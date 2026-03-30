@@ -1,8 +1,37 @@
 from __future__ import annotations
 
-"""Wave 5 helper implementations for compression entrypoints."""
+"""Compression pipeline helpers behind the public facade."""
+
+import copy
+import json
+import os
+import re
+from typing import Any
 
 import tok.compression as _compression
+from . import (
+    EDIT_LIKE_TOOLS,
+    FILE_LIKE_TOOLS,
+    QUESTION_PREFIXES,
+    RECENT_WINDOW_EVIDENCE_THRESHOLD,
+    RECENT_WINDOW_THRESHOLD,
+    STOP_WORDS,
+    TOK_OUTPUT_DIRECTIVE_MINIMAL,
+    TOK_OUTPUT_DIRECTIVE_REINFORCED,
+    TOK_PROTOCOL_LAW,
+    TOK_TOOL_COMPAT_DIRECTIVE,
+    _CUT_REJECTION_REASONS,
+    _SEMANTIC_HASH_MIN_CHARS,
+    _apply_result_cache,
+    _compute_semantic_hash,
+    _make_semantic_cache_key,
+    _should_include_tok_state,
+    _summarize_causal_failures,
+    _summarize_decision_hypotheses,
+    classify_cut_eligibility,
+    logger,
+    text_of,
+)
 
 globals().update(vars(_compression))
 
@@ -377,29 +406,7 @@ def _detect_tool_content_type_impl(text: str) -> str:
 
 def _compress_git_log_impl(text: str) -> str:
     """Compress verbose git log to compact table."""
-    lines = text.splitlines()
-    commits: list[tuple[str, str]] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        match = re.match(r"^([0-9a-f]{7,40})\s+(.*)$", stripped)
-        if match:
-            commits.append((match.group(1)[:8], match.group(2)[:72]))
-            continue
-        if stripped.startswith(("commit ", "Author:", "Date:")):
-            continue
-        if commits and not stripped.startswith(("Merge:",)):
-            sha, message = commits[-1]
-            commits[-1] = (sha, f"{message} / {stripped[:48]}")
-    if not commits:
-        return truncate_large_result(text)
-    rows = [f"{sha} {message}" for sha, message in commits[:12]]
-    omitted = len(commits) - len(rows)
-    header = f">>> tok_compressed:git_log|commits:{len(commits)}"
-    if omitted > 0:
-        rows.append(f"... {omitted} more commits")
-    return header + "\n" + "\n".join(rows)
+    return _compress_git_log(text)
 
 
 def tok_tool_result_impl(

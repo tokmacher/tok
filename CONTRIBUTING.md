@@ -18,6 +18,7 @@ Thanks for helping improve Tok.
 Suggested checks:
 
 ```bash
+pre-commit run --all-files
 python scripts/check_repo_hygiene.py
 uv run pytest tests/unit/test_cli.py tests/unit/test_gateway.py tests/unit/test_compression.py tests/unit/test_universal_runtime.py tests/unit/test_bridge_memory.py
 python -m build
@@ -32,6 +33,7 @@ python -m build
 ## Testing Expectations
 
 - Run the full pytest suite before merging: `pytest tests/unit/ tests/integration/ -v`.
+- The release-surface coverage gate is 80%. Use the checked-in `.coveragerc` when running `pytest --cov=src/tok`.
 - The `uv` lockfile governs precise dependency versions. `uv sync` keeps you aligned with the lockfile, while `pip install -e "[.dev]"` may resolve newer versions; prefer `uv sync` if you need deterministic results.
 
 ## Docs Expectations

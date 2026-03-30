@@ -1,9 +1,4 @@
-"""Command handlers for Tok CLI.
-
-This module contains the core command implementations that were previously
-in the main cli/__init__.py file but have been extracted for better
-organization and maintainability.
-"""
+"""Protocol conversion and parsing commands for the Tok CLI."""
 
 from __future__ import annotations
 

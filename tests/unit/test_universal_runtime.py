@@ -827,6 +827,7 @@ def test_runtime_prepare_request_reverts_when_mutated_body_fails_preflight(
         deltas=None,
         pressure=0,
         behavior_signals=None,
+        runtime_hints=None,
     ):
         del (
             tok_state,
@@ -836,13 +837,13 @@ def test_runtime_prepare_request_reverts_when_mutated_body_fails_preflight(
             deltas,
             pressure,
             behavior_signals,
+            runtime_hints,
         )
-        broken = dict(body)
-        broken["messages"] = "not-a-list"
-        return broken
+        body["messages"] = "not-a-list"
+        return body
 
     monkeypatch.setattr(
-        "tok.runtime.pipeline.request_preparation.inject_system_additions",
+        "tok.runtime._request_preparation.inject_system_additions",
         _bad_injection,
     )
 
@@ -2537,9 +2538,9 @@ def test_answer_anchor_present_signal_set_when_answer_facts_in_state(tmp_path):
         messages=[{"role": "user", "content": "what is the entry point?"}],
     )
     prepared = runtime.prepare_request(request, session)
-    assert (
-        prepared.behavior_signals.get("answer_anchor_present", 0) == 1
-    ), "answer_anchor_present must be set when answer facts are in state"
+    assert prepared.behavior_signals.get("answer_anchor_present", 0) == 1, (
+        "answer_anchor_present must be set when answer facts are in state"
+    )
     assert (
         prepared.behavior_signals.get(
             "state_resend_reason_answer_anchor_present_kept_full", 0
@@ -2672,9 +2673,9 @@ def test_answer_anchor_present_signal_absent_without_answer_facts(tmp_path):
         messages=[{"role": "user", "content": "hello"}],
     )
     prepared = runtime.prepare_request(request, session)
-    assert (
-        prepared.behavior_signals.get("answer_anchor_present", 0) == 0
-    ), "answer_anchor_present must not be set when no answer facts are in state"
+    assert prepared.behavior_signals.get("answer_anchor_present", 0) == 0, (
+        "answer_anchor_present must not be set when no answer facts are in state"
+    )
 
 
 def test_prepare_request_emits_resend_reason_for_suppressed_or_delta(tmp_path):
@@ -3055,9 +3056,9 @@ def test_record_fallback_event_increments_and_degrades():
 
     for i in range(_FALLBACK_THRESHOLD - 1):
         session.record_fallback_event()
-        assert (
-            not session._baseline_only
-        ), f"should not degrade before threshold at i={i}"
+        assert not session._baseline_only, (
+            f"should not degrade before threshold at i={i}"
+        )
 
     session.record_fallback_event()
     assert session._baseline_only, "should degrade at threshold"
@@ -3154,12 +3155,12 @@ def test_collect_transient_error_snippets_returns_transient_errors():
     errs = collect_transient_error_snippets(messages)
 
     assert isinstance(errs, list)
-    assert (
-        len(errs) >= 1
-    ), f"Expected at least 1 transient error snippet, got: {errs}"
-    assert not any(
-        "blocked on" in e.lower() for e in errs
-    ), f"Hard blocker phrase leaked into errs: {errs}"
+    assert len(errs) >= 1, (
+        f"Expected at least 1 transient error snippet, got: {errs}"
+    )
+    assert not any("blocked on" in e.lower() for e in errs), (
+        f"Hard blocker phrase leaked into errs: {errs}"
+    )
 
 
 def test_collect_transient_error_snippets_empty_when_no_transient_errors():
@@ -3181,9 +3182,9 @@ def test_collect_behavior_signals_values_are_all_ints():
 
     signals = collect_behavior_signals(messages)
     for key, value in signals.items():
-        assert isinstance(
-            value, int
-        ), f"collect_behavior_signals returned non-int value for '{key}': {value!r}"
+        assert isinstance(value, int), (
+            f"collect_behavior_signals returned non-int value for '{key}': {value!r}"
+        )
 
 
 def test_prepare_request_injects_transient_errors_into_hot_errs(tmp_path):

@@ -9,7 +9,6 @@ Two-sided compression:
 from __future__ import annotations
 
 import atexit
-import copy
 import json
 import logging
 import os
@@ -20,13 +19,11 @@ import httpx
 import uvicorn
 from typing import Any, cast
 from collections.abc import AsyncIterator
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI
 
 from ..bridge_memory import BridgeMemoryState
 from ..stats import SavingsTracker
 from ..universal_runtime import (
-    RuntimeRequest,
     RuntimeSession,
     UniversalTokRuntime,
     _discover_project_markers,
@@ -34,23 +31,14 @@ from ..universal_runtime import (
     collect_behavior_signals,
     response_contract_for_mode,
 )
-from ..runtime.pipeline.request_validation import (
-    canonicalize_anthropic_bridge_body,
-    summarize_message_structure,
-    validate_anthropic_bridge_body,
-)
-from ..runtime.policy.translator import IS_TOK
+from ..runtime.pipeline.request_validation import summarize_message_structure
 
-# Import extracted helper modules
+# Internal gateway support modules
 
 from ._fingerprint import (
     _request_body_fingerprint,
 )
-from ._bridge_comparison import (
-    _safe_headers,
-    _payloads_materially_differ,
-    _request_fingerprint_diff,
-)
+from ._bridge_comparison import _request_fingerprint_diff
 
 # PID file handling for foreground mode
 TOK_DIR = Path.home() / ".tok"
@@ -463,7 +451,7 @@ def create_app(session: BridgeSession | None = None) -> FastAPI:
     """Create the bridge FastAPI application."""
     from ._app_factory import create_app_impl
 
-    return cast(FastAPI, create_app_impl(session))
+    return create_app_impl(session)
 
 
 def run_bridge(

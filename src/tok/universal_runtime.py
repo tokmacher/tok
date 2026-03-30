@@ -25,7 +25,10 @@ from .runtime.pipeline.response_processing import (  # noqa: F401
     parse_tok_response,
     malformed_tok_signals,
 )
-from .runtime.policy.macro_handling import _jit_context_matches  # noqa: F401
+from .runtime.policy.macro_handling import (  # noqa: F401
+    _jit_context_matches,
+    execute_jit_macro,
+)
 from .runtime.policy.semantic_validation import (  # noqa: F401
     calculate_invisible_pressure,
     calculate_memory_lift,
@@ -55,6 +58,7 @@ __all__ = [
     "build_tool_use_id_to_context",
     "collect_behavior_signals",
     "_jit_context_matches",
+    "execute_jit_macro",
     "RuntimeSession",
     "UniversalTokRuntime",
     "RuntimeRequest",

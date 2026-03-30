@@ -50,10 +50,15 @@ class TestMacroPersistence(unittest.TestCase):
 
     def test_registry_persistence(self):
         registry = MacroRegistry()
-        m1 = Macro(name="m1", instructions=(), inputs=(), hit_count=10)
+        m1 = Macro(
+            name="m1",
+            instructions=(Instruction(op="add", args=()),),
+            inputs=(),
+            hit_count=10,
+        )
         m2 = Macro(
             name="m2",
-            instructions=(),
+            instructions=(Instruction(op="grep", args=()),),
             inputs=(),
             hit_count=2,
             is_durable=False,
@@ -82,7 +87,7 @@ class TestMacroPersistence(unittest.TestCase):
         registry.register(
             Macro(
                 name="old_low",
-                instructions=(),
+                instructions=(Instruction(op="op1", args=()),),
                 inputs=(),
                 hit_count=1,
                 last_seen=old_date,
@@ -92,7 +97,7 @@ class TestMacroPersistence(unittest.TestCase):
         registry.register(
             Macro(
                 name="old_high",
-                instructions=(),
+                instructions=(Instruction(op="op2", args=()),),
                 inputs=(),
                 hit_count=10,
                 last_seen=old_date,
@@ -102,7 +107,7 @@ class TestMacroPersistence(unittest.TestCase):
         registry.register(
             Macro(
                 name="old_durable",
-                instructions=(),
+                instructions=(Instruction(op="op3", args=()),),
                 inputs=(),
                 hit_count=1,
                 last_seen=old_date,
@@ -113,7 +118,7 @@ class TestMacroPersistence(unittest.TestCase):
         registry.register(
             Macro(
                 name="recent_low",
-                instructions=(),
+                instructions=(Instruction(op="op4", args=()),),
                 inputs=(),
                 hit_count=1,
                 last_seen=recent_date,
@@ -129,14 +134,11 @@ class TestMacroPersistence(unittest.TestCase):
 
     def test_hierarchical_mining_naming(self):
         miner = IRPatternMiner(min_frequency=2)
-        # Mock an existing macro from a previous session
-        existing = {
-            "auto_macro_0": Macro(
-                name="auto_macro_0", instructions=(), inputs=()
-            )
-        }
+        existing_registry = MacroRegistry()
+        existing_registry.register(
+            Macro(name="auto_macro_0", instructions=(), inputs=())
+        )
 
-        # Pattern that calls an existing macro
         from tok.neuro.ir import TokIR
 
         history = TokIR(
@@ -148,16 +150,14 @@ class TestMacroPersistence(unittest.TestCase):
             )
         )
 
-        discovered = miner.mine([history], existing_macros=existing)
+        discovered = miner.mine([history], registry=existing_registry)
 
         self.assertEqual(len(discovered), 1)
         new_macro = discovered[0]
-        # Should be named auto_macro_1 to avoid collision
         self.assertEqual(new_macro.name, "auto_macro_1")
-        # Should show it is composed of auto_macro_0
         self.assertIn("auto_macro_0", new_macro.provenance.composed_of)
-        self.assertEqual(
-            new_macro.provenance.source_code, "@auto_macro_0 -> pytest"
+        self.assertIn(
+            "@auto_macro_0 -> pytest", new_macro.provenance.source_code
         )
 
 

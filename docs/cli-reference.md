@@ -77,6 +77,11 @@ Use this for maintainer release checks and CI parity. See
 [`docs/release-checklist.md`](./release-checklist.md) and
 [`docs/CICD_INTEGRATION.md`](./CICD_INTEGRATION.md).
 
+## CI/CD Integration
+
+For details on running Tok's test and gate tooling in CI, see
+[`docs/CICD_INTEGRATION.md`](./CICD_INTEGRATION.md).
+
 ## Format Tools
 
 ```bash

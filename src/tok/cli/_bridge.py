@@ -13,22 +13,15 @@ import typer
 
 from ..stats import SavingsTracker
 
-from ._shared import (
-    TOK_DIR,
-    PID_FILE,
+from ._cli_support import (
     LOG_FILE,
-    COLLECTOR_PID_FILE,
     console,
-    _get_running_bridge_pid,
-    _memory_root,
-    _read_collector_pid,
     _render_stats_panel,
     _runtime_verdict,
     _savings_headline,
     _savings_style,
     _session_signals_text,
     _session_status_rows,
-    _start_collector,
     _status_border,
 )
 
@@ -71,7 +64,9 @@ def bridge_start(
     ] = "https://api.anthropic.com",
 ) -> None:
     """Start the Tok bridge server."""
-    existing = _get_running_bridge_pid(port)
+    import tok.cli as cli
+
+    existing = cli._get_running_bridge_pid(port)
 
     if existing:
         console.print(
@@ -79,9 +74,9 @@ def bridge_start(
         )
         raise typer.Exit(0)
 
-    TOK_DIR.mkdir(parents=True, exist_ok=True)
+    cli.TOK_DIR.mkdir(parents=True, exist_ok=True)
 
-    _start_collector(debug=debug)
+    cli._start_collector(debug=debug)
 
     if foreground:
         from ..gateway import run_bridge
@@ -107,7 +102,7 @@ def bridge_start(
         env["TOK_API_BASE"] = api_base
         env["TOK_RESET_SESSION"] = "1"
 
-        log_file = open(LOG_FILE, "a")
+        log_file = open(cli.LOG_FILE, "a")
         proc = subprocess.Popen(
             [sys.executable, "-m", "tok.gateway"],
             env=env,
@@ -115,7 +110,7 @@ def bridge_start(
             stderr=log_file,
             start_new_session=True,
         )
-        PID_FILE.write_text(str(proc.pid))
+        cli.PID_FILE.write_text(str(proc.pid))
 
         # Wait for bridge to be ready
         for _ in range(15):
@@ -128,10 +123,10 @@ def bridge_start(
                     console.print(
                         f"[green]Bridge started on :{port} (PID {proc.pid})[/green]"
                     )
-                    console.print(f"Logs: {LOG_FILE}")
+                    console.print(f"Logs: {cli.LOG_FILE}")
                     if capture:
                         console.print(
-                            f"Capture directory: {_memory_root() / 'sessions'}"
+                            f"Capture directory: {cli._memory_root() / 'sessions'}"
                         )
                     return
             except Exception:
@@ -140,16 +135,18 @@ def bridge_start(
         console.print(
             f"[yellow]Bridge started (PID {proc.pid}) but health check pending[/yellow]"
         )
-        console.print(f"Logs: {LOG_FILE}")
+        console.print(f"Logs: {cli.LOG_FILE}")
         if capture:
-            console.print(f"Capture directory: {_memory_root() / 'sessions'}")
+            console.print(f"Capture directory: {cli._memory_root() / 'sessions'}")
 
 
 @bridge_app.command("stop")
 def bridge_stop() -> None:
     """Stop the Tok bridge server."""
+    import tok.cli as cli
+
     port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
-    pid = _get_running_bridge_pid(port)
+    pid = cli._get_running_bridge_pid(port)
     tracker = SavingsTracker()
 
     if not pid:
@@ -174,7 +171,7 @@ def bridge_stop() -> None:
                 f"[yellow]Failed to stop PID {p} (gone or permission denied)[/yellow]"
             )
 
-    PID_FILE.unlink(missing_ok=True)
+    cli.PID_FILE.unlink(missing_ok=True)
 
     session_summary = tracker.session_summary()
     if session_summary:
@@ -202,7 +199,7 @@ def bridge_stop() -> None:
         )
 
     # Stop collector as well
-    collector_pid = _read_collector_pid()
+    collector_pid = cli._read_collector_pid()
     if collector_pid:
         try:
             os.kill(collector_pid, signal.SIGTERM)
@@ -211,14 +208,16 @@ def bridge_stop() -> None:
             )
         except (ProcessLookupError, PermissionError):
             pass
-    COLLECTOR_PID_FILE.unlink(missing_ok=True)
+    cli.COLLECTOR_PID_FILE.unlink(missing_ok=True)
 
 
 @bridge_app.command("status")
 def bridge_status() -> None:
     """Check bridge status."""
+    import tok.cli as cli
+
     port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
-    pid = _get_running_bridge_pid(port)
+    pid = cli._get_running_bridge_pid(port)
     if pid is None:
         console.print("[yellow]Bridge not running[/yellow]")
         raise typer.Exit(1)

@@ -1586,7 +1586,7 @@ def check_stability_artifacts(
         }
 
         if not artifact.exists():
-            row["reason"] = "missing"
+            row["reason"] = "file not found"
             results[benchmark] = row
             continue
 
@@ -1605,8 +1605,9 @@ def check_stability_artifacts(
         preferred_count = int(preferred_mode_counts.get("tok-tool-compatible", 0))
         success_rate = float(tok_summary.get("success_rate", 0.0))
 
+        benchmark_name = str(payload.get("benchmark", benchmark))
         passed = (
-            benchmark == str(payload.get("benchmark", ""))
+            benchmark_name == benchmark
             and runs > 0
             and success_rate == 1.0
             and preferred_count == runs
@@ -1614,7 +1615,7 @@ def check_stability_artifacts(
 
         row.update(
             {
-                "benchmark": str(payload.get("benchmark", "")),
+                "benchmark": benchmark_name,
                 "runs": runs,
                 "success_rate": success_rate,
                 "preferred_mode": preferred_count,

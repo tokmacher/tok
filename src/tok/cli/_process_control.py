@@ -1,8 +1,4 @@
-"""Process management utilities for Tok CLI.
-
-This module contains functions for managing Tok bridge and collector processes,
-including PID file handling, port checking, and process lifecycle management.
-"""
+"""Process-control utilities for Tok bridge and collector commands."""
 
 from __future__ import annotations
 

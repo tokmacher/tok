@@ -35,7 +35,7 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 
 ## Prerequisites
 
-- Python `3.9+`
+- Python `3.10+`
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - provider/API configuration that already works with Claude Code
@@ -239,5 +239,4 @@ Keep Tok on, but inspect the degradation reason before deciding the bridge is at
 - [`docs/cli-reference.md`](./cli-reference.md) for the command surface
 - [`docs/troubleshooting.md`](./troubleshooting.md) for fallback and degraded-session diagnosis
 - [`docs/production-readiness.md`](./production-readiness.md) for advanced runtime defaults and release posture
-- [`docs/release-checklist.md`](./release-checklist.md) for maintainer packaging and smoke checks
 - [`docs/architecture.md`](./architecture.md) for deep runtime details

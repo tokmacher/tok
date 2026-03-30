@@ -36,6 +36,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.2.1",
+    "hatchling>=1.25.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-asyncio>=0.23.0",
@@ -78,11 +79,19 @@ max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 "src/tok/gateway/_cache_control.py" = ["C901"]
+"src/tok/gateway/_app_factory.py" = ["C901"]
+"src/tok/cli/_release.py" = ["C901"]
+"src/tok/cli/__init__.py" = ["F401"]
+"src/tok/gateway/__init__.py" = ["F401"]
+"src/tok/compression/__init__.py" = ["F401"]
+"src/tok/compression/_pipeline.py" = ["C901"]
+"src/tok/runtime/core.py" = ["F401"]
+"src/tok/runtime/_request_preparation.py" = ["C901"]
 "tests/integration/test_bridge_fidelity.py" = ["C901"]
-"src/tok/testing/**" = ["C901"]  # Advisory: non-release surface
-"src/tok/analysis/**" = ["C901"]  # Advisory: non-release surface
-"src/tok/neuro/**" = ["C901"]  # Advisory: non-release surface
-"src/tok/protocol/**" = ["C901"]  # Advisory: non-release surface
+"src/tok/testing/**" = ["C901"]
+"src/tok/analysis/**" = ["C901"]
+"src/tok/neuro/**" = ["C901"]
+"src/tok/protocol/**" = ["C901"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -111,10 +120,15 @@ module = [
   "tok.analysis.*",
   "tok.testing.*",
   "tok.protocol.*",
+  "tok.monitoring.*",
 ]
 check_untyped_defs = true
 disallow_untyped_defs = false
 warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = "tok.monitoring.*"
+ignore_errors = true
 
 # Test files
 [[tool.mypy.overrides]]

@@ -42,6 +42,7 @@ from ..compression import (
     compress_history,
     compress_recent_window,
     compress_tool_results,
+    inject_system_additions,
     text_of,
 )
 
@@ -574,7 +575,7 @@ class RuntimeSession:
         blocker_rediscovery: bool = False,
     ) -> dict[str, int]:
         """Record a new result-bearing logical target event for repeat-target control."""
-        from ._wave5 import observe_repeat_target_result_impl
+        from ._request_preparation import observe_repeat_target_result_impl
 
         return observe_repeat_target_result_impl(
             self,
@@ -702,9 +703,9 @@ class RuntimeSession:
             block = reminder + "\n" + guidance
             hints.append(block)
             metrics["hot_recent_hint_injected"] += 1
-            metrics[
-                "reacquisition_tokens_avoided_estimate"
-            ] += record.token_cost
+            metrics["reacquisition_tokens_avoided_estimate"] += (
+                record.token_cost
+            )
             if (
                 record.tool_family in {"search", "command"}
                 and record.unchanged_result_count > 0
@@ -1093,16 +1094,13 @@ class UniversalTokRuntime:
         *,
         result_cache: dict[str, Any] | None = None,
     ) -> PreparedRuntimeRequest:
-        from ._wave5 import prepare_request_impl
+        from ._request_preparation import prepare_request_impl
 
-        return cast(
-            PreparedRuntimeRequest,
-            prepare_request_impl(
-                self,
-                request,
-                session,
-                result_cache=result_cache,
-            ),
+        return prepare_request_impl(
+            self,
+            request,
+            session,
+            result_cache=result_cache,
         )
 
     def process_response(

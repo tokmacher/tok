@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 import typer
 
-from ._shared import console
+from ._cli_support import console
 
 dev_app = typer.Typer(help="Fixture generation and benchmarking commands")
 

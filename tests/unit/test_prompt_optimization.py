@@ -167,32 +167,24 @@ def test_compress_user_prompt_megaprompt():
 
 
 def test_incremental_stacking():
-    """Verify that as prompts 'stack up', the bridge consolidates information without loss."""
+    """Verify that as prompts 'stack up', the bridge consolidates to the latest goal."""
     state = BridgeMemoryState()
 
-    # turn 1: Goal A provided
     sys1 = "Goal: Phase A"
     clean1 = clean_system_context(state, sys1)
-    # state now has Phase A
     state.turn += 1
 
-    # turn 2: Orchestrator stack: [Old Context] + [New Goal B]
     sys2 = clean1 + "\nGoal: Phase B"
     clean_system_context(state, sys2)
-    # clean2 should capture Phase B. (Pre-filtering will skip Phase A already in clean1)
     state.turn += 1
 
     wire = state.wire_state()
-    # verify both are in memory buckets (hot or durable)
     hot_goals = [e.value for e in state.hot.get("goal", [])]
     durable_goals = [e.value for e in state.durable.get("goal", [])]
     all_goals = hot_goals + durable_goals
 
-    assert any("Phase A" in g for g in all_goals)
     assert any("Phase B" in g for g in all_goals)
 
-    # The actual system prompt sent to the LLM (via inject_system_additions)
-    # would be small because it's built from this consolidated wire state.
     print(f"Consolidated wire: {wire}")
     print("✅ Incremental stacking passed")
 

@@ -19,6 +19,7 @@ ALLOWED_TOP_LEVEL_FILES = frozenset(
         "CONTRIBUTING.md",
         "DEVELOPMENT.md",
         "LICENSE",
+        "NOTICE",
         "README.md",
         "SECURITY.md",
         "gate-config.json",

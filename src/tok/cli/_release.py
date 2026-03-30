@@ -1,10 +1,52 @@
 from __future__ import annotations
 
-"""Wave 5 helper implementations for release-facing CLI commands."""
+"""Release-facing CLI helper implementations."""
 
-import tok.cli as _cli
+import json
+import os
+from pathlib import Path
+from typing import Any
 
-globals().update(vars(_cli))
+import typer
+from rich.table import Table
+
+from ..runtime.pipeline.response_handling import evaluate_replay_gate
+from ..runtime.pipeline.tool_processing import (
+    build_tool_use_id_to_context,
+    collect_behavior_signals,
+)
+from ..runtime.policy.semantic_validation import calculate_invisible_pressure
+from ..runtime.policy.smart_policy import (
+    advance_state,
+    initial_state,
+    policy_for_model,
+)
+from ..stats import SavingsTracker
+from . import _msg_text
+from ._cli_support import (
+    _get_running_bridge_pid,
+    _memory_root,
+    _render_stats_panel,
+    _runtime_verdict,
+    _savings_headline,
+    _savings_style,
+    _session_recommendation,
+    _session_signals_text,
+    _session_status_rows,
+    _status_border,
+    console,
+)
+from ._gate import (
+    evaluate_expected_failure,
+    fixture_usage_weight,
+    gate_release_summary,
+    infer_fixture_format,
+    is_common_path_fixture,
+    load_fixture_files,
+    load_gate_config,
+    load_session_trend,
+    read_fixture,
+)
 
 
 def stats_command(
@@ -784,6 +826,8 @@ def gate_check_command(
                     "behavior_signals": behavior,
                     "records": len(records),
                     "fixture_format": infer_fixture_format(records),
+                    "fixture_kind": str(meta.get("fixture_kind", "")),
+                    "provenance": str(meta.get("provenance", "")),
                     "common_path": is_common_path_fixture(
                         fixture_name, meta
                     ),
@@ -814,11 +858,27 @@ def gate_check_command(
     if conf_table.row_count:
         console.print(conf_table)
 
+    common_path_rows = [
+        row for row in results if row.get("common_path") and "error" not in row
+    ]
+    common_path_summary = {
+        "fixtures": len(common_path_rows),
+        "total_weight": round(
+            sum(float(row.get("usage_weight", 0.0)) for row in common_path_rows),
+            1,
+        ),
+    }
+
     release_summary = gate_release_summary(
         results,
         tracker=tracker,
         trend_info=trend_info,
     )
+    if trend_info is not None:
+        console.print(
+            "[bold]Set Trend:[/bold] "
+            f"status={trend_info.get('status', 'clean')}"
+        )
     required_fixture_names = (
         gate_config.get("required_fixtures", []) if gate_config else []
     )
@@ -840,6 +900,7 @@ def gate_check_command(
             "results": results,
             "required_fixtures": required_fixture_names,
             "release_summary": release_summary,
+            "common_path_summary": common_path_summary,
         }
         if stability_check is not None:
             payload["stability_check"] = stability_check
@@ -857,7 +918,17 @@ def gate_check_command(
         ]
         if failing_benchmarks:
             console.print(
+                "[red]STABILITY FAIL[/red] "
+                + ", ".join(
+                    f"{name} ({stability_check[name].get('reason', 'criteria_failed')})"
+                    for name in failing_benchmarks
+                )
+            )
+            console.print("[red]Stability gate: FAIL[/red]")
+            console.print(
                 "[red]Stability artifact check failed:[/red] "
                 + ", ".join(failing_benchmarks)
             )
             raise typer.Exit(1)
+        console.print("[green]STABILITY PASS[/green]")
+        console.print("[green]Stability gate: PASS[/green]")

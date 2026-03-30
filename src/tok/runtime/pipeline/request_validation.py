@@ -50,6 +50,10 @@ def _check_changed_content(
     canonical_blocks = canonical_message.get("content")
     if not isinstance(canonical_blocks, list):
         canonical_blocks = []
+    if isinstance(original_content, list):
+        original_blocks = [block for block in original_content if isinstance(block, dict)]
+        if len(original_blocks) != len(canonical_blocks):
+            return True
     normalized_blocks, _ = _normalize_message_content_to_blocks(
         original_content
     )
@@ -173,11 +177,14 @@ def canonicalize_anthropic_bridge_messages(
     canonical_path: list[dict[str, Any]] = []
     signals: dict[str, int] = {}
     total_drops: dict[str, int] = {}
+    changed = False
 
     for raw_message in messages:
-        msg, changed = _process_bridged_message(
+        msg, message_changed = _process_bridged_message(
             raw_message, signals, total_drops
         )
+        if message_changed:
+            changed = True
         if msg is not None:
             canonical_path.append(msg)
 

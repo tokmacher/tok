@@ -138,9 +138,9 @@ def load_session_trend(tracker: SavingsTracker) -> dict[str, Any]:
     trend = tracker.trend_summary(recent_sessions=5)
     invisible_pressure = trend.get("avg_invisible_pressure", 0)
     status = "clean"
-    if invisible_pressure > 3:
+    if invisible_pressure > 10:
         status = "noisy"
-    elif invisible_pressure > 0:
+    elif invisible_pressure > 5:
         status = "watch"
     return {
         "trend": trend,

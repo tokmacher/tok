@@ -38,7 +38,7 @@ class TestJitBenchmark(unittest.TestCase):
         # A response from the LLM that accepts the JIT offer
         llm_response = "I will check the file now. EXECUTE_JIT(@check_error(path='src/tok/cli.py', query='parse_error', command='pytest src/tok/cli.py'))"
 
-        with patch("tok.universal_runtime.execute_jit_macro") as mock_exec:
+        with patch("tok.runtime.core.execute_jit_macro") as mock_exec:
             mock_exec.return_value = "JIT execution result content"
 
             processed = self.runtime.process_response(
@@ -60,10 +60,10 @@ class TestJitBenchmark(unittest.TestCase):
             # 3. Verify content was appended to the visible response
             found_jit_result = False
             for block in processed.content_blocks:
-                if block.get(
-                    "type"
-                ) == "text" and "[JIT Execution Result for @check_error]" in block.get(
-                    "text", ""
+                if (
+                    block.get("type") == "text"
+                    and "[JIT Execution Result for @check_error]"
+                    in block.get("text", "")
                 ):
                     found_jit_result = True
                     self.assertIn(
@@ -78,7 +78,7 @@ class TestJitBenchmark(unittest.TestCase):
             "EXECUTE_JIT(@check_error(path='...', query='...', command='...'))"
         )
 
-        with patch("tok.universal_runtime.execute_jit_macro") as mock_exec:
+        with patch("tok.runtime.core.execute_jit_macro") as mock_exec:
             processed = self.runtime.process_response(
                 llm_response, model="gpt-4", session=self.session
             )

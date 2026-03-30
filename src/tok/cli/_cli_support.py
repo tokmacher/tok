@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Shared constants, helpers, and display utilities for the Tok CLI."""
+"""Shared CLI constants, display helpers, and process utilities."""
 
 import os
 import subprocess

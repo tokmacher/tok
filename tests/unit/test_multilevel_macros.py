@@ -222,10 +222,10 @@ def test_serialization_round_trip():
             print(f"    {line}")
 
     # Deserialize
-    restored = BridgeMemoryState.from_tok(tok_text)
-    assert len(restored.macro_registry.macros) == len(
-        registry.macros
-    ), f"Expected {len(registry.macros)} macros, got {len(restored.macro_registry.macros)}"
+    restored = BridgeMemoryState.from_tok(tok_text, load_global_macros=False)
+    assert len(restored.macro_registry.macros) == len(registry.macros), (
+        f"Expected {len(registry.macros)} macros, got {len(restored.macro_registry.macros)}"
+    )
     print(
         f"\n  ✅ Round-trip: {len(restored.macro_registry.macros)} macros survived serialization"
     )

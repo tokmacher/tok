@@ -1,14 +1,74 @@
 from __future__ import annotations
 
-"""Wave 5 helper implementations for runtime-core methods."""
+"""Runtime request-preparation helpers extracted from core."""
+
+import copy
+import os
+from pathlib import Path
+from typing import Any, cast
 
 import tok.runtime.core as _core
+from ..compression import (
+    EDIT_LIKE_TOOLS,
+    compress_history,
+    compress_recent_window,
+    compress_tool_results,
+    inject_system_additions,
+    text_of,
+)
+from ..neuro.ir import Instruction
+from .config import (
+    TOK_HOT_COMMAND_MAX_CHARS,
+    TOK_HOT_COMMAND_MAX_LINES,
+    TOK_HOT_FILE_MAX_CHARS,
+    TOK_HOT_FILE_MAX_LINES,
+    TOK_HOT_SEARCH_MAX_CHARS,
+    TOK_HOT_SEARCH_MAX_LINES,
+    TOK_NEIGHBORHOOD_TRIGGER_ANCHORS,
+    TOK_NEIGHBORHOOD_WINDOW_TURNS,
+    TOK_REACQUIRE_STUCK_COUNT,
+    TOK_REACQUIRE_STUCK_WINDOW_TURNS,
+    TOK_REACQUIRE_TRIGGER_COUNT,
+    TOK_REACQUIRE_WINDOW_TURNS,
+)
+from .core import UniversalTokRuntime, logger
+from .memory.bridge_memory import clean_system_context
+from .memory.session_helpers import extract_memory_items
+from .pipeline.request_preparation import (
+    _capture_repeat_target_snapshots,
+    _inject_system,
+    collect_transient_error_snippets,
+    mutation_signals,
+)
+from .pipeline.response_processing import translate_request_results
+from .pipeline.request_validation import (
+    canonicalize_anthropic_bridge_body,
+    detect_prompt_bloat,
+)
+from .pipeline.tool_processing import (
+    _should_skip_history_rewrite,
+    build_tool_use_id_to_context,
+    collect_behavior_signals,
+    count_tokens,
+    logical_target_key_from_context,
+    normalize_tool_events,
+)
+from .policy.macro_handling import _jit_context_matches
+from .policy.semantic_validation import calculate_invisible_pressure
+from .repeat_targets import (
+    HotSummaryRecord,
+    RepeatTargetEvent,
+    build_summary_for_family,
+    resolve_evidence_intent,
+    stable_digest,
+)
+from .types import PreparedRuntimeRequest, RuntimeRequest
 
 globals().update(vars(_core))
 
 
 def observe_repeat_target_result_impl(
-    session_self,
+    session_self: _core.RuntimeSession,
     *,
     tool_id: str,
     tool_name: str,
@@ -87,8 +147,7 @@ def observe_repeat_target_result_impl(
         for event in session_self._recent_repeat_target_events
         if event.tool_family == family
         and event.logical_target == logical_target
-        and current_turn - event.turn_index
-        < TOK_REACQUIRE_STUCK_WINDOW_TURNS
+        and current_turn - event.turn_index < TOK_REACQUIRE_STUCK_WINDOW_TURNS
     ]
     repeat_count = len(recent_events)
     stuck_count = len(stuck_events)
@@ -188,8 +247,7 @@ def observe_repeat_target_result_impl(
                     signals["evidence_neighborhood_hot"] = 1
 
     if family == "file_read" and (
-        signals.get("repeat_target_hot")
-        or signals.get("repeat_target_stuck")
+        signals.get("repeat_target_hot") or signals.get("repeat_target_stuck")
     ):
         warm_metrics = session_self.apply_predictive_cache_warming(
             logical_target
@@ -200,9 +258,9 @@ def observe_repeat_target_result_impl(
 
 
 def prepare_request_impl(
-    runtime_self,
+    runtime_self: UniversalTokRuntime,
     request: RuntimeRequest,
-    session: RuntimeSession,
+    session: _core.RuntimeSession,
     *,
     result_cache: dict[str, Any] | None = None,
 ) -> PreparedRuntimeRequest:
@@ -214,6 +272,8 @@ def prepare_request_impl(
         body["system"] = copy.deepcopy(request.system)
     original_body = copy.deepcopy(body)
     compressed = False
+
+    _pre_existing_session_signals = dict(session.pending_behavior_signals)
 
     last_user_msg = ""
     if request.messages:
@@ -272,9 +332,7 @@ def prepare_request_impl(
             session._pending_macro_heal = jit_macro.name
             session._pending_macro_heal_turn = session.bridge_memory.turn
         elif jit_macro and not _jit_context_matches(jit_macro, session):
-            session.pending_behavior_signals[
-                "jit_offer_context_filtered"
-            ] = 1
+            session.pending_behavior_signals["jit_offer_context_filtered"] = 1
 
     _speculative_macro_hint: str | None = None
     if session.bridge_memory.load_global_macros:
@@ -282,7 +340,8 @@ def prepare_request_impl(
         _spec_names = [
             f"@{m.name}"
             for m in session.bridge_memory.macro_registry.macros.values()
-            if m.hit_count >= _spec_threshold and _jit_context_matches(m, session)
+            if m.hit_count >= _spec_threshold
+            and _jit_context_matches(m, session)
         ]
         if _spec_names:
             _speculative_macro_hint = (
@@ -290,12 +349,14 @@ def prepare_request_impl(
                 + ", ".join(sorted(_spec_names))
                 + ". Use @name to invoke."
             )
-            session.pending_behavior_signals[
-                "speculative_macros_injected"
-            ] = len(_spec_names)
+            session.pending_behavior_signals["speculative_macros_injected"] = (
+                len(_spec_names)
+            )
 
     id_to_context = build_tool_use_id_to_context(translated_messages)
-    behavior_signals = collect_behavior_signals(translated_messages, id_to_context)
+    behavior_signals = collect_behavior_signals(
+        translated_messages, id_to_context
+    )
     behavior_signals["_project_markers_proxy"] = len(session._project_markers)
     for err_snippet in collect_transient_error_snippets(translated_messages):
         session.bridge_memory._upsert(
@@ -319,9 +380,6 @@ def prepare_request_impl(
     history_skip_reason = ""
     should_skip_history = False
     skip_reason = ""
-    resend_reason: str | None = None
-    previous_comparable: dict[str, list[str]] = {}
-
     for event in normalized_tool_events:
         if event.name.lower() in EDIT_LIKE_TOOLS and event.path:
             session.bridge_memory.bump_file_heat(event.path, weight=2.0)
@@ -344,7 +402,6 @@ def prepare_request_impl(
         )
         answer_ready = False
         resend_signals = {}
-        resend_reason = None
         has_answer_anchor = False
         late_answer_followthrough_active = (
             request.tool_compatible
@@ -385,12 +442,16 @@ def prepare_request_impl(
         )
         if repeat_snapshot_signals:
             session._bump_signals(repeat_snapshot_signals)
+            for key, value in repeat_snapshot_signals.items():
+                behavior_signals[key] = behavior_signals.get(key, 0) + value
 
         session._save_bridge_memory()
         body["messages"], type_breakdown = compress_tool_results(
             translated_messages,
             result_cache=(
-                result_cache if result_cache is not None else session.result_cache
+                result_cache
+                if result_cache is not None
+                else session.result_cache
             ),
             tool_use_id_to_context=id_to_context,
             compression_level=policy.tool_levels[mode],
@@ -486,7 +547,8 @@ def prepare_request_impl(
                 compressed = True
                 if request.tool_compatible:
                     behavior_signals["tool_compatible_compression"] = (
-                        behavior_signals.get("tool_compatible_compression", 0) + 1
+                        behavior_signals.get("tool_compatible_compression", 0)
+                        + 1
                     )
                 session_memory = session.refresh_hot_memory(
                     tok_state, model=request.model
@@ -507,14 +569,17 @@ def prepare_request_impl(
                     )
                 )
                 if tool_result_count > 0:
-                    behavior_signals["tok_history_cut_point_missing_with_tools"] = (
-                        1
-                    )
+                    behavior_signals[
+                        "tok_history_cut_point_missing_with_tools"
+                    ] = 1
+                    behavior_signals["tok_history_cut_blocked_tool_result"] = 1
                 session_memory = session.refresh_hot_memory(
                     "", model=request.model
                 )
         else:
-            session_memory = session.refresh_hot_memory("", model=request.model)
+            session_memory = session.refresh_hot_memory(
+                "", model=request.model
+            )
 
         if request.tool_compatible:
             (
@@ -529,25 +594,29 @@ def prepare_request_impl(
                 request,
                 session,
                 session_memory,
-                runtime_hints,
+                history_skip_reason or skip_reason or None,
                 behavior_signals,
-                hot_hint_metrics,
+                runtime_hints,
                 current_pressure=current_pressure,
-                type_breakdown=type_breakdown,
+                hot_hint_metrics=hot_hint_metrics,
+                translated_messages=translated_messages,
+                should_skip_history=should_skip_history,
+                recent_messages=recent,
             )
-            if processed_body:
-                body["system"] = processed_body.get("system", body.get("system", ""))
-                resend_reason = next(
-                    (
-                        key
-                        for key, value in resend_signals.items()
-                        if key.startswith("state_resend_") and value
-                    ),
-                    None,
-                )
-                has_answer_anchor = bool(
-                    behavior_signals.get("answer_anchor_present", 0)
-                )
+            body = _inject_system(
+                body,
+                injected_state_payload,
+                runtime_hints,
+                tool_compatible=True,
+                grammar=bool(request.grammar),
+                todo=request.todo or "",
+                deltas=bool(request.deltas),
+                pressure=current_pressure,
+                behavior_signals=behavior_signals,
+            )
+            has_answer_anchor = bool(
+                behavior_signals.get("answer_anchor_present", 0)
+            )
         else:
             system_body = inject_system_additions(
                 body,
@@ -559,6 +628,23 @@ def prepare_request_impl(
             )
             body["system"] = system_body.get("system", body.get("system", ""))
 
+        _mut_signals = mutation_signals(original_body, body)
+        for key, value in _mut_signals.items():
+            behavior_signals[key] = behavior_signals.get(key, 0) + value
+        if _mut_signals.get("tok_preflight_rejected"):
+            body = original_body
+            session._bump_signals(_mut_signals)
+            session._save_bridge_memory()
+            return PreparedRuntimeRequest(
+                body=body,
+                compressed=False,
+                input_saved_tokens=0,
+                type_breakdown={},
+                behavior_signals=behavior_signals,
+                mode=mode,
+                normalized_tool_events=normalized_tool_events,
+            )
+
         prepared_prompt_tokens = session.prepared_prompt_tokens(body)
         baseline_prompt_tokens = session.prepared_prompt_tokens(original_body)
         saved_prompt_tokens = max(
@@ -567,6 +653,18 @@ def prepare_request_impl(
         if saved_prompt_tokens > 0:
             compressed = True
             saved_tokens += saved_prompt_tokens
+
+        for key, value in session.pending_behavior_signals.items():
+            if value and value > _pre_existing_session_signals.get(key, 0):
+                behavior_signals[key] = (
+                    behavior_signals.get(key, 0)
+                    + value
+                    - _pre_existing_session_signals.get(key, 0)
+                )
+
+        for key, value in hot_hint_metrics.items():
+            if value:
+                behavior_signals[key] = behavior_signals.get(key, 0) + value
 
         session._bump_signals(behavior_signals)
         session._bump_signals(hot_hint_metrics)
@@ -589,13 +687,24 @@ def prepare_request_impl(
         baseline_prompt_tokens = prepared_prompt_tokens
         saved_prompt_tokens = 0
 
+    canonical_body, canonicalized, canonical_signals = (
+        canonicalize_anthropic_bridge_body(body)
+        if request.adapter_kind == "claude-bridge"
+        else (body, False, {})
+    )
+    if canonicalized:
+        body = canonical_body
+        for key, value in canonical_signals.items():
+            behavior_signals[key] = behavior_signals.get(key, 0) + value
+
     return PreparedRuntimeRequest(
         body=body,
-        original_body=original_body,
         compressed=compressed,
         input_saved_tokens=saved_tokens,
         type_breakdown=type_breakdown,
         behavior_signals=behavior_signals,
+        mode=mode,
+        normalized_tool_events=normalized_tool_events,
         baseline_prompt_tokens=baseline_prompt_tokens,
         prepared_prompt_tokens=prepared_prompt_tokens,
         saved_prompt_tokens=saved_prompt_tokens,
@@ -603,9 +712,4 @@ def prepare_request_impl(
         reacquisition_tokens_avoided_estimate=hot_hint_metrics.get(
             "reacquisition_tokens_avoided_estimate", 0
         ),
-        runtime_hints=runtime_hints,
-        injected_state_payload=injected_state_payload,
-        history_skip_reason=history_skip_reason,
-        resend_reason=resend_reason,
-        previous_comparable=previous_comparable,
     )

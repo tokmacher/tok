@@ -1,10 +1,37 @@
 from __future__ import annotations
 
-"""Wave 5 helper implementations for gateway app construction."""
+"""Gateway app-construction helpers behind the public interface."""
 
-import tok.gateway as _gateway
+import copy
+import json
+from collections.abc import AsyncIterator
+from typing import Any
 
-globals().update(vars(_gateway))
+import httpx
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import StreamingResponse
+
+from ..runtime.pipeline.request_validation import (
+    canonicalize_anthropic_bridge_body,
+    validate_anthropic_bridge_body,
+)
+from ..runtime.policy.translator import IS_TOK
+from ..universal_runtime import RuntimeRequest
+from . import (
+    ANTHROPIC_API_BASE,
+    BridgeSession,
+    _RUNTIME,
+    _log_bridge_body_structure,
+    _materialize_stream_tool_blocks,
+    _record_fallback_once,
+    _response_contract_for_mode,
+    logger,
+)
+from ._bridge_comparison import (
+    _payloads_materially_differ,
+    _request_fingerprint_diff,
+    _safe_headers,
+)
 
 
 async def buffer_strip_restream_impl(
@@ -434,25 +461,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             ),
             "last_degradation_reason": str(
                 session_summary.get("last_degradation_reason", "")
-            ),
-            "evidence_anchor_hot": int(signals.get("evidence_anchor_hot", 0)),
-            "evidence_anchor_stuck": int(
-                signals.get("evidence_anchor_stuck", 0)
-            ),
-            "evidence_alias_resolved": int(
-                signals.get("evidence_alias_resolved", 0)
-            ),
-            "history_snapshot_recorded": int(
-                signals.get("history_snapshot_recorded", 0)
-            ),
-            "derived_copy_alias_applied": int(
-                signals.get("derived_copy_alias_applied", 0)
-            ),
-            "evidence_novelty_missing": int(
-                signals.get("evidence_novelty_missing", 0)
-            ),
-            "evidence_neighborhood_hot": int(
-                signals.get("evidence_neighborhood_hot", 0)
             ),
         }
 

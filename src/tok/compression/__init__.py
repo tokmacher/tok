@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import difflib
 import hashlib
 import json
@@ -391,7 +390,7 @@ def compress_history(
     prune_tool_results: bool = False,
 ) -> tuple[list[dict[str, Any]], str]:
     """Split messages into old (to compress) + recent (to keep verbatim)."""
-    from ._wave5 import compress_history_impl
+    from ._pipeline import compress_history_impl
 
     return compress_history_impl(
         messages,
@@ -403,21 +402,49 @@ def compress_history(
 
 def _detect_tool_content_type(text: str) -> str:
     """Detect the content type of a tool result."""
-    from ._wave5 import _detect_tool_content_type_impl
+    from ._pipeline import _detect_tool_content_type_impl
 
     return _detect_tool_content_type_impl(text)
 
 
 def _compress_git_log(text: str) -> str:
     """Compress verbose git log to compact table."""
-    from ._wave5 import _compress_git_log_impl
+    from ._pipeline import _compress_git_log_impl
 
     return _compress_git_log_impl(text)
 
 
+def _compress_git_diff(text: str) -> str:
+    """Compress git diff output while preserving the public facade."""
+    from ._pipeline import _compress_git_diff
+
+    return _compress_git_diff(text)
+
+
+def _compress_ls(text: str) -> str:
+    """Compress ls-style output while preserving the public facade."""
+    from ._pipeline import _compress_ls
+
+    return _compress_ls(text)
+
+
+def _compress_install(text: str) -> str:
+    """Compress install output while preserving the public facade."""
+    from ._pipeline import _compress_install
+
+    return _compress_install(text)
+
+
+def truncate_large_result(text: str, limit: int = 1200) -> str:
+    """Head-tail truncation for extremely large results to prevent context flooding."""
+    from ._pipeline import truncate_large_result as _truncate_large_result
+
+    return _truncate_large_result(text, limit=limit)
+
+
 def tok_tool_result(content: str, compression_level: str = "balanced") -> str:
     """Convert large tool result to dense tok representation."""
-    from ._wave5 import tok_tool_result_impl
+    from ._pipeline import tok_tool_result_impl
 
     return tok_tool_result_impl(content, compression_level=compression_level)
 
@@ -558,7 +585,7 @@ def compress_tool_results(
     semantic_hash_cache: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
-    from ._wave5 import compress_tool_results_impl
+    from ._pipeline import compress_tool_results_impl
 
     return compress_tool_results_impl(
         messages,
@@ -581,7 +608,7 @@ def inject_system_additions(
     behavior_signals: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Inject the Tok output directive into every request."""
-    from ._wave5 import inject_system_additions_impl
+    from ._pipeline import inject_system_additions_impl
 
     return inject_system_additions_impl(
         body,
@@ -628,7 +655,7 @@ def compress_recent_window(
     tool_compatible: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
-    from ._wave5 import compress_recent_window_impl
+    from ._pipeline import compress_recent_window_impl
 
     return compress_recent_window_impl(
         messages,
@@ -656,7 +683,9 @@ def compress_user_prompt(prompt: str) -> str:
         filtered_lines.append(line)
 
     if not filtered_lines and "optimized task context" in prompt.lower():
-        return re.sub(r"### Optimized Task Context\n", "", prompt, flags=re.I).strip()
+        return re.sub(
+            r"### Optimized Task Context\n", "", prompt, flags=re.I
+        ).strip()
 
     goals: list[str] = []
     constraints: list[str] = []
@@ -666,7 +695,13 @@ def compress_user_prompt(prompt: str) -> str:
         lower = line.lower()
         if any(
             prefix in lower
-            for prefix in ("task:", "goal:", "requirement:", "implement ", "add ")
+            for prefix in (
+                "task:",
+                "goal:",
+                "requirement:",
+                "implement ",
+                "add ",
+            )
         ):
             goals.append(line[:60])
         elif line.startswith(("- ", "* ", "1. ")) and any(

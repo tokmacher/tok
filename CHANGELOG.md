@@ -10,10 +10,16 @@
 - `tok install` auto-configures shell integration for zsh/bash/fish
 - `tok doctor` health check command
 - Health endpoint at `/health`
-- 903 test functions across 63 files covering compression, translation, stats, pricing, and CLI
+- 905 test functions across 70 files covering compression, translation, stats, pricing, and CLI
 - Mock Anthropic server for integration testing without API keys
-- GitHub Actions CI (Python 3.9, 3.11, 3.12)
+- GitHub Actions CI (Python 3.10, 3.11, 3.12 on ubuntu-latest and macos-latest)
 - `py.typed` marker for PEP 561
+- GitHub issue and PR templates
+- Development setup guide (`DEVELOPMENT.md`)
+- Maintainer docs (`docs/maintainers/README.md`)
+- Production readiness, release checklist, and public release decision docs
+- CI/CD integration guide
+- Committed `uv.lock` for deterministic dependency resolution
 
 ### Changed
 - Renamed `bridge.py` (format converter) to `format_bridge.py` to free `bridge` name for gateway
@@ -23,6 +29,7 @@
 - Research artifacts moved to `archive/`
 - Docs consolidated from 30+ files to 4 focused docs
 - Tests reorganized into `tests/unit/`, `tests/integration/`, `tests/benchmarks/`
+- Release posture documented more explicitly: live Claude validation is the final pre-release gate, CLI decomposition beyond the current split is deferred, and dependency upper bounds remain a post-`0.1.0` policy follow-up
 
 ### Removed
 - `[MEMORY-DEBUG]` print statements replaced with proper `logging` module

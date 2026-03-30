@@ -115,6 +115,8 @@ pip install tok-protocol
 tok --help
 tok install
 tok bridge start --help
+tok bridge status --help
+tok stats --help
 ```
 
 This is the minimum supported install bar for the first public release.
@@ -153,7 +155,8 @@ The minimal recipe is:
 6. reuse the same session on the next turn
 
 See [`examples/tok_wrap_example.py`](examples/tok_wrap_example.py) and
-[`examples/README.md`](examples/README.md).
+[`examples/README.md`](examples/README.md). That is the only shipped example path for
+the first public release.
 
 ## Docs Map
 
@@ -180,9 +183,10 @@ The repository is intentionally split by audience and lifecycle:
 
 ## Validation Workflow
 
-After working on the codebase, run the full validation flow using `uv run` to execute the refactor plan suite, lint, and type checks:
+After working on the codebase, run the full validation flow using `uv run` to execute the core regression suite, lint, and type checks:
 
 ```bash
+pre-commit run --all-files
 uv run python -m pytest tests/unit/test_architecture.py tests/unit/validation_metrics.py tests/unit/test_adversarial.py tests/unit/test_memory_growth.py tests/unit/test_bridge_fidelity.py tests/unit/test_encoder_transformer.py tests/unit/test_schema_validation.py tests/unit/test_sifter.py tests/unit/test_error_handling.py -v
 uv run ruff check src/tok/ tests/unit
 uv run mypy src/tok/

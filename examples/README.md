@@ -1,15 +1,11 @@
 # Examples
 
-Tok ships one primary example path and one explicitly experimental path.
+Tok ships one supported example for the v0.1.0 public release.
 
-## Recommended Example
+## Supported Example
 
 - [`tok_wrap_example.py`](./tok_wrap_example.py): minimal experimental Python wrapper flow using `RuntimeSession`, `tok.wrap(...)`, and `tok.process(...)`
 
-## Secondary / Internal Examples
+Older playground/demo scripts are intentionally not shipped as part of the public example set because they are broader than the supported bridge-first and wrapper flows.
 
-- [`final_demo.py`](./final_demo.py): broader demo script
-- [`multi_format_demo.py`](./multi_format_demo.py): format conversion demonstration
-- [`playground.py`](./playground.py): parser/playground script for Tok syntax exploration, not part of the primary bridge-first workflow
-
-If you are new to Tok, use the bridge flow in [`README.md`](../README.md) first.
+If you are new to Tok, start with the bridge flow in [`README.md`](../README.md) first.
