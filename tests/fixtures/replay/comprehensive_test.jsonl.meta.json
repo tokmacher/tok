@@ -1,0 +1,20 @@
+{
+  "model": "claude-sonnet-4",
+  "provider": "anthropic",
+  "family": "claude",
+  "min_savings_pct": 15.0,
+  "max_invisible_pressure": 5,
+  "max_repeat_file_read": 2,
+  "max_repeat_search": 3,
+  "max_non_tok_response": 1,
+  "max_fail_open_compat_response": 1,
+  "max_malformed_tok_response": 0,
+  "max_blocker_rediscovery": 2,
+  "name": "comprehensive_test",
+  "turns": 4,
+  "complexity": "medium",
+  "fixture_kind": "compression",
+  "provenance": "synthetic",
+  "common_path": false,
+  "usage_weight": 0.8
+}

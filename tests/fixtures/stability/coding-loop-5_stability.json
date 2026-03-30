@@ -1,0 +1,34 @@
+{
+  "benchmark": "coding-loop-5",
+  "recorded": "2026-03-20T00:00:00Z",
+  "provider": "openrouter",
+  "model": "deepseek/deepseek-v3.2",
+  "runs": 5,
+  "preferred_mode_counts": {
+    "tok-tool-compatible": 5
+  },
+  "mode_summaries": {
+    "baseline": {
+      "runs": 5,
+      "success_rate": 1.0,
+      "success_count": 5,
+      "median_total_tokens": 1659,
+      "min_total_tokens": 1600,
+      "max_total_tokens": 1710,
+      "median_prompt_tokens": 1412,
+      "median_completion_tokens": 247,
+      "median_latency_ms": 780.0
+    },
+    "tok-tool-compatible": {
+      "runs": 5,
+      "success_rate": 1.0,
+      "success_count": 5,
+      "median_total_tokens": 891,
+      "min_total_tokens": 850,
+      "max_total_tokens": 930,
+      "median_prompt_tokens": 721,
+      "median_completion_tokens": 170,
+      "median_latency_ms": 735.0
+    }
+  }
+}

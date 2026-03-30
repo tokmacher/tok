@@ -1,0 +1,21 @@
+{
+  "model": "claude-3-sonnet",
+  "min_savings_pct": 0.0,
+  "max_invisible_pressure": 0,
+  "max_repeat_file_read": 0,
+  "max_repeat_search": 0,
+  "max_non_tok_response": 0,
+  "max_fail_open_compat_response": 0,
+  "max_malformed_tok_response": 0,
+  "max_blocker_rediscovery": 0,
+  "fixture_kind": "conformance",
+  "provenance": "synthetic",
+  "common_path": false,
+  "usage_weight": 0.4,
+  "expected_failure": true,
+  "expected_signals": [
+    "semantic_drift_detected",
+    "non_tok_response",
+    "fail_open_compat_response"
+  ]
+}

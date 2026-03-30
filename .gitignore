@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+develop-eggs/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / packaging
+*.whl
+*.tar.gz
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local runtime state
+telemetry.db
+execution.log
+memory.tok
+gate-config.json
+
+# Temporary / working files
+tmp/
+*.tmp
+*.bak
+
+# Claude / AI tooling
+.claude/
+CLAUDE.md
+
+# Visualization
+viz/
+
+# Research / notes not for release
+archive/
+research/
+results/
+human_checklist.txt
+refactoring_plan.txt
+release_ready.txt
+roadmap.md

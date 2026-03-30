@@ -1,0 +1,1 @@
+{"messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": [{"type": "text", "text": "I am responding in plain markdown because the bridge is broken."}]}]}

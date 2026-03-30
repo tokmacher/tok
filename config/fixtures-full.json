@@ -1,0 +1,15 @@
+{
+  "fixture_set": "full",
+  "fixtures": [
+    "claude_coding_loop",
+    "comprehensive_test",
+    "file_heavy_operations",
+    "gemini_coding_loop",
+    "gpt_coding_loop",
+    "high_pressure_scenario",
+    "long_coding_session",
+    "multi_model_session",
+    "search_intensive_workflow"
+  ],
+  "count": 9
+}

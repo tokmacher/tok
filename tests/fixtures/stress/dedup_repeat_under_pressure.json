@@ -1,0 +1,144 @@
+{
+  "turns": [
+    {
+      "turn_index": 1,
+      "prompt": "Read the target file.",
+      "tool_uses": [
+        {
+          "type": "tool_use",
+          "id": "sr1",
+          "name": "view_file",
+          "input": {
+            "path": "src/sample.py"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_use_id": "sr1",
+          "content": "def helper():\n    return 'ok'\n\ndef helper():\n    return 'ok'\n\ndef helper():\n    return 'ok'\n\ndef helper():\n    return 'ok'\n"
+        }
+      ],
+      "input_behavior_signals": {},
+      "request_messages": 1,
+      "input_saved_tokens": 0
+    },
+    {
+      "turn_index": 2,
+      "prompt": "Read the same target file with another alias.",
+      "tool_uses": [
+        {
+          "type": "tool_use",
+          "id": "sr2",
+          "name": "read_file",
+          "input": {
+            "path": "./src/sample.py"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_use_id": "sr2",
+          "content": "def helper():\n    return 'ok'\n\ndef helper():\n    return 'ok'\n\ndef helper():\n    return 'ok'\n\ndef helper():\n    return 'ok'\n"
+        }
+      ],
+      "input_behavior_signals": {},
+      "request_messages": 3,
+      "input_saved_tokens": 0
+    },
+    {
+      "turn_index": 3,
+      "prompt": "Search for the anchor.",
+      "tool_uses": [
+        {
+          "type": "tool_use",
+          "id": "sr3",
+          "name": "grep_search",
+          "input": {
+            "search_path": "src",
+            "query": "anchor_symbol"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_use_id": "sr3",
+          "content": "src/sample.py:1: anchor_symbol\nsrc/sample.py:8: anchor_symbol\n"
+        }
+      ],
+      "input_behavior_signals": {},
+      "request_messages": 5,
+      "input_saved_tokens": 0
+    },
+    {
+      "turn_index": 4,
+      "prompt": "Search for the anchor again.",
+      "tool_uses": [
+        {
+          "type": "tool_use",
+          "id": "sr4",
+          "name": "grep_search",
+          "input": {
+            "search_path": "./src",
+            "query": "anchor_symbol"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_use_id": "sr4",
+          "content": "src/sample.py:1: anchor_symbol\nsrc/sample.py:8: anchor_symbol\n"
+        }
+      ],
+      "input_behavior_signals": {},
+      "request_messages": 7,
+      "input_saved_tokens": 0
+    },
+    {
+      "turn_index": 5,
+      "prompt": "Check build status.",
+      "tool_uses": [
+        {
+          "type": "tool_use",
+          "id": "sr5",
+          "name": "bash",
+          "input": {
+            "command": "build status"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_use_id": "sr5",
+          "content": "build started 2026-03-29T12:00:00Z\nstatus: ok\npayload={\"b\":2,\"a\":1}\njob=123e4567-e89b-12d3-a456-426614174000\nbuild started 2026-03-29T12:00:00Z\nstatus: ok\npayload={\"b\":2,\"a\":1}\njob=123e4567-e89b-12d3-a456-426614174000\n"
+        }
+      ],
+      "input_behavior_signals": {},
+      "request_messages": 9,
+      "input_saved_tokens": 0
+    },
+    {
+      "turn_index": 6,
+      "prompt": "Check build status again.",
+      "tool_uses": [
+        {
+          "type": "tool_use",
+          "id": "sr6",
+          "name": "bash",
+          "input": {
+            "command": "build status"
+          }
+        }
+      ],
+      "tool_results": [
+        {
+          "tool_use_id": "sr6",
+          "content": "build started 2026-03-29T13:00:00Z\nstatus: ok\npayload={\"a\":1,\"b\":2}\njob=123e4567-e89b-12d3-a456-426614174000\nbuild started 2026-03-29T13:00:00Z\nstatus: ok\npayload={\"a\":1,\"b\":2}\njob=123e4567-e89b-12d3-a456-426614174000\n"
+        }
+      ],
+      "input_behavior_signals": {},
+      "request_messages": 11,
+      "input_saved_tokens": 0
+    }
+  ]
+}

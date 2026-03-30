@@ -1,0 +1,82 @@
+{
+  "templates": {
+    "strict_claude": {
+      "model": "claude-sonnet-4",
+      "provider": "anthropic",
+      "family": "claude",
+      "min_savings_pct": 20.0,
+      "max_invisible_pressure": 2,
+      "max_repeat_file_read": 0,
+      "max_repeat_search": 0,
+      "max_non_tok_response": 0,
+      "max_fail_open_compat_response": 0,
+      "max_malformed_tok_response": 0,
+      "max_blocker_rediscovery": 0
+    },
+    "standard_claude": {
+      "model": "claude-sonnet-4",
+      "provider": "anthropic",
+      "family": "claude",
+      "min_savings_pct": 15.0,
+      "max_invisible_pressure": 5,
+      "max_repeat_file_read": 2,
+      "max_repeat_search": 3,
+      "max_non_tok_response": 1,
+      "max_fail_open_compat_response": 1,
+      "max_malformed_tok_response": 0,
+      "max_blocker_rediscovery": 2
+    },
+    "lenient_claude": {
+      "model": "claude-sonnet-4",
+      "provider": "anthropic",
+      "family": "claude",
+      "min_savings_pct": 10.0,
+      "max_invisible_pressure": 8,
+      "max_repeat_file_read": 5,
+      "max_repeat_search": 5,
+      "max_non_tok_response": 2,
+      "max_fail_open_compat_response": 3,
+      "max_malformed_tok_response": 1,
+      "max_blocker_rediscovery": 4
+    },
+    "high_pressure": {
+      "model": "claude-sonnet-4",
+      "provider": "anthropic",
+      "family": "claude",
+      "min_savings_pct": 5.0,
+      "max_invisible_pressure": 15,
+      "max_repeat_file_read": 10,
+      "max_repeat_search": 8,
+      "max_non_tok_response": 5,
+      "max_fail_open_compat_response": 8,
+      "max_malformed_tok_response": 3,
+      "max_blocker_rediscovery": 10
+    },
+    "standard_gpt": {
+      "model": "gpt-4",
+      "provider": "openai",
+      "family": "gpt",
+      "min_savings_pct": 12.0,
+      "max_invisible_pressure": 6,
+      "max_repeat_file_read": 3,
+      "max_repeat_search": 4,
+      "max_non_tok_response": 2,
+      "max_fail_open_compat_response": 2,
+      "max_malformed_tok_response": 1,
+      "max_blocker_rediscovery": 3
+    },
+    "standard_gemini": {
+      "model": "gemini-pro",
+      "provider": "google",
+      "family": "gemini",
+      "min_savings_pct": 10.0,
+      "max_invisible_pressure": 7,
+      "max_repeat_file_read": 4,
+      "max_repeat_search": 4,
+      "max_non_tok_response": 2,
+      "max_fail_open_compat_response": 3,
+      "max_malformed_tok_response": 2,
+      "max_blocker_rediscovery": 4
+    }
+  }
+}

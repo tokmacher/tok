@@ -1,0 +1,11 @@
+{
+  "fixture_set": "feature",
+  "fixtures": [
+    "claude_coding_loop",
+    "gpt_coding_loop",
+    "long_coding_session",
+    "search_intensive_workflow",
+    "high_pressure_scenario"
+  ],
+  "count": 5
+}

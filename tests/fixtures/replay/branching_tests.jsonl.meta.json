@@ -1,0 +1,1 @@
+{"model":"claude-sonnet-4","provider":"anthropic","family":"claude","min_savings_pct":5.0,"max_invisible_pressure":5,"max_repeat_file_read":5,"max_repeat_search":5,"max_non_tok_response":1,"max_fail_open_compat_response":1,"max_malformed_tok_response":0,"max_blocker_rediscovery":1,"fixture_kind":"compression","provenance":"synthetic","common_path":false,"usage_weight":0.8}
