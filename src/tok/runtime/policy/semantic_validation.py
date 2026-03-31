@@ -70,9 +70,9 @@ class SemanticValidator:
             drift_signals["tok_memory_snap_triggered"] = 1
 
         # 1. Detect redundant human prose (Leakage)
-        # Case A: Common conversational keywords
+        # Case A: Multi-word conversational phrases that signal verbose filler
         if re.search(
-            r"(?i)(I have|I'll|successfully|requested|here|here is|certainly|provide|summarized|explore|understand|examine|investigate)",
+            r"(?i)\b(I have|I'll have|I'll|successfully|requested|certainly|summarized|investigate)\b",
             text,
         ):
             if len(text.split()) > 10:

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # tok_claude.sh — Shell integration for Tok + Claude Code
 #
-# SOURCE this file (do not execute it directly):
-#   source /path/to/tok/scripts/tok_claude.sh
+# This repo copy is for development. Public installs should prefer `tok install`,
+# which sources the packaged script from the installed tok-protocol path.
 #
-# Or add to ~/.zshrc / ~/.bashrc:
+# If you need to source this file manually during local development:
 #   source /path/to/tok/scripts/tok_claude.sh
 #
 # This defines only a `claude` function:
@@ -13,7 +13,7 @@
 #   3. Leaves the real `tok` CLI untouched
 
 # Path to the tok repo (auto-detected from this script's location)
-TOK_DIR="${TOK_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]:-${(%):-%x}}")/.." && pwd)"}"
+TOK_DIR="${TOK_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}"
 TOK_BRIDGE_PORT="${TOK_BRIDGE_PORT:-9090}"
 _TOK_STARTUP_TRIES="${_TOK_STARTUP_TRIES:-15}"
 

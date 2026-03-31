@@ -15,12 +15,12 @@ class ImpactEngine:
     def __init__(self, project_root: str):
         self.project_root = Path(project_root)
         self.walker = DirectoryWalker()
-        self.index: dict[str, set[str]] = (
-            {}
-        )  # {qualified_name: {files_that_use_it}}
-        self.signatures: dict[str, list[str]] = (
-            {}
-        )  # {qualified_name: [arg_names]}
+        self.index: dict[
+            str, set[str]
+        ] = {}  # {qualified_name: {files_that_use_it}}
+        self.signatures: dict[
+            str, list[str]
+        ] = {}  # {qualified_name: [arg_names]}
 
     def build_project_index(self):
         """Scan all python files and build a usage index."""

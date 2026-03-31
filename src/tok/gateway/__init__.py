@@ -26,7 +26,6 @@ from ..stats import SavingsTracker
 from ..universal_runtime import (
     RuntimeSession,
     UniversalTokRuntime,
-    _discover_project_markers,
     build_tool_use_id_to_context,
     collect_behavior_signals,
     response_contract_for_mode,
@@ -262,36 +261,11 @@ class BridgeSession:
             sessions_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             self._capture_file = sessions_dir / f"{ts}.jsonl"
-        # Initialize runtime session with proper memory directory
-        self.runtime_session.memory_dir = self.memory_dir
-        self.runtime_session.keep_turns = self.keep_turns
-        self.runtime_session._load_global_macros = not explicit_memory_dir
-        self.runtime_session._project_markers = (
-            frozenset() if explicit_memory_dir else _discover_project_markers()
-        )
-        # Load persisted state
-        self.runtime_session.bridge_memory = (
-            self.runtime_session._load_bridge_memory()
-        )
-        self.runtime_session.result_cache = (
-            self.runtime_session._load_result_cache()
-        )
-        self.runtime_session.fallback_memory = (
-            self.runtime_session._load_fallback_memory()
-        )
-        if (
-            self.runtime_session.fallback_memory
-            and not self.runtime_session.bridge_memory.wire_state()
-        ):
-            self.runtime_session.bridge_memory.ingest_wire_state(
-                self.runtime_session.fallback_memory
+        if explicit_memory_dir:
+            self.runtime_session = RuntimeSession(
+                memory_dir=self.memory_dir,
+                keep_turns=self.keep_turns,
             )
-            self.runtime_session._save_bridge_memory()
-        if not explicit_memory_dir:
-            for marker in self.runtime_session._project_markers:
-                self.runtime_session.bridge_memory.bump_file_heat(
-                    marker, weight=0.1
-                )
         # Reset session stats so each bridge run starts with a clean slate
         if os.getenv("TOK_RESET_SESSION", "0") == "1":
             self.tracker.reset_session_stats()
@@ -455,14 +429,33 @@ def create_app(session: BridgeSession | None = None) -> FastAPI:
 
 
 def run_bridge(
-    port: int = 9090,
-    keep_turns: int = 2,
-    debug: bool = False,
-    fail_open: bool = True,
+    port: int | None = None,
+    keep_turns: int | None = None,
+    debug: bool | None = None,
+    fail_open: bool | None = None,
     foreground: bool = True,
     api_base: str = "https://api.anthropic.com",
 ) -> None:
     """Start the bridge server."""
+    port = int(
+        port
+        if port is not None
+        else os.getenv("TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090"))
+    )
+    keep_turns = int(
+        keep_turns
+        if keep_turns is not None
+        else os.getenv(
+            "TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2")
+        )
+    )
+    debug = debug if debug is not None else os.getenv("TOK_DEBUG", "0") == "1"
+    fail_open = (
+        fail_open
+        if fail_open is not None
+        else os.getenv("TOK_FAIL_OPEN", "1") == "1"
+    )
+
     # Write PID file for foreground mode
     TOK_DIR.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(str(os.getpid()))

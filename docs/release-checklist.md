@@ -4,6 +4,7 @@ Steps for cutting a Tok release.
 
 ## Before Release
 
+- [ ] Worktree is clean or intentionally quarantined; do not tag from a churn-heavy bridge/runtime branch
 - [ ] All CI checks pass on `main`
 - [ ] Run full test suite locally: `pytest tests/unit tests/integration -v`
 - [ ] Run lint and hygiene: `pre-commit run --all-files && ruff check src/tok tests`
@@ -11,6 +12,7 @@ Steps for cutting a Tok release.
 - [ ] Build package: `python -m build`
 - [ ] Verify wheel installs cleanly in a fresh venv
 - [ ] Run the clean-room install verification from the README
+- [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.0`
 - [ ] Run live Claude bridge validation on the supported path: `tok install`, `tok bridge start`, `claude`, `tok bridge status`, `tok doctor`, `tok stats`, `tok bridge stop`
 - [ ] Confirm only supported examples remain in `examples/`
 - [ ] Update `CHANGELOG.md` with release date
@@ -21,6 +23,7 @@ Steps for cutting a Tok release.
 
 ## Release
 
+- [ ] Reconfirm the exact release candidate still passes the supported bridge-first live validation path
 - [ ] Tag the commit: `git tag v0.x.x`
 - [ ] Push the tag: `git push origin v0.x.x`
 - [ ] Watch the `Release` GitHub Actions workflow build the artifacts

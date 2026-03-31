@@ -147,9 +147,9 @@ def test_miner_distinguishes_patterns_by_dependency():
     ins_un = list(unchained.instructions)
     fp_ch = IRPatternMiner._get_dependency_fingerprint(ins_ch, 0, 2)
     fp_un = IRPatternMiner._get_dependency_fingerprint(ins_un, 0, 2)
-    assert (
-        fp_ch != fp_un
-    ), "Chained and unchained patterns must have different fingerprints"
+    assert fp_ch != fp_un, (
+        "Chained and unchained patterns must have different fingerprints"
+    )
 
 
 def test_miner_embeds_dep_fingerprint_in_provenance():
@@ -170,9 +170,9 @@ def test_miner_embeds_dep_fingerprint_in_provenance():
     if macros:  # dep-aware patterns might fire
         macro = macros[0]
         assert macro.provenance is not None
-        assert "deps:" in (
-            macro.provenance.source_code or ""
-        ), f"Expected dep fingerprint in source_code: {macro.provenance.source_code}"
+        assert "deps:" in (macro.provenance.source_code or ""), (
+            f"Expected dep fingerprint in source_code: {macro.provenance.source_code}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +256,6 @@ def test_context_requirements_set_during_mining():
     assert discovered, "Should discover at least one macro"
     macro = discovered[0]
     # The first path-like arg is src/tok/cli.py
-    assert (
-        macro.context_requirements.get("file") == "src/tok/cli.py"
-    ), f"Expected context file=src/tok/cli.py, got: {macro.context_requirements}"
+    assert macro.context_requirements.get("file") == "src/tok/cli.py", (
+        f"Expected context file=src/tok/cli.py, got: {macro.context_requirements}"
+    )

@@ -232,6 +232,6 @@ def test_hypothesis_promotion_via_ingest_wire_state():
     )
 
     # Question should be resolved
-    assert not state.hot.get(
-        "questions"
-    ), "Question should be cleared after fact answers it"
+    assert not state.hot.get("questions"), (
+        "Question should be cleared after fact answers it"
+    )

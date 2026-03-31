@@ -124,17 +124,6 @@ def collect_transient_error_snippets(
     return result
 
 
-def _answer_anchor_runtime_hints(
-    raw_state: str,
-    *,
-    tool_compatible: bool,
-    behavior_signals: dict[str, int] | None = None,
-) -> list[str]:
-    """Return runtime strategy hints based on answer anchor presence."""
-    del raw_state, tool_compatible, behavior_signals
-    return []
-
-
 def _latest_user_message(
     messages: list[dict[str, Any]],
 ) -> dict[str, Any] | None:

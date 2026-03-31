@@ -178,9 +178,9 @@ def test_replace_hot_evicts_durable_contradictions():
     wire = state.wire_state()
 
     assert "branch:feature-x" in wire
-    assert (
-        "branch:main" not in wire
-    ), "Stale durable fact was not evicted by hot replacement!"
+    assert "branch:main" not in wire, (
+        "Stale durable fact was not evicted by hot replacement!"
+    )
 
 
 def test_file_heat_double_edit_ranks_higher():
@@ -430,9 +430,9 @@ def test_cache_stability_with_fragmented_updates():
     # Fields present in both should maintain their relative order
     shared = [f for f in baseline_fields if f in after_fields]
     shared_after = [f for f in after_fields if f in baseline_fields]
-    assert (
-        shared == shared_after
-    ), f"Field order changed after partial update. Before: {shared}, After: {shared_after}"
+    assert shared == shared_after, (
+        f"Field order changed after partial update. Before: {shared}, After: {shared_after}"
+    )
 
 
 def test_question_decay_drops_low_score_untouched_questions():
@@ -574,9 +574,9 @@ def test_edited_file_triggers_was_edited_digest_branch():
     assert recorded
     facts = [e.value for e in state.hot.get("facts", [])]
     # was_edited branch extracts def/class signatures — both defs should appear
-    assert any(
-        "handle_request" in f or "close" in f for f in facts
-    ), f"Expected edited-path signature digest in facts, got: {facts}"
+    assert any("handle_request" in f or "close" in f for f in facts), (
+        f"Expected edited-path signature digest in facts, got: {facts}"
+    )
 
 
 def test_durable_facts_scale_to_new_limit():

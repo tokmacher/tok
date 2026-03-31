@@ -54,7 +54,6 @@ def _bridge_bodies_materially_differ(
     current: dict[str, Any], original: dict[str, Any]
 ) -> bool:
     """Return True when two bridge bodies differ after canonical comparison."""
-    """Return True when two bridge bodies differ after canonical comparison."""
     if not isinstance(current, dict) or not isinstance(original, dict):
         return current != original
 

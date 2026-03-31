@@ -621,11 +621,7 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
             counterfactual={
                 "prepared_total_tokens_without_pressure": strict_low.bloat_attribution[
                     "request_footprint"
-                ][
-                    "prepared"
-                ][
-                    "total_tokens"
-                ],
+                ]["prepared"]["total_tokens"],
                 "protocol_law_delta_tokens": (
                     strict_high.bloat_attribution["request_footprint"][
                         "prepared"

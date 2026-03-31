@@ -3,6 +3,7 @@
 import tempfile
 from pathlib import Path
 
+import tok.runtime.tools as runtime_tools
 from tok.runtime_tools import RuntimeToolExecutor, execute_normalized_tool
 from tok.universal_runtime import NormalizedToolEvent
 
@@ -12,13 +13,14 @@ class TestRuntimeToolExecutor:
 
     def setup_method(self):
         """Set up test environment."""
-        self.executor = RuntimeToolExecutor()
         self.temp_dir = tempfile.mkdtemp()
+        self.executor = RuntimeToolExecutor(workspace_root=self.temp_dir)
 
     def teardown_method(self):
         """Clean up test environment."""
         import shutil
 
+        runtime_tools._default_executor = None
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_execute_read_file_success(self):
@@ -39,8 +41,9 @@ class TestRuntimeToolExecutor:
 
     def test_execute_read_file_not_found(self):
         """Test reading non-existent file."""
+        missing_file = Path(self.temp_dir) / "missing.txt"
         event = NormalizedToolEvent(
-            id="test_read_missing", name="read", path="/nonexistent/file.txt"
+            id="test_read_missing", name="read", path=str(missing_file)
         )
 
         result = self.executor.execute_normalized_tool(event)
@@ -143,10 +146,11 @@ class TestRuntimeToolExecutor:
 
     def test_execute_edit_file_not_found(self):
         """Test editing non-existent file."""
+        missing_file = Path(self.temp_dir) / "missing.txt"
         event = NormalizedToolEvent(
             id="test_edit_missing",
             name="edit",
-            path="/nonexistent/file.txt",
+            path=str(missing_file),
             args={"search": "old", "replace": "new"},
         )
 
@@ -250,6 +254,9 @@ class TestRuntimeToolExecutor:
         """Test the convenience function execute_normalized_tool."""
         test_file = Path(self.temp_dir) / "convenience_test.txt"
         test_file.write_text("Original content")
+        runtime_tools._default_executor = RuntimeToolExecutor(
+            workspace_root=self.temp_dir
+        )
 
         event = NormalizedToolEvent(
             id="test_convenience", name="read", path=str(test_file)
@@ -262,7 +269,13 @@ class TestRuntimeToolExecutor:
 
     def test_security_methods(self):
         """Test security methods."""
-        # These should all return True (restrictions disabled)
-        assert self.executor._is_safe_path("/any/path")
-        assert self.executor._is_safe_path("../../../etc/passwd")
-        assert self.executor._is_safe_rm("rm -rf /")
+        safe_file = str(Path(self.temp_dir) / "safe.txt")
+        outside_file = "/any/path"
+
+        assert self.executor._is_safe_path(safe_file)
+        assert not self.executor._is_safe_path(outside_file)
+        assert not self.executor._is_safe_path("../../../etc/passwd")
+        assert not self.executor._is_safe_rm("rm -rf /")
+        assert self.executor._is_safe_rm(
+            f"rm -rf {Path(self.temp_dir) / 'scratch'}"
+        )

@@ -14,6 +14,7 @@ Tok's first open-source release is intentionally narrow:
 - diagnose with `status`, `doctor`, `stats`, and logs
 
 The bridge is the supported product path. Broader platform and SDK work come later.
+The default CLI help intentionally centers that bridge-first path for `0.1.0`.
 
 ## What The Bridge Does
 
@@ -55,6 +56,8 @@ tok stats
 ```
 
 `tok install` adds a `claude()` shell wrapper. It does **not** replace the real `tok` CLI.
+If `claude` is still missing after install, reload your shell before digging into
+bridge logs or runtime health.
 
 ## What Success Looks Like
 

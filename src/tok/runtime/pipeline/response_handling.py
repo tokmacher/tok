@@ -3,7 +3,6 @@
 from __future__ import annotations
 import copy
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
 from ..policy.semantic_validation import calculate_invisible_pressure
@@ -13,65 +12,6 @@ if TYPE_CHECKING:
     from ..core import RuntimeSession
 
 logger = logging.getLogger("tok.runtime")
-
-
-def has_forbidden_tok_hybrid_patterns(text: str) -> bool:
-    """Return True if text contains raw JSON tool patterns that should be formatted via Tok."""
-    lowered = text.lower()
-    return any(
-        pattern in lowered
-        for pattern in (
-            "@tool(json=",
-            "@tool(json:",
-            "@tool({",
-            "@tool(",
-            '"type": "tool_use"',
-        )
-    )
-
-
-def has_non_inverted_assistant_message(text: str) -> bool:
-    """Return True if an assistant message block is missing proper Tok inversion markers."""
-    in_msg_assistant = False
-    block_is_inverted = False
-
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith(">>>"):
-            in_msg_assistant = False
-            block_is_inverted = False
-            continue
-        if stripped.startswith("@"):
-            in_msg_assistant = (
-                stripped.startswith("@msg") and "role:assistant" in stripped
-            )
-            block_is_inverted = False
-            continue
-
-        if in_msg_assistant:
-            if re.match(r"^\s+\|[#\d]?>", line):
-                block_is_inverted = True
-                continue
-            if not block_is_inverted:
-                return True
-    return False
-
-
-def has_markdown_fallback_after_tok_header(text: str) -> bool:
-    """Return True if a Tok header is followed directly by markdown headers."""
-    saw_header = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith(">>>"):
-            saw_header = True
-            continue
-        if saw_header and re.match(r"^#{1,6}\s+", stripped):
-            return True
-    return False
 
 
 def sort_cache_control_blocks(
@@ -312,16 +252,3 @@ def handle_answer_repair(
         tool_compatible,
         followthrough_guard_blocked,
     )
-
-
-def report_protocol_drift(
-    *,
-    model: str,
-    merged_signals: dict[str, int],
-    mode: str,
-    session: RuntimeSession,
-    content_blocks: list[dict[str, Any]],
-) -> None:
-    """Emit telemetry for protocol drift events."""
-    # Move protocol drift telemetry logic here from process_response
-    pass

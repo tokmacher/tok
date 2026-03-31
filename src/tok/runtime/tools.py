@@ -6,11 +6,15 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 from datetime import datetime
 from typing import Any
+import logging
 
 from ..protocol.models import Trust, TOOL_SCHEMAS, TokNode, build_tok_traceback
 from ..protocol.parser import serialize
+
+logger = logging.getLogger("tok.runtime.tools")
 
 
 # Import NormalizedToolEvent locally to avoid circular imports
@@ -68,12 +72,59 @@ class RuntimeToolExecutor:
         self._sifter_cache: dict[str, str] = {}
 
     def _is_safe_path(self, path: str) -> bool:
-        """Restrictions disabled: Returns True for all paths."""
-        return True
+        """Validate that a path stays within the workspace root.
+
+        Resolves symlinks and normalises ``..`` components.  Relative paths
+        are resolved against the workspace root.  The empty path and paths
+        that escape the workspace root are rejected.
+        """
+        if not path or not path.strip():
+            return False
+        try:
+            resolved = os.path.realpath(path)
+        except (OSError, ValueError):
+            return False
+        workspace = os.path.realpath(self.workspace_root)
+        return resolved == workspace or resolved.startswith(workspace + os.sep)
 
     def _is_safe_rm(self, cmd: str) -> bool:
-        """Restrictions disabled: Returns True for all rm commands."""
-        return True
+        """Validate that an rm command does not target the workspace root or system paths."""
+        import re as _re
+
+        target = (
+            _re.sub(r"^rm\s+(?:-[rfRF]+\s+)*", "", cmd).strip().strip("'\"")
+        )
+        if not target:
+            return False
+        try:
+            resolved = os.path.realpath(target)
+        except (OSError, ValueError):
+            return False
+        workspace = os.path.realpath(self.workspace_root)
+        if resolved == workspace:
+            return False
+        if resolved.startswith(workspace + os.sep):
+            protected_children = (".git",)
+            rel = os.path.relpath(resolved, workspace)
+            if any(
+                rel == p or rel.startswith(p + os.sep)
+                for p in protected_children
+            ):
+                return False
+        blocked_roots = (
+            "/",
+            "/etc",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/System",
+            "/Library",
+            "/var",
+        )
+        return not any(
+            resolved == r or resolved.startswith(r + "/")
+            for r in blocked_roots
+        )
 
     def _compiler_guard(
         self, tool_name: str, attrs: dict[str, Any], node: Any
@@ -125,7 +176,9 @@ class RuntimeToolExecutor:
                     if input_data.get("text") == node_text.strip():
                         del input_data["text"]
         except Exception:
-            pass
+            logger.debug(
+                "Failed to parse CLI-style attributes for %s", tool_name
+            )
 
     def _fill_missing_attributes(
         self, tool_name: str, input_data: dict[str, Any], node_text: str
@@ -159,7 +212,6 @@ class RuntimeToolExecutor:
                 continue
             if (
                 "\n" in val
-                or "\n" in val
                 or val.strip().startswith("|>")
                 or val.strip().startswith(">")
                 or ("def " in val and ":" in val)
@@ -173,9 +225,7 @@ class RuntimeToolExecutor:
     def _format_payload(self, payload: str) -> str:
         payload = re.sub(r"^\|>\s*", "", payload, flags=re.MULTILINE)
         payload = re.sub(r"^>\s*", "", payload, flags=re.MULTILINE)
-        return (
-            payload.replace("\n", "\n").replace("\r", "").replace("\t", "    ")
-        )
+        return payload.replace("\r", "").replace("\t", "    ")
 
     def _build_drift_error(
         self,
@@ -220,6 +270,7 @@ class RuntimeToolExecutor:
                 self._sifter_cache[path] = Sifter.from_file(path)["skeleton"]
             return self._sifter_cache[path]
         except Exception:
+            logger.debug("Failed to capture snapshot for %s", path)
             return None
 
     def _compute_delta(self, path: str, post_state: str) -> list[Any]:
@@ -251,7 +302,7 @@ class RuntimeToolExecutor:
                 with open(self.log_path, "w") as f:
                     f.writelines(lines[-1000:])
         except Exception:
-            pass
+            logger.debug("Failed to rotate log file %s", self.log_path)
 
         with open(self.log_path, "a") as f:
             f.write(log_entry)
@@ -458,40 +509,18 @@ class RuntimeToolExecutor:
             }
 
         try:
-            # Detect shell metacharacters or builtins that require shell=True
-            shell_metachars = [
-                "|",
-                "&&",
-                "||",
-                ";",
-                ">",
-                "<",
-                "*",
-                "?",
-                "[",
-                "]",
-                "(",
-                ")",
-                "$",
-                "`",
-                "\n",
-            ]
-            shell_builtins = ["cd ", "export ", "source ", "alias "]
-            use_shell = any(c in cmd for c in shell_metachars) or any(
-                b in cmd for b in shell_builtins
+            args = shlex.split(cmd)
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=int(os.getenv("TOK_TOOL_TIMEOUT", "120")),
+                cwd=self.workspace_root,
             )
-
-            if use_shell:
-                proc = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True
-                )
-            else:
-                args = shlex.split(cmd)
-                proc = subprocess.run(args, capture_output=True, text=True)
 
             self._log_execution(cmd, proc.stdout, proc.stderr, proc.returncode)
 
-            output = proc.stdout if proc.stdout else proc.stderr
+            output = proc.stdout or proc.stderr or ""
             if output:
                 lines = output.strip().split("\n")
                 snippet = "\n".join(lines[:5])
@@ -621,13 +650,16 @@ class RuntimeToolExecutor:
 
 # Global executor instance for backward compatibility
 _default_executor = None
+_executor_lock = threading.Lock()
 
 
 def get_default_executor() -> RuntimeToolExecutor:
     """Get or create the default tool executor."""
     global _default_executor
     if _default_executor is None:
-        _default_executor = RuntimeToolExecutor()
+        with _executor_lock:
+            if _default_executor is None:
+                _default_executor = RuntimeToolExecutor()
     return _default_executor
 
 

@@ -40,15 +40,15 @@ def test_adapters_no_forbidden_imports():
 
 def test_adapters_delegates_to_runtime():
     source = ADAPTERS_PATH.read_text()
-    assert (
-        "UniversalTokRuntime" in source
-    ), "OrchestratorAdapter must use UniversalTokRuntime"
-    assert (
-        "prepare_request" in source or "prepare" in source
-    ), "Adapter must call runtime.prepare_request()"
-    assert (
-        "process_response" in source or "finalize" in source
-    ), "Adapter must call runtime.process_response()"
+    assert "UniversalTokRuntime" in source, (
+        "OrchestratorAdapter must use UniversalTokRuntime"
+    )
+    assert "prepare_request" in source or "prepare" in source, (
+        "Adapter must call runtime.prepare_request()"
+    )
+    assert "process_response" in source or "finalize" in source, (
+        "Adapter must call runtime.process_response()"
+    )
 
 
 def test_orchestrator_and_bridge_adapter_telemetry_parity():

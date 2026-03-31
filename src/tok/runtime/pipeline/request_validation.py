@@ -51,7 +51,9 @@ def _check_changed_content(
     if not isinstance(canonical_blocks, list):
         canonical_blocks = []
     if isinstance(original_content, list):
-        original_blocks = [block for block in original_content if isinstance(block, dict)]
+        original_blocks = [
+            block for block in original_content if isinstance(block, dict)
+        ]
         if len(original_blocks) != len(canonical_blocks):
             return True
     normalized_blocks, _ = _normalize_message_content_to_blocks(

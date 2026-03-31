@@ -9,23 +9,19 @@ from .adapters import (
 )
 
 
+class OrchestratorConfig:
+    """Placeholder for orchestrator configuration (not yet implemented)."""
+
+
 def __getattr__(name: str) -> Any:
     if name == "Agent":
         from .agent import Agent
 
         return Agent
-    if name in ("TokOrchestrator", "OrchestratorConfig"):
+    if name == "TokOrchestrator":
         from .orchestrator import TokOrchestrator
 
-        if name == "TokOrchestrator":
-            return TokOrchestrator
-        # OrchestratorConfig was never defined; return a stub dataclass
-        import dataclasses
-
-        OrchestratorConfig: Any = dataclasses.dataclass(
-            type("OrchestratorConfig", (), {})
-        )
-        return OrchestratorConfig
+        return TokOrchestrator
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

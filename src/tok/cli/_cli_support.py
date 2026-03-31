@@ -125,23 +125,26 @@ def _start_collector(debug: bool = False) -> None:
 
     log_file = open(COLLECTOR_LOG_FILE, "a")
 
-    # We use sys.executable -m uvicorn if possible, or just uvicorn
-    cmd = [
-        sys.executable,
-        "-m",
-        "uvicorn",
-        "tok.collector.main:app",
-        "--port",
-        "8000",
-    ]
+    try:
+        cmd = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "tok.collector.main:app",
+            "--port",
+            "8000",
+        ]
 
-    proc = subprocess.Popen(
-        cmd,
-        env=env,
-        stdout=log_file,
-        stderr=log_file,
-        start_new_session=True,
-    )
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+
     COLLECTOR_PID_FILE.write_text(str(proc.pid))
 
     # Wait briefly for collector

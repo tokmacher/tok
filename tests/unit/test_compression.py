@@ -900,12 +900,12 @@ class TestFileCache:
         _apply_file_cache(raw, "src/foo.py", cache)
         result, saved = _apply_file_cache(raw, "src/foo.py", cache)
         # Repeated identical file read must be replaced with a compact stub.
-        assert (
-            "unchanged" in result
-        ), f"Expected 'unchanged' stub; got: {result!r}"
-        assert (
-            saved > 0
-        ), f"Expected positive savings for repeated read; got saved={saved}"
+        assert "unchanged" in result, (
+            f"Expected 'unchanged' stub; got: {result!r}"
+        )
+        assert saved > 0, (
+            f"Expected positive savings for repeated read; got saved={saved}"
+        )
 
     def test_second_read_changed_uses_diff(self):
         cache: dict = {}
@@ -918,12 +918,12 @@ class TestFileCache:
         assert raw1 != raw2, "replacement didn't work"
         result, saved = _apply_file_cache(raw2, "src/foo.py", cache)
         # Changed file read must use diff/delta path, not return raw.
-        assert (
-            result != raw2
-        ), "Expected diff stub for changed file read, got raw"
-        assert (
-            "delta" in result or "changed" in result
-        ), f"Expected delta marker; got: {result!r}"
+        assert result != raw2, (
+            "Expected diff stub for changed file read, got raw"
+        )
+        assert "delta" in result or "changed" in result, (
+            f"Expected delta marker; got: {result!r}"
+        )
 
     def test_compress_tool_results_deduplicates_repeated_file_reads(self):
         cache: dict = {}
@@ -947,13 +947,13 @@ class TestFileCache:
         )
         result_content = out2[1]["content"][0]["content"]
         # Second read must be compressed to a stub, not returned verbatim.
-        assert (
-            "unchanged" in result_content
-        ), f"Expected 'unchanged' stub for repeated file read; got: {result_content!r}"
+        assert "unchanged" in result_content, (
+            f"Expected 'unchanged' stub for repeated file read; got: {result_content!r}"
+        )
         assert bd1 == {}
-        assert (
-            sum(bd2.values()) > 0
-        ), f"Expected savings on second read; got {bd2}"
+        assert sum(bd2.values()) > 0, (
+            f"Expected savings on second read; got {bd2}"
+        )
 
     def test_file_tools_are_preserved_verbatim(self):
         cache: dict = {}
@@ -1233,51 +1233,51 @@ class TestPerTurnInjectionBudget:
     def test_cold_start_within_budget(self):
         """Cold start (no state, no drift) must stay under 70 tokens."""
         sys = _inject(tok_state=None, pressure=0)
-        assert (
-            _token_count(sys) <= 70
-        ), f"Cold-start injection exceeded 70 tokens: {_token_count(sys)}"
+        assert _token_count(sys) <= 70, (
+            f"Cold-start injection exceeded 70 tokens: {_token_count(sys)}"
+        )
 
     def test_typical_session_within_budget(self):
         """Warm turn with state, no drift, must stay under 120 tokens."""
         sys = _inject(tok_state=_TYPICAL_STATE, pressure=0)
-        assert (
-            _token_count(sys) <= 120
-        ), f"Typical session injection exceeded 120 tokens: {_token_count(sys)}"
+        assert _token_count(sys) <= 120, (
+            f"Typical session injection exceeded 120 tokens: {_token_count(sys)}"
+        )
 
     def test_high_pressure_within_budget(self):
         """High-pressure turn (law + reinforced + state) must stay under 200 tokens."""
         sys = _inject(tok_state=_TYPICAL_STATE, pressure=75)
-        assert (
-            _token_count(sys) <= 200
-        ), f"High-pressure injection exceeded 200 tokens: {_token_count(sys)}"
+        assert _token_count(sys) <= 200, (
+            f"High-pressure injection exceeded 200 tokens: {_token_count(sys)}"
+        )
 
     def test_low_drift_within_budget(self):
         """Low-drift turn (law only, no reinforced) must stay under 185 tokens."""
         sys = _inject(tok_state=_TYPICAL_STATE, pressure=25)
-        assert (
-            _token_count(sys) <= 185
-        ), f"Low-drift injection exceeded 185 tokens: {_token_count(sys)}"
+        assert _token_count(sys) <= 185, (
+            f"Low-drift injection exceeded 185 tokens: {_token_count(sys)}"
+        )
 
     def test_law_absent_at_zero_pressure(self):
         """TOK_PROTOCOL_LAW must NOT be present when pressure=0."""
         sys = _inject(tok_state=_TYPICAL_STATE, pressure=0)
-        assert (
-            TOK_PROTOCOL_LAW_MARKER not in sys
-        ), "TOK_PROTOCOL_LAW injected at pressure=0 — unexpected overhead"
+        assert TOK_PROTOCOL_LAW_MARKER not in sys, (
+            "TOK_PROTOCOL_LAW injected at pressure=0 — unexpected overhead"
+        )
 
     def test_law_absent_at_single_signal(self):
         """TOK_PROTOCOL_LAW must NOT be present when pressure=1 (single benign signal)."""
         sys = _inject(tok_state=_TYPICAL_STATE, pressure=1)
-        assert (
-            TOK_PROTOCOL_LAW_MARKER not in sys
-        ), "TOK_PROTOCOL_LAW injected at pressure=1 — threshold should be >1"
+        assert TOK_PROTOCOL_LAW_MARKER not in sys, (
+            "TOK_PROTOCOL_LAW injected at pressure=1 — threshold should be >1"
+        )
 
     def test_law_present_at_two_signals(self):
         """TOK_PROTOCOL_LAW MUST be present when pressure>=2."""
         sys = _inject(tok_state=_TYPICAL_STATE, pressure=2)
-        assert (
-            TOK_PROTOCOL_LAW_MARKER in sys
-        ), "TOK_PROTOCOL_LAW missing at pressure=2"
+        assert TOK_PROTOCOL_LAW_MARKER in sys, (
+            "TOK_PROTOCOL_LAW missing at pressure=2"
+        )
 
     def test_grammar_never_injected_by_gateway_path(self):
         """The full grammar (TOK_SYSTEM_PROMPT) must never appear when grammar=None."""
@@ -1292,12 +1292,12 @@ class TestPerTurnInjectionBudget:
         """Above pressure=50 the reinforced directive replaces the minimal one."""
         sys_below = _inject(tok_state=_TYPICAL_STATE, pressure=50)
         sys_above = _inject(tok_state=_TYPICAL_STATE, pressure=51)
-        assert (
-            REINFORCED_MARKER not in sys_below
-        ), "Reinforced directive appeared at pressure=50 (threshold should be >50)"
-        assert (
-            REINFORCED_MARKER in sys_above
-        ), "Reinforced directive missing at pressure=51"
+        assert REINFORCED_MARKER not in sys_below, (
+            "Reinforced directive appeared at pressure=50 (threshold should be >50)"
+        )
+        assert REINFORCED_MARKER in sys_above, (
+            "Reinforced directive missing at pressure=51"
+        )
         # Reinforced is larger than minimal: escalation adds tokens
         assert _token_count(sys_above) > _token_count(sys_below)
 
@@ -1316,10 +1316,10 @@ class TestPerTurnInjectionBudget:
         )
 
         # Law adds at least 20 tokens overhead
-        assert (
-            law_delta >= 20
-        ), f"TOK_PROTOCOL_LAW overhead smaller than expected: {law_delta}t"
+        assert law_delta >= 20, (
+            f"TOK_PROTOCOL_LAW overhead smaller than expected: {law_delta}t"
+        )
         # Full escalation (law + reinforced) must add more than law alone
-        assert (
-            reinforced_delta > law_delta
-        ), "Reinforced escalation should cost more than law-only"
+        assert reinforced_delta > law_delta, (
+            "Reinforced escalation should cost more than law-only"
+        )

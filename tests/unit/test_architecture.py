@@ -41,6 +41,6 @@ def test_orchestrator_depends_on_parser_and_bridge() -> None:
 def test_protocol_components_do_not_import_orchestrator() -> None:
     for name in ("parser", "bridge"):
         _, modules = _collect_import_statements(SOURCES[name])
-        assert all(
-            "adapters.orchestrator" not in mod for mod in modules
-        ), f"{name} must not import adapters.orchestrator"
+        assert all("adapters.orchestrator" not in mod for mod in modules), (
+            f"{name} must not import adapters.orchestrator"
+        )

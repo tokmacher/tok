@@ -732,7 +732,9 @@ class TokOrchestrator:
             model=self.model,
             behavior_signals=None,
         )
-        del processed_hs  # telemetry recorded in session; return value not needed here
+        del (
+            processed_hs
+        )  # telemetry recorded in session; return value not needed here
 
         self.handshake_done = True
         return agent_reply

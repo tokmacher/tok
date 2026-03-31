@@ -11,14 +11,17 @@ console = Console()
 
 
 def install() -> None:
-    """Install Tok shell helpers (tok doctor/swap commands)."""
+    """Install the Tok shell helper that adds the claude() wrapper."""
     try:
         rc_path = shell_integration.install()
         console.print(
             f"[green]✅ Tok shell integration installed in {rc_path}.[/green]"
         )
         console.print(
-            "[dim]Open a new shell or run: source " + str(rc_path) + "[/dim]"
+            "[dim]Reload your shell: source " + str(rc_path) + "[/dim]"
+        )
+        console.print(
+            "[dim]Next step: run `tok bridge start`, then `claude`, then `tok doctor`.[/dim]"
         )
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")

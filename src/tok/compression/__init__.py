@@ -470,6 +470,9 @@ def _apply_result_cache(
 
     if cache_key not in result_cache:
         result_cache[cache_key] = (content_hash, raw)
+        if len(result_cache) > 256:
+            oldest = next(iter(result_cache))
+            del result_cache[oldest]
         if normalized_tool_name in FILE_LIKE_TOOLS:
             return raw, 0
         if normalized_error:
@@ -512,15 +515,6 @@ def _apply_result_cache(
         header = f">>> tool:{tool_name}|delta|changed\n"
         return header + compressed, len(raw) - (len(header) + len(compressed))
 
-    # Emit diff stub
-    changed_lines = sum(
-        1
-        for l in diff_lines
-        if l.startswith(("+", "-")) and not l.startswith(("+++", "---"))
-    )
-    header = f">>> tool:{tool_name}|delta|changed_lines:{changed_lines}"
-
-    # For many tools, a raw diff is fine; for file_read, we skip context lines
     # Emit diff stub
     changed_lines = sum(
         1

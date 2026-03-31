@@ -49,9 +49,9 @@ def test_parameterized_macro_uses_placeholder_for_path_args():
     assert placeholders, f"Expected $pN placeholders in args, got: {all_args}"
 
     # Inputs tuple should be populated (not empty as with the old hardcoded logic)
-    assert (
-        len(macro.inputs) > 0
-    ), f"Expected non-empty inputs, got: {macro.inputs}"
+    assert len(macro.inputs) > 0, (
+        f"Expected non-empty inputs, got: {macro.inputs}"
+    )
 
 
 def test_non_path_args_are_not_parameterized():
@@ -77,6 +77,6 @@ def test_non_path_args_are_not_parameterized():
             a for a in all_args if isinstance(a, str) and a.startswith("$p")
         ]
         # No path-like args → no placeholders expected
-        assert (
-            not placeholders
-        ), f"Unexpected $pN placeholders for non-path args: {all_args}"
+        assert not placeholders, (
+            f"Unexpected $pN placeholders for non-path args: {all_args}"
+        )

@@ -205,12 +205,12 @@ class TestHealthSummary:
             pressure_metric = next(
                 m for m in data["metrics"] if m["name"] == "Pressure"
             )
-            assert (
-                pressure_metric["status"] == "watch"
-            ), f"Expected watch based on avg_pressure=0.5, got {pressure_metric['status']}"
-            assert (
-                pressure_metric["status"] != "unhealthy"
-            ), "Raw cumulative count 1137 must not drive the verdict to unhealthy"
+            assert pressure_metric["status"] == "watch", (
+                f"Expected watch based on avg_pressure=0.5, got {pressure_metric['status']}"
+            )
+            assert pressure_metric["status"] != "unhealthy", (
+                "Raw cumulative count 1137 must not drive the verdict to unhealthy"
+            )
             # Raw pressure is exported separately for diagnostics
             assert data["current_pressure_raw"] == 1137
             assert data["avg_pressure"] == 0.5
@@ -252,9 +252,9 @@ class TestHealthSummary:
             pressure_metric = next(
                 m for m in data["metrics"] if m["name"] == "Pressure"
             )
-            assert (
-                pressure_metric["status"] == "watch"
-            ), "No history should yield watch, not healthy or unhealthy"
+            assert pressure_metric["status"] == "watch", (
+                "No history should yield watch, not healthy or unhealthy"
+            )
         finally:
             Path(export_path).unlink(missing_ok=True)
 

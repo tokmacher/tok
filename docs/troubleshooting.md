@@ -20,10 +20,12 @@ tok doctor
 
 - `tok install` updated your shell rc file, but the current shell has not reloaded it.
 - Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.
+- Then run `tok doctor` again before assuming the bridge is at fault.
 
 ### `Bridge not running`
 
 - Start it again with `tok bridge start`.
+- Re-run `tok bridge status` or `tok doctor` immediately after startup.
 - If it still fails, use `tok bridge start --foreground` so errors stay in the current terminal.
 - Inspect recent bridge logs with `tok bridge logs 100`.
 

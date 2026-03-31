@@ -48,8 +48,13 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Databases
+*.db
+
+# Pre-commit cache
+.pre-commit-cache/
+
 # Local runtime state
-telemetry.db
 execution.log
 memory.tok
 gate-config.json

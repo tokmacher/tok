@@ -92,9 +92,9 @@ class TestSifterPointerGeneration:
             second_batch.append(ptr)
 
         # Should be identical after reset
-        assert (
-            first_batch == second_batch
-        ), "Pointer reset should work consistently"
+        assert first_batch == second_batch, (
+            "Pointer reset should work consistently"
+        )
 
     def test_pointer_sequencing(self):
         """Pointers should increment in sequence."""

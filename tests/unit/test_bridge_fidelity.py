@@ -37,6 +37,6 @@ def test_bridge_round_trip_fidelity() -> None:
         total += _key_coverage(sample, decoded)
 
     fidelity = total / len(samples)
-    assert (
-        fidelity >= 0.95
-    ), f"Fidelity was {fidelity:.2%}, expected ≥95% key coverage"
+    assert fidelity >= 0.95, (
+        f"Fidelity was {fidelity:.2%}, expected ≥95% key coverage"
+    )

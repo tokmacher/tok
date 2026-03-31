@@ -379,8 +379,8 @@ def test_orchestrator_handshake_routes_response_through_finalize(monkeypatch):
 
     orchestrator.handshake()
 
-    assert (
-        "text" in finalize_calls
-    ), "adapter.finalize() was never called during handshake()"
+    assert "text" in finalize_calls, (
+        "adapter.finalize() was never called during handshake()"
+    )
     assert "t:1|agt:handshake" in finalize_calls["text"]
     assert finalize_calls["model"] == "openai/gpt-4.1-mini"

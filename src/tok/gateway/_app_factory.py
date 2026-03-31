@@ -268,7 +268,9 @@ async def buffer_strip_restream_impl(
                                         "index": i,
                                         "delta": {
                                             "type": "input_json_delta",
-                                            "partial_json": json.dumps(tool_input),
+                                            "partial_json": json.dumps(
+                                                tool_input
+                                            ),
                                         },
                                     }
                                     yield f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
@@ -491,9 +493,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             for k, v in headers.items()
         )
 
-        if path.startswith("v1/messages") and not (
-            has_x_api_key or has_auth_bearer
-        ):
+        if path.startswith("v1/") and not (has_x_api_key or has_auth_bearer):
             logger.warning("Blocking request to %s — missing API key", path)
             return Response(
                 content=json.dumps(
@@ -697,7 +697,10 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         if is_streaming:
             client = httpx.AsyncClient(timeout=300.0)
             try:
-                response, retried_without_tok = await _send_with_tok_fail_open_retry(
+                (
+                    response,
+                    retried_without_tok,
+                ) = await _send_with_tok_fail_open_retry(
                     client,
                     method=request.method,
                     url=target_url,
@@ -735,9 +738,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             client,
                             response,
                             input_saved_tokens=saved_toks if compressed else 0,
-                            type_breakdown=tool_breakdown if compressed else None,
+                            type_breakdown=tool_breakdown
+                            if compressed
+                            else None,
                             behavior_signals=behavior_signals or None,
-                            prompt_metrics=prompt_metrics if compressed else None,
+                            prompt_metrics=prompt_metrics
+                            if compressed
+                            else None,
                             tool_compatible=request_tool_compatible,
                         ),
                         status_code=response.status_code,
@@ -753,7 +760,10 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 await client.aclose()
 
         async with httpx.AsyncClient(timeout=300.0) as client:
-            response, retried_without_tok = await _send_with_tok_fail_open_retry(
+            (
+                response,
+                retried_without_tok,
+            ) = await _send_with_tok_fail_open_retry(
                 client,
                 method=request.method,
                 url=target_url,
@@ -820,7 +830,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             tool_compatible=request_tool_compatible,
                         )
                         response_signals = processed.behavior_signals
-                        new_content = processed.content_blocks + passthrough_blocks
+                        new_content = (
+                            processed.content_blocks + passthrough_blocks
+                        )
                         resp_json["content"] = new_content
                         total_output_saved = processed.output_saved_tokens
 
@@ -828,7 +840,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         if session_signals:
                             response_signals = response_signals or {}
                             for k, v in session_signals.items():
-                                response_signals[k] = response_signals.get(k, 0) + v
+                                response_signals[k] = (
+                                    response_signals.get(k, 0) + v
+                                )
 
                         logger.info(
                             "Response: %d blocks, ~%d saved",
@@ -848,9 +862,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             ),
                             input_saved=saved_toks if compressed else 0,
                             output_saved=total_output_saved,
-                            type_breakdown=tool_breakdown if compressed else None,
+                            type_breakdown=tool_breakdown
+                            if compressed
+                            else None,
                             behavior_signals=response_signals or None,
-                            prompt_metrics=prompt_metrics if compressed else None,
+                            prompt_metrics=prompt_metrics
+                            if compressed
+                            else None,
                         )
                         session.capture_event(
                             {
@@ -864,24 +882,24 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                 ),
                                 "behavior_signals": response_signals or {},
                                 "session_quality": str(
-                                    (session.tracker.session_summary() or {}).get(
-                                        "session_quality", "clean"
-                                    )
+                                    (
+                                        session.tracker.session_summary() or {}
+                                    ).get("session_quality", "clean")
                                 ),
                                 "session_tokens_saved": int(
-                                    (session.tracker.session_summary() or {}).get(
-                                        "tokens_saved", 0
-                                    )
+                                    (
+                                        session.tracker.session_summary() or {}
+                                    ).get("tokens_saved", 0)
                                 ),
                                 "session_savings_pct": float(
-                                    (session.tracker.session_summary() or {}).get(
-                                        "savings_pct", 0.0
-                                    )
+                                    (
+                                        session.tracker.session_summary() or {}
+                                    ).get("savings_pct", 0.0)
                                 ),
                                 "last_degradation_reason": str(
-                                    (session.tracker.session_summary() or {}).get(
-                                        "last_degradation_reason", ""
-                                    )
+                                    (
+                                        session.tracker.session_summary() or {}
+                                    ).get("last_degradation_reason", "")
                                 ),
                             }
                         )
@@ -895,31 +913,46 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         try:
                             _model = resp_json.get("model", "")
                             _usage = resp_json.get("usage", {})
-                            session_signals = session.consume_behavior_signals()
+                            session_signals = (
+                                session.consume_behavior_signals()
+                            )
                             error_signals = {"processing_error": 1}
                             if session_signals:
                                 for k, v in session_signals.items():
-                                    error_signals[k] = error_signals.get(k, 0) + v
+                                    error_signals[k] = (
+                                        error_signals.get(k, 0) + v
+                                    )
 
                             if _model and _usage:
                                 session.tracker.record_call(
                                     model=_model,
                                     actual_input=_usage.get("input_tokens", 0),
-                                    actual_output=_usage.get("output_tokens", 0),
+                                    actual_output=_usage.get(
+                                        "output_tokens", 0
+                                    ),
                                     cache_read=_usage.get(
                                         "cache_read_input_tokens", 0
                                     ),
                                     cache_write=_usage.get(
                                         "cache_creation_input_tokens", 0
                                     ),
-                                    input_saved=saved_toks if compressed else 0,
+                                    input_saved=saved_toks
+                                    if compressed
+                                    else 0,
                                     output_saved=0,
-                                    type_breakdown=tool_breakdown if compressed else None,
+                                    type_breakdown=tool_breakdown
+                                    if compressed
+                                    else None,
                                     behavior_signals=error_signals,
-                                    prompt_metrics=prompt_metrics if compressed else None,
+                                    prompt_metrics=prompt_metrics
+                                    if compressed
+                                    else None,
                                 )
-                        except Exception:
-                            pass
+                        except Exception as _exc:
+                            logger.debug(
+                                "Failed to record usage in fail-open path: %s",
+                                _exc,
+                            )
                     else:
                         raise
 

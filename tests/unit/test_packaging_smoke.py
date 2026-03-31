@@ -33,9 +33,9 @@ class TestBundledScript:
         ref = files("tok.data").joinpath("tok_claude.sh")
         content = Path(str(ref)).read_text()
 
-        assert (
-            "claude()" in content
-        ), "tok_claude.sh must define claude() function"
+        assert "claude()" in content, (
+            "tok_claude.sh must define claude() function"
+        )
 
 
 class TestShellIntegrationBlock:

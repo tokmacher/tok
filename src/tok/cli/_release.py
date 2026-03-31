@@ -828,21 +828,15 @@ def gate_check_command(
                     "fixture_format": infer_fixture_format(records),
                     "fixture_kind": str(meta.get("fixture_kind", "")),
                     "provenance": str(meta.get("provenance", "")),
-                    "common_path": is_common_path_fixture(
-                        fixture_name, meta
-                    ),
-                    "usage_weight": fixture_usage_weight(
-                        fixture_name, meta
-                    ),
+                    "common_path": is_common_path_fixture(fixture_name, meta),
+                    "usage_weight": fixture_usage_weight(fixture_name, meta),
                 }
             )
             if not passed and not continue_on_error:
                 break
         except Exception as exc:
             failed += 1
-            conf_table.add_row(
-                fixture_name, "❌ ERROR", "-", "-", str(exc)
-            )
+            conf_table.add_row(fixture_name, "❌ ERROR", "-", "-", str(exc))
             results.append(
                 {
                     "fixture": fixture_name,
@@ -864,7 +858,9 @@ def gate_check_command(
     common_path_summary = {
         "fixtures": len(common_path_rows),
         "total_weight": round(
-            sum(float(row.get("usage_weight", 0.0)) for row in common_path_rows),
+            sum(
+                float(row.get("usage_weight", 0.0)) for row in common_path_rows
+            ),
             1,
         ),
     }
@@ -883,9 +879,7 @@ def gate_check_command(
         gate_config.get("required_fixtures", []) if gate_config else []
     )
     required_benchmark_list = [
-        item.strip()
-        for item in required_benchmarks.split(",")
-        if item.strip()
+        item.strip() for item in required_benchmarks.split(",") if item.strip()
     ]
     stability_check = None
     if stability_dir is not None:

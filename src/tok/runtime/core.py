@@ -144,7 +144,6 @@ from .policy.macro_handling import (
 from .pipeline.request_preparation import (
     _inject_system,
     collect_transient_error_snippets,
-    _answer_anchor_runtime_hints,
     _is_answer_ready_turn,
     _runtime_hints_for_turn,
     _annotate_reacquisition_diagnostics,
@@ -324,16 +323,38 @@ class RuntimeSession:
 
     def _load_bridge_memory(self) -> BridgeMemoryState:
         """Load bridge memory from persisted file."""
+        path = self._bridge_memory_file()
+        if not path.exists():
+            return BridgeMemoryState(
+                load_global_macros=self._load_global_macros
+            )
         try:
-            path = self._bridge_memory_file()
-            if path.exists():
-                return BridgeMemoryState.from_tok(
-                    path.read_text(),
-                    load_global_macros=self._load_global_macros,
-                )
-        except Exception:
-            pass
-        return BridgeMemoryState(load_global_macros=self._load_global_macros)
+            return BridgeMemoryState.from_tok(
+                path.read_text(),
+                load_global_macros=self._load_global_macros,
+            )
+        except FileNotFoundError:
+            return BridgeMemoryState(
+                load_global_macros=self._load_global_macros
+            )
+        except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Bridge memory file corrupted at %s: %s — starting with empty memory",
+                path,
+                exc,
+            )
+            return BridgeMemoryState(
+                load_global_macros=self._load_global_macros
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to load bridge memory from %s: %s",
+                path,
+                exc,
+            )
+            return BridgeMemoryState(
+                load_global_macros=self._load_global_macros
+            )
 
     def _save_bridge_memory(self) -> None:
         """Save bridge memory to persisted file."""
@@ -341,8 +362,12 @@ class RuntimeSession:
             assert self.memory_dir is not None
             self.memory_dir.mkdir(parents=True, exist_ok=True)
             self._bridge_memory_file().write_text(self.bridge_memory.to_tok())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to save bridge memory to %s: %s",
+                self._bridge_memory_file(),
+                exc,
+            )
 
     def _result_cache_file(self) -> Path:
         assert self.memory_dir is not None
@@ -350,14 +375,24 @@ class RuntimeSession:
 
     def _load_result_cache(self) -> dict[str, Any]:
         """Load result cache from persisted file."""
+        path = self._result_cache_file()
+        if not path.exists():
+            return {}
         try:
-            path = self._result_cache_file()
-            if path.exists():
-                result = json.loads(path.read_text())
-                if isinstance(result, dict):
-                    return result
-        except Exception:
-            pass
+            result = json.loads(path.read_text())
+            if isinstance(result, dict):
+                return result
+            logger.warning(
+                "Result cache at %s is not a dict — starting empty", path
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Result cache corrupted at %s: %s — starting empty", path, exc
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to load result cache from %s: %s", path, exc
+            )
         return {}
 
     def _save_result_cache(self) -> None:
@@ -365,11 +400,19 @@ class RuntimeSession:
         try:
             assert self.memory_dir is not None
             self.memory_dir.mkdir(parents=True, exist_ok=True)
-            # Only save the first element (hash) and first 10k chars of raw to keep cache size sane
-            # Actually, standard result_cache is (hash, raw).
-            self._result_cache_file().write_text(json.dumps(self.result_cache))
-        except Exception:
-            pass
+            trimmed = {
+                k: (v[0], v[1][:10240])
+                if isinstance(v, tuple) and len(v) == 2
+                else v
+                for k, v in self.result_cache.items()
+            }
+            self._result_cache_file().write_text(json.dumps(trimmed))
+        except Exception as exc:
+            logger.warning(
+                "Failed to save result cache to %s: %s",
+                self._result_cache_file(),
+                exc,
+            )
 
     def _fallback_memory_file(self) -> Path:
         assert self.memory_dir is not None
@@ -377,12 +420,19 @@ class RuntimeSession:
 
     def _load_fallback_memory(self) -> str:
         """Load persisted raw fallback memory from disk."""
+        path = self._fallback_memory_file()
+        if not path.exists():
+            return ""
         try:
-            path = self._fallback_memory_file()
-            if path.exists():
-                return path.read_text().strip()
-        except Exception:
-            pass
+            return path.read_text().strip()
+        except (UnicodeDecodeError, PermissionError) as exc:
+            logger.warning(
+                "Failed to load fallback memory from %s: %s", path, exc
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to load fallback memory from %s: %s", path, exc
+            )
         return ""
 
     def _save_fallback_memory(self) -> None:
@@ -393,20 +443,33 @@ class RuntimeSession:
             self._fallback_memory_file().write_text(
                 self.fallback_memory + "\n"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to save fallback memory to %s: %s",
+                self._fallback_memory_file(),
+                exc,
+            )
 
     def _episode_ledger_file(self) -> Path:
         assert self.memory_dir is not None
         return self.memory_dir / "episode_ledger.tok"
 
     def _load_episode_ledger(self) -> EpisodeLedger:
+        path = self._episode_ledger_file()
+        if not path.exists():
+            return EpisodeLedger()
         try:
-            path = self._episode_ledger_file()
-            if path.exists():
-                return EpisodeLedger.from_tok(path.read_text())
-        except Exception:
-            pass
+            return EpisodeLedger.from_tok(path.read_text())
+        except (ValueError, UnicodeDecodeError) as exc:
+            logger.warning(
+                "Episode ledger corrupted at %s: %s — starting empty",
+                path,
+                exc,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to load episode ledger from %s: %s", path, exc
+            )
         return EpisodeLedger()
 
     def _save_episode_ledger(self) -> None:
@@ -416,8 +479,12 @@ class RuntimeSession:
             self._episode_ledger_file().write_text(
                 self.episode_ledger.to_tok()
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to save episode ledger to %s: %s",
+                self._episode_ledger_file(),
+                exc,
+            )
 
     def record_episode(self, entry: EpisodeEntry) -> None:
         """Log a completed reasoning episode and persist the ledger."""
@@ -816,76 +883,6 @@ class RuntimeSession:
             self._tok_memory_snap_triggered = 1
 
 
-# Answer memory grounding is imported from .answer_memory
-
-
-# Answer memory operations are imported from .answer_memory
-
-
-# Answer memory pipeline is imported from .answer_memory
-
-
-# Response behavior signals are imported from .response_processing
-
-
-# ---------------------------------------------------------------------------
-# End of duplicated/legacy definitions
-# ---------------------------------------------------------------------------
-
-
-# Answer visible text check is imported from .answer_memory
-
-
-# ---------------------------------------------------------------------------
-# End of duplicated/legacy definitions
-# ---------------------------------------------------------------------------
-
-
-# Response checks (has_forbidden_*, has_non_inverted_*, has_markdown_*) are imported from .response_handling
-
-
-# malformed_tok_signals and has_well_formed_tok_blocks are imported from .response_processing
-
-
-# translate_request_results is imported from .response_processing
-
-
-# apply_schema_adaptations is imported from .response_processing
-
-
-# _extract_json_tools is imported from .response_processing
-
-
-# translate_response_tools, parse_tok_response, and response_contract functions are imported from .response_processing
-
-
-# sort_cache_control_blocks is imported from .response_handling
-
-
-# SemanticValidator class is imported from .semantic_validation
-
-
-# calculate_invisible_pressure is imported from .semantic_validation
-
-
-# _parse_jit_args is imported from .macro_handling
-
-
-# _attribute_macro_savings is imported from .macro_handling
-
-
-# _heal_macro_from_repair is imported from .macro_handling
-
-
-# _jit_context_matches and execute_jit_macro are imported from .macro_handling
-
-
-# calculate_memory_lift and calculate_semantic_regression_score are imported from .semantic_validation
-
-
-# evaluate_replay_gate is imported from .response_handling
-
-
 class UniversalTokRuntime:
     """Canonical transport-agnostic request/response runtime."""
 
@@ -983,13 +980,6 @@ class UniversalTokRuntime:
                 tool_compatible_compression=bool(
                     behavior_signals.get("tool_compatible_compression", 0)
                 ),
-            )
-            runtime_hints.extend(
-                _answer_anchor_runtime_hints(
-                    pre_resend_memory,
-                    tool_compatible=request.tool_compatible,
-                    behavior_signals=behavior_signals,
-                )
             )
             if translated_messages is None:
                 answer_ready = False
@@ -1131,7 +1121,9 @@ class UniversalTokRuntime:
         }
 
         # Apply Self-Healing if drift is detected in non-Tok response
-        healed_text = heal_drift(text, merged_signals)
+        healed_text = heal_drift(
+            text, merged_signals, tool_compatible=tool_compatible
+        )
         if healed_text != text:
             merged_signals["tok_drift_healed"] = 1
             # Re-evaluating contract with healed text ensures blocks are correctly extracted

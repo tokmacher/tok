@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 import tok.gateway as gateway
 from tok.gateway import (
@@ -1829,3 +1831,392 @@ def test_malformed_tok_hybrid_tool_signals():
     )
     assert signals.get("malformed_tok_hybrid_tool") == 1
     assert signals.get("malformed_tok_response") == 1
+
+
+# ---------------------------------------------------------------------------
+# M2: Non-streaming processing error fail-open
+# ---------------------------------------------------------------------------
+
+
+def test_non_streaming_processing_error_fail_open_passes_raw_content(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": False,
+    }
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=10,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    def _fake_process_response(*args, **kwargs):
+        raise RuntimeError("processing failure")
+
+    async def _fake_send(self, request, stream=False):
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+                "content": [{"type": "text", "text": "raw upstream response"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(
+        gateway._RUNTIME, "process_response", _fake_process_response
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    resp_json = response.json()
+    assert resp_json["content"] == [
+        {"type": "text", "text": "raw upstream response"}
+    ]
+
+
+def test_non_streaming_processing_error_fail_open_records_usage(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=10,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    def _fake_process_response(*args, **kwargs):
+        raise RuntimeError("processing failure")
+
+    async def _fake_send(self, request, stream=False):
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+                "content": [{"type": "text", "text": "raw response"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(
+        gateway._RUNTIME, "process_response", _fake_process_response
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
+    app = create_app(session)
+    client = TestClient(app)
+
+    client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    summary = session.tracker.session_summary()
+    assert summary is not None
+    assert summary["actual_tokens"] > 0
+
+
+def test_non_streaming_processing_error_fail_closed_propagates(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=10,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    def _fake_process_response(*args, **kwargs):
+        raise RuntimeError("processing failure")
+
+    async def _fake_send(self, request, stream=False):
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+                "content": [{"type": "text", "text": "raw response"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(
+        gateway._RUNTIME, "process_response", _fake_process_response
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=False))
+    client = TestClient(app, raise_server_exceptions=True)
+
+    with pytest.raises(RuntimeError):
+        client.post(
+            "/v1/messages",
+            headers={"x-api-key": "test"},
+            json={
+                "model": "claude-sonnet-4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# M3: Streaming fail-open retry on HTTP 400
+# ---------------------------------------------------------------------------
+
+
+def test_gateway_retries_streaming_with_original_after_tok_400(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": True,
+    }
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "system": "tok injected system",
+                "stream": True,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={"repeat_file_read": 1},
+            type_breakdown={"repetitive_cached": 168},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        content = request.read()
+        payload = json.loads(content.decode())
+        sent_bodies.append(payload)
+        if len(sent_bodies) == 1:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "bad request"}},
+            )
+        sse_data = (
+            "event: message_start\ndata: "
+            + json.dumps(
+                {
+                    "type": "message_start",
+                    "message": {
+                        "model": "claude-sonnet-4",
+                        "usage": {"input_tokens": 10, "output_tokens": 5},
+                    },
+                }
+            )
+            + "\n\n"
+            + "event: content_block_start\ndata: "
+            + json.dumps(
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                }
+            )
+            + "\n\n"
+            + "event: content_block_delta\ndata: "
+            + json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "ok"},
+                }
+            )
+            + "\n\n"
+            + "event: content_block_stop\ndata: "
+            + json.dumps({"type": "content_block_stop", "index": 0})
+            + "\n\n"
+            + "event: message_delta\ndata: "
+            + json.dumps(
+                {
+                    "type": "message_delta",
+                    "usage": {"output_tokens": 1},
+                }
+            )
+            + "\n\n"
+            + "event: message_stop\ndata: "
+            + json.dumps({"type": "message_stop"})
+            + "\n\n"
+        )
+        resp = httpx.Response(
+            200,
+            content=sse_data.encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+        return resp
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 2
+    assert sent_bodies[0]["messages"] == [
+        {"role": "user", "content": "compressed by tok"}
+    ]
+    assert sent_bodies[1]["messages"] == [{"role": "user", "content": "hello"}]
+
+
+# ---------------------------------------------------------------------------
+# M5: fail_open=False gating
+# ---------------------------------------------------------------------------
+
+
+def test_gateway_fail_open_false_does_not_retry_on_400(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        content = request.read()
+        payload = json.loads(content.decode())
+        sent_bodies.append(payload)
+        return httpx.Response(400, json={"error": {"message": "bad request"}})
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=False))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert len(sent_bodies) == 1
+
+
+def test_gateway_fail_open_false_propagates_request_processing_error(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del request, session, result_cache
+        raise RuntimeError("request prep failure")
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=False))
+    client = TestClient(app, raise_server_exceptions=True)
+
+    with pytest.raises(RuntimeError):
+        client.post(
+            "/v1/messages",
+            headers={"x-api-key": "test"},
+            json={
+                "model": "claude-sonnet-4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+            },
+        )

@@ -86,9 +86,9 @@ class TestBridgeJsonRoundtrip:
         recovered = json.loads(recovered_json) if recovered_json else {}
 
         # Booleans should be present
-        assert (
-            "active" in recovered or "deleted" in recovered
-        ), "Boolean attrs lost"
+        assert "active" in recovered or "deleted" in recovered, (
+            "Boolean attrs lost"
+        )
 
     def test_numeric_values(self):
         """Numeric values (int, float) should survive."""
@@ -262,9 +262,9 @@ class TestBridgeDataFidelityScore:
         print(f"\nTier 1 Fidelity Score: {fidelity_score:.1f}%")
 
         # Tier 1 target: ≥ 95% (all except null_value might coerce to string)
-        assert (
-            fidelity_score >= 85
-        ), f"Tier 1 fidelity {fidelity_score} below acceptable (target ≥ 95%)"
+        assert fidelity_score >= 85, (
+            f"Tier 1 fidelity {fidelity_score} below acceptable (target ≥ 95%)"
+        )
 
     def test_loss_budget_matrix_tier2_nested_dicts(self):
         """Tier 2 (Nested dicts, one level): target ≥ 85% key preservation.
@@ -310,9 +310,9 @@ class TestBridgeDataFidelityScore:
 
         fidelity_score = (passing / total * 100) if total > 0 else 0
         print(f"\nTier 2 Nested Dict Key Preservation: {fidelity_score:.1f}%")
-        assert (
-            fidelity_score >= 66
-        ), f"Tier 2 fidelity {fidelity_score} below threshold"
+        assert fidelity_score >= 66, (
+            f"Tier 2 fidelity {fidelity_score} below threshold"
+        )
 
     def test_loss_budget_matrix_tier3_tables_and_lists(self):
         """Tier 3 (Tables, lists, scalars-as-text): document losses, don't assert strict fidelity.
@@ -412,9 +412,9 @@ class TestBridgeConsistency:
         recovered = json.loads(recovered_json) if recovered_json else {}
 
         # Something should survive
-        assert len(recovered) > 0 or "important" in str(
-            recovered
-        ), "Round-trip should preserve something"
+        assert len(recovered) > 0 or "important" in str(recovered), (
+            "Round-trip should preserve something"
+        )
 
 
 def analyze_losses() -> dict:

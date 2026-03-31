@@ -272,7 +272,10 @@ def compress_history_impl(
         content = msg.get("content")
         if role == "assistant" and isinstance(content, list):
             for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                if (
+                    not isinstance(block, dict)
+                    or block.get("type") != "tool_use"
+                ):
                     continue
                 tool_name = str(block.get("name", "")).lower()
                 tool_input = block.get("input", {})
@@ -312,7 +315,9 @@ def compress_history_impl(
         ):
             first = text.splitlines()[0] if text.splitlines() else text
             _bump(error_scores, first[:60], 3 + recency, 60)
-        for match in re.finditer(r"\b(\d+\s+(?:passed|failed|errors?))\b", lowered):
+        for match in re.finditer(
+            r"\b(\d+\s+(?:passed|failed|errors?))\b", lowered
+        ):
             _bump(test_scores, match.group(1), 2 + recency, 24)
         for line in text.splitlines():
             stripped = line.strip()
@@ -354,7 +359,9 @@ def compress_history_impl(
     top_constraints = _top_items(
         constraint_scores, _get_int(profile, "constraints", 2)
     )
-    top_questions = _top_items(question_scores, _get_int(profile, "questions", 2))
+    top_questions = _top_items(
+        question_scores, _get_int(profile, "questions", 2)
+    )
     top_blockers = _top_items(blocker_scores, _get_int(profile, "blockers", 2))
     top_next = _top_items(next_scores, _get_int(profile, "next", 2))
     if top_files:
@@ -375,7 +382,8 @@ def compress_history_impl(
         state_map["next"] = ",".join(top_next)
     if facts:
         compact_facts = [
-            f"{k}:{v}" for k, v in sorted(facts.items())[: _get_int(profile, "facts", 3)]
+            f"{k}:{v}"
+            for k, v in sorted(facts.items())[: _get_int(profile, "facts", 3)]
         ]
         if compact_facts:
             state_map["facts"] = ",".join(compact_facts)
@@ -450,7 +458,9 @@ def tok_tool_result_impl(
     else:
         compressed = content
 
-    compressed = _tighten_compressed_output(kind, compressed, compression_level)
+    compressed = _tighten_compressed_output(
+        kind, compressed, compression_level
+    )
     compressed = truncate_large_result(compressed)
 
     saved = original_chars - len(compressed)
@@ -604,7 +614,9 @@ def inject_system_additions_impl(
     if runtime_hints:
         directive_parts.append(
             "\n".join(
-                str(hint).strip() for hint in runtime_hints if str(hint).strip()
+                str(hint).strip()
+                for hint in runtime_hints
+                if str(hint).strip()
             )
         )
     output_directive = "\n\n".join(directive_parts)
@@ -768,6 +780,8 @@ def compress_recent_window_impl(
             block["content"] = compressed
 
     return messages, breakdown
+
+
 TOOL_COMPRESS_THRESHOLD = 0  # chars — always compress if we have a strategy
 
 # Heuristic: source code indicators
@@ -1517,7 +1531,7 @@ def _compress_env_ps(text: str, kind: str) -> str:
     # or just show a high-level summary if too large.
 
     if kind == "ps_output":
-        # Keep header + any non-system processes (heuristic: not in /Sytem or /usr/lib)
+        # Keep header + any non-system processes (heuristic: not in /System or /usr/lib)
         kept = [lines[0]] if lines else []
         for line in lines[1:]:
             if (
@@ -1635,4 +1649,6 @@ def truncate_large_result(text: str, limit: int = 1200) -> str:
             break
 
     omitted = len(text) - (limit // 2 * 2)
-    return f"{head}\n... [TRUNCATED {omitted} CHARS] ...{important_line}\n{tail}"
+    return (
+        f"{head}\n... [TRUNCATED {omitted} CHARS] ...{important_line}\n{tail}"
+    )

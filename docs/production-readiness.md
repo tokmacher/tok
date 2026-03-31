@@ -23,6 +23,7 @@ Runtime defaults and release posture for Tok.
 - SDK/wrapper path exists but is experimental
 - No breaking changes are guaranteed before 1.0
 - The current release candidate is gated on one final live Claude validation pass against the supported bridge workflow
+- The release candidate should be tagged only from a quiet, clean tree after that validation passes
 
 ## Intentional Deferrals For 0.1.0
 

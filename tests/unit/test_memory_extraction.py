@@ -31,9 +31,9 @@ def test_extract_compression():
 More text
 """
     result = tok._extract_compression(response)
-    assert (
-        result == ">>> DELTA: identity=Alice project=chimera"
-    ), f"Expected >>> line, got: {result}"
+    assert result == ">>> DELTA: identity=Alice project=chimera", (
+        f"Expected >>> line, got: {result}"
+    )
     print("[PASS] Test 1: >>> line extracted")
 
     # Test 2: No >>> line
@@ -50,9 +50,9 @@ secret: X99
 """
     result = tok._extract_compression(response)
     # Should extract @state content
-    assert (
-        result is not None and "identity" in result
-    ), f"Expected state content, got: {result}"
+    assert result is not None and "identity" in result, (
+        f"Expected state content, got: {result}"
+    )
     print("[PASS] Test 3: @state block extracted as fallback")
 
 

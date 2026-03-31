@@ -17,12 +17,17 @@ class TestCLI:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "bridge" in result.output
-        assert "metrics" in result.output
-        assert "dev" in result.output
         assert "stats" in result.output
         assert "savings" in result.output
         assert "install" in result.output
         assert "doctor" in result.output
+        assert "metrics" not in result.output
+        assert "dev" not in result.output
+        assert "memory-snap" not in result.output
+        assert "capture-review" not in result.output
+        assert "gate-check" not in result.output
+        assert "convert" not in result.output
+        assert "parse" not in result.output
 
     def test_bridge_help(self):
         result = runner.invoke(app, ["bridge", "--help"])
@@ -110,6 +115,8 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Tok shell integration installed in" in result.output
         assert ".zshrc" in result.output
+        assert "Reload your shell:" in result.output
+        assert "tok bridge start" in result.output
 
     def test_bridge_status_shows_mode_and_session_summary(self, monkeypatch):
         monkeypatch.setattr(
@@ -166,6 +173,8 @@ class TestCLI:
         assert "Session quality" in result.output
         assert "Degradation reason" in result.output
         assert "Session signals" in result.output
+        assert "tok doctor" in result.output
+        assert "tok bridge logs 100" in result.output
 
     def test_bridge_status_shows_watch_session_verdict(self, monkeypatch):
         monkeypatch.setattr(
@@ -286,11 +295,14 @@ class TestCLI:
         self, monkeypatch, tmp_path
     ):
         import tok.cli as cli
+        from tok.cli import _cli_support
 
         pid_file = tmp_path / "bridge.pid"
         pid_file.write_text("not-a-pid")
-        monkeypatch.setattr(cli, "PID_FILE", pid_file)
-        monkeypatch.setattr(cli, "_find_pids_on_port", lambda port: [])
+        monkeypatch.setattr(_cli_support, "PID_FILE", pid_file)
+        monkeypatch.setattr(
+            _cli_support, "_find_pids_on_port", lambda port: []
+        )
 
         def deny_unlink(*args, **kwargs):
             raise PermissionError("sandbox")
@@ -300,6 +312,7 @@ class TestCLI:
         result = runner.invoke(app, ["bridge", "status"])
         assert result.exit_code == 1
         assert "Bridge not running" in result.output
+        assert "tok bridge start" in result.output
 
     def test_bridge_start_with_capture_prints_capture_directory(
         self, monkeypatch, tmp_path
@@ -333,6 +346,7 @@ class TestCLI:
         assert "Bridge started on :9090 (PID 4321)" in result.output
         assert "Capture directory:" in result.output
         assert ".tok/sessions" in result.output
+        assert "run `claude`" in result.output
 
     def test_bridge_start_enables_session_reset(self, monkeypatch, tmp_path):
         monkeypatch.setattr(
@@ -1234,6 +1248,9 @@ class TestCLI:
         monkeypatch.setattr(
             "tok.cli._get_running_bridge_pid", lambda port: 321
         )
+        monkeypatch.setattr(
+            "shutil.which", lambda name: "/usr/local/bin/claude"
+        )
         monkeypatch.setenv(
             "TOK_SAVINGS_FILE", "/tmp/test-empty-savings-doctor.tok"
         )
@@ -1283,6 +1300,7 @@ class TestCLI:
         assert "Tok verdict:" in result.output
         assert "baseline" in result.output
         assert "Recommendation:" in result.output
+        assert "tok bridge logs 100" in result.output
         assert (
             "investigate degradation before trusting this session"
             in result.output

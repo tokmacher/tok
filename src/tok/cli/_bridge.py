@@ -103,13 +103,16 @@ def bridge_start(
         env["TOK_RESET_SESSION"] = "1"
 
         log_file = open(cli.LOG_FILE, "a")
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "tok.gateway"],
-            env=env,
-            stdout=log_file,
-            stderr=log_file,
-            start_new_session=True,
-        )
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "tok.gateway"],
+                env=env,
+                stdout=log_file,
+                stderr=log_file,
+                start_new_session=True,
+            )
+        finally:
+            log_file.close()
         cli.PID_FILE.write_text(str(proc.pid))
 
         # Wait for bridge to be ready
@@ -124,6 +127,9 @@ def bridge_start(
                         f"[green]Bridge started on :{port} (PID {proc.pid})[/green]"
                     )
                     console.print(f"Logs: {cli.LOG_FILE}")
+                    console.print(
+                        "[dim]Next step: run `claude`, then `tok bridge status` or `tok doctor`.[/dim]"
+                    )
                     if capture:
                         console.print(
                             f"Capture directory: {cli._memory_root() / 'sessions'}"
@@ -136,8 +142,13 @@ def bridge_start(
             f"[yellow]Bridge started (PID {proc.pid}) but health check pending[/yellow]"
         )
         console.print(f"Logs: {cli.LOG_FILE}")
+        console.print(
+            "[dim]Next step: wait a moment, then run `tok bridge status`; if it still fails, restart with `tok bridge start --foreground`.[/dim]"
+        )
         if capture:
-            console.print(f"Capture directory: {cli._memory_root() / 'sessions'}")
+            console.print(
+                f"Capture directory: {cli._memory_root() / 'sessions'}"
+            )
 
 
 @bridge_app.command("stop")
@@ -220,9 +231,11 @@ def bridge_status() -> None:
     pid = cli._get_running_bridge_pid(port)
     if pid is None:
         console.print("[yellow]Bridge not running[/yellow]")
+        console.print(
+            "[dim]Next step: run `tok bridge start`, then re-run `tok bridge status` or `tok doctor`.[/dim]"
+        )
         raise typer.Exit(1)
 
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
     try:
         import httpx
 
@@ -295,12 +308,35 @@ def bridge_status() -> None:
                     border_style=_status_border(verdict_style),
                 )
             )
+            if baseline_only:
+                console.print(
+                    "[dim]Next step: run `tok doctor`, then inspect `tok bridge logs 100` for the degradation reason.[/dim]"
+                )
+            elif mode == "baseline":
+                console.print(
+                    "[dim]Next step: restart without `TOK_MODE=baseline` if you want compression enabled.[/dim]"
+                )
+            elif str(payload.get("session_quality", "clean")) == "watch":
+                console.print(
+                    "[dim]Next step: keep Tok on, but watch `Fallbacks` and rerun `tok doctor` if they rise.[/dim]"
+                )
+            elif tokens_saved <= 0:
+                console.print(
+                    "[dim]Next step: keep working for a few turns, then run `tok stats --last-session` if savings are still unclear.[/dim]"
+                )
             return
-    except Exception:
+    except httpx.ConnectError:
         pass
+    except Exception as exc:
+        console.print(
+            f"[dim]Status check error: {exc.__class__.__name__}: {exc}[/dim]"
+        )
 
     console.print(
         f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]"
+    )
+    console.print(
+        "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
     )
 
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # tok_claude.sh — Shell integration for Tok + Claude Code
 #
-# SOURCE this file (do not execute it directly):
-#   source /path/to/tok/scripts/tok_claude.sh
+# This file is bundled with tok-protocol.
+# SOURCE this file directly from the installed package path if needed:
+#   source /path/to/site-packages/tok/data/tok_claude.sh
 #
-# Or add to ~/.zshrc / ~/.bashrc:
-#   source /path/to/tok/scripts/tok_claude.sh
+# `tok install` adds the correct source line to ~/.zshrc or ~/.bashrc for you.
 #
 # This defines only a `claude` function:
 #   1. Starts the current Tok bridge if it is not already running

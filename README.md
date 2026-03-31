@@ -18,6 +18,10 @@ The first open-source release is intentionally narrow:
 - check `tok bridge status`, `tok doctor`, and `tok stats`
 - stop the bridge cleanly
 
+The default CLI help is intentionally narrow too. For `0.1.0`, the main public
+commands are `tok install`, `tok bridge ...`, `tok doctor`, `tok stats`, and the
+compatibility alias `tok savings`.
+
 ## What Tok Is / Is Not
 
 Tok is:
@@ -93,6 +97,9 @@ Fallbacks              0
 
 If you see `Degraded to baseline: yes` or fallback counts rising, Tok protected the
 session by serving requests without compression.
+
+If `claude` is still not found after `tok install`, reload your shell with
+`source ~/.zshrc` or `source ~/.bashrc` before debugging Tok itself.
 
 ## First 10 Minutes Troubleshooting
 

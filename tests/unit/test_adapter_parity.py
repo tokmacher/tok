@@ -52,9 +52,9 @@ def _direct_imports_in_file(path: Path) -> set[str]:
 def test_adapters_module_does_not_import_compression():
     imports = _direct_imports_in_file(_ADAPTERS_PATH)
     forbidden = imports & _FORBIDDEN_MODULES
-    assert (
-        not forbidden
-    ), f"adapters.py must not import {_FORBIDDEN_MODULES}, found: {forbidden}"
+    assert not forbidden, (
+        f"adapters.py must not import {_FORBIDDEN_MODULES}, found: {forbidden}"
+    )
 
 
 # ---------------------------------------------------------------------------

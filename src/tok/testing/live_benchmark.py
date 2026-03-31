@@ -1602,7 +1602,9 @@ def check_stability_artifacts(
         preferred_mode_counts = payload.get("preferred_mode_counts", {})
         tok_summary = mode_summaries.get("tok-tool-compatible", {})
         runs = int(payload.get("runs", 0))
-        preferred_count = int(preferred_mode_counts.get("tok-tool-compatible", 0))
+        preferred_count = int(
+            preferred_mode_counts.get("tok-tool-compatible", 0)
+        )
         success_rate = float(tok_summary.get("success_rate", 0.0))
 
         benchmark_name = str(payload.get("benchmark", benchmark))

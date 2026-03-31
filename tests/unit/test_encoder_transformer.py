@@ -291,9 +291,9 @@ class TestDocumentTransformerAdvanced:
         md = "# Root\n\n## Level 1\n\n### Level 2\n\n#### Level 3\n\n##### Level 4"
 
         nodes = transformer.transform(md, rich=True)
-        assert any(
-            "parent" in getattr(n, "attrs", {}) for n in nodes
-        ), "Flattened nodes should include parent metadata"
+        assert any("parent" in getattr(n, "attrs", {}) for n in nodes), (
+            "Flattened nodes should include parent metadata"
+        )
 
     def test_pointerization_detects_repeated_terms(self):
         """Repeated terms should generate PTR nodes for compression pointers."""

@@ -72,9 +72,9 @@ class TestBridgeAppCreation:
         app = create_app()
         routes = [r.path for r in app.routes]
         # The gateway registers a catch-all /{path:path} that proxies to Anthropic
-        assert (
-            "/{path:path}" in routes
-        ), f"Expected catch-all proxy route; got: {routes}"
+        assert "/{path:path}" in routes, (
+            f"Expected catch-all proxy route; got: {routes}"
+        )
 
     def test_bridge_session_default_values(self):
         from tok.gateway import BridgeSession

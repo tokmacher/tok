@@ -13,6 +13,13 @@ The first public release supports exactly this workflow:
 5. `tok bridge status` / `tok doctor` / `tok stats` to monitor
 6. `tok bridge stop` to end the session
 
+The default CLI help surface should reinforce that path by centering:
+
+- `tok install`
+- `tok bridge start|status|logs|stop`
+- `tok doctor`
+- `tok stats` / `tok savings`
+
 The only supported Python helper path in this release is:
 
 1. create one `RuntimeSession`
@@ -53,6 +60,7 @@ A public release requires:
 6. Coverage for the supported release surface stays at or above 80%
 7. Live Claude validation confirms the bridge-first workflow behaves correctly against a real session
 8. The release shape is narrow, explicit, and defensible
+9. The release candidate is cut from a clean, fully revalidated tree
 
 ## Deferred Follow-Ups
 

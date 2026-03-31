@@ -1242,9 +1242,9 @@ def _tool_family_incremental_headroom(
             family, {"count": 0, "incremental_headroom_chars": 0}
         )
         entry["count"] += 1
-        entry[
-            "incremental_headroom_chars"
-        ] += opportunity.incremental_headroom_chars
+        entry["incremental_headroom_chars"] += (
+            opportunity.incremental_headroom_chars
+        )
     return dict(
         sorted(
             buckets.items(),
@@ -1278,9 +1278,9 @@ def _hot_targets(
         )
         entry["tool_families"].add(opportunity.normalized_tool_identity)
         entry["count"] += 1
-        entry[
-            "incremental_headroom_chars"
-        ] += opportunity.incremental_headroom_chars
+        entry["incremental_headroom_chars"] += (
+            opportunity.incremental_headroom_chars
+        )
     ranked = sorted(
         targets.values(),
         key=lambda item: (item["incremental_headroom_chars"], item["count"]),

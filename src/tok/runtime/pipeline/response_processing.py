@@ -20,8 +20,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger("tok.runtime")
 
 
-def heal_drift(text: str, behavior_signals: dict[str, int]) -> str:
+def heal_drift(
+    text: str,
+    behavior_signals: dict[str, int],
+    *,
+    tool_compatible: bool = False,
+) -> str:
     """Wrap raw prose drift in a Tok envelope to ensure protocol adherence."""
+    if tool_compatible:
+        return text
     if behavior_signals.get("semantic_drift_detected") or behavior_signals.get(
         "non_tok_response"
     ):
@@ -366,6 +373,9 @@ def _parse_hybrid_tools(text: str) -> list[TokNode]:
                 )
                 args = json.loads(repaired)
             except Exception:
+                logger.debug(
+                    "Failed to repair hybrid tool JSON: %s", json_str[:80]
+                )
                 continue
 
         if isinstance(args, dict):

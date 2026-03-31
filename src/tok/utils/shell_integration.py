@@ -26,7 +26,7 @@ def detect_shell(shell_env: str | None = None) -> str:
         return name
     raise RuntimeError(
         "tok install currently supports zsh and bash. "
-        "Source tok_claude.sh manually for other shells."
+        "For other shells, source the installed tok_claude.sh path manually."
     )
 
 

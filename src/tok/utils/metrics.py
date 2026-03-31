@@ -286,7 +286,9 @@ def fallback_trends(window: int = 10) -> None:
             "direction": (
                 "regressing"
                 if avg_fallback > 3
-                else "improving" if avg_fallback <= 1 else "flat"
+                else "improving"
+                if avg_fallback <= 1
+                else "flat"
             ),
             "avg_fallback": round(avg_fallback, 1),
             "fallback_velocity": trend.get(
@@ -345,7 +347,9 @@ def health_summary(window: int = 10, export: str = "") -> None:
     savings_status = (
         "healthy"
         if avg_savings >= 20
-        else "watch" if avg_savings >= 10 else "unhealthy"
+        else "watch"
+        if avg_savings >= 10
+        else "unhealthy"
     )
     metrics.append(("Savings", f"{avg_savings}%", savings_status))
 
@@ -360,7 +364,9 @@ def health_summary(window: int = 10, export: str = "") -> None:
         pressure_status = (
             "healthy"
             if avg_pressure == 0
-            else "watch" if avg_pressure <= 3 else "unhealthy"
+            else "watch"
+            if avg_pressure <= 3
+            else "unhealthy"
         )
     metrics.append(("Pressure", pressure_display, pressure_status))
 
@@ -372,7 +378,9 @@ def health_summary(window: int = 10, export: str = "") -> None:
     trend_status = (
         "healthy"
         if trend["direction"] == "improving"
-        else "watch" if trend["direction"] == "flat" else "unhealthy"
+        else "watch"
+        if trend["direction"] == "flat"
+        else "unhealthy"
     )
     metrics.append(("Trend", trend["direction"], trend_status))
 
