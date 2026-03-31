@@ -33,6 +33,7 @@ class TokEvent(TypedDict):
 
 _CLIENT: httpx.AsyncClient | None = None
 _CLIENT_LOCK = asyncio.Lock()
+_CLEANUP_COMPLETED = False
 
 
 def get_client() -> httpx.AsyncClient:
@@ -47,28 +48,56 @@ def get_client() -> httpx.AsyncClient:
 
 
 async def cleanup_telemetry() -> None:
-    """Cleanup telemetry resources. Call this on application shutdown."""
-    global _CLIENT
-    if _CLIENT is not None:
-        try:
-            await _CLIENT.aclose()
-            logger.debug("Telemetry client closed")
-        except Exception as exc:
-            logger.debug("Error closing telemetry client: %s", exc)
-        finally:
-            _CLIENT = None
+    """Cleanup telemetry resources. Call this on application shutdown.
+    
+    This function is idempotent and can be called multiple times safely.
+    """
+    global _CLIENT, _CLEANUP_COMPLETED
+    
+    if _CLEANUP_COMPLETED or _CLIENT is None:
+        # Already cleaned up or nothing to clean
+        return
+        
+    try:
+        await _CLIENT.aclose()
+        logger.debug("Telemetry client closed")
+    except Exception as exc:
+        logger.debug("Error closing telemetry client: %s", exc)
+    finally:
+        _CLIENT = None
+        _CLEANUP_COMPLETED = True
 
 
 def _sync_cleanup() -> None:
-    """Synchronous cleanup for atexit handler."""
+    """Synchronous cleanup for atexit handler.
+    
+    Python 3.10+ compatible version that handles loop detection properly.
+    """
+    global _CLEANUP_COMPLETED
+    
+    if _CLEANUP_COMPLETED:
+        # Already cleaned up
+        return
+        
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If loop is running, schedule cleanup
+        # Python 3.10+ compatible way to handle event loops
+        try:
+            # Try to get the current running loop (Python 3.7+)
+            loop = asyncio.get_running_loop()
+            # If we get here, there's a running loop
             loop.create_task(cleanup_telemetry())
-        else:
-            # If no loop running, run cleanup synchronously
-            asyncio.run(cleanup_telemetry())
+        except RuntimeError:
+            # No running loop, create a new one for cleanup
+            try:
+                # Try to get any existing loop (Python 3.10+ compatible)
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(cleanup_telemetry())
+                else:
+                    asyncio.run(cleanup_telemetry())
+            except RuntimeError:
+                # No loop exists, create one and run cleanup
+                asyncio.run(cleanup_telemetry())
     except Exception as exc:
         logger.debug("Error in sync telemetry cleanup: %s", exc)
 

@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 
 from tok import shell_integration
@@ -58,12 +59,9 @@ def test_uninstall_removes_marked_block(tmp_path):
 
 
 def test_detect_shell_rejects_unsupported_shell():
-    try:
+    """Test that unsupported shells raise RuntimeError with appropriate message."""
+    with pytest.raises(RuntimeError, match=r"supports zsh and bash"):
         shell_integration.detect_shell("/opt/homebrew/bin/fish")
-    except RuntimeError as exc:
-        assert "supports zsh and bash" in str(exc)
-    else:
-        raise AssertionError("detect_shell should reject unsupported shells")
 
 
 def test_tok_claude_script_does_not_override_tok_cli():
