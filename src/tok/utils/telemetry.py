@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import datetime
 import logging
 import os
@@ -31,13 +32,49 @@ class TokEvent(TypedDict):
 
 
 _CLIENT: httpx.AsyncClient | None = None
+_CLIENT_LOCK = asyncio.Lock()
 
 
 def get_client() -> httpx.AsyncClient:
+    """Get or create the async HTTP client with proper lifecycle management."""
     global _CLIENT
     if _CLIENT is None:
-        _CLIENT = httpx.AsyncClient(timeout=2.0)
+        _CLIENT = httpx.AsyncClient(
+            timeout=2.0,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+        )
     return _CLIENT
+
+
+async def cleanup_telemetry() -> None:
+    """Cleanup telemetry resources. Call this on application shutdown."""
+    global _CLIENT
+    if _CLIENT is not None:
+        try:
+            await _CLIENT.aclose()
+            logger.debug("Telemetry client closed")
+        except Exception as exc:
+            logger.debug("Error closing telemetry client: %s", exc)
+        finally:
+            _CLIENT = None
+
+
+def _sync_cleanup() -> None:
+    """Synchronous cleanup for atexit handler."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is running, schedule cleanup
+            loop.create_task(cleanup_telemetry())
+        else:
+            # If no loop running, run cleanup synchronously
+            asyncio.run(cleanup_telemetry())
+    except Exception as exc:
+        logger.debug("Error in sync telemetry cleanup: %s", exc)
+
+
+# Register cleanup on exit
+atexit.register(_sync_cleanup)
 
 
 async def emit_event(
@@ -102,6 +139,7 @@ def emit_event_sync(
     try:
         # Use a short timeout to avoid hanging sync callers
         with httpx.Client(timeout=1.0) as client:
-            client.post(collector_url, json=event)
+            response = client.post(collector_url, json=event)
+            response.raise_for_status()
     except Exception as exc:
         logger.debug("Sync telemetry emission failed: %s", exc)

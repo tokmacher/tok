@@ -31,8 +31,10 @@ SECURITY_CONFIG = {
     "safety_db_url": "https://pyup.io/safety/api/v1/advisories/",
 }
 
-# Package name validation regex
-PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._-]+$')
+# Package name validation regex based on PyPI requirements
+# PyPI allows: letters, numbers, hyphens, underscores, and dots
+# Must start and end with letter or number, no consecutive special chars
+PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$')
 VERSION_REGEX = re.compile(r'^[a-zA-Z0-9._+-]+$')
 
 

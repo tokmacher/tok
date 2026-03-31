@@ -191,6 +191,7 @@ def install(
             raise RuntimeError(f"RC file too large: {rc_path} ({len(existing)} bytes)")
         
         # Write new content safely
+        temp_file = None
         try:
             prefix = "" if not existing or existing.endswith("\n") else "\n"
             new_content = existing + prefix + block
@@ -198,12 +199,34 @@ def install(
             # Write to temporary file first, then atomic rename
             temp_file = rc_path.with_suffix('.tmp')
             temp_file.write_text(new_content, encoding='utf-8')
-            temp_file.replace(rc_path)  # Atomic rename
+            
+            # Verify the temp file was written correctly
+            if not temp_file.exists():
+                raise RuntimeError("Failed to write temporary file")
+            
+            temp_size = temp_file.stat().st_size
+            if temp_size == 0:
+                raise RuntimeError("Temporary file is empty")
+            
+            # Atomic rename
+            temp_file.replace(rc_path)
+            
+            # Verify the operation succeeded
+            if not rc_path.exists():
+                raise RuntimeError("RC file not found after atomic rename")
             
             logger.info(f"Tok shell integration installed to {rc_path}")
             
         except (OSError, PermissionError) as e:
             raise RuntimeError(f"Failed to write RC file {rc_path}: {e}")
+        finally:
+            # Cleanup temporary file if it still exists
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                    logger.debug(f"Cleaned up temporary file: {temp_file}")
+                except OSError as e:
+                    logger.warning(f"Failed to cleanup temporary file {temp_file}: {e}")
         
         return rc_path
         
