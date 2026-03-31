@@ -744,7 +744,7 @@ def test_stress_harness_run_records_distinct_failures(tmp_path, monkeypatch):
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -887,7 +887,7 @@ def test_strict_gate_retries_until_fresh_evidence_and_creates_checkpoint(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -942,7 +942,7 @@ def test_reuse_task_flags_validated_target_reacquisition(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -997,7 +997,7 @@ def test_validated_target_reconfirmation_is_tracked_without_reacquisition_loop(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -1058,7 +1058,7 @@ def test_exact_target_reread_still_increments_fallback_pressure(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -1111,7 +1111,7 @@ def test_late_reconfirmation_failure_shape_can_be_graced_without_incrementing_fa
         StressHarnessConfig(fallback_threshold=1),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     assert (
@@ -1250,7 +1250,7 @@ def test_retry_prompt_uses_mixed_turn_template_for_late_validated_target(
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1306,7 +1306,7 @@ def test_retry_prompt_uses_toolless_template_for_late_validated_target(
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1363,7 +1363,7 @@ def test_retry_prompt_uses_exact_target_reread_template(tmp_path):
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1417,7 +1417,7 @@ def test_retry_prompt_preserves_late_validated_bad_args_guidance(
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1471,7 +1471,7 @@ def test_retry_prompt_mixed_turn_keeps_direct_answer_option_when_fresh_evidence_
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1525,7 +1525,7 @@ def test_retry_prompt_uses_early_answer_only_for_mixed_when_fresh_evidence_not_r
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1577,7 +1577,7 @@ def test_retry_prompt_preserves_generic_prompt_for_non_late_or_non_validated_ret
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1625,7 +1625,7 @@ def test_retry_prompt_uses_early_tool_only_for_mixed_when_fresh_evidence_require
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1678,7 +1678,7 @@ def test_retry_prompt_uses_tool_only_stage_for_late_generic_retry(tmp_path):
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1733,7 +1733,7 @@ def test_retry_prompt_uses_answer_only_stage_when_supporting_tool_backing_exists
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1786,7 +1786,7 @@ def test_retry_prompt_transitions_tool_only_retry_to_answer_only(tmp_path):
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     prompt, signals = harness._retry_prompt(
@@ -1827,7 +1827,7 @@ def test_tool_only_retry_stage_satisfaction_requires_one_clean_read_only_tool(
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     satisfied_turn = SimpleNamespace(
@@ -1869,7 +1869,7 @@ def test_answer_only_retry_stage_requires_two_line_answer_without_tools(
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     satisfied_turn = SimpleNamespace(
@@ -1899,7 +1899,7 @@ def test_first_irreversible_miss_kind_classifies_failure_shapes(tmp_path):
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     def turn(**kwargs):
@@ -1984,7 +1984,7 @@ def test_failed_task_summaries_and_locus_capture_retry_families(tmp_path):
         StressHarnessConfig(),
         client=_FakeClient([]),
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     turns = [
@@ -2061,7 +2061,7 @@ def test_repeat_tool_use_before_validation_does_not_count_as_reacquisition(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2100,7 +2100,7 @@ def test_anchor_seed_requires_direct_file_read_not_only_search(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2139,7 +2139,7 @@ def test_anchor_seed_succeeds_after_narrow_search_then_direct_read(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2185,7 +2185,7 @@ def test_repeated_seed_tool_use_after_evidence_counts_as_failure_pressure(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2258,7 +2258,7 @@ def test_later_tasks_wait_until_reuse_and_checkpoint_run(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2322,7 +2322,7 @@ def test_reuse_probe_from_memory_increments_success_without_reacquisition(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2389,7 +2389,7 @@ def test_reuse_probe_tool_use_triggers_reacquisition_loop(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2485,7 +2485,7 @@ def test_retention_probe_can_trigger_latest_anchor_substitution(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2595,7 +2595,7 @@ def test_early_retention_probe_runs_before_payload_pressure(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2729,7 +2729,7 @@ def test_tool_contract_probe_runs_before_fresh_anchor_runtime(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2836,7 +2836,7 @@ def test_early_retention_probe_can_hold_and_set_retention_surface_held(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -2961,7 +2961,7 @@ def test_late_retention_probe_runs_before_fallback_and_can_hold(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -3082,7 +3082,7 @@ def test_late_retention_probe_tool_use_does_not_count_as_success(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -3134,7 +3134,7 @@ def test_missing_memory_classes_without_probes_are_diagnosed_as_unexercised(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -3213,7 +3213,7 @@ def test_payload_eligibility_distinguishes_high_bytes_from_compaction_ready(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -3252,7 +3252,7 @@ def test_early_baseline_is_diagnosed_as_early_contract_collapse(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -3294,7 +3294,7 @@ def test_early_baseline_can_identify_answer_assembly_failure(
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()
@@ -3346,7 +3346,7 @@ def test_first_checkpoint_can_trigger_retention_loss(tmp_path, monkeypatch):
         config,
         client=client,
         session=RuntimeSession(memory_dir=tmp_path),
-        workspace_root=Path("/Users/jfj/Desktop/tok"),
+        workspace_root=Path(__file__).parent.parent.parent,
     )
 
     result = harness.run()

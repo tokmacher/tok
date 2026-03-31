@@ -11,7 +11,7 @@ Registration (add to ~/.claude/settings.json under "hooks"):
             "hooks": [
                 {
                     "type": "command",
-                    "command": "cd /Users/jfj/Desktop/tok && uv run python scripts/tok_compress_hook.py"
+                    "command": "cd $TOK_ROOT && uv run python scripts/tok_compress_hook.py"
                 }
             ]
         }

@@ -9,11 +9,11 @@ from tok.compression import _detect_tool_content_type, tok_tool_result
 def test_stack_trace_filtering():
     trace = (
         "Traceback (most recent call last):\n"
-        '  File "/Users/jfj/Desktop/tok/main.py", line 10, in main\n'
+        '  File "main.py", line 10, in main\n'
         "    run_app()\n"
-        '  File "/Users/jfj/Desktop/tok/app.py", line 20, in run_app\n'
+        '  File "app.py", line 20, in run_app\n'
         "    process_data()\n"
-        '  File "/Users/jfj/Desktop/tok/venv/lib/python3.11/site-packages/library/core.py", line 50, in process_data\n'
+        '  File "venv/lib/python3.11/site-packages/library/core.py", line 50, in process_data\n'
         '    raise ValueError("Invalid data")\n'
         "ValueError: Invalid data"
     )
@@ -52,7 +52,7 @@ def test_ps_output_compression():
 
 
 def test_env_output_compression():
-    env_out = "PATH=/usr/bin:/bin\nHOME=/Users/jfj\nUSER=jfj\nSECRET_API_KEY=sk-12345\nLESS_IMPORTANT=ignored\n"
+    env_out = "PATH=/usr/bin:/bin\nHOME=/tmp\nUSER=testuser\nSECRET_API_KEY=sk-12345\nLESS_IMPORTANT=ignored\n"
     env_out += "PADDING=more data\n" * 100
     compressed = tok_tool_result(env_out)
     assert ">>> tool:env" in compressed

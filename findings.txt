@@ -1,0 +1,142 @@
+# Open Source Release Preparation Findings
+
+## Current State
+
+The repo is close to release-ready. Licensing (Apache 2.0), documentation, CI/CD, and secret hygiene are all in good shape. The main work is cleaning up developer-specific artifacts and hardening the dependency strategy.
+
+---
+
+## HIGH Priority - Must Fix Before Release
+
+### Hardcoded Paths
+
+Multiple files contain your local path `/Users/jfj/Desktop/tok`. These must be replaced with relative paths, environment variables, or `pathlib.Path` resolution.
+
+| File | Lines | Details |
+|------|-------|---------|
+| tests/unit/test_stress_harness.py | ~40+ locations | Hardcoded workspace_root in test parameters |
+| src/tok/neuro/monitor.py | 92-93 | Hardcoded paths to `execution.log`, `macros.tok` |
+| scripts/parse_tok_logs.py | 5-6 | Hardcoded paths to `tokviz.txt`, `viz/tok_metrics.json` |
+| scripts/tok_compress_hook.py | 14, 90 | Hardcoded paths |
+| tests/unit/test_gateway.py | 1676 | Hardcoded path in test assertion |
+| tests/unit/test_phase8.py | 54 | Hardcoded path |
+
+### CLAUDE.md Inclusion Decision
+
+CLAUDE.md is an AI assistant instruction file. Decide whether to:
+- Exclude from release (add to .gitignore or remove)
+- Keep as a reference for contributors using AI tools
+
+---
+
+## Dependency Update Strategy
+
+### Current Setup
+- Dependabot: configured in `.github/dependabot.yml`, runs weekly
+- Dependencies: version upper bounds in `pyproject.toml` (good)
+- uv.lock: pins exact versions for deterministic builds (good)
+
+### Recommendation: Time-Gate Package Updates
+
+Option 1: Disable Dependabot entirely
+  - Pros: Zero surprise breakage, full manual control
+  - Cons: Miss security patches, stale dependencies
+
+Option 2: Reduce Dependabot frequency to monthly or quarterly
+  - Change `schedule.interval` in dependabot.yml from `weekly` to `monthly`
+  - Pros: Still get updates, less churn
+  - Cons: Still some risk of breaking changes
+
+Option 3: Time-gate uv/pip resolution (your 90-day idea)
+  - Add a policy that dependencies must be at least 90 days old before adoption
+  - Implementation: pin versions in pyproject.toml and only bump after the gating period
+  - Could automate with a script that checks release dates before allowing upgrades
+  - Pros: Protects against freshly-introduced supply chain attacks and regressions
+  - Cons: More manual work to maintain
+
+Option 4: Combine approaches (recommended)
+  - Set Dependabot to monthly
+  - Manually review and test each bump
+  - Keep upper bounds on all dependencies
+  - For critical deps (httpx, openai, etc.), require 90-day lag before adopting new versions
+
+---
+
+## MEDIUM Priority
+
+### Test Mock API Key
+- tests/unit/test_advanced_compression.py line 55: `SECRET_API_KEY=sk-12345`
+- This is a mock key for testing environment variable parsing
+- Acceptable as-is, but the `sk-` prefix mimics real OpenAI key format
+- Consider using an obviously fake format like `test-key-not-real` instead
+
+### Copyright Consistency
+- LICENSE line 189: "Copyright 2026 Tok Contributors"
+- NOTICE line 2: "Copyright 2026 Tok Team"
+- These are inconsistent (Contributors vs Team). Pick one.
+
+---
+
+## LOW Priority - Niche Maintainability Items
+
+### No Changelog Automation
+- CHANGELOG.md is updated manually
+- Consider using `towncrier` or `keep-a-changelog` tooling for auto-generation from PR labels
+
+### No Docs Auto-Generation
+- All docs are manual markdown in docs/
+- Consider adding Sphinx or MkDocs for API reference generation from docstrings
+- Lower priority since the docs are well-written and current
+
+### No tox / Nox for Local Multi-Version Testing
+- CI tests on Python 3.10-3.12, but no local multi-version tool
+- `tox.ini` or `noxfile.py` would let contributors test across versions locally
+
+### CLI Without a Framework
+- src/tok/__main__.py uses argparse directly
+- Not a bug, but a maintainability consideration as CLI grows
+- `click` or `typer` would give better help text, completion, and subcommand handling
+
+### No Pre-Commit Hook for Tests
+- .pre-commit-config.yaml runs linting and formatting
+- But does not run the test suite before commits
+- Consider adding a `pytest --quiet` hook for changed files
+
+### scripts/ Directory
+- Contains ad-hoc scripts (parse_tok_logs.py, tok_compress_hook.py, pr-comment.py)
+- These reference hardcoded paths and may be developer-specific
+- Decide whether to include, document, or exclude from the release
+- If included, make paths configurable via CLI args or env vars
+
+### data/validation_dataset.json
+- 16,610 lines of synthetic validation data
+- Consider whether this belongs in the repo or should be downloaded separately
+- Bloats the repo size; could be hosted as a release artifact instead
+
+---
+
+## Already Good (No Action Needed)
+
+- Apache 2.0 license properly applied and declared in pyproject.toml
+- All standard OSS docs present: README, CONTRIBUTING, DEVELOPMENT, SECURITY, CODE_OF_CONDUCT, CHANGELOG
+- CI/CD: lint, type check, test on multiple Python versions and OSes
+- Release workflow uses PyPI trusted publishing (no secrets in CI)
+- Security workflow includes CodeQL and dependency review
+- No real secrets or credentials in the codebase
+- Test data is synthetic and generic
+- Version properly declared (0.1.0)
+- Dependencies have upper bounds
+- .gitignore covers runtime artifacts (telemetry.db, memory.tok, execution.log, gate-config.json)
+
+---
+
+## Pre-Release Checklist
+
+- [x] Replace all hardcoded `/Users/jfj/Desktop/tok` paths
+- [x] CLAUDE.md already in .gitignore (excluded from release)
+- [ ] Decide on dependency update strategy (time-gating, frequency, etc.)
+- [x] scripts/ paths now configurable via CLI args or env vars
+- [x] Fix copyright notice inconsistency (now both say "Contributors")
+- [ ] Consider replacing mock key format in tests
+- [ ] Review data/validation_dataset.json for repo size impact
+- [ ] Final review of all files for anything personal or internal

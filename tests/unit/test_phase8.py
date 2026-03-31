@@ -51,7 +51,7 @@ class TestSemanticValidator:
 class TestBridgeMemoryPointers:
     def test_wire_state_with_pointers(self):
         state = BridgeMemoryState()
-        long_path = "/Users/jfj/Desktop/tok/src/tok/universal_runtime.py"
+        long_path = "src/tok/universal_runtime.py"
         state.hot["files"] = [MemoryEntry(value=long_path)]
 
         wire = state.wire_state()

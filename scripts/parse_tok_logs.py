@@ -1,9 +1,13 @@
 import re
 import json
 import os
+from pathlib import Path
 
-LOG_FILE = "/Users/jfj/Desktop/tok/tokviz.txt"
-OUTPUT_FILE = "/Users/jfj/Desktop/tok/viz/tok_metrics.json"
+SCRIPT_DIR = Path(__file__).parent
+LOG_FILE = os.environ.get("TOK_VIS_LOG", SCRIPT_DIR.parent / "tokviz.txt")
+OUTPUT_FILE = os.environ.get(
+    "TOK_VIS_OUTPUT", SCRIPT_DIR.parent / "viz" / "tok_metrics.json"
+)
 
 
 def parse_logs():

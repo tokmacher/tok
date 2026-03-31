@@ -1,0 +1,267 @@
+# Tok Public Release Plan
+
+## Executive Summary
+This plan outlines the remaining tasks needed to prepare the Tok repository for public open source release. The repository is substantially ready with most infrastructure in place, but several critical blockers remain.
+
+## Critical Blockers (Must Fix)
+
+### 1. Repository Hygiene Issues
+**Status**: NEEDS WORK
+- Files present that should be gitignored: `.DS_Store`, `telemetry.db`, `execution.log`, `memory.tok`, `gate-config.json`
+- Internal files in repo: `CLAUDE.md`, `roadmap.md`, `human_checklist.txt`, `refactoring_plan.txt`, `release-plan.txt`, `release_ready.txt`
+- `archive/` directory contains research artifacts not meant for public release
+
+**Actions**:
+```bash
+# Remove files from git tracking
+git rm --cached $(git ls-files | grep -E "\.DS_Store|telemetry\.db|execution\.log|memory\.tok|gate-config\.json|CLAUDE\.md|roadmap\.md|human_checklist\.txt|refactoring_plan\.txt|release-plan\.txt|release_ready\.txt")
+git rm -r --cached archive/
+
+# Ensure .gitignore is working
+git status
+```
+
+**Deadline**: Before any other release activities
+
+### 2. Test Coverage Below Target
+**Status**: CRITICAL
+- Current coverage: 71.39% (line-rate="0.7139")
+- Target requirement: 80% (from release-checklist.md and CI)
+- Gap: ~8.6% additional coverage needed
+
+**Actions**:
+- Run `pytest tests/unit tests/integration -v --cov=src/tok --cov-report=term-missing` to identify uncovered modules
+- Prioritize testing modules with lowest coverage
+- Focus on release surface: `src/tok/cli`, `src/tok/gateway`, `src/tok/runtime/core`
+
+**Deadline**: Must complete before CI gate check
+
+**Success Criteria**: Coverage ≥ 80%
+
+## High Priority Items
+
+### 3. Release Readiness Audit Follow-up
+**Status**: MOSTLY COMPLETE
+From `release_ready.txt` audit:
+
+✅ **Fixed**:
+- License mismatch (Apache 2.0 confirmed)
+- Python version inconsistency (3.10+ confirmed)
+- Issue/PR templates added
+- SECURITY.md updated with contact
+- NOTICE file added
+- CI tests on both Ubuntu and macOS
+
+❌ **Remaining**:
+- Exception hierarchy creation needed:
+  - Create `src/tok/exceptions.py` with:
+    - `TokError(Exception)`
+    - `CompressionError(TokError)`
+    - `SessionError(TokError)`
+    - `BridgeUnavailableError(TokError)`
+    - `ReplayGateError(TokError)`
+    - `InvalidSessionStateError(TokError)`
+  - Add to `src/tok/__init__.py`'s `__all__` and `_SYMBOLS`
+
+**Actions**:
+```bash
+# Create exception hierarchy
+cat > src/tok/exceptions.py << 'EOF'
+"""Tok-specific exceptions."""
+
+class TokError(Exception):
+    """Base exception for Tok-specific errors."""
+    pass
+
+
+class CompressionError(TokError):
+    """Raised when compression fails."""
+    pass
+
+
+class SessionError(TokError):
+    """Raised when session state is invalid or expired."""
+    pass
+
+
+class BridgeUnavailableError(TokError):
+    """Raised when the bridge is not available."""
+    pass
+
+
+class ReplayGateError(TokError):
+    """Raised when replay gating fails."""
+    pass
+
+
+class InvalidSessionStateError(TokError):
+    """Raised when session state is invalid."""
+    pass
+EOF
+
+# Update __init__.py to include exceptions
+# Add to _SYMBOLS:
+#   "TokError": (".exceptions", "TokError"),
+#   "CompressionError": (".exceptions", "CompressionError"),
+#   "SessionError": (".exceptions", "SessionError"),
+#   "BridgeUnavailableError": (".exceptions", "BridgeUnavailableError"),
+#   "ReplayGateError": (".exceptions", "ReplayGateError"),
+#   "InvalidSessionStateError": (".exceptions", "InvalidSessionStateError"),
+# Add to __all__:
+#   "TokError", "CompressionError", "SessionError", "BridgeUnavailableError", 
+#   "ReplayGateError", "InvalidSessionStateError"
+```
+
+**Deadline**: Before final testing
+
+### 4. Documentation Updates
+**Status**: NEEDS REVIEW
+- **README.md**: Badges are present - verify they resolve correctly
+- **CHANGELOG.md**: Update to reflect current test count (903 tests, not "46 new unit tests")
+- **Examples**: Verify only supported examples remain
+
+**Actions**:
+```bash
+# Verify README badges are working
+# Test PyPI badge: https://pypi.org/project/tok-protocol/
+# Test CI badge: https://github.com/tokmacher/tok/actions/workflows/ci.yml
+# Test Python badge: https://img.shields.io/pypi/pyversions/tok-protocol.svg
+# Test License badge: https://img.shields.io/badge/License-Apache%202.0-blue.svg
+
+# Update CHANGELOG.md test count
+# Find "46 new unit tests" and replace with "903 test functions"
+```
+
+**Deadline**: Before release tagging
+
+## Medium Priority Items
+
+### 5. Code Quality Refinements
+**Status**: OPTIONAL
+- **Ruff configuration**: Consider removing ignored rules (E722, B904, E721) that mask potential bugs
+- **uv.lock synchronization**: Ensure all docs reference uv for consistency
+
+**Actions** (Optional):
+```bash
+# Consider updating .ruff.lint.ignore in pyproject.toml
+# Remove at minimum: E722, B904, E721
+```
+
+**Deadline**: Post-release, can be deferred
+
+### 6. Testing Infrastructure Verification
+**Status**: VERIFIED
+- **903 test functions** across 63 files ✅
+- **Replay fixtures** system in place ✅
+- **CI coverage gate** at 80% ❌ (needs fixing)
+- **Live API tests** properly marked with `@pytest.mark.live` ✅
+
+**Actions**:
+- Coverage gate is main concern
+- All other testing infrastructure is excellent
+
+### 7. CI/CD Pipeline Verification
+**Status**: VERIFIED
+- **CI workflow**: Comprehensive (lint, typecheck, test, build) ✅
+- **Release workflow**: Automated PyPI publishing via trusted publishing ✅
+- **Security workflow**: Dependency review and CodeQL analysis ✅
+
+**Actions**:
+- No changes needed - all workflows properly configured
+
+## Low Priority Items
+
+### 8. Additional Enhancements
+**Status**: FUTURE
+- **Dependency upper bounds**: Optional for 0.1.0
+- **Windows support**: Not in scope for 0.1.0
+- **Visual dashboards**: Not in scope for 0.1.0
+
+**Actions**:
+- Document for future releases
+- No action needed for 0.1.0
+
+## Verification Checklist
+
+Before release, ensure:
+
+### Pre-Release Must-Haves
+- [ ] All CI checks pass on `main` branch
+- [ ] Test coverage reaches 80% (currently 71.39%)
+- [ ] No hardcoded secrets or credentials
+- [ ] Internal files removed from git tracking
+- [ ] LICENSE, CODE_OF_CONDUCT, CONTRIBUTING, SECURITY files present
+- [ ] Clean-room install verification works
+- [ ] Bridge-first workflow validated against real Claude Code session
+
+### Release Day Actions
+- [ ] Update CHANGELOG.md with release date
+- [ ] Update version in `__init__.py` and `pyproject.toml`
+- [ ] Run full validation flow:
+  ```bash
+  pre-commit run --all-files
+  python scripts/check_repo_hygiene.py
+  uv run pytest tests/unit tests/integration -v -x --cov=src/tok --cov-report=term-missing --cov-fail-under=80
+  uv run ruff check src/tok tests
+  uv run mypy src/tok/
+  python -m build
+  ```
+- [ ] Tag release: `git tag v0.1.0`
+- [ ] Push tag: `git push origin v0.1.0`
+- [ ] Monitor Release GitHub Action
+- [ ] Verify PyPI publication
+- [ ] Verify GitHub Release
+
+### Post-Release
+- [ ] Verify package on PyPI
+- [ ] Verify README renders correctly on PyPI
+- [ ] Update any internal references to new version
+- [ ] Announce if appropriate
+
+## Execution Timeline
+
+### Phase 1: Immediate Fixes (1-2 hours)
+1. Remove internal files from git tracking
+2. Increase test coverage to 80%
+3. Create exception hierarchy
+4. Update CHANGELOG.md
+
+### Phase 2: Final Verification (1-2 hours)
+1. Run full validation flow
+2. Clean-room install verification
+3. Live Claude Code bridge validation
+4. Verify all documentation
+
+### Phase 3: Release (30 minutes)
+1. Final git status check
+2. Tag and push release
+3. Monitor automated workflows
+4. Verify release artifacts
+
+## Success Criteria
+
+**Release is ready when:**
+- All "Pre-Release Must-Haves" are checked ✅
+- Test coverage ≥ 80%
+- No internal files in public repository
+- Clean-room install passes all README instructions
+- All CI workflows are green on `main`
+
+## Risk Mitigation
+
+- **Coverage risk**: If coverage cannot reach 80%, document why and consider adjusting threshold or marking specific modules as excluded
+- **Documentation risk**: All docs changes are reversible if issues found
+- **Git hygiene risk**: All file removals can be undone with `git checkout` if needed
+- **Release rollbacks**: Can delete GitHub Release and PyPI version if critical issues found
+
+## Dependencies
+
+- None - all work can be done by maintainer with appropriate permissions
+- GitHub repository must be configured for:
+  - PyPI trusted publishing
+  - GitHub Pages for docs (if using)
+  - Security scanning if enabled
+
+## Notes
+
+This plan assumes the repository is already targeting `tokmacher` organization and the codebase has been validated through internal testing cycles. The focus is specifically on making the repository suitable for public consumption.

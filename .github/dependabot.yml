@@ -4,12 +4,37 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 3
     labels:
       - "dependencies"
+      - "security-review-required"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    allow:
+      - dependency-type: "production"
+      - dependency-type: "development"
+    assignees:
+      - "tok-team"
+    reviewers:
+      - "tok-team"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 2
     labels:
       - "dependencies"
       - "github-actions"
+      - "security-review-required"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    assignees:
+      - "tok-team"
+    reviewers:
+      - "tok-team"
