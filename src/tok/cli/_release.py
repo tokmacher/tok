@@ -59,9 +59,14 @@ def stats_command(
     recent: int | None = None,
     since: str | None = None,
     window: int = 5,
+    reset: bool = False,
 ) -> None:
     """Show token savings and fallback state."""
     tracker = SavingsTracker()
+    if reset:
+        tracker.reset_ledger()
+        console.print("[green]Lifetime stats have been reset.[/green]")
+        return
     session_summary = tracker.session_summary()
     lifetime_summary = tracker.lifetime_summary()
     last_completed = tracker.last_session_summary()

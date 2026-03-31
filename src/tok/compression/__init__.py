@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import time as time_module
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,6 +53,22 @@ FILE_LIKE_TOOLS = frozenset(
         "cat",
         "open_file",
         "get_file",
+    }
+)
+
+COMMAND_LIKE_TOOLS = frozenset(
+    {
+        "bash",
+        "run_terminal",
+        "run",
+        "shell",
+        "sh",
+        "zsh",
+        "bash_script",
+        "execute_command",
+        "cmd",
+        "terminal",
+        "exec",
     }
 )
 
@@ -237,6 +254,7 @@ Recent responses show protocol drift. Strict compliance required:
 _STABLE_RESULT_EXPLANATION = (
     "@stable_result(hash:...) means the tool output is identical to a previous turn."
     " Treat it as: the state is unchanged, no new information."
+    " For exploration: try different search patterns, read different sections, or use unique queries."
 )
 
 # Minimum content length to be eligible for semantic hash deduplication.
@@ -454,6 +472,8 @@ def _apply_result_cache(
     context: dict[str, Any],
     result_cache: dict[str, tuple[str, str]],
     compression_level: str = "balanced",
+    bypass_cache: bool = False,
+    ttl_seconds: int = 1800,
 ) -> tuple[str, int]:
     """Apply general result cache dedup for any tool result.
 
@@ -461,6 +481,11 @@ def _apply_result_cache(
     """
     tool_name = context.get("name")
     normalized_tool_name = str(tool_name or "").lower()
+
+    if bypass_cache or normalized_tool_name in COMMAND_LIKE_TOOLS:
+        compressed = tok_tool_result(raw, compression_level=compression_level)
+        return compressed, len(raw) - len(compressed)
+
     args_str = json.dumps(context.get("args"), sort_keys=True)
     raw_cache_key = f"{tool_name}:{args_str}"
     cache_key = hashlib.sha256(raw_cache_key.encode()).hexdigest()[:12]
@@ -469,7 +494,7 @@ def _apply_result_cache(
     content_hash = hashlib.sha256(raw.encode()).hexdigest()[:8]
 
     if cache_key not in result_cache:
-        result_cache[cache_key] = (content_hash, raw)
+        result_cache[cache_key] = (content_hash, raw, time_module.time())
         if len(result_cache) > 256:
             oldest = next(iter(result_cache))
             del result_cache[oldest]
@@ -483,7 +508,20 @@ def _apply_result_cache(
             )
         return compressed, len(raw) - len(compressed)
 
-    cached_hash, cached_raw = result_cache[cache_key]
+    cached_entry = result_cache[cache_key]
+    if len(cached_entry) == 3:
+        cached_hash, cached_raw, timestamp = cached_entry
+        if time_module.time() - timestamp > ttl_seconds:
+            result_cache[cache_key] = (content_hash, raw, time_module.time())
+            compressed = tok_tool_result(
+                raw, compression_level=compression_level
+            )
+            return compressed, len(raw) - len(compressed)
+    elif len(cached_entry) == 2:
+        cached_hash, cached_raw = cached_entry
+    else:
+        cached_hash = cached_entry[0] if cached_entry else ""
+        cached_raw = ""
 
     if normalized_error:
         cached_normalized = _normalize_error_content(cached_raw)
@@ -502,7 +540,7 @@ def _apply_result_cache(
     diff_lines = list(difflib.unified_diff(old_lines, new_lines))
     diff_text = "".join(diff_lines)
 
-    result_cache[cache_key] = (content_hash, raw)
+    result_cache[cache_key] = (content_hash, raw, time_module.time())
 
     if not diff_lines or len(diff_text) >= 0.7 * len(raw):
         if normalized_error:
@@ -577,6 +615,7 @@ def compress_tool_results(
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
+    bypass_result_cache: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
@@ -587,6 +626,7 @@ def compress_tool_results(
         tool_use_id_to_context=tool_use_id_to_context,
         compression_level=compression_level,
         semantic_hash_cache=semantic_hash_cache,
+        bypass_result_cache=bypass_result_cache,
     )
 
 

@@ -186,6 +186,7 @@ Recent responses show protocol drift. Strict compliance required:
 _STABLE_RESULT_EXPLANATION = (
     "@stable_result(hash:...) means the tool output is identical to a previous turn."
     " Treat it as: the state is unchanged, no new information."
+    " For exploration: try different search patterns, read different sections, or use unique queries."
 )
 
 # Minimum content length to be eligible for semantic hash deduplication.

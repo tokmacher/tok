@@ -10,6 +10,7 @@ from typing import Any
 
 import tok.compression as _compression
 from . import (
+    COMMAND_LIKE_TOOLS,
     EDIT_LIKE_TOOLS,
     FILE_LIKE_TOOLS,
     QUESTION_PREFIXES,
@@ -32,6 +33,7 @@ from . import (
     logger,
     text_of,
 )
+from ..runtime.config import RESULT_CACHE_TTL_SECONDS
 
 globals().update(vars(_compression))
 
@@ -483,6 +485,7 @@ def compress_tool_results_impl(
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
+    bypass_result_cache: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     breakdown: dict[str, int] = {}
@@ -503,6 +506,8 @@ def compress_tool_results_impl(
                         context,
                         result_cache,
                         compression_level=compression_level,
+                        bypass_cache=bypass_result_cache,
+                        ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                     )
                     if saved > 0:
                         kind = _detect_tool_content_type_impl(content)
@@ -547,7 +552,11 @@ def compress_tool_results_impl(
                     else:
                         semantic_hash_cache[cache_key] = content_hash
 
-            if result_cache is not None and tool_use_id_to_context is not None:
+            if (
+                result_cache is not None
+                and tool_use_id_to_context is not None
+                and not bypass_result_cache
+            ):
                 tool_id = block.get("tool_use_id", "")
                 context = tool_use_id_to_context.get(tool_id)
 
@@ -557,6 +566,8 @@ def compress_tool_results_impl(
                         context,
                         result_cache,
                         compression_level=compression_level,
+                        bypass_cache=bypass_result_cache,
+                        ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                     )
                     if saved > 0:
                         kind = _detect_tool_content_type_impl(raw)

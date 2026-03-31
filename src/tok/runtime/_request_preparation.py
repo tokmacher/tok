@@ -400,6 +400,10 @@ def prepare_request_impl(
         runtime_hints = (
             [_speculative_macro_hint] if _speculative_macro_hint else []
         )
+        # Add hint for exploring large files efficiently
+        from ..runtime.config import TOK_LARGE_FILE_HINT
+
+        runtime_hints.append(TOK_LARGE_FILE_HINT)
         answer_ready = False
         resend_signals = {}
         has_answer_anchor = False

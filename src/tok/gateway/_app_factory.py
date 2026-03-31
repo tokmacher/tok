@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+import httpcore
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
@@ -47,9 +48,14 @@ async def buffer_strip_restream_impl(
     """Buffer the full SSE stream, translate Tok -> readable English/tool_use, re-emit."""
     try:
         raw = b""
-        async for chunk in response.aiter_bytes():
-            raw += chunk
-
+        try:
+            async for chunk in response.aiter_bytes():
+                raw += chunk
+        except (httpx.ReadError, httpcore.ReadError) as e:
+            logger.warning(
+                "Stream read error during buffering, emitting partial content: %s",
+                str(e),
+            )
         text = raw.decode("utf-8", errors="replace")
         sse_events = text.split("\n\n")
 
@@ -286,6 +292,7 @@ async def buffer_strip_restream_impl(
             except (json.JSONDecodeError, KeyError):
                 yield (event_str + "\n\n").encode()
     finally:
+        await response.aclose()
         await client.aclose()
 
 
@@ -718,7 +725,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     behavior_signals["unexpected_error"] = 1
                     _record_fallback_once(session, request_state)
                 else:
-                    logger.error("Unexpected error in request processing: %s", exc)
+                    logger.error(
+                        "Unexpected error in request processing: %s", exc
+                    )
                     raise
 
         target_url = f"{ANTHROPIC_API_BASE}/{path}"
@@ -780,7 +789,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                 session,
                                 client,
                                 response,
-                                input_saved_tokens=saved_toks if compressed else 0,
+                                input_saved_tokens=saved_toks
+                                if compressed
+                                else 0,
                                 type_breakdown=tool_breakdown
                                 if compressed
                                 else None,
@@ -798,10 +809,59 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         )
                 except Exception as e:
                     logger.error(
-                        "Streaming error in Tok bridge: %s", str(e), exc_info=True
+                        "Streaming error in Tok bridge: %s",
+                        str(e),
+                        exc_info=True,
                     )
-                    # Client is automatically closed by context manager
-                    # No need to manually call client.aclose()
+                    if session.fail_open:
+                        logger.warning(
+                            "Streaming error - fail-open: retrying without Tok"
+                        )
+                        compressed = False
+                        saved_toks = 0
+                        tool_breakdown = {}
+                        behavior_signals = {
+                            "streaming_error_retry": 1,
+                        }
+                        async with httpx.AsyncClient(
+                            timeout=300.0
+                        ) as retry_client:
+                            (
+                                response,
+                                retried,
+                            ) = await _send_with_tok_fail_open_retry(
+                                retry_client,
+                                method=request.method,
+                                url=target_url,
+                                headers=headers,
+                                content=original_body_bytes,
+                                original_content=original_body_bytes,
+                                stream=True,
+                                compressed_request=False,
+                            )
+                            if path == "v1/messages":
+                                return StreamingResponse(
+                                    buffer_strip_restream_impl(
+                                        session,
+                                        retry_client,
+                                        response,
+                                        input_saved_tokens=0,
+                                        type_breakdown=None,
+                                        behavior_signals=behavior_signals,
+                                        prompt_metrics=None,
+                                        tool_compatible=request_tool_compatible,
+                                    ),
+                                    status_code=response.status_code,
+                                    headers=_safe_headers(response.headers),
+                                    media_type=response.headers.get(
+                                        "content-type", "text/event-stream"
+                                    ),
+                                )
+                    return Response(
+                        content=f"Streaming error: {str(e)}",
+                        status_code=502,
+                        media_type="text/plain",
+                    )
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             (
@@ -852,17 +912,19 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     passthrough_blocks = [
                         block
                         for block in resp_json.get("content", [])
-                        if block.get("type") != "text"
+                        if isinstance(block, dict) and block.get("type") != "text"
                     ]
 
                     logger.info(
                         "Raw response content: %s",
-                        resp_json.get("content", [])[:3],
+                        resp_json.get("content", [])[:3] if resp_json.get("content") else [],
                     )
 
                     for block in resp_json.get("content", []):
-                        if block.get("type") == "text":
-                            full_response_text += block["text"]
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text_content = block.get("text")
+                            if isinstance(text_content, str):
+                                full_response_text += text_content
 
                     response_signals: dict[str, int] = {}
                     if full_response_text:

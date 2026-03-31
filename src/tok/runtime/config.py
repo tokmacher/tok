@@ -6,6 +6,8 @@ from .policy.smart_policy import MemoryProjectionProfile
 
 TTL_SECONDS = {"1h": 3600, "30m": 1800, "15m": 900, "5m": 300, "1m": 60}
 
+RESULT_CACHE_TTL_SECONDS: int = int(os.getenv("TOK_RESULT_CACHE_TTL", "1800"))
+
 # Consecutive fail-open events in a session that trigger automatic baseline degradation.
 _FALLBACK_THRESHOLD: int = int(os.getenv("TOK_FALLBACK_THRESHOLD", "3"))
 
@@ -109,6 +111,10 @@ TOK_NEIGHBORHOOD_THRASH_HINT = (
     "You've explored multiple files in {neighborhood} without new findings. "
     "Synthesize what you have or choose one genuinely new target."
 )
+TOK_LARGE_FILE_HINT = (
+    "For files >500 lines, use session.explore_file(path) or session.get_file_overview(path) "
+    "to get a Tok-formatted overview before reading specific sections with Read(offset=X, limit=Y)."
+)
 TOK_NEIGHBORHOOD_TRIGGER_ANCHORS: int = int(
     os.getenv("TOK_NEIGHBORHOOD_TRIGGER_ANCHORS", "3")
 )
@@ -148,6 +154,7 @@ DIFF_RATIO_THRESHOLD: float = 0.7
 
 __all__ = [
     "TTL_SECONDS",
+    "RESULT_CACHE_TTL_SECONDS",
     "_FALLBACK_THRESHOLD",
     "_PROJECT_MARKER_FILES",
     "TOOL_DENSITY_THRESHOLD",
@@ -175,6 +182,7 @@ __all__ = [
     "LATE_ANSWER_FOLLOWTHROUGH_HINT",
     "TOK_NOVELTY_REQUIRED_HINT",
     "TOK_NEIGHBORHOOD_THRASH_HINT",
+    "TOK_LARGE_FILE_HINT",
     "TOK_NEIGHBORHOOD_TRIGGER_ANCHORS",
     "TOK_NEIGHBORHOOD_WINDOW_TURNS",
     "_TOOL_REQUIRED_PROMPT_PATTERNS",

@@ -58,6 +58,7 @@ from .policy.smart_policy import (
 from ..neuro.ir import Instruction
 from .config import (
     _FALLBACK_THRESHOLD,
+    RESULT_CACHE_TTL_SECONDS,
     TOOL_DENSITY_THRESHOLD,
     TOOL_COMPAT_MEMORY_PROFILE,
     TOK_HOT_COMMAND_MAX_CHARS,
@@ -94,12 +95,18 @@ from .pipeline.request_validation import (
 )
 from .pipeline.tool_processing import (
     build_tool_use_id_to_context,
+    count_tokens,
+    logical_target_key_from_context,
     normalize_tool_events,
     collect_behavior_signals,
     _count_tool_density,
     _should_skip_history_rewrite,
-    count_tokens,
-    logical_target_key_from_context,
+)
+from ..explorer import (
+    explore_file,
+    explore_module,
+    get_file_overview,
+    list_large_files,
 )
 from .repeat_targets import (
     HotSummaryRecord,
@@ -375,13 +382,26 @@ class RuntimeSession:
 
     def _load_result_cache(self) -> dict[str, Any]:
         """Load result cache from persisted file."""
+        import time as time_module
+
         path = self._result_cache_file()
         if not path.exists():
             return {}
         try:
             result = json.loads(path.read_text())
             if isinstance(result, dict):
-                return result
+                cleaned = {}
+                current_time = time_module.time()
+                for k, v in result.items():
+                    if isinstance(v, list) and len(v) == 3:
+                        cached_hash, raw, timestamp = v
+                        if current_time - timestamp < RESULT_CACHE_TTL_SECONDS:
+                            cleaned[k] = v
+                    elif isinstance(v, list) and len(v) == 2:
+                        cleaned[k] = v
+                    else:
+                        cleaned[k] = v
+                return cleaned
             logger.warning(
                 "Result cache at %s is not a dict — starting empty", path
             )
@@ -401,7 +421,9 @@ class RuntimeSession:
             assert self.memory_dir is not None
             self.memory_dir.mkdir(parents=True, exist_ok=True)
             trimmed = {
-                k: (v[0], v[1][:10240])
+                k: (v[0], v[1][:10240], v[2])
+                if isinstance(v, tuple) and len(v) == 3
+                else (v[0], v[1][:10240])
                 if isinstance(v, tuple) and len(v) == 2
                 else v
                 for k, v in self.result_cache.items()
@@ -572,6 +594,65 @@ class RuntimeSession:
         if recorded:
             self._save_bridge_memory()
         return recorded
+
+    # ---------------------------------------------------------------------------
+    # Explorer helpers - available on session for agent exploration
+    # ---------------------------------------------------------------------------
+    def explore_file(self, filepath: str, mode: str = "overview") -> str:
+        """Explore a Python file and return Tok-formatted overview.
+
+        Args:
+            filepath: Path to Python file
+            mode: "overview" for summary, "skeleton" for full structure
+
+        Returns:
+            Tok-formatted string with file overview
+        """
+        from ..explorer import explore_file as _explore_file
+
+        result = _explore_file(filepath, mode)
+        self._bump_signals({"explore_file_invoked": 1})
+        return result
+
+    def explore_module(self, module_path: str, mode: str = "overview") -> str:
+        """Explore a module/package and return Tok-formatted overview.
+
+        Args:
+            module_path: Path to module directory or file
+            mode: "overview" for summary, "skeleton" for full structure
+
+        Returns:
+            Tok-formatted string with module overview
+        """
+        from ..explorer import explore_module as _explore_module
+
+        result = _explore_module(module_path, mode)
+        self._bump_signals({"explore_module_invoked": 1})
+        return result
+
+    def get_file_overview(self, filepath: str) -> dict[str, Any]:
+        """Get structured overview of a Python file.
+
+        Returns:
+            dict with path, line_count, classes, functions, is_large
+        """
+        from ..explorer import get_file_overview as _get_file_overview
+
+        result = _get_file_overview(filepath)
+        self._bump_signals({"file_overview_invoked": 1})
+        return result
+
+    def list_large_files(self, root: str = "src/tok") -> list[dict[str, Any]]:
+        """Find all Python files > 500 lines in a directory tree.
+
+        Returns:
+            List of dicts with file info sorted by line count
+        """
+        from ..explorer import list_large_files as _list_large_files
+
+        result = _list_large_files(root)
+        self._bump_signals({"list_large_files_invoked": 1})
+        return result
 
     def check_temp_copy_alias(self, path: str, snippet: str) -> str | None:
         from .repeat_targets import normalize_path_target, _is_temp_path

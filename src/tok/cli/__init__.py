@@ -415,6 +415,13 @@ def stats(
             help="Number of recent sessions for trend analysis",
         ),
     ] = 5,
+    reset: Annotated[
+        bool,
+        typer.Option(
+            "--reset",
+            help="Reset lifetime stats (clear global ledger)",
+        ),
+    ] = False,
 ) -> None:
     """Show token savings and fallback state."""
     from ._release import stats_command
@@ -428,6 +435,7 @@ def stats(
         recent=recent,
         since=since,
         window=window,
+        reset=reset,
     )
 
 

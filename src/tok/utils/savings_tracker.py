@@ -219,6 +219,7 @@ class SavingsTracker:
             return self._empty_stats()
 
     def save_stats(self, stats: dict[str, Any]) -> None:
+        """Save stats atomically to prevent race conditions."""
         try:
             lines = [f">>> session:{stats.get('session_start', 'unknown')}"]
             key_map_inv = {
@@ -259,8 +260,13 @@ class SavingsTracker:
                     parts.append(f"signals:{sig_str}")
                 lines.append(">>> m:" + "|".join(parts))
 
-            with open(self._savings_file, "w") as f:
+            # Atomic write: write to temp file then rename
+            temp_path = self._savings_file + ".tmp"
+            with open(temp_path, "w") as f:
                 f.write("\n".join(lines) + "\n")
+            
+            # Atomic rename
+            os.rename(temp_path, self._savings_file)
         except Exception as exc:
             logger.warning("Stats write error: %s", exc)
 
@@ -762,7 +768,7 @@ class SavingsTracker:
                 baseline_only=baseline_only,
             )
 
-            log_lines.append(
+            new_entry = (
                 f"{date_str};{sess_id};{sess['calls']};{sess['total_tokens']}"
                 f";{sess['actual_cost_usd']:.6f};{sess['baseline_cost_usd']:.6f};{sess['saved_usd']:.6f}"
                 f";{sess['saved_tokens']};{invisible_pressure};"
@@ -770,6 +776,22 @@ class SavingsTracker:
                 f";{semantic_regression};{reacquisition_count}"
                 f";{answer_anchor_miss_count};{degradation_reason}"
             )
+
+            is_duplicate = any(
+                line.startswith(f"{date_str};")
+                and line.split(";", 4)[2:4]
+                == [str(sess["calls"]), str(sess["total_tokens"])]
+                for line in log_lines
+            )
+            if not is_duplicate:
+                log_lines.append(new_entry)
+            else:
+                logger.info(
+                    "Skipping duplicate session: %s (%d turns)",
+                    date_str,
+                    sess["calls"],
+                )
+                return
 
             self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
             out = self._format_ledger_output(ledger, pct, log_lines)
@@ -1198,3 +1220,15 @@ class SavingsTracker:
                 }
             )
         return entries
+
+    def reset_ledger(self) -> None:
+        """Clear the persistent savings ledger."""
+        with self._lock:
+            if self._ledger_path.exists():
+                self._ledger_path.unlink()
+            default_ledger = self._default_ledger()
+            default_ledger["sessions"] = 0
+            out = self._format_ledger_output(default_ledger, 0.0, [])
+            self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            self._ledger_path.write_text("\n".join(out))
+            logger.info("Lifetime ledger reset")
