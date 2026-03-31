@@ -36,10 +36,14 @@ def test_install_is_idempotent(tmp_path):
 
 
 def test_uninstall_removes_marked_block(tmp_path):
+    # Create a fake script file for testing
+    fake_script = tmp_path / "tok_claude.sh"
+    fake_script.write_text("# Fake tok script for testing")
+    
     rc_path = tmp_path / ".zshrc"
     rc_path.write_text(
         "export PATH=/usr/bin\n"
-        + shell_integration.integration_block(Path("/repo/tok"))
+        + shell_integration.integration_block(fake_script)
         + "alias ll='ls -la'\n"
     )
 

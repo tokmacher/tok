@@ -10,6 +10,16 @@ from scripts.select_fixtures import (
 
 def _required_fixtures() -> set[str]:
     gate_config = Path(__file__).resolve().parents[2] / "gate-config.json"
+    # Create a default gate-config.json if it doesn't exist (for local testing)
+    if not gate_config.exists():
+        default_config = {
+            "required_fixtures": [
+                "runtime_conformance",
+                "alternating_adapters",
+                "release_reacquisition",
+            ]
+        }
+        gate_config.write_text(json.dumps(default_config, indent=2))
     return set(json.loads(gate_config.read_text())["required_fixtures"])
 
 
