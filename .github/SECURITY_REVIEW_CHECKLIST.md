@@ -4,15 +4,15 @@
 This checklist must be completed for all dependency updates before merging.
 
 ## 🔍 Package Information
-- **Package Name**: 
-- **Current Version**: 
-- **New Version**: 
+- **Package Name**:
+- **Current Version**:
+- **New Version**:
 - **Update Type**: [ ] Security Patch [ ] Feature Update [ ] Bug Fix [ ] Major Version
-- **PR Link**: 
+- **PR Link**:
 
 ## ⏰ Age Verification
 - [ ] Package is at least 90 days old
-- [ ] Release date verified: 
+- [ ] Release date verified:
 - [ ] No recent security advisories in the last 90 days
 
 ## 🔐 Security Analysis
@@ -38,7 +38,7 @@ This checklist must be completed for all dependency updates before merging.
 ## 📊 Risk Assessment
 - **Risk Level**: [ ] Low [ ] Medium [ ] High
 - **Impact**: [ ] Minimal [ ] Moderate [ ] Significant
-- **Justification**: 
+- **Justification**:
 
 ## 👥 Review Process
 - [ ] Initial security review completed
@@ -47,7 +47,7 @@ This checklist must be completed for all dependency updates before merging.
 - [ ] Documentation updated (if needed)
 
 ## 📝 Notes and Concerns
-- 
+-
 
 ## ✅ Final Approval
 - [ ] Security review completed - approved
@@ -68,6 +68,6 @@ This checklist must be completed for all dependency updates before merging.
 
 ---
 
-**Reviewer Name**: 
-**Review Date**: 
+**Reviewer Name**:
+**Review Date**:
 **Signature**:

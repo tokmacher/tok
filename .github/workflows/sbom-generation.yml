@@ -14,17 +14,17 @@ jobs:
   generate-sbom:
     name: Generate Software Bill of Materials
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      
+
       - name: Install cyclonedx-bom
         run: pip install cyclonedx-bom
-      
+
       - name: Generate SBOM from uv.lock
         run: |
           cyclonedx-py \
@@ -33,12 +33,12 @@ jobs:
             --type library \
             --omit-dev-dependencies \
             uv.lock
-      
+
       - name: Generate SPDX SBOM
         run: |
           pip install spdx-tools
           python scripts/generate_spdx_sbom.py
-      
+
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -47,11 +47,11 @@ jobs:
             sbom.json
             sbom.spdx
           retention-days: 90
-      
+
       - name: Analyze dependency tree
         run: |
           python scripts/analyze_dependency_tree.py
-      
+
       - name: Upload analysis report
         uses: actions/upload-artifact@v4
         with:
