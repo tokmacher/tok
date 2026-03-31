@@ -1,6 +1,6 @@
 # Tok
 
-[![CI](https://github.com/tok-protocol/tok/actions/workflows/ci.yml/badge.svg)](https://github.com/tok-protocol/tok/actions/workflows/ci.yml)
+[![CI](https://github.com/tokmacher/tok/actions/workflows/ci.yml/badge.svg)](https://github.com/tokmacher/tok/actions/workflows/ci.yml)
 [![PyPI version](https://img.shields.io/pypi/v/tok-protocol.svg)](https://pypi.org/project/tok-protocol/)
 [![Python](https://img.shields.io/pypi/pyversions/tok-protocol.svg)](https://pypi.org/project/tok-protocol/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)

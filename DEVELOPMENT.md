@@ -8,7 +8,7 @@
 ## Install
 
 ```bash
-git clone https://github.com/tok-protocol/tok.git
+git clone https://github.com/tokmacher/tok.git
 cd tok
 uv sync
 uv run pre-commit install

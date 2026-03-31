@@ -47,10 +47,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tok-protocol/tok"
-Documentation = "https://github.com/tok-protocol/tok#readme"
-Issues = "https://github.com/tok-protocol/tok/issues"
-Repository = "https://github.com/tok-protocol/tok"
+Homepage = "https://github.com/tokmacher/tok"
+Documentation = "https://github.com/tokmacher/tok#readme"
+Issues = "https://github.com/tokmacher/tok/issues"
+Repository = "https://github.com/tokmacher/tok"
 
 [project.scripts]
 tok = "tok.cli:app"

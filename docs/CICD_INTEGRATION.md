@@ -40,7 +40,7 @@ plus a weekly schedule.
 
 ## CI Status Badges
 
-- **CI**: ![CI](https://github.com/tok-protocol/tok/actions/workflows/ci.yml/badge.svg)
+- **CI**: ![CI](https://github.com/tokmacher/tok/actions/workflows/ci.yml/badge.svg)
 - **PyPI**: ![PyPI version](https://img.shields.io/pypi/v/tok-protocol.svg)
 
 ## Local Development Checks
