@@ -9,7 +9,9 @@
 
 This repository contains the Tok protocol and its first official implementation: an invisible, bridge-first CLI for **Claude Code**. It intercepts standard LLM traffic, translates verbose JSON/Markdown into highly compressed Tok sigils over the wire, and perfectly re-hydrates it for the user.
 
-The result is an O(1) rolling state that massively expands your effective context window, preserves useful working memory, and makes token savings visible immediately.
+The result is an O(1) rolling state that expands your effective context window, preserves useful working memory, and makes token savings visible immediately.
+
+Tok also learns from your (Claude's) usage patterns to optimize compression strategies over time.
 
 Tok is an invisible bridge that lets you do more without getting in the way.
 
@@ -99,6 +101,52 @@ Tok achieves its compression through several deterministic techniques:
 - **Verbatim hashing**: Generates compact fingerprints for identical code blocks
 - **Structural analysis**: Identifies code patterns and relationships for intelligent compression
 - **Cross-file understanding**: Maintains awareness of codebase structure across the conversation
+
+## Tok Syntax Examples
+
+### Wire Protocol State
+```tok
+>>> t:3|g:refactor|f:src/main.py|cmds:pytest|e:import_error
+```
+- Turn 3, goal is refactor, working on src/main.py, ran pytest, encountered import error
+
+### Semantic Deduplication
+```tok
+# Original verbose result:
+>>> tool:view_file|path:src/utils.py|unchanged|cached
+
+# Delta compression:
+>>> tool:edit_file|path:src/main.py|delta|changed_lines:5
+--- a/src/main.py
++++ b/src/main.py
+@@ -10,7 +10,7 @@
+-def old_function():
++def new_function():
+     return True
+```
+
+### Macro Usage
+```tok
+# Learned macro for testing workflow:
+@run_tests(src="src/", coverage=True)
+# Expands to: pytest src/ --cov=src --cov-report=html
+```
+
+### Pointer System
+```tok
+@pointers
+  |> *A=src/main.py
+  |> *B=DatabaseConnection
+  |> *C=UserAuthentication
+
+# References use lightweight pointers:
+f:*A|cmds:pytest|b:*C
+```
+
+### Memory State
+```tok
+>>> t:5|g:implement_auth|f:*A,*B|cmds:npm_test|facts:*C handles JWT|next:add_middleware
+```
 
 ## Prerequisites
 
