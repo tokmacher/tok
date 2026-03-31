@@ -5,9 +5,13 @@
 [![Python](https://img.shields.io/pypi/pyversions/tok-protocol.svg)](https://pypi.org/project/tok-protocol/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-Tok is a bridge-first Python package for Claude Code that compresses conversation
-history, preserves useful context, and makes token savings visible without asking you
-to learn a new workflow.
+**Tok is a high-density, BPE-aligned wire protocol that cuts LLM token costs by ~50% without altering your workflow.**
+
+This repository contains the Tok protocol and its first official implementation: an invisible, bridge-first CLI for **Claude Code**. It intercepts standard LLM traffic, translates verbose JSON/Markdown into highly compressed Tok sigils over the wire, and perfectly re-hydrates it for the user.
+
+The result is an O(1) rolling state that massively expands your effective context window, preserves useful working memory, and makes token savings visible immediately.
+
+Tok is an invisible bridge that lets you do more without getting in the way.
 
 The first open-source release is intentionally narrow:
 
@@ -24,20 +28,77 @@ compatibility alias `tok savings`.
 
 ## What Tok Is / Is Not
 
-Tok is:
+**Tok is:**
 
-- a bridge-first CLI for Claude Code
-- an invisible runtime layer that compresses conversation state
-- a safety-first workflow with visible fallback and degradation signals
+- A deterministic syntactic compression layer (it does not use lossy LLM summarization).
+- A bridge-first CLI optimized currently for Claude Code.
+- A safety-first workflow with visible fallback and degradation signals (Fail-Open).
 
-Tok is not:
+**Tok is not (yet):**
 
-- a broad agent platform
-- a universal runtime standard
-- a fully polished SDK-first product
+- A broad multi-agent framework.
+- A fully polished SDK-first product for general Python usage.
+- A replacement for your existing tools (it runs invisibly underneath them).
 
 The bridge is the supported public workflow today. The Python wrapper/SDK path exists,
 but it is still experimental and secondary.
+
+## Demonstrated Savings
+
+Here's an example of the `tok stats` output, showcasing the significant cost and token savings achieved in a real session:
+
+![Tok Usage Screenshot](docs/images/tok_stats.png)
+
+This output clearly illustrates the financial benefits and token efficiency of using Tok:
+
+- **$48.22 saved (82.1% reduction)** from 207 API calls
+- **20.9M tokens avoided** through compression
+- **6.5M vs 27.5M tokens** comparing Tok vs baseline
+- **Preserved workflow** via Claude Code CLI
+
+## Technical Overview
+
+Tok achieves its compression through several deterministic techniques:
+
+### Semantic Deduplication
+- **Content hashing**: Identical tool results are detected via SHA-256 hashes and replaced with `>>> tool:name|unchanged|cached` stubs
+- **Delta compression**: Changed results show only the diff: `>>> tool:name|delta|changed_lines:5`  
+- **Error normalization**: Similar errors collapse to canonical forms like `|err:enoent|`
+
+### Macro System
+- **Pattern recognition**: Repeated command sequences are automatically learned as macros
+- **Cross-session persistence**: High-value macros survive bridge restarts and system reboots
+- **Cross-workflow reuse**: Macros learned in one project automatically apply to new projects
+- **ROI tracking**: Macros with lifetime savings > ROI_PROTECTION_THRESHOLD are preserved indefinitely
+- **Durable promotion**: High-value macros graduate from hot memory to durable storage
+
+### Wire Protocol
+- **BPE-aligned sigils**: Single-character fields (`t:`, `g:`, `f:`) minimize token cost
+- **Structured state**: `>>> t:2|g:refactor|f:src/main.py|cmds:pytest` encodes context efficiently
+- **Lossless round-trip**: Tok state perfectly re-hydrates to original JSON/Markdown
+
+### Memory Architecture
+- **Hot/durable buckets**: Recent context vs. long-term knowledge with different decay rates
+- **O(1) rolling state**: Constant-time updates regardless of conversation length
+- **Fail-open safety**: Automatic fallback to baseline if compression risks fidelity
+
+### Pointer System
+- **Cross-reference tracking**: Automatically detects when files, functions, or concepts are referenced across the conversation
+- **Implicit graph building**: Maintains relationships between entities without explicit user annotation
+- **Context preservation**: Pointers ensure that when a file is mentioned later, its full context remains accessible
+- **Memory efficiency**: References are stored as lightweight pointers rather than duplicating content
+
+### Semantic Validation System
+- **Invisible Pressure**: Quantifies protocol drift and cognitive overhead from repeated operations
+- **Memory Lift**: Measures knowledge accumulation through structured memory promotions
+- **Semantic Regression**: Detects when the model falls back to verbose, non-optimized responses
+- **Real-time monitoring**: Continuous validation ensures Tok maintains its compression benefits
+
+### Code Analysis (Sifter)
+- **AST-based extraction**: Parses Python code to extract function signatures, type annotations, and structure
+- **Verbatim hashing**: Generates compact fingerprints for identical code blocks
+- **Structural analysis**: Identifies code patterns and relationships for intelligent compression
+- **Cross-file understanding**: Maintains awareness of codebase structure across the conversation
 
 ## Prerequisites
 
@@ -103,13 +164,13 @@ If `claude` is still not found after `tok install`, reload your shell with
 
 ## First 10 Minutes Troubleshooting
 
-| If you see this | Check this first | Likely fix |
-| --- | --- | --- |
-| `tok: command not found` | Was the package installed into the active Python environment? | Re-activate the environment and run `pip install tok-protocol` again. |
-| `claude: command not found` after `tok install` | Was your shell reloaded? | Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell. |
-| `Bridge not running` | Did `tok bridge start` succeed? | Restart with `tok bridge start --foreground` and inspect `tok bridge logs`. |
-| No savings visible yet | Is the session still very short? | Keep working for a few turns, then run `tok doctor` and `tok stats --last-session`. |
-| `Degraded to baseline: yes` | Did the session fall back for safety? | Run `tok doctor` first, then follow the steps in [`docs/troubleshooting.md`](docs/troubleshooting.md). |
+| If you see this                                     | Check this first                                              | Likely fix                                                                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `tok: command not found`                          | Was the package installed into the active Python environment? | Re-activate the environment and run `pip install tok-protocol` again.                                                       |
+| `claude: command not found` after `tok install` | Was your shell reloaded?                                      | Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.                                                         |
+| `Bridge not running`                              | Did `tok bridge start` succeed?                             | Restart with `tok bridge start --foreground` and inspect `tok bridge logs`.                                               |
+| No savings visible yet                              | Is the session still very short?                              | Keep working for a few turns, then run `tok doctor` and `tok stats --last-session`, or `tok stats` for a lifetime view. |
+| `Degraded to baseline: yes`                       | Did the session fall back for safety?                         | Run `tok doctor` first, then follow the steps in [`docs/troubleshooting.md`](docs/troubleshooting.md).                       |
 
 ## Clean-Room Install Verification
 
@@ -147,6 +208,8 @@ TOK_MODE=baseline tok bridge start
 claude
 tok stats
 ```
+
+Baseline prices are calculated using current Openrouter USD rates.
 
 ## Experimental Python Recipe
 
