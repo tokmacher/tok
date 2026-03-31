@@ -322,7 +322,7 @@ class TestCLI:
         from tok.cli import _bridge, _cli_support
 
         no_bridge = lambda port: None
-        no_collector = lambda debug=False: None
+        no_collector = lambda _debug=False: None
         fake_memory_root = lambda: tmp_path / ".tok"
 
         for mod in (_bridge, _cli_support):
@@ -357,7 +357,7 @@ class TestCLI:
         from tok.cli import _bridge, _cli_support
 
         no_bridge = lambda port: None
-        no_collector = lambda debug=False: None
+        no_collector = lambda _debug=False: None
 
         for mod in (_bridge, _cli_support):
             monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
