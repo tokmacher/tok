@@ -201,3 +201,8 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.151.9",
+]
