@@ -2,7 +2,9 @@ from __future__ import annotations
 
 """Shared CLI constants, display helpers, and process utilities."""
 
+import logging
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -13,6 +15,8 @@ from collections.abc import Mapping
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+logger = logging.getLogger(__name__)
 
 
 console = Console()
@@ -77,19 +81,85 @@ def read_pid() -> int | None:
     return None
 
 
-def find_pids_on_port(port: int) -> list[int]:
-    """Find PIDs listening on a specific port using lsof."""
+def validate_port(port: int) -> bool:
+    """Validate port number is within valid range."""
+    return isinstance(port, int) and 1 <= port <= 65535
+
+def check_port_python(port: int) -> list[int]:
+    """Check if port is in use using Python socket module (safer fallback)."""
+    if not validate_port(port):
+        return []
+    
+    pids = []
     try:
+        # Try to connect to the port to see if it's in use
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1)
+            result = sock.connect_ex(('localhost', port))
+            if result == 0:
+                # Port is in use, but we can't get PID without system calls
+                # This is a safe fallback that doesn't use subprocess
+                logger.debug(f"Port {port} is in use (detected via socket)")
+                # Return empty list since we can't safely get PID without lsof
+    except (socket.error, OSError, ValueError) as e:
+        logger.debug(f"Socket check failed for port {port}: {e}")
+    
+    return pids
+
+def find_pids_on_port(port: int) -> list[int]:
+    """Find PIDs listening on a specific port using safe methods."""
+    if not validate_port(port):
+        logger.warning(f"Invalid port number: {port}")
+        return []
+    
+    # First try the Python-based safe method
+    pids = check_port_python(port)
+    if pids:
+        return pids
+    
+    # Fallback to lsof with proper validation and safety measures
+    try:
+        # Validate the port parameter again before using in subprocess
+        if not validate_port(port):
+            return []
+            
+        # Use proper argument list to prevent injection
+        cmd = ["lsof", "-i", f":{port}", "-t", "-sTCP:LISTEN"]
+        
         result = subprocess.run(
-            ["lsof", "-i", f":{port}", "-t", "-sTCP:LISTEN"],
+            cmd,
             capture_output=True,
             text=True,
             check=False,
+            timeout=10,  # Add timeout to prevent hanging
         )
-        if result.returncode == 0:
-            return [int(p) for p in result.stdout.strip().split() if p.strip()]
-    except (subprocess.SubprocessError, ValueError):
-        pass
+        
+        if result.returncode == 0 and result.stdout:
+            # Validate output before processing
+            output_lines = result.stdout.strip().split()
+            pids = []
+            for pid_str in output_lines:
+                try:
+                    pid = int(pid_str)
+                    # Additional validation: PID should be reasonable
+                    if 1 <= pid <= 999999:
+                        pids.append(pid)
+                except ValueError:
+                    # Skip non-numeric output
+                    continue
+            return pids
+        else:
+            # Log non-zero exit codes for debugging
+            if result.returncode != 0:
+                logger.debug(f"lsof failed with exit code {result.returncode} for port {port}")
+                
+    except (subprocess.SubprocessError, ValueError, TypeError) as e:
+        logger.debug(f"Subprocess error checking port {port}: {e}")
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Timeout checking port {port} with lsof")
+    except Exception as e:
+        logger.debug(f"Unexpected error checking port {port}: {e}")
+    
     return []
 
 

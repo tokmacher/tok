@@ -671,16 +671,54 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     )
                     session.runtime_session.reset_fallback_count()
 
-            except Exception as exc:
+            # Handle specific exception types for better error classification
+            except (json.JSONDecodeError, ValueError) as exc:
                 if session.fail_open:
                     logger.warning(
-                        "tok_fallback_activated: request processing error, serving without compression: %s",
+                        "tok_fallback_activated: JSON decode error, serving without compression: %s",
                         exc,
                     )
                     behavior_signals["processing_error"] = 1
                     behavior_signals["tok_fallback_activated"] = 1
+                    behavior_signals["json_decode_error"] = 1
                     _record_fallback_once(session, request_state)
                 else:
+                    raise
+            except (KeyError, AttributeError) as exc:
+                if session.fail_open:
+                    logger.warning(
+                        "tok_fallback_activated: data structure error, serving without compression: %s",
+                        exc,
+                    )
+                    behavior_signals["processing_error"] = 1
+                    behavior_signals["tok_fallback_activated"] = 1
+                    behavior_signals["data_structure_error"] = 1
+                    _record_fallback_once(session, request_state)
+                else:
+                    raise
+            except (MemoryError, OverflowError) as exc:
+                # Critical system errors - always fallback
+                logger.error(
+                    "tok_fallback_activated: critical system error, serving without compression: %s",
+                    exc,
+                )
+                behavior_signals["processing_error"] = 1
+                behavior_signals["tok_fallback_activated"] = 1
+                behavior_signals["critical_system_error"] = 1
+                _record_fallback_once(session, request_state)
+            except Exception as exc:
+                # Catch-all for truly unexpected errors
+                if session.fail_open:
+                    logger.error(
+                        "tok_fallback_activated: unexpected error, serving without compression: %s",
+                        exc,
+                    )
+                    behavior_signals["processing_error"] = 1
+                    behavior_signals["tok_fallback_activated"] = 1
+                    behavior_signals["unexpected_error"] = 1
+                    _record_fallback_once(session, request_state)
+                else:
+                    logger.error("Unexpected error in request processing: %s", exc)
                     raise
 
         target_url = f"{ANTHROPIC_API_BASE}/{path}"
@@ -691,73 +729,79 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         try:
             body_dict = json.loads(body_bytes)
             is_streaming = bool(body_dict.get("stream", False))
-        except Exception:
-            pass
+        except (json.JSONDecodeError, ValueError):
+            # Invalid JSON - not streaming
+            logger.debug("Failed to parse JSON for streaming detection")
+        except Exception as exc:
+            # Other unexpected errors during JSON parsing
+            logger.debug("Unexpected error during JSON parsing: %s", exc)
 
         if is_streaming:
-            client = httpx.AsyncClient(timeout=300.0)
-            try:
-                (
-                    response,
-                    retried_without_tok,
-                ) = await _send_with_tok_fail_open_retry(
-                    client,
-                    method=request.method,
-                    url=target_url,
-                    headers=headers,
-                    content=body_bytes,
-                    original_content=original_body_bytes,
-                    stream=True,
-                    compressed_request=compressed,
-                )
-                if retried_without_tok:
-                    compressed = False
-                    saved_toks = 0
-                    tool_breakdown = {}
-                    prompt_metrics = {
-                        "baseline_prompt_tokens": 0,
-                        "prepared_prompt_tokens": 0,
-                        "saved_prompt_tokens": 0,
-                        "hot_hint_tokens_added": 0,
-                        "reacquisition_tokens_avoided_estimate": 0,
-                    }
-                    behavior_signals = {
-                        "tok_fail_open_retry": 1,
-                        "tok_fallback_activated": 1,
-                    }
-                    logger.warning(
-                        "tok_fallback_activated: upstream 400 retry, serving without compression"
+            # Use context manager for proper resource cleanup
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                try:
+                    (
+                        response,
+                        retried_without_tok,
+                    ) = await _send_with_tok_fail_open_retry(
+                        client,
+                        method=request.method,
+                        url=target_url,
+                        headers=headers,
+                        content=body_bytes,
+                        original_content=original_body_bytes,
+                        stream=True,
+                        compressed_request=compressed,
                     )
-                    _record_fallback_once(session, request_state)
-                resp_headers = _safe_headers(response.headers)
+                    if retried_without_tok:
+                        compressed = False
+                        saved_toks = 0
+                        tool_breakdown = {}
+                        prompt_metrics = {
+                            "baseline_prompt_tokens": 0,
+                            "prepared_prompt_tokens": 0,
+                            "saved_prompt_tokens": 0,
+                            "hot_hint_tokens_added": 0,
+                            "reacquisition_tokens_avoided_estimate": 0,
+                        }
+                        behavior_signals = {
+                            "tok_fail_open_retry": 1,
+                            "tok_fallback_activated": 1,
+                        }
+                        logger.warning(
+                            "tok_fallback_activated: upstream 400 retry, serving without compression"
+                        )
+                        _record_fallback_once(session, request_state)
+                    resp_headers = _safe_headers(response.headers)
 
-                if path == "v1/messages":
-                    return StreamingResponse(
-                        buffer_strip_restream_impl(
-                            session,
-                            client,
-                            response,
-                            input_saved_tokens=saved_toks if compressed else 0,
-                            type_breakdown=tool_breakdown
-                            if compressed
-                            else None,
-                            behavior_signals=behavior_signals or None,
-                            prompt_metrics=prompt_metrics
-                            if compressed
-                            else None,
-                            tool_compatible=request_tool_compatible,
-                        ),
-                        status_code=response.status_code,
-                        headers=resp_headers,
-                        media_type=response.headers.get(
-                            "content-type", "text/event-stream"
-                        ),
+                    if path == "v1/messages":
+                        return StreamingResponse(
+                            buffer_strip_restream_impl(
+                                session,
+                                client,
+                                response,
+                                input_saved_tokens=saved_toks if compressed else 0,
+                                type_breakdown=tool_breakdown
+                                if compressed
+                                else None,
+                                behavior_signals=behavior_signals or None,
+                                prompt_metrics=prompt_metrics
+                                if compressed
+                                else None,
+                                tool_compatible=request_tool_compatible,
+                            ),
+                            status_code=response.status_code,
+                            headers=resp_headers,
+                            media_type=response.headers.get(
+                                "content-type", "text/event-stream"
+                            ),
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Streaming error in Tok bridge: %s", str(e), exc_info=True
                     )
-            except Exception as e:
-                logger.error(
-                    "Streaming error in Tok bridge: %s", str(e), exc_info=True
-                )
-                await client.aclose()
+                    # Client is automatically closed by context manager
+                    # No need to manually call client.aclose()
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             (

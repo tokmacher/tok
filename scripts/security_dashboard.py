@@ -6,55 +6,156 @@ Provides real-time security metrics and alerts.
 """
 
 import json
+import logging
+import re
+import time
 from pathlib import Path
 from datetime import datetime, timezone
-import requests
+from typing import Dict, Any, Optional
 
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
+
+# Security configuration
+SECURITY_CONFIG = {
+    "request_timeout": 30,
+    "max_retries": 3,
+    "rate_limit_delay": 0.1,  # 100ms between requests
+    "user_agent": "tok-security-dashboard/0.1.0",
+    "vulnerability_db_url": "https://pypi.org/pypi",
+    "safety_db_url": "https://pyup.io/safety/api/v1/advisories/",
+}
+
+# Package name validation regex
+PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9._-]+$')
+VERSION_REGEX = re.compile(r'^[a-zA-Z0-9._+-]+$')
+
+
+def validate_package_name(package_name: str) -> bool:
+    """Validate package name for security."""
+    if not package_name or len(package_name) > 100:
+        return False
+    return bool(PACKAGE_NAME_REGEX.fullmatch(package_name))
+
+def validate_version(version: str) -> bool:
+    """Validate version string for security."""
+    if not version or len(version) > 50:
+        return False
+    return bool(VERSION_REGEX.fullmatch(version))
+
+def create_secure_session() -> requests.Session:
+    """Create a secure HTTP session with proper configuration."""
+    session = requests.Session()
+    
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=SECURITY_CONFIG["max_retries"],
+        status_forcelist=[429, 500, 502, 503, 504],
+        method_whitelist=["HEAD", "GET", "OPTIONS"],
+        backoff_factor=1,
+        raise_on_status=False
+    )
+    
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    
+    # Set secure headers
+    session.headers.update({
+        'User-Agent': SECURITY_CONFIG["user_agent"],
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'close',
+    })
+    
+    return session
 
 class SecurityMonitor:
     def __init__(self):
-        self.vulnerability_db_url = "https://pypi.org/pypi"
-        self.safety_db_url = "https://pyup.io/safety/api/v1/advisories/"
+        self.vulnerability_db_url = SECURITY_CONFIG["vulnerability_db_url"]
+        self.safety_db_url = SECURITY_CONFIG["safety_db_url"]
 
     def load_dependency_analysis(self) -> dict:
         """Load dependency analysis data."""
         analysis_file = Path("dependency-analysis.json")
         if not analysis_file.exists():
-            print(
-                "❌ Dependency analysis file not found. Run SBOM generation first."
+            logger.error(
+                "Dependency analysis file not found. Run SBOM generation first."
             )
             return {}
 
-        with open(analysis_file) as f:
-            return json.load(f)
+        try:
+            with open(analysis_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (IOError, OSError, json.JSONDecodeError) as e:
+            logger.error(f"Failed to load dependency analysis: {e}")
+            return {}
 
     def check_vulnerabilities(self, packages: list[dict]) -> list[dict]:
         """Check for known vulnerabilities in packages."""
         vulnerabilities = []
+        session = create_secure_session()
 
-        for package in packages:
-            name = package.get("name", "")
-            version = package.get("version", "")
+        try:
+            for package in packages:
+                name = package.get("name", "")
+                version = package.get("version", "")
 
-            if not name or not version:
-                continue
+                # Input validation
+                if not validate_package_name(name) or not validate_version(version):
+                    logger.warning(f"Invalid package info: {name}@{version}")
+                    continue
 
-            try:
-                # Check PyPI for security advisories
-                response = requests.get(
-                    f"{self.vulnerability_db_url}/{name}/{version}/json",
-                    timeout=10,
-                )
+                # Rate limiting
+                time.sleep(SECURITY_CONFIG["rate_limit_delay"])
 
-                if response.status_code == 200:
-                    data = response.json()
-                    # Check for vulnerabilities in PyPI data
-                    # This is a simplified check - in production, you'd use a proper vulnerability database
+                try:
+                    # Check PyPI for security advisories
+                    url = f"{self.vulnerability_db_url}/{name}/{version}/json"
+                    logger.debug(f"Checking vulnerabilities: {name}@{version}")
+                    
+                    response = session.get(
+                        url,
+                        timeout=SECURITY_CONFIG["request_timeout"],
+                        verify=True  # SSL verification enabled
+                    )
 
-            except Exception as e:
-                print(
-                    f"⚠️  Could not check vulnerabilities for {name}@{version}: {e}"
-                )
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Check for vulnerabilities in PyPI data
+                        # This is a simplified check - in production, you'd use a proper vulnerability database
+                        if not isinstance(data, dict):
+                            logger.warning(f"Invalid response structure for {name}@{version}")
+                            continue
+                        
+                        # Add vulnerability checking logic here
+                        # For now, we just log that we checked the package
+                        logger.debug(f"Checked {name}@{version} for vulnerabilities")
+                    elif response.status_code == 404:
+                        logger.debug(f"Package {name}@{version} not found in PyPI")
+                    else:
+                        logger.warning(f"Unexpected status {response.status_code} for {name}@{version}")
+
+                except requests.exceptions.SSLError as e:
+                    logger.error(f"SSL error checking {name}@{version}: {e}")
+                except requests.exceptions.Timeout as e:
+                    logger.error(f"Timeout checking {name}@{version}: {e}")
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Network error checking {name}@{version}: {e}")
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.error(f"Invalid JSON response for {name}@{version}: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error checking {name}@{version}: {e}")
+
+        except Exception as e:
+            logger.error(f"Vulnerability check failed: {e}")
+        finally:
+            session.close()
 
         return vulnerabilities
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 import collections
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, Any
+
 from ..runtime.memory.tok_state import (
     TokMemory,
     EpisodeMemory,
@@ -10,6 +12,8 @@ from ..runtime.memory.tok_state import (
 )
 from .ir import MacroRegistry, TokIR
 from .miner import IRPatternMiner
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .llm_clients import ChatLLM
@@ -47,7 +51,7 @@ class MemoryDistiller:
             elif isinstance(m, RepairMemory) and m.final_ok:
                 repair_groups[m.tokens].append(m)
 
-        print(
+        logger.debug(
             f"Distiller: Found {len(groups)} episode groups and {len(repair_groups)} repair groups."
         )
 
@@ -64,7 +68,7 @@ class MemoryDistiller:
         discovered_macros = self.miner.mine(ir_histories, self.registry)
         for macro in discovered_macros:
             self.registry.register(macro)
-            print(f"Autonomous Inversion: Registered macro @{macro.name}")
+            logger.debug(f"Autonomous Inversion: Registered macro @{macro.name}")
 
         # 2. Negative Distillation (Failure-Driven)
         negative_lessons = self.mine_negative_patterns(memory)
@@ -85,7 +89,7 @@ class MemoryDistiller:
                 lesson = self.distill_batch(label, batch)
                 if lesson:
                     new_memory.append(lesson)
-                    print(
+                    logger.debug(
                         f"Distiller: Collapsed {len(batch)} episodes into 1 lesson."
                     )
                     continue
@@ -106,7 +110,7 @@ class MemoryDistiller:
         final_tokens = estimated_token_count(new_memory)
         savings = initial_tokens - final_tokens
         if savings > 0:
-            print(
+            logger.info(
                 f"Distifflation complete: {initial_tokens} -> {final_tokens} tokens ({savings} saved)."
             )
 
@@ -141,7 +145,7 @@ class MemoryDistiller:
                         constraint=f"TOK-NEG: avoid re-defining @{macro_name}; use existing definition to save tokens.",
                     )
                 )
-                print(
+                logger.debug(
                     f"Negative Distillation: Mining constraint for @{macro_name}"
                 )
 
@@ -214,8 +218,7 @@ class MemoryDistiller:
                     tokens=repair.tokens, lesson=lesson_text.strip()
                 )
         except Exception as exc:
-            print(f"Distill error: {exc}")
-        return None
+            logger.error(f"Distill error: {exc}")
         return None
 
     def hierarchical_compress(
@@ -283,6 +286,6 @@ class MemoryDistiller:
 
                 return new_memory
         except Exception as exc:
-            print(f"Meta-distill error: {exc}")
+            logger.error(f"Meta-distill error: {exc}")
 
         return memory

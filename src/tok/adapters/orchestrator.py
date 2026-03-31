@@ -1,6 +1,7 @@
 from __future__ import annotations
 import atexit
 import concurrent.futures
+import logging
 import os
 import re
 import subprocess
@@ -10,6 +11,8 @@ from pathlib import Path
 import tiktoken
 from dotenv import load_dotenv
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 from .adapters import OrchestratorAdapter
 from ..monitoring.profiler import TokProfiler
@@ -65,7 +68,7 @@ def fetch_model_pricing(client: OpenAI, model: str) -> tuple[float, float]:
             completion_price = float(pricing_data.get("completion", 0) or 0)
             return prompt_price, completion_price
     except Exception as e:
-        print(f"[!] Could not fetch pricing for {model}: {e}")
+        logger.warning(f"Could not fetch pricing for {model}: {e}")
 
     return FALLBACK_PRICING["prompt"], FALLBACK_PRICING["completion"]
 
@@ -127,8 +130,8 @@ class TokOrchestrator:
             self.prompt_price,
             self.completion_price,
         ) = self._fetch_pricing_with_timeout(model)
-        print(
-            f"[*] Pricing for {model}: ${self.prompt_price}/1K prompt, ${self.completion_price}/1K completion"
+        logger.info(
+            f"Pricing for {model}: ${self.prompt_price}/1K prompt, ${self.completion_price}/1K completion"
         )
 
         self.system_prompt = """
@@ -330,11 +333,11 @@ class TokOrchestrator:
                 cmd, shell=True, env=env, capture_output=True, text=True
             )
             if proc.returncode != 0:
-                print(f"[!] Territory Sync Failed: {proc.stderr}")
+                logger.error(f"Territory Sync Failed: {proc.stderr}")
             else:
-                print("[!] Territory regenerated due to file changes.")
+                logger.info("Territory regenerated due to file changes.")
         except Exception as e:
-            print(f"[!] Warning: Territory regeneration failed: {e}")
+            logger.warning(f"Warning: Territory regeneration failed: {e}")
         finally:
             if shadowed:
                 os.rename("tok.py.tmp", "tok.py")
@@ -451,10 +454,10 @@ class TokOrchestrator:
             response_text = response.choices[0].message.content or ""
             final_agent_reply = response_text
             self.pulse_count += 1
-            print(f"[*] Raw Response length: {len(response_text)} chars")
-            if verbose:
+            logger.debug(f"Raw Response length: {len(response_text)} chars")
+            if verbose and logger.isEnabledFor(logging.DEBUG):
                 preview = response_text[:200].replace("\n", " ")
-                print(f"    > {preview}...")
+                logger.debug(f"    > {preview}...")
 
             processed = self.adapter.finalize(
                 text=response_text,
@@ -482,8 +485,8 @@ class TokOrchestrator:
                 hasattr(processed, "updated_memory")
                 and processed.updated_memory
             ):
-                print(
-                    f"[*] Memory updated: {len(processed.updated_memory)} chars"
+                logger.debug(
+                    f"Memory updated: {len(processed.updated_memory)} chars"
                 )
 
             messages.append({"role": "assistant", "content": response_text})
@@ -521,7 +524,7 @@ class TokOrchestrator:
     def _call_llm_once(
         self, chat_messages: list[dict[str, Any]]
     ) -> tuple[Any | None, str | None]:
-        print(f"[*] Calling {self.model} (Turn {self.turn_count})...")
+        logger.debug(f"Calling {self.model} (Turn {self.turn_count})...")
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -531,7 +534,7 @@ class TokOrchestrator:
             )
             return response, None
         except Exception as e:
-            print(f"[!] API Error: {e}")
+            logger.error(f"API Error: {e}")
             return None, str(e)
 
     def _get_usage_tokens(
@@ -646,7 +649,7 @@ class TokOrchestrator:
         response_text: str,
         tool_feedback: str,
     ) -> None:
-        print(f"[*] Tool Results ({len(tool_feedback)} chars), chaining...")
+        logger.debug(f"Tool Results ({len(tool_feedback)} chars), chaining...")
         messages.append({"role": "assistant", "content": response_text})
         messages.append(
             {
@@ -669,9 +672,9 @@ class TokOrchestrator:
             removed = True
         if removed:
             self.adapter.session._save_bridge_memory()
-            print(f"[*] REMOVED: {key_to_forget} from session memory.")
+            logger.debug(f"REMOVED: {key_to_forget} from session memory.")
         else:
-            print(f"[!] Key not found in session memory: {key_to_forget}")
+            logger.warning(f"Key not found in session memory: {key_to_forget}")
 
     def handshake(self) -> str:
         """Establish the Tok protocol with a cold call."""
@@ -681,7 +684,7 @@ class TokOrchestrator:
             dynamic_messages=[],
         )
         prompt_tokens = self.count_tokens(self.system_prompt)
-        print(f">>> Handshake: Sending grammar ({prompt_tokens} tokens)")
+        logger.debug(f"Handshake: Sending grammar ({prompt_tokens} tokens)")
 
         extra_headers = {}
         if self.app_name:
@@ -699,18 +702,16 @@ class TokOrchestrator:
             extra_headers=extra_headers,
         )
 
-        print("<<< ", end="", flush=True)
+        logger.debug("Handshake reply received")
         agent_reply = ""
         for chunk in stream:
             if (
-                not isinstance(chunk, tuple)
-                and chunk.choices
+                chunk.choices
+                and chunk.choices[0].delta
                 and chunk.choices[0].delta.content
             ):
                 content = chunk.choices[0].delta.content
-                print(content, end="", flush=True)
                 agent_reply += content
-        print()
 
         if hasattr(stream, "usage") and stream.usage:
             prompt_tokens_actual = stream.usage.prompt_tokens
@@ -724,8 +725,8 @@ class TokOrchestrator:
         self.total_completion_tokens += completion_tokens
         self.total_cost_usd += turn_cost
 
-        print(
-            f"<<< Handshake reply: {completion_tokens} tokens | Cost: ${turn_cost:.8f}"
+        logger.debug(
+            f"Handshake reply: {completion_tokens} tokens | Cost: ${turn_cost:.8f}"
         )
         processed_hs = self.adapter.finalize(
             text=agent_reply,
