@@ -499,7 +499,7 @@ def _select_resend_reason(
     has_answer_facts: bool,
 ) -> str:
     if comparable == previous_comparable and comparable:
-        return "unchanged_state"
+        return "verified_current_state"  # Changed from "unchanged_state" - data is verified fresh
     previous_has_answer_facts = _tool_compatible_has_answer_facts(
         previous_comparable
     )

@@ -825,14 +825,21 @@ class BridgeMemoryState:
 
         heat = self._file_heat.get(normalized_path, 0)
         was_edited = heat >= 2.0
+        
+        # Calculate line count for freshness visibility
+        line_count = len(snippet.splitlines())
+        estimated_tokens = line_count * 4  # Rough estimate: ~4 tokens per line
+        
         digest = self._extract_file_digest(
             snippet, normalized_path, was_edited=was_edited
         )
         if not digest:
             digest = " ".join(snippet.split())[:160]
 
+        # Enhanced fact format: includes line count and token savings indicator
         fact_key = f"file[{normalized_path}]"
-        value = f"{fact_key}:{digest}"
+        # Format: file[path]:LINE_COUNT|digest|~TOKENS_SAVED
+        value = f"{fact_key}:{line_count}|{digest}|~{estimated_tokens}t"
 
         base_score = 2
         heat_bonus = int(heat * 2)
@@ -908,6 +915,11 @@ class BridgeMemoryState:
         return True
 
     def get_file_fact_digests(self) -> dict[str, str]:
+        """Extract file digests from facts, handling new format with line counts.
+        
+        New format: file[path]:LINE_COUNT|digest|~tokens
+        Legacy format: file[path]:digest
+        """
         result: dict[str, str] = {}
         for entry in self.hot.get("facts", []):
             if entry.value.startswith("file["):
@@ -918,8 +930,19 @@ class BridgeMemoryState:
                     continue
                 path = entry.value[5:bracket_end]
                 colon_idx = entry.value.find(":", bracket_end)
-                digest = entry.value[colon_idx + 1 :] if colon_idx >= 0 else ""
-                result[path] = digest
+                if colon_idx < 0:
+                    continue
+                    
+                rest = entry.value[colon_idx + 1 :]
+                # Handle new format: LINE_COUNT|digest|~tokens
+                if "|" in rest:
+                    parts = rest.split("|")
+                    if len(parts) >= 2:
+                        digest = parts[1]  # digest is the second part
+                        result[path] = digest
+                else:
+                    # Legacy format: just digest
+                    result[path] = rest
         return result
 
     def record_hypothesis(self, text: str) -> bool:

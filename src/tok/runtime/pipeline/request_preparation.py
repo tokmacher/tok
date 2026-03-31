@@ -578,9 +578,9 @@ def _apply_tool_compatible_resend_diagnostics(
         return
 
     if resend_signals.get("state_resend_suppressed_turn"):
-        behavior_signals["state_resend_reason_state_suppressed"] = 1
+        behavior_signals["state_resend_reason_state_verified_current"] = 1  # Changed: state is verified current, not "suppressed"
         if has_answer_anchor:
-            behavior_signals["answer_anchor_suppressed"] = 1
+            behavior_signals["answer_anchor_verified_current"] = 1  # Changed: verified current, not "suppressed"
         return
 
     if resend_signals.get("state_resend_full_turn"):
