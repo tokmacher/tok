@@ -13,7 +13,13 @@ import httpx
 logger = logging.getLogger("tok.telemetry")
 
 
-DEFAULT_COLLECTOR_URL = "http://localhost:8000/ingest"
+def _default_collector_url() -> str:
+    host = os.getenv("TOK_COLLECTOR_HOST", "localhost")
+    port = os.getenv("TOK_COLLECTOR_PORT", "8000")
+    return f"http://{host}:{port}/ingest"
+
+
+DEFAULT_COLLECTOR_URL = _default_collector_url()
 
 
 class TokEvent(TypedDict):

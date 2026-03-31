@@ -351,7 +351,7 @@ def _summarize_causal_failures(
 def _summarize_decision_hypotheses(
     messages: list[dict[str, Any]],
     next_scores: dict[str, int],
-    question_scores: dict[str, int],
+    _question_scores: dict[str, int],
 ) -> None:
     """Augment next/questions scores with decision+rationale snippets.
 
@@ -557,7 +557,7 @@ def _apply_file_cache(
 
 
 def _make_semantic_cache_key(
-    context: dict[str, Any] | None, raw: str
+    context: dict[str, Any] | None, _raw: str
 ) -> str | None:
     """Return a stable cache key for (tool_name, args) if context is available."""
     if not context:

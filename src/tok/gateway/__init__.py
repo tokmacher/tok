@@ -433,22 +433,18 @@ def run_bridge(
     keep_turns: int | None = None,
     debug: bool | None = None,
     fail_open: bool | None = None,
-    foreground: bool = True,
-    api_base: str = "https://api.anthropic.com",
+    _foreground: bool = True,
+    _api_base: str = "https://api.anthropic.com",
 ) -> None:
     """Start the bridge server."""
-    port = int(
-        port
-        if port is not None
-        else os.getenv("TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090"))
+    _port_env: str = os.getenv(
+        "TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090")
     )
-    keep_turns = int(
-        keep_turns
-        if keep_turns is not None
-        else os.getenv(
-            "TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2")
-        )
+    port = int(port if port is not None else _port_env)
+    _keep_turns_env: str = os.getenv(
+        "TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2")
     )
+    keep_turns = int(keep_turns if keep_turns is not None else _keep_turns_env)
     debug = debug if debug is not None else os.getenv("TOK_DEBUG", "0") == "1"
     fail_open = (
         fail_open
@@ -476,7 +472,8 @@ def run_bridge(
     atexit.register(lambda: PID_FILE.unlink(missing_ok=True))
     app = create_app(session)
 
-    logger.info("Listening on http://localhost:%d", port)
+    host_display = os.getenv("TOK_BRIDGE_HOST", "localhost")
+    logger.info("Listening on http://%s:%d", host_display, port)
     logger.info("Keeping last %d human turns verbatim", keep_turns)
     logger.info("Fail-open: %s", "enabled" if fail_open else "disabled")
     logger.info(

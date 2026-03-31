@@ -15,10 +15,11 @@
 # Path to the tok repo (auto-detected from this script's location)
 TOK_DIR="${TOK_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}"
 TOK_BRIDGE_PORT="${TOK_BRIDGE_PORT:-9090}"
+TOK_BRIDGE_HOST="${TOK_BRIDGE_HOST:-localhost}"
 _TOK_STARTUP_TRIES="${_TOK_STARTUP_TRIES:-15}"
 
 _tok_bridge_running() {
-    curl -s --connect-timeout 1 "http://localhost:${TOK_BRIDGE_PORT}/health" \
+    curl -s --connect-timeout 1 "http://${TOK_BRIDGE_HOST}:${TOK_BRIDGE_PORT}/health" \
         -o /dev/null 2>&1
 }
 
@@ -49,5 +50,5 @@ _tok_start_bridge() {
 
 claude() {
     _tok_start_bridge || return 1
-    ANTHROPIC_BASE_URL="http://localhost:${TOK_BRIDGE_PORT}" command claude "$@"
+    ANTHROPIC_BASE_URL="http://${TOK_BRIDGE_HOST}:${TOK_BRIDGE_PORT}" command claude "$@"
 }

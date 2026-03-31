@@ -445,7 +445,7 @@ class TokToolCall(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_tool_call(cls, data):
+    def validate_tool_call(_cls, data):
         if not data.get("tool"):
             raise ValueError("Missing tool name")
         # Validate path characters
@@ -469,7 +469,7 @@ class ReadToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_read(cls, data):
+    def validate_read(_cls, data):
         path = (data.get("path") or "").strip()
         if not path:
             raise ValueError("path is required")
@@ -482,7 +482,7 @@ class WriteToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_write(cls, data):
+    def validate_write(_cls, data):
         path = (data.get("path") or "").strip()
         if not path:
             raise ValueError("path is required")
@@ -496,7 +496,7 @@ class EditToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_edit(cls, data):
+    def validate_edit(_cls, data):
         if not (data.get("path") or "").strip():
             raise ValueError("path is required")
         if not (data.get("search") or "").strip():
@@ -516,7 +516,7 @@ class RunToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_run(cls, data):
+    def validate_run(_cls, data):
         raw_cmd = (data.get("cmd") or "").strip()
         if not raw_cmd:
             raise ValueError("cmd is required")
@@ -528,7 +528,7 @@ class SearchToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_search(cls, data):
+    def validate_search(_cls, data):
         query = (data.get("query") or data.get("path") or "").strip()
         if not query:
             raise ValueError("search query must not be empty")
@@ -541,7 +541,7 @@ class DeltaToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_delta(cls, data):
+    def validate_delta(_cls, data):
         path = (data.get("path") or "").strip()
         if not path:
             raise ValueError("path is required")
@@ -549,7 +549,7 @@ class DeltaToolSchema(BaseModel):
 
 
 def build_tok_traceback(
-    tool_name: str, raw_input: str, exc: ValidationError
+    _tool_name: str, raw_input: str, exc: ValidationError
 ) -> str:
     """Convert a pydantic ValidationError into a dense @error Tok block."""
     first_err = exc.errors()[0]

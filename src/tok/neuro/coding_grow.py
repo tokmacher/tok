@@ -11,6 +11,6 @@ class CodingTask:
         self.tests = tests
 
 
-def tokify_code(code: str) -> Any:
+def tokify_code(_code: str) -> Any:
     """Stub for tokify_code function."""
     pass

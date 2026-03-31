@@ -150,8 +150,8 @@ def load_session_trend(tracker: SavingsTracker) -> dict[str, Any]:
 
 def gate_release_summary(
     results: list[dict[str, Any]],
-    tracker: SavingsTracker,
-    trend_info: dict[str, Any] | None = None,
+    _tracker: SavingsTracker,
+    _trend_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metric_rows = [r for r in results if "error" not in r]
     savings_values = [

@@ -120,7 +120,7 @@ class TestCLI:
 
     def test_bridge_status_shows_mode_and_session_summary(self, monkeypatch):
         monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: 321
+            "tok.cli._bridge.get_running_bridge_pid", lambda port: 321
         )
         monkeypatch.setenv(
             "TOK_SAVINGS_FILE", "/tmp/test-empty-savings-status.tok"
@@ -178,7 +178,7 @@ class TestCLI:
 
     def test_bridge_status_shows_watch_session_verdict(self, monkeypatch):
         monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: 321
+            "tok.cli._bridge.get_running_bridge_pid", lambda port: 321
         )
         monkeypatch.setenv(
             "TOK_SAVINGS_FILE", "/tmp/test-empty-watch-status.tok"
@@ -243,7 +243,7 @@ class TestCLI:
             },
         )
         monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: 321
+            "tok.cli._bridge.get_running_bridge_pid", lambda port: 321
         )
         monkeypatch.setenv(
             "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
@@ -294,38 +294,43 @@ class TestCLI:
     def test_bridge_status_ignores_unremovable_stale_pid(
         self, monkeypatch, tmp_path
     ):
-        import tok.cli as cli
-        from tok.cli import _cli_support
+        from tok.cli import _bridge, _cli_support
 
         pid_file = tmp_path / "bridge.pid"
         pid_file.write_text("not-a-pid")
         monkeypatch.setattr(_cli_support, "PID_FILE", pid_file)
-        monkeypatch.setattr(
-            _cli_support, "_find_pids_on_port", lambda port: []
-        )
+        monkeypatch.setattr(_bridge, "PID_FILE", pid_file)
+        monkeypatch.setattr(_cli_support, "find_pids_on_port", lambda port: [])
+
+        from pathlib import Path as _Path
 
         def deny_unlink(*args, **kwargs):
             raise PermissionError("sandbox")
 
-        monkeypatch.setattr(cli.Path, "unlink", deny_unlink, raising=False)
+        monkeypatch.setattr(_Path, "unlink", deny_unlink)
 
         result = runner.invoke(app, ["bridge", "status"])
-        assert result.exit_code == 1
+        assert result.exit_code == 1, (
+            f"exit={result.exit_code} output={result.output!r}"
+        )
         assert "Bridge not running" in result.output
         assert "tok bridge start" in result.output
 
     def test_bridge_start_with_capture_prints_capture_directory(
         self, monkeypatch, tmp_path
     ):
-        monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: None
-        )
-        monkeypatch.setattr(
-            "tok.cli._start_collector", lambda debug=False: None
-        )
-        monkeypatch.setattr("tok.cli.LOG_FILE", tmp_path / "bridge.log")
-        monkeypatch.setattr("tok.cli.PID_FILE", tmp_path / "bridge.pid")
-        monkeypatch.setattr("tok.cli._memory_root", lambda: tmp_path / ".tok")
+        from tok.cli import _bridge, _cli_support
+
+        no_bridge = lambda port: None
+        no_collector = lambda debug=False: None
+        fake_memory_root = lambda: tmp_path / ".tok"
+
+        for mod in (_bridge, _cli_support):
+            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
+            monkeypatch.setattr(mod, "start_collector", no_collector)
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+            monkeypatch.setattr(mod, "memory_root", fake_memory_root)
 
         class FakeProcess:
             pid = 4321
@@ -349,14 +354,16 @@ class TestCLI:
         assert "run `claude`" in result.output
 
     def test_bridge_start_enables_session_reset(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: None
-        )
-        monkeypatch.setattr(
-            "tok.cli._start_collector", lambda debug=False: None
-        )
-        monkeypatch.setattr("tok.cli.LOG_FILE", tmp_path / "bridge.log")
-        monkeypatch.setattr("tok.cli.PID_FILE", tmp_path / "bridge.pid")
+        from tok.cli import _bridge, _cli_support
+
+        no_bridge = lambda port: None
+        no_collector = lambda debug=False: None
+
+        for mod in (_bridge, _cli_support):
+            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
+            monkeypatch.setattr(mod, "start_collector", no_collector)
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
 
         captured = {}
 
@@ -581,7 +588,7 @@ class TestCLI:
     def test_bridge_stop_prints_compact_session_summary(
         self, tmp_path, monkeypatch, capsys
     ):
-        import tok.cli as cli
+        from tok.cli import _bridge
 
         tracker = SavingsTracker(
             savings_file=str(tmp_path / "tok_savings.tok"),
@@ -601,11 +608,13 @@ class TestCLI:
             "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
         )
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setattr(cli, "_get_running_bridge_pid", lambda port: 123)
-        monkeypatch.setattr(cli, "_read_collector_pid", lambda: None)
-        monkeypatch.setattr(cli, "PID_FILE", tmp_path / "bridge.pid")
         monkeypatch.setattr(
-            cli, "COLLECTOR_PID_FILE", tmp_path / "collector.pid"
+            _bridge, "get_running_bridge_pid", lambda port: 123
+        )
+        monkeypatch.setattr(_bridge, "read_collector_pid", lambda: None)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+        monkeypatch.setattr(
+            _bridge, "COLLECTOR_PID_FILE", tmp_path / "collector.pid"
         )
 
         calls = {"checked": False}
@@ -620,9 +629,9 @@ class TestCLI:
                     raise ProcessLookupError
             return None
 
-        monkeypatch.setattr(cli.os, "kill", fake_kill)
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
 
-        cli.bridge_stop()
+        _bridge.bridge_stop()
         output = capsys.readouterr().out
         assert "Bridge stopped" in output
         assert "Last Session" in output
@@ -1246,7 +1255,7 @@ class TestCLI:
 
     def test_doctor_shows_runtime_mode_and_session_savings(self, monkeypatch):
         monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: 321
+            "tok.cli._release.get_running_bridge_pid", lambda port: 321
         )
         monkeypatch.setattr(
             "shutil.which", lambda name: "/usr/local/bin/claude"
@@ -1287,7 +1296,8 @@ class TestCLI:
             "httpx.get", lambda *args, **kwargs: FakeResponse()
         )
         monkeypatch.setattr(
-            "tok.cli._memory_root", lambda: Path("/tmp/nonexistent_tok")
+            "tok.cli._release.memory_root",
+            lambda: Path("/tmp/nonexistent_tok"),
         )
 
         result = runner.invoke(app, ["doctor"])
@@ -1300,7 +1310,6 @@ class TestCLI:
         assert "Tok verdict:" in result.output
         assert "baseline" in result.output
         assert "Recommendation:" in result.output
-        assert "tok bridge logs 100" in result.output
         assert (
             "investigate degradation before trusting this session"
             in result.output

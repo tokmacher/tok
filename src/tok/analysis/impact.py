@@ -43,7 +43,7 @@ class ImpactEngine:
                 continue
 
     def _index_file_contents(
-        self, module_name: str, tree: ast.AST, file_path: str
+        self, _module_name: str, tree: ast.AST, file_path: str
     ) -> None:
         """Extract imports and calls to build the index."""
         # This is a simplified version for demonstration

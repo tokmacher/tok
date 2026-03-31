@@ -6,10 +6,7 @@ import json
 import logging
 import os
 import shutil
-import signal
-import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Annotated, Any, cast
 from collections.abc import Mapping
@@ -38,27 +35,20 @@ from ..runtime.memory.bridge_memory import (
 )
 from ..stats import SavingsTracker
 from ._cli_support import (
-    COLLECTOR_LOG_FILE,
-    COLLECTOR_PID_FILE,
     LOG_FILE,
-    PID_FILE,
-    TOK_DIR,
-    _find_pids_on_port,
-    _get_running_bridge_pid,
-    _memory_root,
-    _read_collector_pid,
-    _read_pid,
-    _render_stats_panel,
-    _runtime_verdict,
-    _savings_headline,
-    _savings_style,
-    _savings_verdict,
-    _session_recommendation,
-    _session_signals_text,
-    _session_status_rows,
-    _start_collector,
-    _status_border,
+    bridge_url,
     console,
+    get_running_bridge_pid,
+    memory_root,
+    render_stats_panel,
+    runtime_verdict,
+    savings_headline,
+    savings_style,
+    savings_verdict,
+    session_recommendation,
+    session_signals_text,
+    session_status_rows,
+    status_border,
 )
 from ._dev import (
     dev_app,
@@ -248,7 +238,7 @@ def bridge_logs(
 
 
 # ---------------------------------------------------------------------------
-# Memory Snap command
+# Memory commands
 # ---------------------------------------------------------------------------
 
 
@@ -259,22 +249,8 @@ def memory_snap(
         typer.Option("--yes", "-y", help="Skip confirmation prompt"),
     ] = False,
 ) -> None:
-    """Clear accumulated bridge memory while preserving essential state.
-
-    Keeps: goal, constraints, files (durable tier).
-    Clears: hot bucket, questions, cmds, errs, next, turns counter.
-
-    Use when context has grown stale and you want a fresh start while retaining
-    the high-value durable memory that should carry forward.
-    """
-    import os
-    from pathlib import Path
-
-    project_dir = os.getenv("TOK_PROJECT_DIR", "")
-    memory_dir = (
-        Path(project_dir) / ".tok" if project_dir else Path.home() / ".tok"
-    )
-    memory_file = memory_dir / "bridge_memory.tok"
+    """Clear accumulated bridge memory while preserving essential state."""
+    memory_file = memory_root() / "bridge_memory.tok"
 
     if not memory_file.exists():
         console.print(
@@ -293,7 +269,6 @@ def memory_snap(
 
     state = BridgeMemoryState.from_tok(memory_file.read_text())
 
-    # Preserve durable goal, constraints, and files — clear everything else.
     preserved = {
         field: entries
         for field, entries in state.durable.items()
@@ -304,7 +279,7 @@ def memory_snap(
     state.durable.update(preserved)
     state.turn = 0
 
-    memory_dir.mkdir(parents=True, exist_ok=True)
+    memory_root().mkdir(parents=True, exist_ok=True)
     memory_file.write_text(state.to_tok())
 
     kept_fields = sorted(preserved.keys())
@@ -320,19 +295,8 @@ def optimize_prompts(
         typer.Option("--yes", "-y", help="Skip confirmation prompt"),
     ] = False,
 ) -> None:
-    """Manual optimization of the current session's system prompt context.
-
-    Identifies bloated content in the persisted bridge memory, compresses it
-    into Tok format, and preserves essential task info. Use this when you notice
-    the system prompt has grown too large (e.g. >2000 chars).
-    """
-    import os
-    from pathlib import Path
-
-    project_dir = os.getenv("TOK_PROJECT_DIR", "")
-    memory_dir = (
-        Path(project_dir) / ".tok" if project_dir else Path.home() / ".tok"
-    )
+    """Manual optimization of the current session's system prompt context."""
+    memory_dir = memory_root()
     memory_file = memory_dir / "bridge_memory.tok"
     fallback_file = memory_dir / "memory.tok"
 
@@ -342,7 +306,6 @@ def optimize_prompts(
 
     state = BridgeMemoryState.from_tok(memory_file.read_text())
 
-    # 1. Check fallback memory
     if fallback_file.exists():
         fallback_text = fallback_file.read_text()
         if len(fallback_text) > 2000:
@@ -366,7 +329,6 @@ def optimize_prompts(
     else:
         console.print("[dim]No fallback memory file found.[/dim]")
 
-    # 2. Check durable goal/facts for excessive length
     bloated_fields = []
     for field, entries in state.durable.items():
         for entry in entries:
@@ -393,7 +355,7 @@ def optimize_prompts(
 
 
 # ---------------------------------------------------------------------------
-# Savings command
+# Savings / Stats / Replay commands
 # ---------------------------------------------------------------------------
 
 
@@ -469,11 +431,6 @@ def stats(
     )
 
 
-# ---------------------------------------------------------------------------
-# Replay command
-# ---------------------------------------------------------------------------
-
-
 @app.command("capture-summary", hidden=True)
 def capture_summary(
     session_file: Annotated[
@@ -509,7 +466,7 @@ def capture_summary(
         )
 
     console.print(
-        _render_stats_panel(
+        render_stats_panel(
             "Capture Summary",
             headline=str(capture_path.name),
             headline_style="bold cyan",
@@ -599,7 +556,7 @@ def capture_review(
     )
 
     console.print(
-        _render_stats_panel(
+        render_stats_panel(
             "Capture Review",
             headline=f"{review['aggregate']['total_sessions']} sessions reviewed",
             headline_style="bold cyan",
@@ -808,6 +765,11 @@ def replay(
     )
 
 
+# ---------------------------------------------------------------------------
+# Doctor command
+# ---------------------------------------------------------------------------
+
+
 @app.command()
 def doctor(
     verbose: Annotated[
@@ -815,190 +777,14 @@ def doctor(
     ] = False,
 ) -> None:
     """Check bridge health and runtime contract conformance."""
+    from ._release import doctor_command
 
-    console.print("[bold]Tok Doctor — Runtime Health Check[/bold]")
-    console.print("=" * 52)
+    doctor_command(verbose=verbose)
 
-    issues = False
-    claude_path = shutil.which("claude")
-    if claude_path:
-        console.print(f"[green]✅ Claude Code on PATH: {claude_path}[/green]")
-    else:
-        console.print("[yellow]⚠️ Claude Code not found on PATH[/yellow]")
-        console.print(
-            "[dim]Next step: install Claude Code or reload your shell after `tok install` with `source ~/.zshrc` or `source ~/.bashrc`.[/dim]"
-        )
-        issues = True
 
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
-    pid = _get_running_bridge_pid(port)
-    tracker = SavingsTracker()
-    session_summary = tracker.session_summary()
-    if pid:
-        console.print(f"[green]✅ Bridge process: PID {pid}[/green]")
-        try:
-            import httpx
-
-            resp = httpx.get(f"http://localhost:{port}/health", timeout=2.0)
-            if resp.status_code == 200:
-                console.print(
-                    f"[green]✅ Health endpoint reachable on :{port}[/green]"
-                )
-                payload = resp.json()
-                baseline_only = bool(payload.get("baseline_only"))
-                mode = str(payload.get("mode", "unknown"))
-                fallback_count = int(payload.get("fallback_count", 0))
-                tokens_saved = (
-                    int(session_summary["tokens_saved"])
-                    if session_summary
-                    else int(payload.get("session_tokens_saved", 0))
-                )
-                verdict, verdict_style = _runtime_verdict(
-                    tok_active=True,
-                    baseline_only=baseline_only,
-                    mode=mode,
-                    tokens_saved=tokens_saved,
-                    session_quality=str(
-                        payload.get("session_quality", "clean")
-                    ),
-                )
-                headline, headline_pct, subhead = _savings_headline(
-                    session_summary,
-                    savings_pct=float(payload.get("session_savings_pct", 0.0)),
-                    tokens_saved=int(payload.get("session_tokens_saved", 0)),
-                )
-                console.print(
-                    _render_stats_panel(
-                        "Current Session",
-                        headline=f"{headline} • {headline_pct}",
-                        headline_style=(
-                            _savings_style(
-                                float(session_summary["savings_pct"])
-                            )
-                            if session_summary
-                            else "bold yellow"
-                        ),
-                        subhead=f"{verdict} • {subhead}",
-                        rows=_session_status_rows(
-                            summary=session_summary,
-                            tok_active=True,
-                            baseline_only=baseline_only,
-                            mode=mode,
-                            fallback_count=fallback_count,
-                            session_quality=str(
-                                payload.get("session_quality", "clean")
-                            ),
-                            degradation_reason=str(
-                                payload.get("last_degradation_reason", "")
-                            ),
-                            session_signals=_session_signals_text(payload),
-                        ),
-                        border_style=_status_border(verdict_style),
-                    )
-                )
-                if baseline_only:
-                    console.print(
-                        "[yellow]⚠️ Tok verdict:[/yellow] bridge is alive but the current session has degraded to baseline."
-                    )
-                    console.print(
-                        "[dim]Next step: inspect `Degradation reason`, then run `tok bridge logs 100` for the fallback trigger.[/dim]"
-                    )
-                    issues = True
-                elif mode == "baseline":
-                    console.print(
-                        "[yellow]⚠️ Tok verdict:[/yellow] bridge is running in baseline mode, so compression is disabled by default."
-                    )
-                    console.print(
-                        "[dim]Next step: restart without `TOK_MODE=baseline` if you want compression enabled.[/dim]"
-                    )
-                elif tokens_saved > 0:
-                    console.print(
-                        "[green]✅ Tok verdict:[/green] compression is active and saving tokens on the current session."
-                    )
-                else:
-                    console.print(
-                        "[yellow]⚠️ Tok verdict:[/yellow] bridge is healthy, but no current-session savings are visible yet."
-                    )
-                    console.print(
-                        "[dim]Next step: keep working for a few turns, then run `tok stats --last-session` if savings are still unclear.[/dim]"
-                    )
-                console.print(
-                    f"[bold]Recommendation:[/bold] {_session_recommendation(baseline_only=baseline_only, session_quality=str(payload.get('session_quality', 'clean'))).split(': ', 1)[1]}"
-                )
-            else:
-                console.print(
-                    f"[red]❌ Health endpoint responded {resp.status_code} on :{port}[/red]"
-                )
-                console.print(
-                    "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
-                )
-                issues = True
-        except Exception as exc:  # pragma: no cover - network variability
-            console.print(
-                f"[red]❌ Unable to reach health endpoint on :{port} ({exc.__class__.__name__})[/red]"
-            )
-            console.print(
-                "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
-            )
-            issues = True
-    else:
-        console.print("[red]❌ Bridge process not running[/red]")
-        console.print(
-            "[dim]Next step: run `tok bridge start`, then re-run `tok doctor`.[/dim]"
-        )
-        issues = True
-
-    memory_dir = _memory_root()
-    structured_path = memory_dir / "bridge_memory.tok"
-    fallback_path = memory_dir / "memory.tok"
-
-    if not memory_dir.exists():
-        console.print(
-            f"[yellow]⚠️ Memory directory not initialized: {memory_dir}[/yellow]"
-        )
-        issues = True
-    elif structured_path.exists() and structured_path.stat().st_size > 0:
-        console.print(
-            f"[green]✅ Structured memory present: {structured_path}[/green]"
-        )
-    elif fallback_path.exists() and fallback_path.stat().st_size > 0:
-        console.print(
-            f"[yellow]⚠️ Structured memory missing; wire fallback in use ({fallback_path})[/yellow]"
-        )
-        issues = True
-    else:
-        console.print(
-            f"[red]❌ No bridge memory files found in {memory_dir}[/red]"
-        )
-        issues = True
-    signals = tracker.behavior_signals()
-    structured_hits = signals.get("cold_start_structured_memory", 0)
-    fallback_hits = signals.get("cold_start_wire_fallback", 0)
-    console.print(
-        f"[bold]Cold-start signals:[/bold] structured={structured_hits} fallback={fallback_hits}"
-    )
-    if fallback_hits > structured_hits:
-        console.print(
-            "[yellow]⚠️ Wire fallback exceeded structured memory — check bridge state[/yellow]"
-        )
-        issues = True
-
-    if verbose and signals:
-        console.print("\n[bold]Behavior signals (session):[/bold]")
-        for key, value in sorted(
-            signals.items(), key=lambda kv: (-kv[1], kv[0])
-        ):
-            console.print(f"  {key:<32} {value:>4}")
-
-    if issues:
-        console.print(
-            "\n[red]Doctor found issues — see above for remediation.[/red]"
-        )
-        raise typer.Exit(1)
-
-    console.print(
-        "\n[green]✅ All checks passed — runtime contract healthy.[/green]"
-    )
+# ---------------------------------------------------------------------------
+# Gate-check / JIT commands
+# ---------------------------------------------------------------------------
 
 
 @app.command("jit-check", hidden=True)
@@ -1008,8 +794,6 @@ def jit_check() -> None:
     try:
         import pytest
 
-        # Run the specific JIT execution suite
-        # We use pytest to leverage its advanced reporting and discovery
         retcode = pytest.main(["tests/unit/test_jit_execution.py", "-v"])
         if retcode != 0:
             console.print("[red]❌ Macro JIT Gate Check failed![/red]")
@@ -1114,18 +898,9 @@ def gate_check(
     )
 
 
-def _msg_text(msg: dict[str, Any]) -> str:
-    """Extract plain text from a message for token counting."""
-    content = msg.get("content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict):
-                parts.append(block.get("text", "") or block.get("content", ""))
-        return " ".join(parts)
-    return str(content)
+# ---------------------------------------------------------------------------
+# Legacy aliases (hidden)
+# ---------------------------------------------------------------------------
 
 
 @app.command(hidden=True)

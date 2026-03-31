@@ -42,11 +42,11 @@ def load_benchmark_definition(name: str) -> BenchmarkDefinition:
 
 
 class LiveBenchmarkRunner:
-    def __new__(cls, *args: Any, **kwargs: Any) -> LiveBenchmarkRunner:
+    def __new__(_cls, *args: Any, **kwargs: Any) -> LiveBenchmarkRunner:
         return _impl().LiveBenchmarkRunner(*args, **kwargs)  # type: ignore[no-any-return]
 
     def run(
-        self, definition: BenchmarkDefinition, *, mode: str, turns: int = 3
+        self, _definition: BenchmarkDefinition, *, mode: str, turns: int = 3
     ) -> BenchmarkResult:
         raise NotImplementedError
 

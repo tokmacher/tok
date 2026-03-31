@@ -25,7 +25,7 @@ class Bridge(SerializationProtocol):
     """The Invisible Bridge: JSON/XML/MD <-> Tok with JIT Activation."""
 
     @staticmethod
-    def dispatch_async_v7(callback_id: str, payload: Any) -> str:
+    def dispatch_async_v7(callback_id: str, _payload: Any) -> str:
         """V7 asynchronous dispatch."""
         return f"v7_async_{callback_id}"
 
@@ -111,7 +111,7 @@ class Bridge(SerializationProtocol):
     def execute(
         llm_callable: Callable[[str], Any],
         payload: dict[str, Any],
-        schema: dict[str, Any] | None = None,
+        _schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """The Invisible Bridge with JIT activation."""
         json_payload = json.dumps(payload)

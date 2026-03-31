@@ -364,7 +364,7 @@ def _track_file_read_repeats(
     effective_path: str,
     logical_target: str,
     family: str,
-    tool_name: str,
+    _tool_name: str,
     is_shell_file_read: bool,
     tool_id: str,
     file_reads_seen_raw: dict[str, int],
@@ -425,7 +425,7 @@ def _track_command_repeats(
     commands_seen_logical: dict[str, int],
     repeat_command_ids: list[str],
     repeated_tool_targets: set[tuple[str, str]],
-    bump: Callable[[str], None],
+    _bump: Callable[[str], None],
 ) -> None:
     """Track command operations and detect repeats."""
     if family != "command" or not logical_target:

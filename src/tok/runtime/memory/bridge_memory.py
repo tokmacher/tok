@@ -298,7 +298,7 @@ class BridgeMemoryState:
         )
 
     @classmethod
-    def _parse_mem_header(cls, line: str, state: BridgeMemoryState) -> None:
+    def _parse_mem_header(_cls, line: str, state: BridgeMemoryState) -> None:
         """Parse the @mem line for turn counter."""
         for token in line.split():
             if token.startswith("t:"):

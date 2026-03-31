@@ -415,7 +415,7 @@ class TokOrchestrator:
     def chat(
         self,
         user_input: str,
-        use_system_prompt: bool = True,
+        _use_system_prompt: bool = True,
         verbose: bool = True,
     ) -> str:
         """

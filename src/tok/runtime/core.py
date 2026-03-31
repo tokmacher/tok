@@ -924,8 +924,8 @@ class UniversalTokRuntime:
         hot_hint_metrics: dict[str, int],
         translated_messages: list[dict[str, Any]] | None = None,
         should_skip_history: bool = False,
-        calculate_dropped_tokens: bool = False,
-        recent_messages: list[dict[str, Any]] | None = None,
+        _calculate_dropped_tokens: bool = False,
+        _recent_messages: list[dict[str, Any]] | None = None,
         has_answer_anchor_param: bool | None = None,
     ) -> tuple[
         str,

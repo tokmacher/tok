@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (Unreleased)
+## 0.1.0 (2026-03-31)
 
 ### Added
 - First-class CLI: `tok bridge start/stop/status/logs`, `tok savings`, `tok install`, `tok doctor`

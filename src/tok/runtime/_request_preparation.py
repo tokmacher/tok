@@ -601,7 +601,7 @@ def prepare_request_impl(
                 hot_hint_metrics=hot_hint_metrics,
                 translated_messages=translated_messages,
                 should_skip_history=should_skip_history,
-                recent_messages=recent,
+                _recent_messages=recent,
             )
             body = _inject_system(
                 body,

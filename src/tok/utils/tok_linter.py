@@ -68,7 +68,7 @@ class SemanticAuditor:
         }
 
     def _calculate_efficiency_math(
-        self, nodes: list[TokNode]
+        self, _nodes: list[TokNode]
     ) -> dict[str, str | int | float]:
         """
         Compare 'Upfront Schema' (System Prompt) vs 'On-Demand Error Injection'.
@@ -224,7 +224,7 @@ class SemanticAuditor:
         return debt
 
     def _generate_suggestions(
-        self, nodes: list[TokNode], debt: list[dict[str, str | int | float]]
+        self, _nodes: list[TokNode], debt: list[dict[str, str | int | float]]
     ) -> list[str]:
         suggestions = []
         processed_keys = set()

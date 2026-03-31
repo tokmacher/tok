@@ -22,15 +22,15 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "openai>=1.0.0",
-    "tiktoken>=0.12.0",
-    "python-dotenv>=1.0.0",
-    "pydantic>=2.0.0",
-    "typer>=0.9.0",
-    "rich>=13.0.0",
-    "fastapi>=0.110.0",
-    "uvicorn[standard]>=0.27.0",
-    "httpx>=0.27.0",
+    "openai>=1.0.0,<2.0.0",
+    "tiktoken>=0.12.0,<1.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "typer>=0.9.0,<1.0.0",
+    "rich>=13.0.0,<14.0.0",
+    "fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.27.0,<1.0.0",
+    "httpx>=0.27.0,<1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -160,7 +160,6 @@ omit = [
     "src/tok/adapters/*",
     "src/tok/cli/_dev.py",
     "src/tok/cli/_install.py",
-    "src/tok/cli/_process_control.py",
     "src/tok/cli/_protocol_tools.py",
     "src/tok/evidence_review.py",
     "src/tok/fixture_generator.py",

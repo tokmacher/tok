@@ -34,15 +34,39 @@ RUNTIME_WARNING_SIGNALS = (
 )
 
 
-def _read_pid() -> int | None:
+def bridge_url(port: int | None = None, path: str = "") -> str:
+    host = os.getenv("TOK_BRIDGE_HOST", "localhost")
+    if port is None:
+        port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+    return f"http://{host}:{port}{path}"
+
+
+def collector_url(path: str = "") -> str:
+    host = os.getenv("TOK_COLLECTOR_HOST", "localhost")
+    port = int(os.getenv("TOK_COLLECTOR_PORT", "8000"))
+    return f"http://{host}:{port}{path}"
+
+
+def msg_text(msg: dict[str, Any]) -> str:
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get("text", "") or block.get("content", ""))
+        return " ".join(parts)
+    return str(content)
+
+
+def read_pid() -> int | None:
     """Read PID from file and validate it's alive."""
     if not PID_FILE.exists():
         return None
     try:
         pid = int(PID_FILE.read_text().strip())
-        os.kill(
-            pid, 0
-        )  # Standard Unix check: does PID exist and can we signal it?
+        os.kill(pid, 0)
         return pid
     except (ValueError, ProcessLookupError, PermissionError):
         pass
@@ -53,10 +77,9 @@ def _read_pid() -> int | None:
     return None
 
 
-def _find_pids_on_port(port: int) -> list[int]:
+def find_pids_on_port(port: int) -> list[int]:
     """Find PIDs listening on a specific port using lsof."""
     try:
-        # lsof -i :<port> -t -sTCP:LISTEN returns only the PIDs
         result = subprocess.run(
             ["lsof", "-i", f":{port}", "-t", "-sTCP:LISTEN"],
             capture_output=True,
@@ -70,17 +93,15 @@ def _find_pids_on_port(port: int) -> list[int]:
     return []
 
 
-def _get_running_bridge_pid(port: int) -> int | None:
+def get_running_bridge_pid(port: int) -> int | None:
     """Get the running bridge PID, with fallback to port check and self-healing."""
-    pid = _read_pid()
+    pid = read_pid()
     if pid is not None:
         return pid
 
-    # Fallback to port check
-    on_port = _find_pids_on_port(port)
+    on_port = find_pids_on_port(port)
     if on_port:
         pid = on_port[0]
-        # Self-heal the PID file
         try:
             TOK_DIR.mkdir(parents=True, exist_ok=True)
             PID_FILE.write_text(str(pid))
@@ -91,7 +112,7 @@ def _get_running_bridge_pid(port: int) -> int | None:
     return None
 
 
-def _read_collector_pid() -> int | None:
+def read_collector_pid() -> int | None:
     """Read Collector PID from file and validate it's alive."""
     if not COLLECTOR_PID_FILE.exists():
         return None
@@ -108,14 +129,13 @@ def _read_collector_pid() -> int | None:
     return None
 
 
-def _start_collector(debug: bool = False) -> None:
+def start_collector(_debug: bool = False) -> None:
     """Start the telemetry collector in the background."""
-    existing = _read_collector_pid()
+    existing = read_collector_pid()
     if existing:
         return
 
-    # Check port 8000
-    on_port = _find_pids_on_port(8000)
+    on_port = find_pids_on_port(8000)
     if on_port:
         COLLECTOR_PID_FILE.write_text(str(on_port[0]))
         return
@@ -147,30 +167,29 @@ def _start_collector(debug: bool = False) -> None:
 
     COLLECTOR_PID_FILE.write_text(str(proc.pid))
 
-    # Wait briefly for collector
     for _ in range(10):
         time.sleep(0.2)
         try:
             import httpx
 
-            r = httpx.get("http://localhost:8000/health", timeout=0.5)
+            r = httpx.get(collector_url("/health"), timeout=0.5)
             if r.status_code in (
                 200,
                 404,
-            ):  # FastAPI might 404 on root but it means it's up
+            ):
                 return
         except Exception:
             pass
 
 
-def _memory_root() -> Path:
+def memory_root() -> Path:
     project_dir = os.getenv("TOK_PROJECT_DIR", "").strip()
     if project_dir:
         return Path(project_dir) / ".tok"
     return Path.home() / ".tok"
 
 
-def _savings_style(pct: float) -> str:
+def savings_style(pct: float) -> str:
     if pct >= 40:
         return "bold green"
     if pct >= 15:
@@ -178,7 +197,7 @@ def _savings_style(pct: float) -> str:
     return "bold red"
 
 
-def _render_stats_panel(
+def render_stats_panel(
     title: str,
     *,
     headline: str,
@@ -199,7 +218,7 @@ def _render_stats_panel(
     )
 
 
-def _savings_verdict(pct: float) -> str:
+def savings_verdict(pct: float) -> str:
     if pct >= 40:
         return "Strong savings"
     if pct >= 15:
@@ -209,7 +228,7 @@ def _savings_verdict(pct: float) -> str:
     return "No visible savings"
 
 
-def _status_border(verdict_style: str) -> str:
+def status_border(verdict_style: str) -> str:
     if "green" in verdict_style:
         return "green"
     if "yellow" in verdict_style:
@@ -217,7 +236,7 @@ def _status_border(verdict_style: str) -> str:
     return "red"
 
 
-def _runtime_verdict(
+def runtime_verdict(
     *,
     tok_active: bool,
     baseline_only: bool,
@@ -240,7 +259,7 @@ def _runtime_verdict(
     return ("Tok active, waiting for first savings", "bold yellow")
 
 
-def _session_signals_text(payload: dict[str, Any]) -> str:
+def session_signals_text(payload: dict[str, Any]) -> str:
     parts: list[str] = []
     reacq_count = int(payload.get("repeat_search_count", 0)) + int(
         payload.get("repeat_file_read_count", 0)
@@ -257,7 +276,7 @@ def _session_signals_text(payload: dict[str, Any]) -> str:
     return "clean" if not parts else ", ".join(parts)
 
 
-def _session_recommendation(
+def session_recommendation(
     *,
     baseline_only: bool,
     session_quality: str | None,
@@ -269,7 +288,7 @@ def _session_recommendation(
     return "Recommendation: keep Tok on"
 
 
-def _savings_headline(
+def savings_headline(
     summary: Mapping[str, Any] | None,
     *,
     savings_pct: float | None = None,
@@ -305,11 +324,11 @@ def _savings_headline(
     return (
         f"Saved ${saved_usd:.4f}",
         f"{pct:.1f}% saved",
-        f"{_savings_verdict(pct)} • {tokens_saved:,} tokens avoided",
+        f"{savings_verdict(pct)} • {tokens_saved:,} tokens avoided",
     )
 
 
-def _session_status_rows(
+def session_status_rows(
     *,
     summary: Mapping[str, Any] | None,
     tok_active: bool,
@@ -321,7 +340,7 @@ def _session_status_rows(
     session_signals: str | None = None,
 ) -> list[tuple[str, str]]:
     tokens_saved = 0 if summary is None else int(summary["tokens_saved"])
-    verdict, _ = _runtime_verdict(
+    verdict, _ = runtime_verdict(
         tok_active=tok_active,
         baseline_only=baseline_only,
         mode=mode,
@@ -404,3 +423,32 @@ def _session_status_rows(
     if fallback_count is not None:
         rows.append(("Fallbacks", str(fallback_count)))
     return rows
+
+
+__all__ = [
+    "bridge_url",
+    "collector_url",
+    "msg_text",
+    "console",
+    "TOK_DIR",
+    "PID_FILE",
+    "LOG_FILE",
+    "COLLECTOR_PID_FILE",
+    "COLLECTOR_LOG_FILE",
+    "RUNTIME_WARNING_SIGNALS",
+    "read_pid",
+    "find_pids_on_port",
+    "get_running_bridge_pid",
+    "read_collector_pid",
+    "start_collector",
+    "memory_root",
+    "savings_style",
+    "render_stats_panel",
+    "savings_verdict",
+    "status_border",
+    "runtime_verdict",
+    "session_signals_text",
+    "session_recommendation",
+    "savings_headline",
+    "session_status_rows",
+]

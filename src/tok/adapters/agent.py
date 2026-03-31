@@ -373,7 +373,7 @@ def _handle_active_node_validation(
 
 def _process_flushed_nodes(
     parser: TokParser,
-    response_text: str,
+    _response_text: str,
     tool_results: list[TokNode],
     start_time: float,
     tta: float | None,

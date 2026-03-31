@@ -567,8 +567,8 @@ def response_contract(text: str) -> ProcessedRuntimeResponse:
 def response_contract_for_mode(
     text: str,
     tool_compatible: bool = False,
-    family: str = "",
-    model: str = "",
+    _family: str = "",
+    _model: str = "",
     session: RuntimeSession | None = None,
 ) -> ProcessedRuntimeResponse:
     """Analyze a response and determine if it follows the expected protocol contract."""

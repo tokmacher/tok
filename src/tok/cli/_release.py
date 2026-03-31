@@ -22,19 +22,20 @@ from ..runtime.policy.smart_policy import (
     policy_for_model,
 )
 from ..stats import SavingsTracker
-from . import _msg_text
 from ._cli_support import (
-    _get_running_bridge_pid,
-    _memory_root,
-    _render_stats_panel,
-    _runtime_verdict,
-    _savings_headline,
-    _savings_style,
-    _session_recommendation,
-    _session_signals_text,
-    _session_status_rows,
-    _status_border,
+    bridge_url,
     console,
+    get_running_bridge_pid,
+    memory_root,
+    msg_text,
+    render_stats_panel,
+    runtime_verdict,
+    savings_headline,
+    savings_style,
+    session_recommendation,
+    session_signals_text,
+    session_status_rows,
+    status_border,
 )
 from ._gate import (
     evaluate_expected_failure,
@@ -70,10 +71,8 @@ def stats_command(
     if not total:
         if session_summary:
             pct = float(session_summary["savings_pct"])
-            headline, headline_pct, subhead = _savings_headline(
-                session_summary
-            )
-            verdict, verdict_style = _runtime_verdict(
+            headline, headline_pct, subhead = savings_headline(session_summary)
+            verdict, verdict_style = runtime_verdict(
                 tok_active=not bool(session_summary["baseline_only"]),
                 baseline_only=bool(session_summary["baseline_only"]),
                 tokens_saved=int(session_summary["tokens_saved"]),
@@ -82,12 +81,12 @@ def stats_command(
                 ),
             )
             console.print(
-                _render_stats_panel(
+                render_stats_panel(
                     "Current Session",
                     headline=f"{headline} • {headline_pct}",
-                    headline_style=_savings_style(pct),
+                    headline_style=savings_style(pct),
                     subhead=f"{verdict} • {subhead}",
-                    rows=_session_status_rows(
+                    rows=session_status_rows(
                         summary=session_summary,
                         tok_active=not bool(session_summary["baseline_only"]),
                         baseline_only=bool(session_summary["baseline_only"]),
@@ -99,20 +98,20 @@ def stats_command(
                         ),
                     )
                     + [("Calls", str(session_summary["calls"]))],
-                    border_style=_status_border(verdict_style),
+                    border_style=status_border(verdict_style),
                 )
             )
         elif not session and last_session is False:
             if last_completed:
                 pct = float(last_completed["savings_pct"])
-                headline, headline_pct, subhead = _savings_headline(
+                headline, headline_pct, subhead = savings_headline(
                     last_completed
                 )
                 console.print(
-                    _render_stats_panel(
+                    render_stats_panel(
                         "Last Completed Session",
                         headline=f"{headline} • {headline_pct}",
-                        headline_style=_savings_style(pct),
+                        headline_style=savings_style(pct),
                         subhead=subhead,
                         rows=[
                             ("Date", str(last_completed["date"])),
@@ -152,14 +151,14 @@ def stats_command(
             if last_session:
                 if last_completed:
                     pct = float(last_completed["savings_pct"])
-                    headline, headline_pct, subhead = _savings_headline(
+                    headline, headline_pct, subhead = savings_headline(
                         last_completed
                     )
                     console.print(
-                        _render_stats_panel(
+                        render_stats_panel(
                             "Last Completed Session",
                             headline=f"{headline} • {headline_pct}",
-                            headline_style=_savings_style(pct),
+                            headline_style=savings_style(pct),
                             subhead=subhead,
                             rows=[
                                 ("Date", str(last_completed["date"])),
@@ -237,14 +236,14 @@ def stats_command(
         if recent is not None:
             if recent_completed:
                 pct = float(recent_completed["savings_pct"])
-                headline, headline_pct, subhead = _savings_headline(
+                headline, headline_pct, subhead = savings_headline(
                     recent_completed
                 )
                 console.print(
-                    _render_stats_panel(
+                    render_stats_panel(
                         f"Recent Sessions ({int(recent_completed['sessions'])})",
                         headline=f"{headline} • {headline_pct}",
-                        headline_style=_savings_style(pct),
+                        headline_style=savings_style(pct),
                         subhead=subhead,
                         rows=[
                             (
@@ -272,14 +271,14 @@ def stats_command(
         if since is not None:
             if since_completed:
                 pct = float(since_completed["savings_pct"])
-                headline, headline_pct, subhead = _savings_headline(
+                headline, headline_pct, subhead = savings_headline(
                     since_completed
                 )
                 console.print(
-                    _render_stats_panel(
+                    render_stats_panel(
                         str(since_completed["label"]),
                         headline=f"{headline} • {headline_pct}",
-                        headline_style=_savings_style(pct),
+                        headline_style=savings_style(pct),
                         subhead=subhead,
                         rows=[
                             ("Sessions", str(since_completed["sessions"])),
@@ -307,14 +306,14 @@ def stats_command(
 
         if lifetime_summary:
             pct = float(lifetime_summary["savings_pct"])
-            headline, headline_pct, subhead = _savings_headline(
+            headline, headline_pct, subhead = savings_headline(
                 lifetime_summary
             )
             console.print(
-                _render_stats_panel(
+                render_stats_panel(
                     "Lifetime",
                     headline=f"{headline} • {headline_pct}",
-                    headline_style=_savings_style(pct),
+                    headline_style=savings_style(pct),
                     subhead=subhead,
                     rows=[
                         ("Sessions", str(lifetime_summary["sessions"])),
@@ -426,7 +425,7 @@ def replay_command(
         ).items():
             behavior_totals[key] = behavior_totals.get(key, 0) + value
 
-        before = sum(_count(_msg_text(m)) for m in messages)
+        before = sum(_count(msg_text(m)) for m in messages)
 
         import copy
 
@@ -461,7 +460,7 @@ def replay_command(
         )
         if tok_state:
             after_history = sum(
-                _count(_msg_text(m)) for m in recent_msgs
+                _count(msg_text(m)) for m in recent_msgs
             ) + _count(tok_state)
             history_turns += 1
             history_before += before
@@ -556,7 +555,7 @@ def doctor_command(verbose: bool = False) -> None:
 
     issues = False
     port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
-    pid = _get_running_bridge_pid(port)
+    pid = get_running_bridge_pid(port)
     tracker = SavingsTracker()
     session_summary = tracker.session_summary()
     if pid:
@@ -564,7 +563,7 @@ def doctor_command(verbose: bool = False) -> None:
         try:
             import httpx
 
-            resp = httpx.get(f"http://localhost:{port}/health", timeout=2.0)
+            resp = httpx.get(bridge_url(port, "/health"), timeout=2.0)
             if resp.status_code == 200:
                 console.print(
                     f"[green]✅ Health endpoint reachable on :{port}[/green]"
@@ -578,7 +577,7 @@ def doctor_command(verbose: bool = False) -> None:
                     if session_summary
                     else int(payload.get("session_tokens_saved", 0))
                 )
-                verdict, verdict_style = _runtime_verdict(
+                verdict, verdict_style = runtime_verdict(
                     tok_active=True,
                     baseline_only=baseline_only,
                     mode=mode,
@@ -587,24 +586,24 @@ def doctor_command(verbose: bool = False) -> None:
                         payload.get("session_quality", "clean")
                     ),
                 )
-                headline, headline_pct, subhead = _savings_headline(
+                headline, headline_pct, subhead = savings_headline(
                     session_summary,
                     savings_pct=float(payload.get("session_savings_pct", 0.0)),
                     tokens_saved=int(payload.get("session_tokens_saved", 0)),
                 )
                 console.print(
-                    _render_stats_panel(
+                    render_stats_panel(
                         "Current Session",
                         headline=f"{headline} • {headline_pct}",
                         headline_style=(
-                            _savings_style(
+                            savings_style(
                                 float(session_summary["savings_pct"])
                             )
                             if session_summary
                             else "bold yellow"
                         ),
                         subhead=f"{verdict} • {subhead}",
-                        rows=_session_status_rows(
+                        rows=session_status_rows(
                             summary=session_summary,
                             tok_active=True,
                             baseline_only=baseline_only,
@@ -616,9 +615,9 @@ def doctor_command(verbose: bool = False) -> None:
                             degradation_reason=str(
                                 payload.get("last_degradation_reason", "")
                             ),
-                            session_signals=_session_signals_text(payload),
+                            session_signals=session_signals_text(payload),
                         ),
-                        border_style=_status_border(verdict_style),
+                        border_style=status_border(verdict_style),
                     )
                 )
                 if baseline_only:
@@ -639,7 +638,7 @@ def doctor_command(verbose: bool = False) -> None:
                         "[yellow]⚠️ Tok verdict:[/yellow] bridge is healthy, but no current-session savings are visible yet."
                     )
                 console.print(
-                    f"[bold]Recommendation:[/bold] {_session_recommendation(baseline_only=baseline_only, session_quality=str(payload.get('session_quality', 'clean'))).split(': ', 1)[1]}"
+                    f"[bold]Recommendation:[/bold] {session_recommendation(baseline_only=baseline_only, session_quality=str(payload.get('session_quality', 'clean'))).split(': ', 1)[1]}"
                 )
             else:
                 console.print(
@@ -655,7 +654,7 @@ def doctor_command(verbose: bool = False) -> None:
         console.print("[red]❌ Bridge process not running[/red]")
         issues = True
 
-    memory_dir = _memory_root()
+    memory_dir = memory_root()
     structured_path = memory_dir / "bridge_memory.tok"
     fallback_path = memory_dir / "memory.tok"
 

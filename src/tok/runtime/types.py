@@ -121,7 +121,7 @@ class NormalizedToolEvent(BaseModel, frozen=True):
 
     @field_validator("compressibility_class")
     @classmethod
-    def validate_compressibility_class(cls, v: str) -> str:
+    def validate_compressibility_class(_cls, v: str) -> str:
         """Validate compressibility_class is a known value."""
         if v not in ("raw", "file_read", "search", "command", "tool_result"):
             return "raw"  # Default to raw for unknown values

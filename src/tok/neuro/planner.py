@@ -251,7 +251,7 @@ def save_tok(
                 f.write(f"TOK: {mem.lesson}\n")
 
 
-def load_tok(path: str) -> tuple[list[TokMemory], MacroRegistry]:
+def load_tok(_path: str) -> tuple[list[TokMemory], MacroRegistry]:
     """Basic parser for .tok files (POC)."""
     # ... In a real system, this would be a full grammar parser ...
     # For now, we return empty structure to show intent.
