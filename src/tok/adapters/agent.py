@@ -382,7 +382,6 @@ def _process_flushed_nodes(
         is_valid, err_msg = DEFAULT_SCHEMA.validate(node)
         if not is_valid:
             print(f"\n  [agent] syntax error: {err_msg}")
-            response_text += f"\n[SYNTAX ERROR] {err_msg}"
             tool_results.append(
                 TokNode(
                     type="error",

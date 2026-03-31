@@ -866,8 +866,8 @@ def gate_check_command(
 
     release_summary = gate_release_summary(
         results,
-        tracker=tracker,
-        trend_info=trend_info,
+        tracker,
+        trend_info,
     )
     if trend_info is not None:
         console.print(

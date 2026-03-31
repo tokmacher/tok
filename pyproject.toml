@@ -44,6 +44,8 @@ dev = [
     "mypy>=1.0",
     "pre-commit>=3.0",
     "hypothesis>=6.0",
+    "safety>=2.0.0",
+    "requests>=2.25.0",
 ]
 
 [project.urls]
@@ -72,7 +74,7 @@ line-length = 79
 select = ["E", "F", "I", "N", "W", "UP", "B", "C901"]
 # Ignore style issues that don't affect functionality
 # Prioritize syntax correctness and maintainability over pedantic style rules
-ignore = ["E501", "E741", "N806", "E402", "N813", "B023", "N802", "F811", "F402", "B025", "N817", "I001"]
+ignore = ["E501", "E741", "N806", "E402", "N813", "B023", "N802", "F811", "F402", "B025", "N817", "I001", "N804", "E731"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15

@@ -89,7 +89,7 @@ class LiveNeuroMonitor:
 
 if __name__ == "__main__":
     monitor = LiveNeuroMonitor(
-        "/Users/jfj/Desktop/tok/execution.log",
-        "/Users/jfj/Desktop/tok/macros.tok",
+        str(Path(__file__).parent.parent.parent / "execution.log"),
+        str(Path(__file__).parent.parent.parent / "macros.tok"),
     )
     monitor.run()

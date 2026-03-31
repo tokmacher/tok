@@ -82,7 +82,7 @@ def bridge_start(
 
     TOK_DIR.mkdir(parents=True, exist_ok=True)
 
-    start_collector(debug=debug)
+    start_collector(_debug=debug)
 
     if foreground:
         from ..gateway import run_bridge
@@ -96,7 +96,7 @@ def bridge_start(
             keep_turns=keep_turns,
             debug=debug,
             fail_open=fail_open,
-            api_base=api_base,
+            _api_base=api_base,
         )
     else:
         env = os.environ.copy()
