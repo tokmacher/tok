@@ -47,7 +47,7 @@ but it is still experimental and secondary.
 
 Here's an example of the `tok stats` output, showcasing the significant cost and token savings achieved in a real session:
 
-![Tok Usage Screenshot](docs/images/tok_stats.png)
+![Tok Savings Output showing 82 percent saved](docs/images/tok_stats.png)
 
 This output clearly illustrates the financial benefits and token efficiency of using Tok:
 
