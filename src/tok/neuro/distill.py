@@ -1,7 +1,7 @@
 from __future__ import annotations
 import collections
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..runtime.memory.tok_state import (
     TokMemory,
@@ -68,7 +68,9 @@ class MemoryDistiller:
         discovered_macros = self.miner.mine(ir_histories, self.registry)
         for macro in discovered_macros:
             self.registry.register(macro)
-            logger.debug(f"Autonomous Inversion: Registered macro @{macro.name}")
+            logger.debug(
+                f"Autonomous Inversion: Registered macro @{macro.name}"
+            )
 
         # 2. Negative Distillation (Failure-Driven)
         negative_lessons = self.mine_negative_patterns(memory)

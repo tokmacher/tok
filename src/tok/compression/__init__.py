@@ -64,7 +64,7 @@ class StableResultPayload(BaseModel):
         return cleaned or None
 
     @model_validator(mode="after")
-    def _reject_precision_payloads(self) -> "StableResultPayload":
+    def _reject_precision_payloads(self) -> StableResultPayload:
         if self.precision_read:
             raise ValueError("precision reads must stay verbatim")
         if not self.summary and not self.skeleton:

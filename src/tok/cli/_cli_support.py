@@ -102,7 +102,7 @@ def check_port_python(port: int) -> list[int]:
                 # This is a safe fallback that doesn't use subprocess
                 logger.debug(f"Port {port} is in use (detected via socket)")
                 # Return empty list since we can't safely get PID without lsof
-    except (socket.error, OSError, ValueError) as e:
+    except (OSError, ValueError) as e:
         logger.debug(f"Socket check failed for port {port}: {e}")
 
     return pids

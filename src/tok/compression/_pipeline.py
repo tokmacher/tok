@@ -5,13 +5,11 @@ from __future__ import annotations
 import copy
 import json
 import os
-import posixpath
 import re
 from typing import Any
 
 import tok.compression as _compression
 from . import (
-    COMMAND_LIKE_TOOLS,
     EDIT_LIKE_TOOLS,
     FILE_LIKE_TOOLS,
     QUESTION_PREFIXES,

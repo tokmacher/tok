@@ -10,7 +10,7 @@ from scripts.select_fixtures import (
 
 def _required_fixtures(config_path: Path | None = None) -> set[str]:
     """Get required fixtures from gate config.
-    
+
     Args:
         config_path: Optional path to gate-config.json. If None, uses repository root.
     """
@@ -18,7 +18,7 @@ def _required_fixtures(config_path: Path | None = None) -> set[str]:
         gate_config = Path(__file__).resolve().parents[2] / "gate-config.json"
     else:
         gate_config = config_path
-        
+
     # Create a default gate-config.json if it doesn't exist (for local testing)
     if not gate_config.exists():
         default_config = {
@@ -56,7 +56,9 @@ def test_required_release_fixtures_are_not_in_redteam(tmp_path):
     assert required.isdisjoint(set(get_redteam_fixtures()))
 
 
-def test_required_release_fixtures_match_current_internal_rc_contract(tmp_path):
+def test_required_release_fixtures_match_current_internal_rc_contract(
+    tmp_path,
+):
     # Use temporary config file to avoid side effects
     config_file = tmp_path / "gate-config.json"
     assert _required_fixtures(config_file) == {

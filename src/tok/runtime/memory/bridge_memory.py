@@ -583,13 +583,15 @@ class BridgeMemoryState:
         """Emit the files field into state_parts with freshness indicators."""
         if not files:
             return
-        
+
         # Build a lookup from file path to freshness data
         freshness_lookup: dict[str, str] = {}
         for fact in file_facts:
             if fact.value.startswith("file[") and ":" in fact.value:
                 # Parse: file[path]:LINE_COUNT|digest|~TOKENS
-                bracket_end = fact.value.index("]", 5) if "]" in fact.value[5:] else -1
+                bracket_end = (
+                    fact.value.index("]", 5) if "]" in fact.value[5:] else -1
+                )
                 if bracket_end < 0:
                     continue
                 path = fact.value[5:bracket_end]
@@ -604,7 +606,7 @@ class BridgeMemoryState:
                         line_count = parts[0]
                         tokens = parts[2]  # ~TOKENS
                         freshness_lookup[path] = f"{line_count}|{tokens}"
-        
+
         file_values = []
         for e in files:
             val = e.value
@@ -615,7 +617,7 @@ class BridgeMemoryState:
             if freshness:
                 val = f"{val}:{freshness}"
             file_values.append(val)
-        
+
         f_key = TOK_FIELD_ALIAS.get("files", "files")
         serialized = f"{f_key}:" + ",".join(file_values)
         self._emit_field("files", serialized, state_parts, omit_unchanged)
@@ -776,7 +778,9 @@ class BridgeMemoryState:
         facts_emitted = False
         for field in field_order:
             if field == "files":
-                self._emit_files_field(files, file_facts, state_parts, omit_unchanged)
+                self._emit_files_field(
+                    files, file_facts, state_parts, omit_unchanged
+                )
             elif field == "facts":
                 self._emit_facts_section(
                     file_facts,
@@ -853,11 +857,11 @@ class BridgeMemoryState:
 
         heat = self._file_heat.get(normalized_path, 0)
         was_edited = heat >= 2.0
-        
+
         # Calculate line count for freshness visibility
         line_count = len(snippet.splitlines())
         estimated_tokens = line_count * 4  # Rough estimate: ~4 tokens per line
-        
+
         digest = self._extract_file_digest(
             snippet, normalized_path, was_edited=was_edited
         )
@@ -944,7 +948,7 @@ class BridgeMemoryState:
 
     def get_file_fact_digests(self) -> dict[str, str]:
         """Extract file digests from facts, handling new format with line counts.
-        
+
         New format: file[path]:LINE_COUNT|digest|~tokens
         Legacy format: file[path]:digest
         """
@@ -960,7 +964,7 @@ class BridgeMemoryState:
                 colon_idx = entry.value.find(":", bracket_end)
                 if colon_idx < 0:
                     continue
-                    
+
                 rest = entry.value[colon_idx + 1 :]
                 # Handle new format: LINE_COUNT|digest|~tokens
                 if "|" in rest:

@@ -11,14 +11,13 @@ import re
 import time
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # Security configuration
@@ -34,8 +33,10 @@ SECURITY_CONFIG = {
 # Package name validation regex based on PyPI requirements
 # PyPI allows: letters, numbers, hyphens, underscores, and dots
 # Must start and end with letter or number, no consecutive special chars
-PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$')
-VERSION_REGEX = re.compile(r'^[a-zA-Z0-9._+-]+$')
+PACKAGE_NAME_REGEX = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$"
+)
+VERSION_REGEX = re.compile(r"^[a-zA-Z0-9._+-]+$")
 
 
 def validate_package_name(package_name: str) -> bool:
@@ -44,38 +45,43 @@ def validate_package_name(package_name: str) -> bool:
         return False
     return bool(PACKAGE_NAME_REGEX.fullmatch(package_name))
 
+
 def validate_version(version: str) -> bool:
     """Validate version string for security."""
     if not version or len(version) > 50:
         return False
     return bool(VERSION_REGEX.fullmatch(version))
 
+
 def create_secure_session() -> requests.Session:
     """Create a secure HTTP session with proper configuration."""
     session = requests.Session()
-    
+
     # Configure retry strategy
     retry_strategy = Retry(
         total=SECURITY_CONFIG["max_retries"],
         status_forcelist=[429, 500, 502, 503, 504],
         method_whitelist=["HEAD", "GET", "OPTIONS"],
         backoff_factor=1,
-        raise_on_status=False
+        raise_on_status=False,
     )
-    
+
     adapter = HTTPAdapter(max_retries=retry_strategy)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
-    
+
     # Set secure headers
-    session.headers.update({
-        'User-Agent': SECURITY_CONFIG["user_agent"],
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'close',
-    })
-    
+    session.headers.update(
+        {
+            "User-Agent": SECURITY_CONFIG["user_agent"],
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "close",
+        }
+    )
+
     return session
+
 
 class SecurityMonitor:
     def __init__(self):
@@ -92,9 +98,9 @@ class SecurityMonitor:
             return {}
 
         try:
-            with open(analysis_file, 'r', encoding='utf-8') as f:
+            with open(analysis_file, encoding="utf-8") as f:
                 return json.load(f)
-        except (IOError, OSError, json.JSONDecodeError) as e:
+        except (OSError, json.JSONDecodeError) as e:
             logger.error(f"Failed to load dependency analysis: {e}")
             return {}
 
@@ -109,7 +115,9 @@ class SecurityMonitor:
                 version = package.get("version", "")
 
                 # Input validation
-                if not validate_package_name(name) or not validate_version(version):
+                if not validate_package_name(name) or not validate_version(
+                    version
+                ):
                     logger.warning(f"Invalid package info: {name}@{version}")
                     continue
 
@@ -120,11 +128,11 @@ class SecurityMonitor:
                     # Check PyPI for security advisories
                     url = f"{self.vulnerability_db_url}/{name}/{version}/json"
                     logger.debug(f"Checking vulnerabilities: {name}@{version}")
-                    
+
                     response = session.get(
                         url,
                         timeout=SECURITY_CONFIG["request_timeout"],
-                        verify=True  # SSL verification enabled
+                        verify=True,  # SSL verification enabled
                     )
 
                     if response.status_code == 200:
@@ -132,27 +140,41 @@ class SecurityMonitor:
                         # Check for vulnerabilities in PyPI data
                         # This is a simplified check - in production, you'd use a proper vulnerability database
                         if not isinstance(data, dict):
-                            logger.warning(f"Invalid response structure for {name}@{version}")
+                            logger.warning(
+                                f"Invalid response structure for {name}@{version}"
+                            )
                             continue
-                        
+
                         # Add vulnerability checking logic here
                         # For now, we just log that we checked the package
-                        logger.debug(f"Checked {name}@{version} for vulnerabilities")
+                        logger.debug(
+                            f"Checked {name}@{version} for vulnerabilities"
+                        )
                     elif response.status_code == 404:
-                        logger.debug(f"Package {name}@{version} not found in PyPI")
+                        logger.debug(
+                            f"Package {name}@{version} not found in PyPI"
+                        )
                     else:
-                        logger.warning(f"Unexpected status {response.status_code} for {name}@{version}")
+                        logger.warning(
+                            f"Unexpected status {response.status_code} for {name}@{version}"
+                        )
 
                 except requests.exceptions.SSLError as e:
                     logger.error(f"SSL error checking {name}@{version}: {e}")
                 except requests.exceptions.Timeout as e:
                     logger.error(f"Timeout checking {name}@{version}: {e}")
                 except requests.exceptions.RequestException as e:
-                    logger.error(f"Network error checking {name}@{version}: {e}")
+                    logger.error(
+                        f"Network error checking {name}@{version}: {e}"
+                    )
                 except (json.JSONDecodeError, ValueError) as e:
-                    logger.error(f"Invalid JSON response for {name}@{version}: {e}")
+                    logger.error(
+                        f"Invalid JSON response for {name}@{version}: {e}"
+                    )
                 except Exception as e:
-                    logger.error(f"Unexpected error checking {name}@{version}: {e}")
+                    logger.error(
+                        f"Unexpected error checking {name}@{version}: {e}"
+                    )
 
         except Exception as e:
             logger.error(f"Vulnerability check failed: {e}")

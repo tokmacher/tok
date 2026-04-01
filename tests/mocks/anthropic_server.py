@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncGenerator
+from typing import Any
+from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, Response

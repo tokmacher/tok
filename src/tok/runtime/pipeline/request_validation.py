@@ -537,9 +537,7 @@ def _rewrite_provider_safe_tool_ids(
                     )
                 elif disposition == "synthesized":
                     signals["tok_bridge_blank_tool_id_synthesized"] = (
-                        signals.get(
-                            "tok_bridge_blank_tool_id_synthesized", 0
-                        )
+                        signals.get("tok_bridge_blank_tool_id_synthesized", 0)
                         + 1
                     )
                 elif disposition == "deduped":
@@ -797,9 +795,7 @@ def quarantine_invalid_tool_history_messages(
                 next_content, "tool_result"
             )
             signals["tok_bridge_invalid_tool_history_quarantined"] = (
-                signals.get(
-                    "tok_bridge_invalid_tool_history_quarantined", 0
-                )
+                signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
                 + 1
             )
             signals["tok_bridge_quarantined_tool_use_blocks"] = (
@@ -824,9 +820,7 @@ def quarantine_invalid_tool_history_messages(
                 content, "tool_use"
             )
             signals["tok_bridge_invalid_tool_history_quarantined"] = (
-                signals.get(
-                    "tok_bridge_invalid_tool_history_quarantined", 0
-                )
+                signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
                 + 1
             )
             signals["tok_bridge_quarantined_tool_use_blocks"] = (
@@ -1056,7 +1050,9 @@ def _process_user_tool_results(
 
         if block_type != "tool_result":
             if saw_tool_result_block and not message_has_mixed_violation:
-                risks["tool_result_not_immediately_after_assistant_tool_use"] = (
+                risks[
+                    "tool_result_not_immediately_after_assistant_tool_use"
+                ] = (
                     risks.get(
                         "tool_result_not_immediately_after_assistant_tool_use",
                         0,
@@ -1117,9 +1113,7 @@ def _collect_bridge_tool_result_shape_risks(
         if not isinstance(message, dict):
             if pending_tool_use_ids:
                 risks["assistant_tool_use_missing_next_tool_result"] = (
-                    risks.get(
-                        "assistant_tool_use_missing_next_tool_result", 0
-                    )
+                    risks.get("assistant_tool_use_missing_next_tool_result", 0)
                     + len(pending_tool_use_ids)
                 )
             pending_tool_use_ids = []
@@ -1131,9 +1125,7 @@ def _collect_bridge_tool_result_shape_risks(
         if role == "assistant":
             if pending_tool_use_ids:
                 risks["assistant_tool_use_missing_next_tool_result"] = (
-                    risks.get(
-                        "assistant_tool_use_missing_next_tool_result", 0
-                    )
+                    risks.get("assistant_tool_use_missing_next_tool_result", 0)
                     + len(pending_tool_use_ids)
                 )
             pending_tool_use_ids = _process_assistant_tool_ids(
@@ -1144,9 +1136,7 @@ def _collect_bridge_tool_result_shape_risks(
         if role != "user":
             if pending_tool_use_ids:
                 risks["assistant_tool_use_missing_next_tool_result"] = (
-                    risks.get(
-                        "assistant_tool_use_missing_next_tool_result", 0
-                    )
+                    risks.get("assistant_tool_use_missing_next_tool_result", 0)
                     + len(pending_tool_use_ids)
                 )
             pending_tool_use_ids = []
@@ -1155,9 +1145,7 @@ def _collect_bridge_tool_result_shape_risks(
         if isinstance(content, str) or not isinstance(content, list):
             if pending_tool_use_ids:
                 risks["assistant_tool_use_missing_next_tool_result"] = (
-                    risks.get(
-                        "assistant_tool_use_missing_next_tool_result", 0
-                    )
+                    risks.get("assistant_tool_use_missing_next_tool_result", 0)
                     + len(pending_tool_use_ids)
                 )
             pending_tool_use_ids = set()
@@ -1170,19 +1158,13 @@ def _collect_bridge_tool_result_shape_risks(
             content, seen_tool_use_ids, pending_tool_use_ids, risks
         )
         if pending_tool_use_ids and tool_result_count == 0:
-            risks["assistant_tool_use_missing_next_tool_result"] = (
-                risks.get(
-                    "assistant_tool_use_missing_next_tool_result", 0
-                )
-                + len(pending_tool_use_ids)
-            )
+            risks["assistant_tool_use_missing_next_tool_result"] = risks.get(
+                "assistant_tool_use_missing_next_tool_result", 0
+            ) + len(pending_tool_use_ids)
         elif pending_tool_use_ids and matched_pending_tool_use_count == 0:
-            risks["assistant_tool_use_missing_next_tool_result"] = (
-                risks.get(
-                    "assistant_tool_use_missing_next_tool_result", 0
-                )
-                + len(pending_tool_use_ids)
-            )
+            risks["assistant_tool_use_missing_next_tool_result"] = risks.get(
+                "assistant_tool_use_missing_next_tool_result", 0
+            ) + len(pending_tool_use_ids)
         elif pending_tool_use_ids and (
             matched_pending_tool_use_count != len(pending_tool_use_ids)
         ):
@@ -1199,10 +1181,9 @@ def _collect_bridge_tool_result_shape_risks(
         pending_tool_use_ids = []
 
     if pending_tool_use_ids:
-        risks["assistant_tool_use_missing_next_tool_result"] = (
-            risks.get("assistant_tool_use_missing_next_tool_result", 0)
-            + len(pending_tool_use_ids)
-        )
+        risks["assistant_tool_use_missing_next_tool_result"] = risks.get(
+            "assistant_tool_use_missing_next_tool_result", 0
+        ) + len(pending_tool_use_ids)
 
     return risks
 
@@ -1316,7 +1297,8 @@ def summarize_bridge_pairing(
             next_tool_result_ids = [
                 str(block.get("tool_use_id", "")).strip()
                 for block in next_content
-                if isinstance(block, dict) and block.get("type") == "tool_result"
+                if isinstance(block, dict)
+                and block.get("type") == "tool_result"
             ]
         timeline.append(
             {
@@ -1445,7 +1427,9 @@ def validate_anthropic_bridge_body(body: dict[str, Any]) -> list[str]:
         failures.append("user_tool_result_after_text")
     if shape_risks.get("assistant_tool_use_missing_next_tool_result"):
         failures.append("assistant_tool_use_missing_next_tool_result")
-    if shape_risks.get("assistant_tool_use_incomplete_next_tool_result_coverage"):
+    if shape_risks.get(
+        "assistant_tool_use_incomplete_next_tool_result_coverage"
+    ):
         failures.append(
             "assistant_tool_use_incomplete_next_tool_result_coverage"
         )

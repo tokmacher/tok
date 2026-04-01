@@ -339,9 +339,7 @@ def _run_bridge_preflight(
             behavior_signals[
                 "tok_bridge_pairing_degraded_to_provider_safe"
             ] = 1
-            behavior_signals[
-                "tok_bridge_prepared_pairing_rejected_local"
-            ] = 1
+            behavior_signals["tok_bridge_prepared_pairing_rejected_local"] = 1
             session.capture_event(
                 {
                     "event": "bridge_preflight_pairing_degraded_to_provider_safe",
@@ -370,10 +368,8 @@ def _run_bridge_preflight(
             ) = _attempt_quarantine_invalid_tool_history(canonical_body)
             _merge_signal_counts(behavior_signals, quarantine_signals)
             if quarantine_valid:
-                recovery_signals = (
-                    session.runtime_session.record_invalid_tool_history_recovery(
-                        blocked=False
-                    )
+                recovery_signals = session.runtime_session.record_invalid_tool_history_recovery(
+                    blocked=False
                 )
                 _merge_signal_counts(behavior_signals, recovery_signals)
                 if recovery_signals.get(
@@ -427,9 +423,10 @@ def _run_bridge_preflight(
                     behavior_signals,
                     bridge_strict_failure_signals(strict_failures),
                 )
-        if _should_block_invalid_tool_history_locally(
-            strict_failures
-        ) or invalid_tool_history_unrecoverable:
+        if (
+            _should_block_invalid_tool_history_locally(strict_failures)
+            or invalid_tool_history_unrecoverable
+        ):
             recovery_signals = (
                 session.runtime_session.record_invalid_tool_history_recovery(
                     blocked=True
@@ -518,7 +515,9 @@ def _run_bridge_preflight(
     if tool_history_repaired and emit_repair_logs:
         logger.info(
             "%s: repaired historical tool IDs before send",
-            _preflight_event_name("bridge_preflight_repaired_tool_history", path),
+            _preflight_event_name(
+                "bridge_preflight_repaired_tool_history", path
+            ),
         )
         session.capture_event(
             {
@@ -562,6 +561,7 @@ def _run_bridge_preflight(
         or tool_history_recovery_applied,
         None,
     )
+
 
 from ._bridge_comparison import (
     _payloads_materially_differ,
@@ -911,17 +911,13 @@ async def buffer_strip_restream_impl(
                                     logger.info(
                                         "stream_recovery_succeeded_tool_use: recovered empty streamed success via non-stream retry"
                                     )
-                                response_signals = dict(
-                                    response_signals or {}
-                                )
+                                response_signals = dict(response_signals or {})
                                 _merge_signal_counts(
                                     response_signals,
                                     recovery_success_signals,
                                 )
                                 retry_usage = retry_json.get("usage", {})
-                                retry_model = str(
-                                    retry_json.get("model", "")
-                                )
+                                retry_model = str(retry_json.get("model", ""))
                                 if retry_model and retry_usage:
                                     session.tracker.record_call(
                                         model=retry_model,
@@ -1281,7 +1277,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 prepared_pairing = summarize_bridge_pairing(
                     prepared_body.get("messages", [])
                 )
-                prepared_failures = validate_anthropic_bridge_body(prepared_body)
+                prepared_failures = validate_anthropic_bridge_body(
+                    prepared_body
+                )
                 prepared_mixed_user_tool_result_messages = (
                     _count_user_messages_with_mixed_tool_result_content(
                         prepared_body.get("messages", [])
@@ -1535,9 +1533,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 session_summary.get("tool_history_repaired_count", 0)
             ),
             "tool_history_pairing_repaired_count": int(
-                session_summary.get(
-                    "tool_history_pairing_repaired_count", 0
-                )
+                session_summary.get("tool_history_pairing_repaired_count", 0)
             ),
             "tool_history_quarantined_count": int(
                 session_summary.get("tool_history_quarantined_count", 0)
@@ -1630,7 +1626,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 ):
                     raise ValueError("request body must be a JSON object")
 
-                provider_safe_original_body, behavior_signals, source_retry_forbidden, preflight_response = _run_bridge_preflight(
+                (
+                    provider_safe_original_body,
+                    behavior_signals,
+                    source_retry_forbidden,
+                    preflight_response,
+                ) = _run_bridge_preflight(
                     session,
                     body=copy.deepcopy(body),
                     original_body=original_body,
@@ -1651,7 +1652,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 raw_retry_forbidden = source_retry_forbidden
                 source_behavior_signals = dict(behavior_signals)
 
-                request_model = str(provider_safe_original_body.get("model", ""))
+                request_model = str(
+                    provider_safe_original_body.get("model", "")
+                )
                 messages = provider_safe_original_body.get("messages", [])
 
                 if path == "v1/messages":
@@ -1845,7 +1848,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             target_url += f"?{request.url.query}"
 
         if session.is_rate_limited_locally():
-            retry_after_seconds = session.local_rate_limit_retry_after_seconds()
+            retry_after_seconds = (
+                session.local_rate_limit_retry_after_seconds()
+            )
             behavior_signals["rate_limit_local_throttle_active"] = 1
             logger.warning(
                 "rate_limit_local_throttle_active: blocking upstream request during local cooldown retry_after=%ss",
@@ -1886,7 +1891,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     )
                     _merge_signal_counts(behavior_signals, retry_signals)
                     if session.is_rate_limited_locally():
-                        behavior_signals["rate_limit_local_throttle_opened"] = 1
+                        behavior_signals[
+                            "rate_limit_local_throttle_opened"
+                        ] = 1
                     if retried_without_tok:
                         compressed = False
                         saved_toks = 0
@@ -1902,9 +1909,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             "tok_fail_open_retry": 1,
                             "tok_fallback_activated": 1,
                         }
-                        _merge_signal_counts(
-                            behavior_signals, retry_signals
-                        )
+                        _merge_signal_counts(behavior_signals, retry_signals)
                         logger.warning(
                             "tok_fallback_activated: upstream 400 retry, serving without compression"
                         )
@@ -2077,7 +2082,8 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     passthrough_blocks = [
                         block
                         for block in resp_json.get("content", [])
-                        if isinstance(block, dict) and block.get("type") != "text"
+                        if isinstance(block, dict)
+                        and block.get("type") != "text"
                     ]
                     passthrough_blocks, passthrough_signals = (
                         normalize_tool_use_blocks(
@@ -2088,11 +2094,16 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
 
                     logger.info(
                         "Raw response content: %s",
-                        resp_json.get("content", [])[:3] if resp_json.get("content") else [],
+                        resp_json.get("content", [])[:3]
+                        if resp_json.get("content")
+                        else [],
                     )
 
                     for block in resp_json.get("content", []):
-                        if isinstance(block, dict) and block.get("type") == "text":
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") == "text"
+                        ):
                             text_content = block.get("text")
                             if isinstance(text_content, str):
                                 full_response_text += text_content

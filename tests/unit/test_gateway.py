@@ -2256,13 +2256,17 @@ def test_collect_behavior_signals_detects_repeats_and_workarounds():
                     "type": "tool_use",
                     "id": "c1",
                     "name": "bash",
-                    "input": {"command": "uv run pytest tests/unit/test_gateway.py -q"},
+                    "input": {
+                        "command": "uv run pytest tests/unit/test_gateway.py -q"
+                    },
                 },
                 {
                     "type": "tool_use",
                     "id": "c2",
                     "name": "bash",
-                    "input": {"command": "uv run pytest tests/unit/test_gateway.py -q"},
+                    "input": {
+                        "command": "uv run pytest tests/unit/test_gateway.py -q"
+                    },
                 },
             ],
         },
@@ -3326,7 +3330,10 @@ def test_gateway_streaming_upstream_400_returns_error_without_stream_recovery(
     )
 
     assert response.status_code == 400
-    assert response.json()["error"]["message"] == "provider-safe retry still rejected"
+    assert (
+        response.json()["error"]["message"]
+        == "provider-safe retry still rejected"
+    )
     assert len(sent_bodies) == 2
     assert "stream_recovery_retry_started" not in caplog.text
     assert "stream_recovery_fallback" not in caplog.text
@@ -3363,7 +3370,9 @@ def test_gateway_retries_upstream_429_then_succeeds(
         del self, stream
         sent_bodies.append(json.loads(request.read().decode()))
         if len(sent_bodies) == 1:
-            return httpx.Response(429, json={"error": {"message": "slow down"}})
+            return httpx.Response(
+                429, json={"error": {"message": "slow down"}}
+            )
         return httpx.Response(
             200,
             json={
@@ -3378,7 +3387,9 @@ def test_gateway_retries_upstream_429_then_succeeds(
     )
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
-    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    monkeypatch.setattr(
+        "tok.gateway._app_factory.random.uniform", lambda a, b: 1.0
+    )
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
     session = BridgeSession(
@@ -3456,7 +3467,9 @@ def test_gateway_429_retry_honors_retry_after_floor(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
-    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    monkeypatch.setattr(
+        "tok.gateway._app_factory.random.uniform", lambda a, b: 1.0
+    )
 
     app = create_app(
         BridgeSession(
@@ -3483,7 +3496,9 @@ def test_gateway_429_retry_honors_retry_after_floor(tmp_path, monkeypatch):
     assert sleep_calls == [2.0]
 
 
-def test_gateway_persistent_429_retries_then_exhausts(tmp_path, monkeypatch, caplog):
+def test_gateway_persistent_429_retries_then_exhausts(
+    tmp_path, monkeypatch, caplog
+):
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
     sent_count = 0
@@ -3518,7 +3533,9 @@ def test_gateway_persistent_429_retries_then_exhausts(tmp_path, monkeypatch, cap
     )
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
-    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    monkeypatch.setattr(
+        "tok.gateway._app_factory.random.uniform", lambda a, b: 1.0
+    )
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
     app = create_app(
@@ -3544,7 +3561,9 @@ def test_gateway_persistent_429_retries_then_exhausts(tmp_path, monkeypatch, cap
     assert "rate_limit_retry_exhausted" in caplog.text
 
 
-def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch):
+def test_gateway_local_throttle_blocks_follow_up_request(
+    tmp_path, monkeypatch
+):
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
     sent_count = 0
@@ -3579,7 +3598,9 @@ def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
-    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    monkeypatch.setattr(
+        "tok.gateway._app_factory.random.uniform", lambda a, b: 1.0
+    )
 
     session = BridgeSession(
         memory_dir=memory_dir,
@@ -3617,7 +3638,9 @@ def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch):
     assert sent_count == 1
 
 
-def test_gateway_local_throttle_expiry_allows_upstream_again(tmp_path, monkeypatch):
+def test_gateway_local_throttle_expiry_allows_upstream_again(
+    tmp_path, monkeypatch
+):
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
     sent_count = 0
@@ -3771,7 +3794,10 @@ def test_gateway_degrades_to_provider_safe_body_on_prepared_pairing_failure(
                     }
                 ],
             },
-            {"role": "assistant", "content": [{"type": "text", "text": "Continue."}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Continue."}],
+            },
         ],
         "stream": False,
     }
@@ -4010,7 +4036,10 @@ def test_gateway_blocks_pairing_failure_when_provider_safe_body_is_still_invalid
                     }
                 ],
             },
-            {"role": "user", "content": [{"type": "text", "text": "Continue."}]},
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Continue."}],
+            },
         ],
         "stream": False,
     }
@@ -4038,7 +4067,10 @@ def test_gateway_blocks_pairing_failure_when_provider_safe_body_is_still_invalid
                             },
                         ],
                     },
-                    {"role": "user", "content": [{"type": "text", "text": "Continue."}]},
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Continue."}],
+                    },
                 ],
                 "stream": False,
             },
@@ -4071,7 +4103,9 @@ def test_gateway_blocks_pairing_failure_when_provider_safe_body_is_still_invalid
 
     assert response.status_code == 400
     assert "bridge_preflight_rejected_blocked_local" in caplog.text
-    assert "bridge_preflight_pairing_degraded_to_provider_safe" not in caplog.text
+    assert (
+        "bridge_preflight_pairing_degraded_to_provider_safe" not in caplog.text
+    )
 
 
 def test_gateway_fail_open_retry_uses_provider_safe_body_after_tool_history_repair(

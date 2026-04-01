@@ -12,21 +12,23 @@ import sys
 import time
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # Security configuration
 SECURITY_CONFIG = {
     "min_package_age_days": 90,
     "require_signatures": True,
-    "allowed_sources": ["https://pypi.org/simple", "https://files.pythonhosted.org"],
+    "allowed_sources": [
+        "https://pypi.org/simple",
+        "https://files.pythonhosted.org",
+    ],
     "blocked_packages": [
         # Known malicious or suspicious packages
         "python3-lib",
@@ -42,9 +44,11 @@ SECURITY_CONFIG = {
 # Package name validation regex based on PyPI requirements
 # PyPI allows: letters, numbers, hyphens, underscores, and dots
 # Must start and end with letter or number, no consecutive special chars
-PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$')
-VERSION_REGEX = re.compile(r'^[a-zA-Z0-9._+-]+$')
-HASH_REGEX = re.compile(r'^[a-fA-F0-9]{64}$')  # SHA-256 hash
+PACKAGE_NAME_REGEX = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$"
+)
+VERSION_REGEX = re.compile(r"^[a-zA-Z0-9._+-]+$")
+HASH_REGEX = re.compile(r"^[a-fA-F0-9]{64}$")  # SHA-256 hash
 
 
 def validate_package_name(package_name: str) -> bool:
@@ -53,42 +57,48 @@ def validate_package_name(package_name: str) -> bool:
         return False
     return bool(PACKAGE_NAME_REGEX.fullmatch(package_name))
 
+
 def validate_version(version: str) -> bool:
     """Validate version string for security."""
     if not version or len(version) > 50:
         return False
     return bool(VERSION_REGEX.fullmatch(version))
 
+
 def validate_hash(hash_str: str) -> bool:
     """Validate SHA-256 hash format."""
     return bool(HASH_REGEX.fullmatch(hash_str))
 
+
 def create_secure_session() -> requests.Session:
     """Create a secure HTTP session with proper configuration."""
     session = requests.Session()
-    
+
     # Configure retry strategy
     retry_strategy = Retry(
         total=SECURITY_CONFIG["max_retries"],
         status_forcelist=[429, 500, 502, 503, 504],
         method_whitelist=["HEAD", "GET", "OPTIONS"],
         backoff_factor=1,
-        raise_on_status=False
+        raise_on_status=False,
     )
-    
+
     adapter = HTTPAdapter(max_retries=retry_strategy)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
-    
+
     # Set secure headers
-    session.headers.update({
-        'User-Agent': SECURITY_CONFIG["user_agent"],
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'close',
-    })
-    
+    session.headers.update(
+        {
+            "User-Agent": SECURITY_CONFIG["user_agent"],
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "close",
+        }
+    )
+
     return session
+
 
 def get_package_metadata(package_name: str, version: str) -> dict | None:
     """Fetch package metadata from PyPI with security measures."""
@@ -96,41 +106,43 @@ def get_package_metadata(package_name: str, version: str) -> dict | None:
     if not validate_package_name(package_name):
         logger.error(f"Invalid package name: {package_name}")
         return None
-    
+
     if not validate_version(version):
         logger.error(f"Invalid version: {version}")
         return None
-    
+
     # Check blocked packages
     if package_name in SECURITY_CONFIG["blocked_packages"]:
         logger.error(f"Blocked package detected: {package_name}")
         return None
-    
+
     # Rate limiting
     time.sleep(SECURITY_CONFIG["rate_limit_delay"])
-    
+
     session = create_secure_session()
-    
+
     try:
         url = f"https://pypi.org/pypi/{package_name}/{version}/json"
         logger.debug(f"Fetching metadata: {package_name}@{version}")
-        
+
         response = session.get(
             url,
             timeout=SECURITY_CONFIG["request_timeout"],
-            verify=True  # SSL verification enabled
+            verify=True,  # SSL verification enabled
         )
-        
+
         response.raise_for_status()
         data = response.json()
-        
+
         # Validate response structure
         if not isinstance(data, dict) or "releases" not in data:
-            logger.warning(f"Invalid response structure for {package_name}@{version}")
+            logger.warning(
+                f"Invalid response structure for {package_name}@{version}"
+            )
             return None
-        
+
         return data
-        
+
     except requests.exceptions.SSLError as e:
         logger.error(f"SSL error fetching {package_name}@{version}: {e}")
         return None
@@ -141,10 +153,14 @@ def get_package_metadata(package_name: str, version: str) -> dict | None:
         logger.error(f"Network error fetching {package_name}@{version}: {e}")
         return None
     except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"Invalid JSON response for {package_name}@{version}: {e}")
+        logger.error(
+            f"Invalid JSON response for {package_name}@{version}: {e}"
+        )
         return None
     except Exception as e:
-        logger.error(f"Unexpected error fetching {package_name}@{version}: {e}")
+        logger.error(
+            f"Unexpected error fetching {package_name}@{version}: {e}"
+        )
         return None
     finally:
         session.close()
@@ -159,14 +175,18 @@ def check_package_age(package_name: str, version: str) -> tuple[bool, int]:
     try:
         uploads = metadata.get("uploads", [])
         if not uploads:
-            logger.warning(f"No upload data found for {package_name}@{version}")
+            logger.warning(
+                f"No upload data found for {package_name}@{version}"
+            )
             return False, 0
-            
+
         upload_time_str = uploads[0].get("upload_time")
         if not upload_time_str:
-            logger.warning(f"No upload time found for {package_name}@{version}")
+            logger.warning(
+                f"No upload time found for {package_name}@{version}"
+            )
             return False, 0
-            
+
         upload_time = datetime.fromisoformat(
             upload_time_str.replace("Z", "+00:00")
         )
@@ -175,7 +195,9 @@ def check_package_age(package_name: str, version: str) -> tuple[bool, int]:
         is_old_enough = age_days >= SECURITY_CONFIG["min_package_age_days"]
         return is_old_enough, age_days
     except (ValueError, TypeError) as e:
-        logger.error(f"Error parsing upload time for {package_name}@{version}: {e}")
+        logger.error(
+            f"Error parsing upload time for {package_name}@{version}: {e}"
+        )
         return False, 0
 
 
@@ -185,9 +207,11 @@ def verify_package_hash(
     """Verify package hash against PyPI record."""
     # Input validation
     if not validate_hash(expected_hash):
-        logger.error(f"Invalid hash format for {package_name}@{version}: {expected_hash}")
+        logger.error(
+            f"Invalid hash format for {package_name}@{version}: {expected_hash}"
+        )
         return False
-    
+
     metadata = get_package_metadata(package_name, version)
     if not metadata:
         return False
@@ -197,20 +221,22 @@ def verify_package_hash(
         if not releases:
             logger.warning(f"No releases found for {package_name}@{version}")
             return False
-        
+
         # Find the matching release file
         for release_file in releases:
             if not isinstance(release_file, dict):
                 continue
-                
+
             if release_file.get("packagetype") == "bdist_wheel":
                 hashes = release_file.get("hashes", {})
                 pypi_hash = hashes.get("sha256")
-                
+
                 if not pypi_hash:
-                    logger.warning(f"No SHA256 hash found for {package_name}@{version} wheel")
+                    logger.warning(
+                        f"No SHA256 hash found for {package_name}@{version} wheel"
+                    )
                     continue
-                
+
                 # Compare hashes case-insensitively
                 return pypi_hash.lower() == expected_hash.lower()
 
@@ -232,9 +258,9 @@ def parse_uv_lock() -> list[dict]:
     current_package = {}
 
     try:
-        with open(lock_file, 'r', encoding='utf-8') as f:
+        with open(lock_file, encoding="utf-8") as f:
             lines = f.readlines()
-    except (IOError, OSError) as e:
+    except OSError as e:
         logger.error(f"Failed to read uv.lock file: {e}")
         sys.exit(1)
 
@@ -246,28 +272,39 @@ def parse_uv_lock() -> list[dict]:
             name = line.split("=")[1].strip().strip('"')
             # Validate package name
             if not validate_package_name(name):
-                logger.warning(f"Invalid package name at line {line_num}: {name}")
+                logger.warning(
+                    f"Invalid package name at line {line_num}: {name}"
+                )
                 continue
             current_package = {"name": name}
         elif line.startswith("version = ") and current_package:
             version = line.split("=")[1].strip().strip('"')
             # Validate version
             if not validate_version(version):
-                logger.warning(f"Invalid version at line {line_num}: {version}")
+                logger.warning(
+                    f"Invalid version at line {line_num}: {version}"
+                )
                 continue
             current_package["version"] = version
         elif line.startswith("hash = ") and current_package:
             hash_str = line.split("=")[1].strip().strip('"')
             # Validate hash format
             if not validate_hash(hash_str):
-                logger.warning(f"Invalid hash format at line {line_num}: {hash_str}")
+                logger.warning(
+                    f"Invalid hash format at line {line_num}: {hash_str}"
+                )
                 continue
             current_package["hash"] = hash_str
         elif line.startswith("url = ") and current_package:
             url = line.split("=")[1].strip().strip('"')
             # Validate URL is from trusted source
-            if not any(url.startswith(source) for source in SECURITY_CONFIG["allowed_sources"]):
-                logger.warning(f"Untrusted package source at line {line_num}: {url}")
+            if not any(
+                url.startswith(source)
+                for source in SECURITY_CONFIG["allowed_sources"]
+            ):
+                logger.warning(
+                    f"Untrusted package source at line {line_num}: {url}"
+                )
                 continue
             current_package["url"] = url
 
@@ -335,7 +372,9 @@ def main() -> int:
 
             # Verify hash if available
             if package_hash:
-                if not verify_package_hash(package_name, version, package_hash):
+                if not verify_package_hash(
+                    package_name, version, package_hash
+                ):
                     violations.append(
                         f"❌ Hash verification failed for {package_name}@{version}"
                     )
@@ -367,15 +406,19 @@ def main() -> int:
             print(
                 f"\n❌ Security verification failed with {len(violations)} violations"
             )
-            logger.error(f"Security verification failed with {len(violations)} violations")
+            logger.error(
+                f"Security verification failed with {len(violations)} violations"
+            )
             return 1
         else:
             print(
                 f"\n⚠️  Security verification passed with {len(warnings)} warnings"
             )
-            logger.warning(f"Security verification passed with {len(warnings)} warnings")
+            logger.warning(
+                f"Security verification passed with {len(warnings)} warnings"
+            )
             return 0
-            
+
     except Exception as e:
         logger.error(f"Verification failed: {e}")
         print(f"\n❌ Verification failed: {e}")

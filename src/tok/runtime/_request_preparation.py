@@ -329,7 +329,10 @@ def _stream_recovery_winnowing_floor_messages(
     if assistant_idx >= 0:
         for idx in range(assistant_idx + 1, len(messages)):
             msg = messages[idx]
-            if msg.get("role") not in {"user", "tool_result"} or not _message_has_tool_result(msg):
+            if msg.get("role") not in {
+                "user",
+                "tool_result",
+            } or not _message_has_tool_result(msg):
                 continue
             tool_result_ids: set[str]
             if msg.get("role") == "tool_result":
@@ -656,9 +659,7 @@ def prepare_request_impl(
                     ] = 1
                 else:
                     recent = body["messages"]
-                    behavior_signals[
-                        "stream_recovery_history_floor_noop"
-                    ] = 1
+                    behavior_signals["stream_recovery_history_floor_noop"] = 1
             else:
                 behavior_signals["tok_history_compression_skipped"] = (
                     behavior_signals.get("tok_history_compression_skipped", 0)
@@ -702,7 +703,10 @@ def prepare_request_impl(
                     tool_compatible=request.tool_compatible,
                 )
                 behavior_signals["bridge_minimum_tail_preserved"] = 1
-            if request.adapter_kind == "claude-bridge" and request.tool_compatible:
+            if (
+                request.adapter_kind == "claude-bridge"
+                and request.tool_compatible
+            ):
                 candidate_body = {
                     "model": request.model,
                     "messages": recent,

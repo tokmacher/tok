@@ -13,14 +13,13 @@ import time
 from pathlib import Path
 from collections import defaultdict, Counter
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # Security configuration
@@ -35,8 +34,10 @@ SECURITY_CONFIG = {
 # Package name validation regex based on PyPI requirements
 # PyPI allows: letters, numbers, hyphens, underscores, and dots
 # Must start and end with letter or number, no consecutive special chars
-PACKAGE_NAME_REGEX = re.compile(r'^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$')
-VERSION_REGEX = re.compile(r'^[a-zA-Z0-9._+-]+$')
+PACKAGE_NAME_REGEX = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$"
+)
+VERSION_REGEX = re.compile(r"^[a-zA-Z0-9._+-]+$")
 
 
 def parse_uv_lock() -> list:
@@ -50,9 +51,9 @@ def parse_uv_lock() -> list:
     current_package = {}
 
     try:
-        with open(lock_file, 'r', encoding='utf-8') as f:
+        with open(lock_file, encoding="utf-8") as f:
             lines = f.readlines()
-    except (IOError, OSError) as e:
+    except OSError as e:
         logger.error(f"Failed to read uv.lock file: {e}")
         sys.exit(1)
 
@@ -64,14 +65,18 @@ def parse_uv_lock() -> list:
             name = line.split("=")[1].strip().strip('"')
             # Validate package name
             if not validate_package_name(name):
-                logger.warning(f"Invalid package name at line {line_num}: {name}")
+                logger.warning(
+                    f"Invalid package name at line {line_num}: {name}"
+                )
                 continue
             current_package = {"name": name}
         elif line.startswith("version = ") and current_package:
             version = line.split("=")[1].strip().strip('"')
             # Validate version
             if not validate_version(version):
-                logger.warning(f"Invalid version at line {line_num}: {version}")
+                logger.warning(
+                    f"Invalid version at line {line_num}: {version}"
+                )
                 continue
             current_package["version"] = version
         elif line.startswith("hash = ") and current_package:
@@ -79,8 +84,13 @@ def parse_uv_lock() -> list:
         elif line.startswith("url = ") and current_package:
             url = line.split("=")[1].strip().strip('"')
             # Validate URL is from trusted source
-            if not any(url.startswith(source) for source in SECURITY_CONFIG["allowed_sources"]):
-                logger.warning(f"Untrusted package source at line {line_num}: {url}")
+            if not any(
+                url.startswith(source)
+                for source in SECURITY_CONFIG["allowed_sources"]
+            ):
+                logger.warning(
+                    f"Untrusted package source at line {line_num}: {url}"
+                )
                 continue
             current_package["url"] = url
         elif line.startswith("dependencies = ") and current_package:
@@ -94,7 +104,9 @@ def parse_uv_lock() -> list:
                     if dep and validate_package_name(dep):
                         deps.append(dep)
                     elif dep:
-                        logger.warning(f"Invalid dependency at line {line_num}: {dep}")
+                        logger.warning(
+                            f"Invalid dependency at line {line_num}: {dep}"
+                        )
                 current_package["dependencies"] = deps
 
     if current_package:
@@ -110,38 +122,43 @@ def validate_package_name(package_name: str) -> bool:
         return False
     return bool(PACKAGE_NAME_REGEX.fullmatch(package_name))
 
+
 def validate_version(version: str) -> bool:
     """Validate version string for security."""
     if not version or len(version) > 50:
         return False
     return bool(VERSION_REGEX.fullmatch(version))
 
+
 def create_secure_session() -> requests.Session:
     """Create a secure HTTP session with proper configuration."""
     session = requests.Session()
-    
+
     # Configure retry strategy
     retry_strategy = Retry(
         total=SECURITY_CONFIG["max_retries"],
         status_forcelist=[429, 500, 502, 503, 504],
         method_whitelist=["HEAD", "GET", "OPTIONS"],
         backoff_factor=1,
-        raise_on_status=False
+        raise_on_status=False,
     )
-    
+
     adapter = HTTPAdapter(max_retries=retry_strategy)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
-    
+
     # Set secure headers
-    session.headers.update({
-        'User-Agent': SECURITY_CONFIG["user_agent"],
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'close',
-    })
-    
+    session.headers.update(
+        {
+            "User-Agent": SECURITY_CONFIG["user_agent"],
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "close",
+        }
+    )
+
     return session
+
 
 def get_package_security_data(package_name: str, version: str) -> dict:
     """Fetch security data for a package with proper security measures."""
@@ -149,38 +166,40 @@ def get_package_security_data(package_name: str, version: str) -> dict:
     if not validate_package_name(package_name):
         logger.error(f"Invalid package name: {package_name}")
         return {}
-    
+
     if not validate_version(version):
         logger.error(f"Invalid version: {version}")
         return {}
-    
+
     # Rate limiting
     time.sleep(SECURITY_CONFIG["rate_limit_delay"])
-    
+
     session = create_secure_session()
-    
+
     try:
         url = f"https://pypi.org/pypi/{package_name}/{version}/json"
         logger.debug(f"Fetching package data: {package_name}@{version}")
-        
+
         response = session.get(
-            url, 
+            url,
             timeout=SECURITY_CONFIG["request_timeout"],
-            verify=True  # SSL verification enabled
+            verify=True,  # SSL verification enabled
         )
-        
+
         response.raise_for_status()
         data = response.json()
-        
+
         # Validate response structure
         if not isinstance(data, dict) or "releases" not in data:
-            logger.warning(f"Invalid response structure for {package_name}@{version}")
+            logger.warning(
+                f"Invalid response structure for {package_name}@{version}"
+            )
             return {}
-        
+
         # Extract relevant security information with validation
         uploads = data.get("uploads", [])
         releases = data.get("releases", {}).get(version, [])
-        
+
         security_info = {
             "upload_time": uploads[0].get("upload_time") if uploads else None,
             "package_size": sum(
@@ -195,9 +214,9 @@ def get_package_security_data(package_name: str, version: str) -> dict:
                 for f in releases
             ),
         }
-        
+
         return security_info
-        
+
     except requests.exceptions.SSLError as e:
         logger.error(f"SSL error fetching {package_name}@{version}: {e}")
         return {}
@@ -208,10 +227,14 @@ def get_package_security_data(package_name: str, version: str) -> dict:
         logger.error(f"Network error fetching {package_name}@{version}: {e}")
         return {}
     except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"Invalid JSON response for {package_name}@{version}: {e}")
+        logger.error(
+            f"Invalid JSON response for {package_name}@{version}: {e}"
+        )
         return {}
     except Exception as e:
-        logger.error(f"Unexpected error fetching {package_name}@{version}: {e}")
+        logger.error(
+            f"Unexpected error fetching {package_name}@{version}: {e}"
+        )
         return {}
     finally:
         session.close()
@@ -377,17 +400,19 @@ def main():
         # Save analysis
         output_file = Path("dependency-analysis.json")
         try:
-            with open(output_file, "w", encoding='utf-8') as f:
+            with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(analysis, f, indent=2)
             logger.info(f"✅ Analysis saved to {output_file}")
-        except (IOError, OSError) as e:
+        except OSError as e:
             logger.error(f"Failed to save analysis: {e}")
             sys.exit(1)
 
         # Print summary
         print("\n📊 Dependency Analysis Summary:")
         print(f"  Total packages: {analysis['summary']['total_packages']}")
-        print(f"  Total dependencies: {analysis['summary']['total_dependencies']}")
+        print(
+            f"  Total dependencies: {analysis['summary']['total_dependencies']}"
+        )
         print(
             f"  Max dependency depth: {analysis['dependency_analysis']['max_dependency_depth']}"
         )
@@ -403,12 +428,16 @@ def main():
 
         if analysis["dependency_analysis"]["dependency_cycles"]:
             print("\n⚠️  Dependency cycles detected:")
-            for cycle in analysis["dependency_analysis"]["dependency_cycles"][:5]:
+            for cycle in analysis["dependency_analysis"]["dependency_cycles"][
+                :5
+            ]:
                 print(f"  - {' -> '.join(cycle)}")
 
         # Security warnings
-        if analysis['security_metrics']['recent_packages'] > 0:
-            print(f"\n⚠️  {analysis['security_metrics']['recent_packages']} packages are less than 90 days old")
+        if analysis["security_metrics"]["recent_packages"] > 0:
+            print(
+                f"\n⚠️  {analysis['security_metrics']['recent_packages']} packages are less than 90 days old"
+            )
             print("  Consider reviewing these packages for security")
 
     except Exception as e:

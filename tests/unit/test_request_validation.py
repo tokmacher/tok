@@ -1,7 +1,6 @@
 import re
 from typing import Any, cast
 
-import pytest
 import tok.runtime._request_preparation as request_preparation_module
 from tok.runtime.core import RuntimeSession, UniversalTokRuntime
 from tok.runtime.pipeline.request_validation import (
@@ -321,8 +320,7 @@ def test_strict_bridge_validation_rejects_incomplete_next_turn_tool_results():
     )
 
     assert (
-        "assistant_tool_use_incomplete_next_tool_result_coverage"
-        in failures
+        "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
     )
 
 
@@ -369,8 +367,7 @@ def test_strict_bridge_validation_rejects_out_of_order_next_turn_tool_results():
 
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
     assert (
-        "assistant_tool_use_incomplete_next_tool_result_coverage"
-        in failures
+        "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
     )
 
 
@@ -544,8 +541,7 @@ def test_strict_bridge_validation_rejects_alternating_multi_turn_reordered_first
     failures = validate_anthropic_bridge_body(body)
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
     assert (
-        "assistant_tool_use_incomplete_next_tool_result_coverage"
-        in failures
+        "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
     )
 
 
@@ -756,11 +752,18 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(
         },
     ]
 
-    def _fake_compress_history(messages, keep_turns=2, profile=None, prune_tool_results=False):
+    def _fake_compress_history(
+        messages, keep_turns=2, profile=None, prune_tool_results=False
+    ):
         del messages, keep_turns, profile, prune_tool_results
         return invalid_recent, "compressed tail"
 
-    def _fake_compress_recent_window(messages, tool_use_id_to_context=None, threshold=0, tool_compatible=False):
+    def _fake_compress_recent_window(
+        messages,
+        tool_use_id_to_context=None,
+        threshold=0,
+        tool_compatible=False,
+    ):
         del tool_use_id_to_context, threshold, tool_compatible
         return messages, {"file": 128}
 
@@ -785,7 +788,9 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(
         session,
     )
 
-    assert prepared.behavior_signals["tok_history_pairing_safety_degraded"] == 1
+    assert (
+        prepared.behavior_signals["tok_history_pairing_safety_degraded"] == 1
+    )
     assert prepared.body["messages"] != invalid_recent
 
 
@@ -840,7 +845,9 @@ def test_prepare_request_applies_stream_recovery_history_floor(
     )
 
     assert called["compress_history"] == 0
-    assert prepared.behavior_signals["stream_recovery_history_floor_applied"] == 1
+    assert (
+        prepared.behavior_signals["stream_recovery_history_floor_applied"] == 1
+    )
     assert (
         prepared.behavior_signals["stream_recovery_history_floor_kept_context"]
         == 1
@@ -932,7 +939,9 @@ def test_canonicalization_sanitizes_invalid_tool_ids_and_matching_results():
     assert changed is True
     rewritten_id = canonical["messages"][0]["content"][0]["id"]
     assert re.fullmatch(r"[A-Za-z0-9_-]+", rewritten_id)
-    assert canonical["messages"][1]["content"][0]["tool_use_id"] == rewritten_id
+    assert (
+        canonical["messages"][1]["content"][0]["tool_use_id"] == rewritten_id
+    )
     assert signals["tok_bridge_tool_id_sanitized"] == 1
     assert signals["tok_bridge_invalid_tool_id_seen"] == 1
     assert signals["tok_bridge_tool_result_id_rewritten"] == 1
@@ -1326,7 +1335,7 @@ def test_user_message_retains_supported_blocks_after_filtering():
             "content": [
                 {"type": "text", "text": "Here is the result"},
             ],
-        }
+        },
     ]
     assert signals.get("tok_bridge_thinking_block_dropped", 0) == 1
     assert signals.get("tok_bridge_unsupported_block_dropped", 0) == 1

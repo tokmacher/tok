@@ -262,7 +262,7 @@ def explore_module(module_path: str, mode: str = "overview") -> str:
 
     lines = [
         f"@module {path.name}",
-        f"  @file __init__.py",
+        "  @file __init__.py",
     ]
 
     # Find all py files in package

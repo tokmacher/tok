@@ -64,7 +64,7 @@ Tok achieves its compression through several deterministic techniques:
 
 ### Semantic Deduplication
 - **Content hashing**: Identical tool results are detected via SHA-256 hashes and replaced with `>>> tool:name|unchanged|cached` stubs
-- **Delta compression**: Changed results show only the diff: `>>> tool:name|delta|changed_lines:5`  
+- **Delta compression**: Changed results show only the diff: `>>> tool:name|delta|changed_lines:5`
 - **Error normalization**: Similar errors collapse to canonical forms like `|err:enoent|`
 
 ### Macro System

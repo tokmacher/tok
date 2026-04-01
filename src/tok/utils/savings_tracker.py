@@ -43,9 +43,9 @@ def _degradation_reason(
         "stream_recovery_fallback", 0
     ):
         return "stream recovery"
-    if signals.get("tok_bridge_invalid_tool_history_quarantined", 0) or signals.get(
-        "tok_bridge_invalid_tool_history_blocked", 0
-    ):
+    if signals.get(
+        "tok_bridge_invalid_tool_history_quarantined", 0
+    ) or signals.get("tok_bridge_invalid_tool_history_blocked", 0):
         return "invalid tool history recovery"
     if signals.get("fail_open_compat_response", 0) or signals.get(
         "processing_error", 0
@@ -278,7 +278,7 @@ class SavingsTracker:
             temp_path = self._savings_file + ".tmp"
             with open(temp_path, "w") as f:
                 f.write("\n".join(lines) + "\n")
-            
+
             # Atomic rename
             os.rename(temp_path, self._savings_file)
         except Exception as exc:

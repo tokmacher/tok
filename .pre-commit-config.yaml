@@ -53,7 +53,7 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
-        stages: [push]
+        stages: [pre-push]
       - id: dependency-integrity
         name: dependency integrity check
         entry: python scripts/verify_dependency_integrity.py
