@@ -42,6 +42,9 @@ from ..runtime.repeat_targets import (
 
 globals().update(vars(_compression))
 
+# Default threshold value; tok.compression overrides this when it imports the pipeline.
+TOOL_COMPRESS_THRESHOLD = 0
+
 
 def compress_history_impl(
     messages: list[dict[str, Any]],

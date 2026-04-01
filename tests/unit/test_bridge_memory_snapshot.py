@@ -117,7 +117,7 @@ class TestGetFileFactDigests:
         assert "/test/a.py" in digests
         assert "/test/b.py" in digests
         # Both should have clean digests without line count tokens
-        for path, digest in digests.items():
+        for _path, digest in digests.items():
             assert "|" not in digest
             assert "~" not in digest
 

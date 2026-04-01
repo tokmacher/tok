@@ -948,7 +948,6 @@ class BridgeMemoryState:
 
     def get_file_fact_digests(self) -> dict[str, str]:
         """Extract file digests from facts, handling new format with line counts.
-
         New format: file[path]:LINE_COUNT|digest|~tokens
         Legacy format: file[path]:digest
         """

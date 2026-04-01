@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from collections import defaultdict, Counter
 from datetime import datetime, timezone
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -47,9 +48,6 @@ def parse_uv_lock() -> list:
         logger.error("uv.lock file not found")
         sys.exit(1)
 
-    packages = []
-    current_package = {}
-
     try:
         with open(lock_file, encoding="utf-8") as f:
             lines = f.readlines()
@@ -57,56 +55,30 @@ def parse_uv_lock() -> list:
         logger.error(f"Failed to read uv.lock file: {e}")
         sys.exit(1)
 
-    for line_num, line in enumerate(lines, 1):
-        line = line.strip()
-        if line.startswith("name = "):
+    packages: list[dict[str, Any]] = []
+    current_package: dict[str, Any] | None = None
+
+    for line_num, raw_line in enumerate(lines, 1):
+        line = raw_line.strip()
+        if not line or "=" not in line:
+            continue
+        key, value = _split_lock_line(line)
+        if key == "name":
             if current_package:
                 packages.append(current_package)
-            name = line.split("=")[1].strip().strip('"')
-            # Validate package name
-            if not validate_package_name(name):
-                logger.warning(
-                    f"Invalid package name at line {line_num}: {name}"
-                )
-                continue
-            current_package = {"name": name}
-        elif line.startswith("version = ") and current_package:
-            version = line.split("=")[1].strip().strip('"')
-            # Validate version
-            if not validate_version(version):
-                logger.warning(
-                    f"Invalid version at line {line_num}: {version}"
-                )
-                continue
-            current_package["version"] = version
-        elif line.startswith("hash = ") and current_package:
-            current_package["hash"] = line.split("=")[1].strip().strip('"')
-        elif line.startswith("url = ") and current_package:
-            url = line.split("=")[1].strip().strip('"')
-            # Validate URL is from trusted source
-            if not any(
-                url.startswith(source)
-                for source in SECURITY_CONFIG["allowed_sources"]
-            ):
-                logger.warning(
-                    f"Untrusted package source at line {line_num}: {url}"
-                )
-                continue
-            current_package["url"] = url
-        elif line.startswith("dependencies = ") and current_package:
-            # Parse dependencies list
-            deps_str = line.split("=")[1].strip()
-            if deps_str.startswith("[") and deps_str.endswith("]"):
-                deps_str = deps_str[1:-1]
-                deps = []
-                for dep in deps_str.split(","):
-                    dep = dep.strip().strip('"')
-                    if dep and validate_package_name(dep):
-                        deps.append(dep)
-                    elif dep:
-                        logger.warning(
-                            f"Invalid dependency at line {line_num}: {dep}"
-                        )
+            current_package = _begin_package(value, line_num)
+            continue
+        if current_package is None:
+            continue
+        if key == "version":
+            _set_package_version(current_package, value, line_num)
+        elif key == "hash":
+            current_package["hash"] = value
+        elif key == "url":
+            _set_package_url(current_package, value, line_num)
+        elif key == "dependencies":
+            deps = _parse_dependencies(value, line_num)
+            if deps:
                 current_package["dependencies"] = deps
 
     if current_package:
@@ -114,6 +86,54 @@ def parse_uv_lock() -> list:
 
     logger.info(f"Parsed {len(packages)} packages from uv.lock")
     return packages
+
+
+def _split_lock_line(line: str) -> tuple[str, str]:
+    key, value = line.split("=", 1)
+    return key.strip(), value.strip().strip('"')
+
+
+def _begin_package(name: str, line_num: int) -> dict[str, Any] | None:
+    if not validate_package_name(name):
+        logger.warning(f"Invalid package name at line {line_num}: {name}")
+        return None
+    return {"name": name}
+
+
+def _set_package_version(
+    package: dict[str, Any], version: str, line_num: int
+) -> None:
+    if not validate_version(version):
+        logger.warning(f"Invalid version at line {line_num}: {version}")
+        return
+    package["version"] = version
+
+
+def _set_package_url(package: dict[str, Any], url: str, line_num: int) -> None:
+    if not any(
+        url.startswith(source) for source in SECURITY_CONFIG["allowed_sources"]
+    ):
+        logger.warning(f"Untrusted package source at line {line_num}: {url}")
+        return
+    package["url"] = url
+
+
+def _parse_dependencies(value: str, line_num: int) -> list[str]:
+    if not value.startswith("[") or not value.endswith("]"):
+        return []
+    deps_list = value[1:-1]
+    dependencies = []
+    for dep in deps_list.split(","):
+        candidate = dep.strip().strip('"')
+        if not candidate:
+            continue
+        if validate_package_name(candidate):
+            dependencies.append(candidate)
+        else:
+            logger.warning(
+                f"Invalid dependency at line {line_num}: {candidate}"
+            )
+    return dependencies
 
 
 def validate_package_name(package_name: str) -> bool:
@@ -317,7 +337,7 @@ def analyze_dependency_tree(packages: list) -> dict:
                 ).timestamp()
                 if upload_time > ninety_days_ago:
                     analysis["security_metrics"]["recent_packages"] += 1
-            except:
+            except ValueError:
                 pass
 
     return analysis
@@ -348,7 +368,7 @@ def find_most_depended_upon(graph: dict) -> list:
     """Find packages that are depended upon by the most other packages."""
     dependency_count = Counter()
 
-    for package, deps in graph.items():
+    for _package, deps in graph.items():
         for dep in deps:
             dependency_count[dep] += 1
 

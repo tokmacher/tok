@@ -579,62 +579,135 @@ def _apply_result_cache(
         compressed = tok_tool_result(raw, compression_level=compression_level)
         return compressed, len(raw) - len(compressed)
 
-    args_str = json.dumps(context.get("args"), sort_keys=True)
-    raw_cache_key = f"{tool_name}:{args_str}"
-    cache_key = hashlib.sha256(raw_cache_key.encode()).hexdigest()[:12]
-
+    cache_key = _build_cache_key(tool_name, context)
     raw_text = str(raw or "")
+    cached_entry = result_cache.get(cache_key)
 
-    if cache_key not in result_cache:
-        normalized_error = _normalize_error_content(raw_text)
-        content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
-        result_cache[cache_key] = (content_hash, raw, time_module.time())
-        if len(result_cache) > 256:
-            oldest = next(iter(result_cache))
-            del result_cache[oldest]
-        if is_file_like:
-            return raw, 0
-        if normalized_error:
-            compressed = normalized_error
-        else:
-            compressed = tok_tool_result(
-                raw, compression_level=compression_level
-            )
-        return compressed, len(raw) - len(compressed)
-
-    cached_entry = result_cache[cache_key]
-    if len(cached_entry) == 3:
-        cached_hash, cached_raw, timestamp = cached_entry
-        if time_module.time() - timestamp > ttl_seconds:
-            normalized_error = _normalize_error_content(raw_text)
-            content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
-            result_cache[cache_key] = (content_hash, raw, time_module.time())
-            compressed = tok_tool_result(
-                raw, compression_level=compression_level
-            )
-            return compressed, len(raw) - len(compressed)
-    elif len(cached_entry) == 2:
-        cached_hash, cached_raw = cached_entry
-    else:
-        cached_hash = cached_entry[0] if cached_entry else ""
-        cached_raw = ""
-
-    # Host/UI sometimes returns a tiny "unchanged" stub (or even an empty payload)
-    # while claiming the content is unchanged. When we have a cached prior payload,
-    # replay it so the model has real evidence and we do not poison caches with stubs.
-    stub_text = raw_text.strip()
-    host_unchanged_stub = bool(
-        is_file_like
-        and cached_raw
-        and (
-            not stub_text
-            or "unchanged since last read" in stub_text.lower()
-            or (len(raw_text) < 80 and len(cached_raw) > 200)
+    if cached_entry is None:
+        return _store_cache_entry(
+            result_cache,
+            cache_key,
+            raw_text,
+            raw,
+            is_file_like,
+            tool_name,
+            compression_level,
+            prefer_normalized_error=True,
         )
+
+    cached_hash, cached_raw, timestamp, entry_length = _unpack_cache_entry(
+        cached_entry
     )
+
+    if entry_length == 3 and _is_cache_entry_stale(timestamp, ttl_seconds):
+        return _store_cache_entry(
+            result_cache,
+            cache_key,
+            raw_text,
+            raw,
+            is_file_like,
+            tool_name,
+            compression_level,
+            prefer_normalized_error=False,
+        )
+
+    cached_raw_text = str(cached_raw or "")
+    return _process_cache_hit(
+        raw,
+        raw_text,
+        context,
+        tool_name,
+        normalized_tool_name,
+        is_precision_read,
+        is_file_like,
+        result_cache,
+        cache_key,
+        entry_length,
+        cached_hash,
+        cached_raw,
+        cached_raw_text,
+        compression_level,
+    )
+
+
+def _build_cache_key(tool_name: Any, context: dict[str, Any]) -> str:
+    serialized_args = context.get("args")
+    args_str = json.dumps(serialized_args, sort_keys=True, default=str)
+    raw_cache_key = f"{tool_name or ''}:{args_str}"
+    return hashlib.sha256(raw_cache_key.encode()).hexdigest()[:12]
+
+
+def _store_cache_entry(
+    result_cache: dict[str, tuple[str, str, float]],
+    cache_key: str,
+    raw_text: str,
+    raw: str,
+    is_file_like: bool,
+    tool_name: Any,
+    compression_level: str,
+    prefer_normalized_error: bool,
+) -> tuple[str, int]:
+    normalized_error = _normalize_error_content(raw_text)
+    content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
+    result_cache[cache_key] = (content_hash, raw, time_module.time())
+    _evict_cache_entry(result_cache)
+    if is_file_like:
+        return raw, 0
+    if prefer_normalized_error and normalized_error:
+        return normalized_error, len(raw_text) - len(normalized_error)
+    compressed = tok_tool_result(raw_text, compression_level=compression_level)
+    return compressed, len(raw_text) - len(compressed)
+
+
+def _evict_cache_entry(
+    result_cache: dict[str, tuple[str, str, float]],
+) -> None:
+    if len(result_cache) > 256:
+        oldest = next(iter(result_cache))
+        del result_cache[oldest]
+
+
+def _unpack_cache_entry(
+    entry: tuple[str, ...],
+) -> tuple[str, str, float | None, int]:
+    entry_length = len(entry)
+    if entry_length >= 3:
+        return entry[0], entry[1], entry[2], entry_length
+    if entry_length == 2:
+        return entry[0], entry[1], None, entry_length
+    if entry_length == 1:
+        return entry[0], "", None, entry_length
+    return "", "", None, entry_length
+
+
+def _is_cache_entry_stale(timestamp: float | None, ttl_seconds: int) -> bool:
+    if timestamp is None:
+        return False
+    return time_module.time() - timestamp > ttl_seconds
+
+
+def _process_cache_hit(
+    raw: str,
+    raw_text: str,
+    context: dict[str, Any],
+    tool_name: Any,
+    normalized_tool_name: str,
+    is_precision_read: bool,
+    is_file_like: bool,
+    result_cache: dict[str, tuple[str, str, float]],
+    cache_key: str,
+    entry_length: int,
+    cached_hash: str,
+    cached_raw: str,
+    cached_raw_text: str,
+    compression_level: str,
+) -> tuple[str, int]:
+    stub_text = raw_text.strip()
     host_stub_replayed = False
-    if host_unchanged_stub:
-        raw_text = str(cached_raw)
+    if _should_replay_host_stub(
+        is_file_like, cached_raw_text, stub_text, raw_text
+    ):
+        raw_text = cached_raw_text
         raw = cached_raw
         host_stub_replayed = True
 
@@ -642,89 +715,62 @@ def _apply_result_cache(
     content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
 
     if normalized_error:
-        cached_normalized = _normalize_error_content(cached_raw)
-        if cached_normalized == normalized_error:
+        cached_normalized = _normalize_error_content(cached_raw_text)
+        if cached_normalized and cached_normalized == normalized_error:
             stub = f">>> tool:{tool_name}|err:{normalized_error[5:-1]}|cached"
-            return stub, len(raw) - len(stub)
+            return stub, len(raw_text) - len(stub)
 
     if content_hash == cached_hash:
-        if is_precision_read:
-            # Precision reads are typically small and often needed verbatim for quoting.
-            # Never return cached stubs/summaries for these; return raw again.
-            # If we replayed a host stub, preserve cached bytes (do not overwrite
-            # with the stub). Refresh timestamp so TTL behaves as expected.
-            if host_stub_replayed and len(cached_entry) == 3:
-                result_cache[cache_key] = (
-                    cached_hash,
-                    cached_raw,
-                    time_module.time(),
-                )
-            else:
-                result_cache[cache_key] = (
-                    content_hash,
-                    raw,
-                    time_module.time(),
-                )
-            return raw, 0
-        if normalized_tool_name in FILE_LIKE_TOOLS:
-            try:
-                from ..runtime.repeat_targets import (
-                    build_file_skeleton,
-                    build_file_summary,
-                )
+        return _serve_cached_content_hash_match(
+            raw,
+            raw_text,
+            context,
+            tool_name,
+            normalized_tool_name,
+            is_precision_read,
+            is_file_like,
+            result_cache,
+            cache_key,
+            entry_length,
+            cached_hash,
+            cached_raw,
+            host_stub_replayed,
+            compression_level,
+        )
 
-                stable_hash = _compute_semantic_hash(raw)
-                summary = (
-                    build_file_summary(raw, max_chars=280, max_lines=12)
-                    or " ".join(raw.split())[:280]
-                )
-                skeleton = build_file_skeleton(
-                    raw, max_chars=280, max_lines=14
-                )
-                payload = StableResultPayload.model_validate(
-                    {
-                        "semantic_hash": stable_hash,
-                        "verified_unchanged": True,
-                        "summary": summary,
-                        "skeleton": skeleton,
-                        "replayed_cached_bytes": host_stub_replayed,
-                        "precision_read": is_precision_read,
-                    }
-                ).render()
-                return payload, len(raw) - len(payload)
-            except ValidationError:
-                stub = f">>> tool:{tool_name}|stable_payload_validation_failed"
-                return stub, len(raw) - len(stub)
-            except Exception:
-                pass
-        stub = f">>> tool:{tool_name}|unchanged|cached"
-        if context.get("path"):
-            stub += f"|path:{context['path']}"
-        return stub, len(raw) - len(stub)
-
-    old_lines = cached_raw.splitlines(keepends=True)
-    new_lines = raw.splitlines(keepends=True)
+    old_lines = cached_raw_text.splitlines(keepends=True)
+    new_lines = raw_text.splitlines(keepends=True)
     diff_lines = list(difflib.unified_diff(old_lines, new_lines))
     diff_text = "".join(diff_lines)
 
-    # Avoid poisoning the cache with host "unchanged" stubs; preserve prior bytes.
-    if host_stub_replayed and len(cached_entry) == 3:
-        result_cache[cache_key] = (cached_hash, cached_raw, time_module.time())
+    if host_stub_replayed and entry_length == 3:
+        result_cache[cache_key] = (
+            cached_hash,
+            cached_raw,
+            time_module.time(),
+        )
     else:
-        result_cache[cache_key] = (content_hash, raw, time_module.time())
+        result_cache[cache_key] = (
+            content_hash,
+            raw,
+            time_module.time(),
+        )
 
-    if not diff_lines or len(diff_text) >= 0.7 * len(raw):
+    if not diff_lines or len(diff_text) >= 0.7 * len(raw_text):
         if normalized_error:
             stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
-            saved = len(raw) - len(stub)
+            saved = len(raw_text) - len(stub)
             if saved < 0:
                 return normalized_error + "\n", 0
             return stub, saved
-        compressed = tok_tool_result(raw, compression_level=compression_level)
+        compressed = tok_tool_result(
+            raw_text, compression_level=compression_level
+        )
         header = f">>> tool:{tool_name}|delta|changed\n"
-        return header + compressed, len(raw) - (len(header) + len(compressed))
+        return header + compressed, len(raw_text) - (
+            len(header) + len(compressed)
+        )
 
-    # Emit diff stub
     changed_lines = sum(
         1
         for l in diff_lines
@@ -732,7 +778,6 @@ def _apply_result_cache(
     )
     header = f">>> tool:{tool_name}|delta|changed_lines:{changed_lines}"
 
-    # For many tools, a raw diff is fine; for file_read, we skip context lines
     if normalized_tool_name in (
         "view_file",
         "read_file",
@@ -752,7 +797,109 @@ def _apply_result_cache(
         diff_text = "".join(stripped_diff)
 
     result = header + "\n" + diff_text
-    return result, len(raw) - len(result)
+    return result, len(raw_text) - len(result)
+
+
+def _should_replay_host_stub(
+    is_file_like: bool,
+    cached_raw_text: str,
+    stub_text: str,
+    raw_text: str,
+) -> bool:
+    if not is_file_like or not cached_raw_text:
+        return False
+    if not stub_text:
+        return True
+    if "unchanged since last read" in stub_text.lower():
+        return True
+    if len(raw_text) < 80 and len(cached_raw_text) > 200:
+        return True
+    return False
+
+
+def _serve_cached_content_hash_match(
+    raw: str,
+    raw_text: str,
+    context: dict[str, Any],
+    tool_name: Any,
+    normalized_tool_name: str,
+    is_precision_read: bool,
+    is_file_like: bool,
+    result_cache: dict[str, tuple[str, str, float]],
+    cache_key: str,
+    entry_length: int,
+    cached_hash: str,
+    cached_raw: str,
+    host_stub_replayed: bool,
+    compression_level: str,
+) -> tuple[str, int]:
+    current_time = time_module.time()
+    if is_precision_read:
+        if host_stub_replayed and entry_length == 3:
+            result_cache[cache_key] = (
+                cached_hash,
+                cached_raw,
+                current_time,
+            )
+        else:
+            result_cache[cache_key] = (
+                cached_hash,
+                raw,
+                current_time,
+            )
+        return raw, 0
+
+    if normalized_tool_name in FILE_LIKE_TOOLS:
+        payload = _build_stable_result_payload(
+            raw_text,
+            tool_name,
+            host_stub_replayed,
+            precision_read=is_precision_read,
+        )
+        if payload is not None:
+            return payload, len(raw_text) - len(payload)
+
+    stub = f">>> tool:{tool_name}|unchanged|cached"
+    if context.get("path"):
+        stub += f"|path:{context['path']}"
+    return stub, len(raw_text) - len(stub)
+
+
+def _build_stable_result_payload(
+    raw_text: str,
+    tool_name: Any,
+    host_stub_replayed: bool,
+    *,
+    precision_read: bool,
+) -> str | None:
+    try:
+        from ..runtime.repeat_targets import (
+            build_file_skeleton,
+            build_file_summary,
+        )
+
+        stable_hash = _compute_semantic_hash(raw_text)
+        summary = (
+            build_file_summary(raw_text, max_chars=280, max_lines=12)
+            or " ".join(raw_text.split())[:280]
+        )
+        skeleton = build_file_skeleton(raw_text, max_chars=280, max_lines=14)
+        payload = StableResultPayload.model_validate(
+            {
+                "semantic_hash": stable_hash,
+                "verified_unchanged": True,
+                "summary": summary,
+                "skeleton": skeleton,
+                "replayed_cached_bytes": host_stub_replayed,
+                "precision_read": precision_read,
+            }
+        ).render()
+        return payload
+    except ValidationError:
+        stub = f">>> tool:{tool_name}|stable_payload_validation_failed"
+        return stub
+    except Exception:
+        return None
 
 
 def _apply_file_cache(

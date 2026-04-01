@@ -80,7 +80,9 @@ def validate_home_directory(home: Path | None) -> Path:
         test_file.touch()
         test_file.unlink()
     except (OSError, PermissionError) as e:
-        raise RuntimeError(f"Home directory is not writable: {home} ({e})")
+        raise RuntimeError(
+            f"Home directory is not writable: {home} ({e})"
+        ) from e
 
     return home
 
@@ -184,7 +186,7 @@ def install(
         except (OSError, PermissionError) as e:
             raise RuntimeError(
                 f"Failed to create parent directory for {rc_path}: {e}"
-            )
+            ) from e
 
         # Read existing content safely
         existing = ""
@@ -236,7 +238,9 @@ def install(
             logger.info(f"Tok shell integration installed to {rc_path}")
 
         except (OSError, PermissionError) as e:
-            raise RuntimeError(f"Failed to write RC file {rc_path}: {e}")
+            raise RuntimeError(
+                f"Failed to write RC file {rc_path}: {e}"
+            ) from e
         finally:
             # Cleanup temporary file if it still exists
             if temp_file and temp_file.exists():

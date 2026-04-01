@@ -51,7 +51,6 @@ def get_client() -> httpx.AsyncClient:
 
 async def cleanup_telemetry() -> None:
     """Cleanup telemetry resources. Call this on application shutdown.
-
     This function is idempotent and can be called multiple times safely.
     """
     global _CLIENT, _CLEANUP_COMPLETED
@@ -72,7 +71,6 @@ async def cleanup_telemetry() -> None:
 
 def _sync_cleanup() -> None:
     """Synchronous cleanup for atexit handler.
-
     Python 3.10+ compatible version that handles loop detection properly.
     """
     global _CLEANUP_COMPLETED

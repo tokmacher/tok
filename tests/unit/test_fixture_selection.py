@@ -10,7 +10,6 @@ from scripts.select_fixtures import (
 
 def _required_fixtures(config_path: Path | None = None) -> set[str]:
     """Get required fixtures from gate config.
-
     Args:
         config_path: Optional path to gate-config.json. If None, uses repository root.
     """

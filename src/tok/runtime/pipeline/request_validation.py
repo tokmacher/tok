@@ -505,145 +505,30 @@ def _rewrite_provider_safe_tool_ids(
             continue
 
         if role == "assistant":
-            pending_pairs = []
-            tool_occurrence = 1
-            for block_index, block in enumerate(content):
-                if (
-                    not isinstance(block, dict)
-                    or block.get("type") != "tool_use"
-                ):
-                    continue
-                raw_tool_use_id = str(block.get("id", "")).strip()
-                normalized_id, disposition = _normalize_or_synthesize_tool_id(
-                    raw_tool_use_id,
+            assistant_changed, assistant_invalid = (
+                _rewrite_assistant_tool_message(
+                    message,
+                    msg_index,
+                    content,
                     occupied_ids,
-                    seed_hint=_tool_id_seed_hint(
-                        msg_index=msg_index,
-                        block_index=block_index,
-                        occurrence=tool_occurrence,
-                    ),
+                    pending_pairs,
+                    signals,
                 )
-                tool_occurrence += 1
-                if raw_tool_use_id and not _is_provider_safe_tool_id(
-                    raw_tool_use_id
-                ):
-                    invalid_tool_ids_seen += 1
-                if block.get("id") != normalized_id:
-                    block["id"] = normalized_id
-                    changed = True
-                if disposition == "sanitized":
-                    signals["tok_bridge_tool_id_sanitized"] = (
-                        signals.get("tok_bridge_tool_id_sanitized", 0) + 1
-                    )
-                elif disposition == "synthesized":
-                    signals["tok_bridge_blank_tool_id_synthesized"] = (
-                        signals.get("tok_bridge_blank_tool_id_synthesized", 0)
-                        + 1
-                    )
-                elif disposition == "deduped":
-                    signals["tok_bridge_tool_id_deduped"] = (
-                        signals.get("tok_bridge_tool_id_deduped", 0) + 1
-                    )
-                pending_pairs.append(
-                    {
-                        "raw_id": raw_tool_use_id,
-                        "new_id": normalized_id,
-                        "consumed": False,
-                    }
-                )
+            )
+            changed |= assistant_changed
+            invalid_tool_ids_seen += assistant_invalid
             continue
 
         if role == "user":
             if not pending_pairs:
                 continue
-            reordered_tool_results: list[tuple[int, dict[str, Any]]] = []
-            matched_indices_in_encounter_order: list[int] = []
-            unmatched_tool_results: list[dict[str, Any]] = []
-            non_tool_blocks: list[dict[str, Any]] = []
-            for block in content:
-                if (
-                    not isinstance(block, dict)
-                    or block.get("type") != "tool_result"
-                ):
-                    if isinstance(block, dict):
-                        non_tool_blocks.append(block)
-                    continue
-                raw_tool_use_id = str(block.get("tool_use_id", "")).strip()
-                match_index: int | None = None
-                if raw_tool_use_id:
-                    exact_matches = [
-                        index
-                        for index, pair in enumerate(pending_pairs)
-                        if (
-                            not pair["consumed"]
-                            and pair["raw_id"] == raw_tool_use_id
-                        )
-                    ]
-                    if len(exact_matches) == 1:
-                        match_index = exact_matches[0]
-                    elif len(exact_matches) > 1:
-                        signals["tok_bridge_tool_result_pairing_ambiguous"] = (
-                            signals.get(
-                                "tok_bridge_tool_result_pairing_ambiguous", 0
-                            )
-                            + 1
-                        )
-                else:
-                    for index, pair in enumerate(pending_pairs):
-                        if not pair["consumed"]:
-                            match_index = index
-                            break
-                    if match_index is not None:
-                        signals["tok_bridge_tool_result_pairing_repaired"] = (
-                            signals.get(
-                                "tok_bridge_tool_result_pairing_repaired", 0
-                            )
-                            + 1
-                        )
-                if match_index is None:
-                    signals["tok_bridge_tool_result_pairing_unrepaired"] = (
-                        signals.get(
-                            "tok_bridge_tool_result_pairing_unrepaired", 0
-                        )
-                        + 1
-                    )
-                    unmatched_tool_results.append(block)
-                    continue
-                pending_pairs[match_index]["consumed"] = True
-                normalized_id = str(pending_pairs[match_index]["new_id"])
-                if block.get("tool_use_id") != normalized_id:
-                    block["tool_use_id"] = normalized_id
-                    signals["tok_bridge_tool_result_id_rewritten"] = (
-                        signals.get("tok_bridge_tool_result_id_rewritten", 0)
-                        + 1
-                    )
-                    changed = True
-                matched_indices_in_encounter_order.append(match_index)
-                reordered_tool_results.append((match_index, block))
-
-            sorted_tool_results = [
-                block
-                for _index, block in sorted(
-                    reordered_tool_results, key=lambda item: item[0]
-                )
-            ]
-            reordered_content = (
-                sorted_tool_results + unmatched_tool_results + non_tool_blocks
+            user_changed = _rewrite_user_tool_message(
+                message,
+                content,
+                pending_pairs,
+                signals,
             )
-            if reordered_content != content:
-                message["content"] = reordered_content
-                changed = True
-                signals["tok_bridge_tool_result_order_repaired"] = (
-                    signals.get("tok_bridge_tool_result_order_repaired", 0) + 1
-                )
-            if matched_indices_in_encounter_order and (
-                matched_indices_in_encounter_order
-                != sorted(matched_indices_in_encounter_order)
-            ):
-                signals["tok_bridge_tool_result_pairing_repaired"] = (
-                    signals.get("tok_bridge_tool_result_pairing_repaired", 0)
-                    + 1
-                )
+            changed |= user_changed
             pending_pairs = []
             continue
 
@@ -657,6 +542,142 @@ def _rewrite_provider_safe_tool_ids(
         signals["tok_bridge_tool_result_rewrite_complete"] = 1
 
     return rewritten_messages, changed, signals
+
+
+def _rewrite_assistant_tool_message(
+    message: dict[str, Any],
+    msg_index: int,
+    content: list[Any],
+    occupied_ids: set[str],
+    pending_pairs: list[dict[str, Any]],
+    signals: dict[str, int],
+) -> tuple[bool, int]:
+    changed = False
+    invalid_tool_ids_seen = 0
+    tool_occurrence = 1
+    for block_index, block in enumerate(content):
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        raw_tool_use_id = str(block.get("id", "")).strip()
+        normalized_id, disposition = _normalize_or_synthesize_tool_id(
+            raw_tool_use_id,
+            occupied_ids,
+            seed_hint=_tool_id_seed_hint(
+                msg_index=msg_index,
+                block_index=block_index,
+                occurrence=tool_occurrence,
+            ),
+        )
+        tool_occurrence += 1
+        if raw_tool_use_id and not _is_provider_safe_tool_id(raw_tool_use_id):
+            invalid_tool_ids_seen += 1
+        if block.get("id") != normalized_id:
+            block["id"] = normalized_id
+            changed = True
+        if disposition == "sanitized":
+            signals["tok_bridge_tool_id_sanitized"] = (
+                signals.get("tok_bridge_tool_id_sanitized", 0) + 1
+            )
+        elif disposition == "synthesized":
+            signals["tok_bridge_blank_tool_id_synthesized"] = (
+                signals.get("tok_bridge_blank_tool_id_synthesized", 0) + 1
+            )
+        elif disposition == "deduped":
+            signals["tok_bridge_tool_id_deduped"] = (
+                signals.get("tok_bridge_tool_id_deduped", 0) + 1
+            )
+        pending_pairs.append(
+            {
+                "raw_id": raw_tool_use_id,
+                "new_id": normalized_id,
+                "consumed": False,
+            }
+        )
+    return changed, invalid_tool_ids_seen
+
+
+def _rewrite_user_tool_message(
+    message: dict[str, Any],
+    content: list[Any],
+    pending_pairs: list[dict[str, Any]],
+    signals: dict[str, int],
+) -> bool:
+    changed = False
+    reordered_tool_results: list[tuple[int, dict[str, Any]]] = []
+    matched_indices_in_encounter_order: list[int] = []
+    unmatched_tool_results: list[dict[str, Any]] = []
+    non_tool_blocks: list[dict[str, Any]] = []
+
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            if isinstance(block, dict):
+                non_tool_blocks.append(block)
+            continue
+        raw_tool_use_id = str(block.get("tool_use_id", "")).strip()
+        match_index: int | None = None
+        if raw_tool_use_id:
+            exact_matches = [
+                index
+                for index, pair in enumerate(pending_pairs)
+                if (not pair["consumed"] and pair["raw_id"] == raw_tool_use_id)
+            ]
+            if len(exact_matches) == 1:
+                match_index = exact_matches[0]
+            elif len(exact_matches) > 1:
+                signals["tok_bridge_tool_result_pairing_ambiguous"] = (
+                    signals.get("tok_bridge_tool_result_pairing_ambiguous", 0)
+                    + 1
+                )
+        else:
+            for index, pair in enumerate(pending_pairs):
+                if not pair["consumed"]:
+                    match_index = index
+                    break
+            if match_index is not None:
+                signals["tok_bridge_tool_result_pairing_repaired"] = (
+                    signals.get("tok_bridge_tool_result_pairing_repaired", 0)
+                    + 1
+                )
+        if match_index is None:
+            signals["tok_bridge_tool_result_pairing_unrepaired"] = (
+                signals.get("tok_bridge_tool_result_pairing_unrepaired", 0) + 1
+            )
+            unmatched_tool_results.append(block)
+            continue
+        pending_pairs[match_index]["consumed"] = True
+        normalized_id = str(pending_pairs[match_index]["new_id"])
+        if block.get("tool_use_id") != normalized_id:
+            block["tool_use_id"] = normalized_id
+            signals["tok_bridge_tool_result_id_rewritten"] = (
+                signals.get("tok_bridge_tool_result_id_rewritten", 0) + 1
+            )
+            changed = True
+        matched_indices_in_encounter_order.append(match_index)
+        reordered_tool_results.append((match_index, block))
+
+    sorted_tool_results = [
+        block
+        for _index, block in sorted(
+            reordered_tool_results, key=lambda item: item[0]
+        )
+    ]
+    reordered_content = (
+        sorted_tool_results + unmatched_tool_results + non_tool_blocks
+    )
+    if reordered_content != content:
+        message["content"] = reordered_content
+        changed = True
+        signals["tok_bridge_tool_result_order_repaired"] = (
+            signals.get("tok_bridge_tool_result_order_repaired", 0) + 1
+        )
+    if matched_indices_in_encounter_order and (
+        matched_indices_in_encounter_order
+        != sorted(matched_indices_in_encounter_order)
+    ):
+        signals["tok_bridge_tool_result_pairing_repaired"] = (
+            signals.get("tok_bridge_tool_result_pairing_repaired", 0) + 1
+        )
+    return changed
 
 
 def bridge_strict_failure_signals(failures: list[str]) -> dict[str, int]:
