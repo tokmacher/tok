@@ -576,18 +576,46 @@ class BridgeMemoryState:
     def _emit_files_field(
         self,
         files: list[MemoryEntry],
+        file_facts: list[MemoryEntry],
         state_parts: list[str],
         omit_unchanged: bool,
     ) -> None:
-        """Emit the files field into state_parts."""
+        """Emit the files field into state_parts with freshness indicators."""
         if not files:
             return
+        
+        # Build a lookup from file path to freshness data
+        freshness_lookup: dict[str, str] = {}
+        for fact in file_facts:
+            if fact.value.startswith("file[") and ":" in fact.value:
+                # Parse: file[path]:LINE_COUNT|digest|~TOKENS
+                bracket_end = fact.value.index("]", 5) if "]" in fact.value[5:] else -1
+                if bracket_end < 0:
+                    continue
+                path = fact.value[5:bracket_end]
+                colon_idx = fact.value.find(":", bracket_end)
+                if colon_idx < 0:
+                    continue
+                rest = fact.value[colon_idx + 1 :]
+                # Extract LINE_COUNT|~TOKENS (skip digest)
+                if "|" in rest:
+                    parts = rest.split("|")
+                    if len(parts) >= 3:
+                        line_count = parts[0]
+                        tokens = parts[2]  # ~TOKENS
+                        freshness_lookup[path] = f"{line_count}|{tokens}"
+        
         file_values = []
         for e in files:
             val = e.value
             if len(val) > 20:
                 val = self.pointers.get_pointer(val)
+            # Append freshness data if available
+            freshness = freshness_lookup.get(e.value)
+            if freshness:
+                val = f"{val}:{freshness}"
             file_values.append(val)
+        
         f_key = TOK_FIELD_ALIAS.get("files", "files")
         serialized = f"{f_key}:" + ",".join(file_values)
         self._emit_field("files", serialized, state_parts, omit_unchanged)
@@ -748,7 +776,7 @@ class BridgeMemoryState:
         facts_emitted = False
         for field in field_order:
             if field == "files":
-                self._emit_files_field(files, state_parts, omit_unchanged)
+                self._emit_files_field(files, file_facts, state_parts, omit_unchanged)
             elif field == "facts":
                 self._emit_facts_section(
                     file_facts,

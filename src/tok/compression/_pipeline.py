@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import posixpath
 import re
 from typing import Any
 
@@ -17,6 +18,7 @@ from . import (
     RECENT_WINDOW_EVIDENCE_THRESHOLD,
     RECENT_WINDOW_THRESHOLD,
     STOP_WORDS,
+    TOK_FRESHNESS_SIGNALS_EXPLANATION,
     TOK_OUTPUT_DIRECTIVE_MINIMAL,
     TOK_OUTPUT_DIRECTIVE_REINFORCED,
     TOK_PROTOCOL_LAW,
@@ -34,6 +36,11 @@ from . import (
     text_of,
 )
 from ..runtime.config import RESULT_CACHE_TTL_SECONDS
+from ..runtime.repeat_targets import (
+    build_file_summary,
+    build_file_skeleton,
+    normalize_path_target,
+)
 
 globals().update(vars(_compression))
 
@@ -486,9 +493,19 @@ def compress_tool_results_impl(
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
     bypass_result_cache: bool = False,
+    hot_summary_records: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     breakdown: dict[str, int] = {}
+
+    def _truncate_stable_snippet(text: str, limit: int) -> str:
+        cleaned = " ".join(str(text or "").split())
+        if len(cleaned) <= limit:
+            return cleaned
+        if limit <= 1:
+            return cleaned[:limit]
+        return cleaned[: limit - 1].rstrip() + "…"
+
     for msg in messages:
         content = msg.get("content")
         if not isinstance(content, list):
@@ -500,6 +517,12 @@ def compress_tool_results_impl(
             ):
                 tool_id = msg.get("tool_use_id", "")
                 context = tool_use_id_to_context.get(tool_id)
+                if (
+                    context
+                    and isinstance(context.get("args"), dict)
+                    and context["args"].get("tok_bypass_cache")
+                ):
+                    continue
                 if context:
                     compressed, saved = _apply_result_cache(
                         content,
@@ -529,24 +552,81 @@ def compress_tool_results_impl(
             if not isinstance(raw, str):
                 continue
 
+            tool_id = ""
+            ctx: dict[str, Any] | None = None
+            if tool_use_id_to_context is not None:
+                tool_id = block.get("tool_use_id", "")
+                ctx = tool_use_id_to_context.get(tool_id)
+                if (
+                    ctx
+                    and isinstance(ctx.get("args"), dict)
+                    and ctx["args"].get("tok_bypass_cache")
+                ):
+                    continue
+
             if (
                 semantic_hash_cache is not None
                 and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
                 and tool_use_id_to_context is not None
             ):
-                tool_id = block.get("tool_use_id", "")
-                ctx = tool_use_id_to_context.get(tool_id)
                 cache_key = _make_semantic_cache_key(ctx, raw)
                 if cache_key is not None:
                     content_hash = _compute_semantic_hash(raw)
                     prev_hash = semantic_hash_cache.get(cache_key)
                     if prev_hash == content_hash:
-                        token = f"@stable_result(hash:{content_hash})"
+                        summary = ""
+                        if hot_summary_records is not None and ctx is not None:
+                            path = ctx.get("path")
+                            if path:
+                                normalized_path = normalize_path_target(path)
+                                record_key = f"file_read|{normalized_path}"
+                                record = hot_summary_records.get(record_key)
+                                if record and hasattr(record, "summary"):
+                                    summary = record.summary
+                        if not summary and ctx is not None:
+                            path = ctx.get("path")
+                            if path and len(raw) >= 100:
+                                try:
+                                    summary = build_file_summary(
+                                        raw,
+                                        max_chars=280,
+                                        max_lines=12,
+                                    )
+                                except Exception:
+                                    pass
+                        if not summary:
+                            summary = _truncate_stable_snippet(raw, 280)
+
+                        skeleton = ""
+                        if ctx is not None:
+                            path = ctx.get("path")
+                            if path and len(raw) >= 100:
+                                try:
+                                    skeleton = build_file_skeleton(
+                                        raw,
+                                        max_chars=280,
+                                        max_lines=14,
+                                    )
+                                except Exception:
+                                    pass
+
+                        lines = [f"@stable_result(hash:{content_hash})"]
+                        if summary:
+                            lines.append(
+                                f"@stable_summary |> "
+                                f"{_truncate_stable_snippet(summary, 280)}"
+                            )
+                        if skeleton:
+                            lines.append(
+                                f"@stable_skeleton |> "
+                                f"{_truncate_stable_snippet(skeleton, 280)}"
+                            )
+                        token = "\n".join(lines)
                         saved = len(raw) - len(token)
                         if saved > 0:
-                            breakdown["semantic_dedup"] = (
-                                breakdown.get("semantic_dedup", 0) + saved
-                            )
+                            breakdown["semantic_dedup"] = breakdown.get(
+                                "semantic_dedup", 0
+                            ) + max(0, saved)
                             block["content"] = token
                             continue
                     else:
@@ -557,8 +637,7 @@ def compress_tool_results_impl(
                 and tool_use_id_to_context is not None
                 and not bypass_result_cache
             ):
-                tool_id = block.get("tool_use_id", "")
-                context = tool_use_id_to_context.get(tool_id)
+                context = ctx
 
                 if context:
                     compressed, saved = _apply_result_cache(
@@ -604,6 +683,31 @@ def inject_system_additions_impl(
 ) -> dict[str, Any]:
     """Inject the Tok output directive into every request."""
     sys_prompt = body.get("system", "")
+
+    # Add Tok freshness signals explanation for Claude to understand system metadata
+    if not tool_compatible and sys_prompt:
+        # Only add if not already present to avoid duplication
+        if isinstance(sys_prompt, str):
+            if "[Tok File Freshness System]" not in sys_prompt:
+                sys_prompt = (
+                    TOK_FRESHNESS_SIGNALS_EXPLANATION + "\n\n" + sys_prompt
+                )
+                body["system"] = sys_prompt
+        elif isinstance(sys_prompt, list):
+            # Check if any text block already contains the freshness explanation
+            has_freshness = any(
+                isinstance(block, dict)
+                and block.get("type") == "text"
+                and "[Tok File Freshness System]" in block.get("text", "")
+                for block in sys_prompt
+            )
+            if not has_freshness:
+                # Prepend the freshness explanation as a new text block
+                sys_prompt = [
+                    {"type": "text", "text": TOK_FRESHNESS_SIGNALS_EXPLANATION}
+                ] + sys_prompt
+                body["system"] = sys_prompt
+
     directive_parts = []
 
     if not tool_compatible:
@@ -639,14 +743,15 @@ def inject_system_additions_impl(
         and not todo
         and not deltas
     ):
-        if isinstance(sys_prompt, str):
+        current_sys_prompt = body.get("system", "")
+        if isinstance(current_sys_prompt, str):
             body["system"] = (
-                sys_prompt + "\n\n" + output_directive
-                if sys_prompt
+                current_sys_prompt + "\n\n" + output_directive
+                if current_sys_prompt
                 else output_directive
             )
-        elif isinstance(sys_prompt, list):
-            body["system"] = sys_prompt + [
+        elif isinstance(current_sys_prompt, list):
+            body["system"] = current_sys_prompt + [
                 {"type": "text", "text": output_directive}
             ]
         else:
@@ -671,16 +776,19 @@ def inject_system_additions_impl(
 
     dynamic_state = "\n\n".join(dynamic_blocks)
 
-    if isinstance(sys_prompt, str):
+    current_sys_prompt = body.get("system", "")
+    if isinstance(current_sys_prompt, str):
         additions = [output_directive]
         if dynamic_state:
             additions.append(dynamic_state)
         addition = "\n\n".join(additions)
         body["system"] = (
-            sys_prompt + "\n\n" + addition if sys_prompt else addition
+            current_sys_prompt + "\n\n" + addition
+            if current_sys_prompt
+            else addition
         )
-    elif isinstance(sys_prompt, list):
-        body["system"] = sys_prompt + [
+    elif isinstance(current_sys_prompt, list):
+        body["system"] = current_sys_prompt + [
             {"type": "text", "text": output_directive}
         ]
         if dynamic_state:

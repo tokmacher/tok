@@ -696,7 +696,7 @@ class RuntimeSession:
             self._recent_repeat_target_events = (
                 self._recent_repeat_target_events[-16:]
             )
-        if len(self._hot_summary_records) > 8:
+        if len(self._hot_summary_records) > 64:
             ranked = sorted(
                 self._hot_summary_records.items(),
                 key=lambda item: (
@@ -704,7 +704,7 @@ class RuntimeSession:
                     item[1].last_seen_turn,
                 ),
                 reverse=True,
-            )[:8]
+            )[:64]
             self._hot_summary_records = dict(ranked)
         if len(self._observed_tool_result_ids) > 64:
             self._observed_tool_result_ids = set(

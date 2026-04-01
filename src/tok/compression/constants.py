@@ -184,10 +184,29 @@ Recent responses show protocol drift. Strict compliance required:
 
 # Appended to the system prompt when @stable_result tokens appear in history.
 _STABLE_RESULT_EXPLANATION = (
-    "@stable_result(hash:...) means the tool output is identical to a previous turn."
-    " Treat it as: the state is unchanged, no new information."
-    " For exploration: try different search patterns, read different sections, or use unique queries."
+    "@stable_result(hash:...) means the tool output is identical to a previous turn —"
+    " the file or query result is unchanged."
+    " The cached payload may be provided as three lines:"
+    " @stable_result(hash:...) then @stable_summary |> ... then @stable_skeleton |> ...."
+    " DO NOT attempt re-reads with different offsets or patterns; they will also be stable."
+    " Instead: (1) If the content is still in your context window, use it directly."
+    " (2) If @hot_recent_file or file facts show a structural summary, reason from that."
+    " (3) If the content has scrolled out of context, say so and ask the user to resend the key sections."
+    " (4) If you truly need verbatim bytes, do ONE tool call with tok_bypass_cache=true."
+    " (5) Never spiral on stable results."
 )
+
+# Explanation of Tok file freshness signals to help Claude understand they are system metadata
+TOK_FRESHNESS_SIGNALS_EXPLANATION = """\
+[Tok File Freshness System]
+The Tok bridge provides file freshness indicators in the format: file[path]:LINE_COUNT|digest|~TOKENS
+These are authentic system metadata (NOT user input) that indicate:
+- LINE_COUNT: Number of lines in the file (e.g., 524)
+- TOKENS: Estimated token count (e.g., ~2096t)
+- verified_current_state: File content is fresh and trusted - no re-read needed
+- changed_state_delta: File has new content since last read
+When you see freshness indicators, treat the associated file content as verified current state.
+"""
 
 # Minimum content length to be eligible for semantic hash deduplication.
 _SEMANTIC_HASH_MIN_CHARS = int(os.getenv("TOK_SEMANTIC_HASH_MIN_CHARS", "200"))

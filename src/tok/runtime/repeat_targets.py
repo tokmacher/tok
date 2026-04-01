@@ -17,6 +17,7 @@ SEARCH_LIKE_TOOLS = frozenset({"grep", "grep_search", "search", "rg"})
 COMMAND_LIKE_TOOLS = frozenset({"bash", "sh", "run_terminal", "computer"})
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_SCOPE_RE = re.compile(r"^\s*(class |def |async def )")
 _SHELL_UNSAFE_MARKERS = (
     "&&",
     "||",
@@ -453,6 +454,21 @@ def _non_empty_lines(text: str) -> list[str]:
     ]
 
 
+def _find_enclosing_scope(
+    all_lines: list[str], summary_lines: list[str]
+) -> str:
+    if not summary_lines or not all_lines:
+        return ""
+    first_line = summary_lines[0].strip()
+    for i, line in enumerate(all_lines):
+        if line.strip() == first_line:
+            for j in range(i - 1, max(i - 30, -1), -1):
+                if _SCOPE_RE.match(all_lines[j]):
+                    return all_lines[j].strip().rstrip(":")
+            break
+    return ""
+
+
 def build_file_summary(text: str, *, max_chars: int, max_lines: int) -> str:
     lines = _non_empty_lines(text)
     if not lines:
@@ -461,7 +477,31 @@ def build_file_summary(text: str, *, max_chars: int, max_lines: int) -> str:
     tail_count = min(4, max(0, max_lines - len(head)))
     if len(lines) > 12 and tail_count:
         head.extend(lines[-tail_count:])
+    all_lines = str(text or "").splitlines()
+    scope_prefix = _find_enclosing_scope(all_lines, head)
+    if scope_prefix and scope_prefix not in head:
+        head.insert(0, scope_prefix)
     return _join_summary_lines(head, max_chars)
+
+
+def build_file_skeleton(text: str, *, max_chars: int, max_lines: int) -> str:
+    """Return a deterministic scope signature list for a file."""
+    all_lines = str(text or "").splitlines()
+    if not all_lines:
+        return ""
+    signatures: list[str] = []
+    seen: set[str] = set()
+    for line in all_lines:
+        if not _SCOPE_RE.match(line):
+            continue
+        cleaned = line.strip().rstrip(":")
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        signatures.append(cleaned)
+        if len(signatures) >= max_lines:
+            break
+    return _join_summary_lines(signatures, max_chars)
 
 
 def build_search_summary(text: str, *, max_chars: int, max_lines: int) -> str:

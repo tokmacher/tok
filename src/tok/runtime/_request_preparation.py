@@ -460,6 +460,7 @@ def prepare_request_impl(
             tool_use_id_to_context=id_to_context,
             compression_level=policy.tool_levels[mode],
             semantic_hash_cache=session.semantic_hash_cache,
+            hot_summary_records=session._hot_summary_records,
         )
         tool_saved = sum(type_breakdown.values()) // 4
         if tool_saved > 0:

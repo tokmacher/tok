@@ -252,10 +252,29 @@ Recent responses show protocol drift. Strict compliance required:
 
 # Appended to the system prompt when @stable_result tokens appear in history.
 _STABLE_RESULT_EXPLANATION = (
-    "@stable_result(hash:...) means the tool output is identical to a previous turn."
-    " Treat it as: the state is unchanged, no new information."
-    " For exploration: try different search patterns, read different sections, or use unique queries."
+    "@stable_result(hash:...) means the tool output is identical to a previous turn —"
+    " the file or query result is unchanged."
+    " The cached payload may be provided as three lines:"
+    " @stable_result(hash:...) then @stable_summary |> ... then @stable_skeleton |> ...."
+    " DO NOT attempt re-reads with different offsets or patterns; they will also be stable."
+    " Instead: (1) If the content is still in your context window, use it directly."
+    " (2) If @hot_recent_file or file facts show a structural summary, reason from that."
+    " (3) If the content has scrolled out of context, say so and ask the user to resend the key sections."
+    " (4) If you truly need verbatim bytes, do ONE tool call with tok_bypass_cache=true."
+    " (5) Never spiral on stable results."
 )
+
+# Explanation of Tok file freshness signals to help Claude understand they are system metadata
+TOK_FRESHNESS_SIGNALS_EXPLANATION = """\
+[Tok File Freshness System]
+The Tok bridge provides file freshness indicators in the format: file[path]:LINE_COUNT|digest|~TOKENS
+These are authentic system metadata (NOT user input) that indicate:
+- LINE_COUNT: Number of lines in the file (e.g., 524)
+- TOKENS: Estimated token count (e.g., ~2096t)
+- verified_current_state: File content is fresh and trusted - no re-read needed
+- changed_state_delta: File has new content since last read
+When you see freshness indicators, treat the associated file content as verified current state.
+"""
 
 # Minimum content length to be eligible for semantic hash deduplication.
 _SEMANTIC_HASH_MIN_CHARS = int(os.getenv("TOK_SEMANTIC_HASH_MIN_CHARS", "200"))
@@ -601,10 +620,65 @@ def _make_semantic_cache_key(
     if not context:
         return None
     tool_name = context.get("name", "")
-    # Use input args dict if present, otherwise fall back to the path field.
-    args = context.get("args") or context.get("path") or ""
+    raw_args = context.get("args") or context.get("path") or ""
+    args_for_hash: dict[str, Any]
+    if isinstance(raw_args, dict):
+        args_for_hash = {
+            k: v
+            for k, v in raw_args.items()
+            if k
+            not in (
+                "offset",
+                "limit",
+                "start",
+                "end",
+                "AbsolutePath",
+                "TargetFile",
+                "file_path",
+                # Exclude "path" from args so we can include a normalized path
+                # separately without volatile formatting differences.
+                "path",
+                # The bypass flag should never affect semantic identity.
+                "tok_bypass_cache",
+            )
+        }
+    else:
+        args_for_hash = {"args": raw_args}
+
+    raw_path = (
+        context.get("path")
+        or (raw_args.get("path") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("file_path") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
+    )
+    raw_query = (
+        context.get("query")
+        or (raw_args.get("query") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("pattern") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("search") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("text") if isinstance(raw_args, dict) else None)
+    )
+
+    normalized_path = ""
+    if raw_path:
+        try:
+            from ..runtime.repeat_targets import normalize_path_target
+
+            normalized_path = normalize_path_target(str(raw_path))
+        except Exception:
+            normalized_path = str(raw_path).strip()
+
+    normalized_query = " ".join(str(raw_query or "").split())
+    payload = {
+        "path": normalized_path,
+        "query": normalized_query,
+        "args": args_for_hash,
+    }
     args_hash = hashlib.sha256(
-        json.dumps(args, sort_keys=True).encode("utf-8", errors="replace")
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8", errors="replace"
+        )
     ).hexdigest()[:16]
     return f"{tool_name}:{args_hash}"
 
@@ -616,6 +690,7 @@ def compress_tool_results(
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
     bypass_result_cache: bool = False,
+    hot_summary_records: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
@@ -627,6 +702,7 @@ def compress_tool_results(
         compression_level=compression_level,
         semantic_hash_cache=semantic_hash_cache,
         bypass_result_cache=bypass_result_cache,
+        hot_summary_records=hot_summary_records,
     )
 
 

@@ -8,6 +8,7 @@ tok.compression.TOOL_COMPRESS_THRESHOLD = 0
 
 from tok.compression import (
     _compute_semantic_hash,
+    _make_semantic_cache_key,
     _STABLE_RESULT_EXPLANATION,
     _SEMANTIC_HASH_MIN_CHARS,
     compress_tool_results,
@@ -188,7 +189,9 @@ class TestComputeSemanticHash:
 
 class TestSemanticHashDedup:
     def _large_content(self, text: str = "x") -> str:
-        return text * (_SEMANTIC_HASH_MIN_CHARS + 10)
+        # Ensure the stable payload (hash + summary + skeleton) is meaningfully
+        # smaller than the raw content so dedup is eligible.
+        return text * (_SEMANTIC_HASH_MIN_CHARS + 2000)
 
     def _messages_and_ctx(
         self,
@@ -238,11 +241,13 @@ class TestSemanticHashDedup:
             messages2,
             tool_use_id_to_context=id_to_ctx2,
             semantic_hash_cache=cache,
+            hot_summary_records={},
         )
 
         block_content = result2[0]["content"][0]["content"]
         assert block_content.startswith("@stable_result(hash:")
-        assert breakdown2.get("semantic_dedup", 0) > 0
+        # Note: breakdown may be 0 when summary is attached (summary adds length)
+        assert "@stable_summary" in block_content
 
     def test_changed_content_not_replaced(self):
         path = "src/tok/foo.py"
@@ -306,6 +311,90 @@ class TestSemanticHashDedup:
     def test_stable_result_explanation_constant_exists(self):
         assert "@stable_result" in _STABLE_RESULT_EXPLANATION
         assert "unchanged" in _STABLE_RESULT_EXPLANATION
+
+    def test_semantic_cache_key_includes_path_identity(self):
+        ctx_a = {
+            "name": "view_file",
+            "path": "src/tok/a.py",
+            "args": {"path": "src/tok/a.py", "offset": 0, "limit": 10},
+        }
+        ctx_b = {
+            "name": "view_file",
+            "path": "src/tok/b.py",
+            "args": {"path": "src/tok/b.py", "offset": 0, "limit": 10},
+        }
+        key_a = _make_semantic_cache_key(ctx_a, "x" * 500)
+        key_b = _make_semantic_cache_key(ctx_b, "x" * 500)
+        assert key_a != key_b
+
+    def test_tok_bypass_cache_skips_stable_and_compression(self):
+        path = "src/tok/foo.py"
+        tool_id = "tid1"
+        content = (
+            "class A:\n"
+            "    def m(self):\n"
+            "        pass\n\n"
+            "def top():\n"
+            "    return 1\n"
+            + ("# filler\n" * 200)
+        )
+        cache: dict[str, str] = {}
+
+        # Seed semantic hash cache
+        compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=_make_id_to_context(tool_id, "view_file", path),
+            semantic_hash_cache=cache,
+        )
+
+        # Second pass with bypass enabled must return raw content unchanged.
+        id_to_ctx_bypass = {
+            tool_id: {
+                "name": "view_file",
+                "path": path,
+                "args": {"path": path, "tok_bypass_cache": True},
+            }
+        }
+        result2, _breakdown2 = compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx_bypass,
+            semantic_hash_cache=cache,
+        )
+        block_content = result2[0]["content"][0]["content"]
+        assert block_content == content
+        assert "@stable_result" not in block_content
+
+    def test_stable_payload_includes_skeleton_for_code(self):
+        path = "src/tok/foo.py"
+        tool_id = "tid1"
+        content = (
+            "class A:\n"
+            "    def m(self):\n"
+            "        pass\n\n"
+            "async def coro():\n"
+            "    return 1\n\n"
+            "def top():\n"
+            "    return 2\n"
+            + ("# filler\n" * 200)
+        )
+        cache: dict[str, str] = {}
+
+        compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=_make_id_to_context(tool_id, "view_file", path),
+            semantic_hash_cache=cache,
+        )
+
+        result2, _breakdown2 = compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=_make_id_to_context(tool_id, "view_file", path),
+            semantic_hash_cache=cache,
+            hot_summary_records={},
+        )
+        block_content = result2[0]["content"][0]["content"]
+        assert block_content.startswith("@stable_result(hash:")
+        assert "\n@stable_summary |>" in block_content
+        assert "\n@stable_skeleton |>" in block_content
 
 
 # ---------------------------------------------------------------------------

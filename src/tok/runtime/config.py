@@ -87,16 +87,23 @@ ANSWER_READY_RUNTIME_HINT = (
     "Do not call tools in this turn."
 )
 ANSWER_READY_REPAIR_HINT = (
-    "Previous turn failed answer assembly. Reply now with only File=... and "
-    "Verification=... using the existing evidence. Do not call tools in this turn."
+    "Previous turn failed answer assembly. You already read the target files —"
+    " their content is in your context or was replaced by @stable_result (meaning unchanged)."
+    " Reply now with only File=... and Verification=..."
+    " If you cannot locate the file content in context, state which files you need re-sent."
+    " If you truly need verbatim bytes, do ONE tool call with tok_bypass_cache=true (otherwise do not call tools)."
+    " Do not call tools in this turn."
 )
 LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT = (
     "Previous turn tried to answer before satisfying the late fresh-evidence "
     "contract. In this turn, use only one supported read-only tool and do not answer."
 )
 LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT = (
-    "Previous turn failed final answer assembly after evidence was available. "
-    "In this turn, do not call tools. Reply only with File=... and Verification=..."
+    "Previous turn failed final answer assembly after evidence was available."
+    " The evidence was already read — check your context or @stable_result hashes (meaning unchanged)."
+    " In this turn, do not call tools. Reply only with File=... and Verification=..."
+    " If content is missing from context, say so explicitly."
+    " If you truly need verbatim bytes, request a one-shot reread with tok_bypass_cache=true in the next turn."
 )
 LATE_ANSWER_FOLLOWTHROUGH_HINT = (
     "Previous turn gathered the required evidence. In this turn, do not call "
