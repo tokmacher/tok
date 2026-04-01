@@ -31,6 +31,10 @@ pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
 python -m build
 ```
 
+If the release check is running in an offline or sandboxed environment that
+already has build requirements installed, `python -m build --no-isolation` is an
+acceptable local fallback. The canonical release command remains `python -m build`.
+
 ## Release
 
 - [ ] Reconfirm the exact release candidate still passes the supported bridge-first live validation path

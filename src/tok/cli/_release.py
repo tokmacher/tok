@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -553,7 +555,23 @@ def replay_command(
             raise typer.Exit(1)
 
 
-def doctor_command(verbose: bool = False) -> None:
+def _safe_env_flag(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        return "unset"
+    return "set"
+
+
+def _tok_version() -> str:
+    try:
+        from importlib import metadata
+
+        return metadata.version("tok-protocol")
+    except Exception:
+        return "unknown"
+
+
+def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
     """Check bridge health and runtime contract conformance."""
     console.print("[bold]Tok Doctor — Runtime Health Check[/bold]")
     console.print("=" * 52)
@@ -700,6 +718,31 @@ def doctor_command(verbose: bool = False) -> None:
             signals.items(), key=lambda kv: (-kv[1], kv[0])
         ):
             console.print(f"  {key:<32} {value:>4}")
+
+    if report:
+        collector_db = os.getenv("TOK_COLLECTOR_DB", "telemetry.db")
+        report_lines = [
+            "Tok Doctor report (safe to share)",
+            f"tok_version={_tok_version()}",
+            f"python={sys.version.split()[0]}",
+            f"platform={platform.platform()}",
+            f"cwd={Path.cwd()}",
+            f"bridge_port={port}",
+            f"bridge_pid={'none' if not pid else pid}",
+            f"memory_root={memory_dir}",
+            f"memory_structured={'present' if structured_path.exists() else 'missing'}",
+            f"memory_fallback={'present' if fallback_path.exists() else 'missing'}",
+            f"collector_db={collector_db}",
+            f"env_OPENAI_API_KEY={_safe_env_flag('OPENAI_API_KEY')}",
+            f"env_OPENROUTER_API_KEY={_safe_env_flag('OPENROUTER_API_KEY')}",
+            f"env_TOK_PROJECT_DIR={_safe_env_flag('TOK_PROJECT_DIR')}",
+            f"env_TOK_COLLECTOR_DB={_safe_env_flag('TOK_COLLECTOR_DB')}",
+            f"env_TOK_MODE={os.getenv('TOK_MODE', 'unset')}",
+        ]
+        console.print("\n[bold]Report:[/bold]")
+        console.print("```")
+        console.print("\n".join(str(line) for line in report_lines))
+        console.print("```")
 
     if issues:
         console.print(

@@ -62,6 +62,16 @@ A public release requires:
 8. The release shape is narrow, explicit, and defensible
 9. The release candidate is cut from a clean, fully revalidated tree
 
+The expected automated revalidation pass for that candidate is:
+
+```bash
+pre-commit run --all-files
+ruff check src/tok tests
+mypy src/tok
+pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
+python -m build
+```
+
 ## Paired IDL Audit Rule
 
 The bounded IDL stress audit now has two required interpretations:

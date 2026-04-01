@@ -235,6 +235,25 @@ tok bridge status --help
 tok stats --help
 ```
 
+If you are validating a local release artifact instead of PyPI, build and install
+the wheel from `dist/`:
+
+```bash
+python -m build
+python -m venv .venv
+source .venv/bin/activate
+pip install dist/tok_protocol-0.1.0-py3-none-any.whl
+tok --help
+tok install
+tok bridge start --help
+tok bridge status --help
+tok stats --help
+```
+
+In restricted or offline environments, a local wheel install still requires the
+published dependencies to be available in the environment or via an internal
+package mirror.
+
 This is the minimum supported install bar for the first public release.
 
 ## Bridge Workflow

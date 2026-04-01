@@ -9,6 +9,7 @@ import typer
 from dotenv import load_dotenv
 
 from ._bridge_commands import register as register_bridge_commands
+from ._init_commands import register as register_init_commands
 from ._install_commands import register as register_install_commands
 from ._legacy_commands import register as register_legacy_commands
 from ._memory_commands import register as register_memory_commands
@@ -28,6 +29,7 @@ app.add_typer(metrics_app, name="metrics", hidden=True)
 app.add_typer(dev_app, name="dev", hidden=True)
 
 register_install_commands(app)
+register_init_commands(app)
 register_bridge_commands(bridge_app)
 register_memory_commands(app)
 register_release_commands(app)

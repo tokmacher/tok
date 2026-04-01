@@ -116,11 +116,18 @@ def doctor(
     verbose: Annotated[
         bool, typer.Option("--verbose", "-v", help="Show all behavior signals")
     ] = False,
+    report: Annotated[
+        bool,
+        typer.Option(
+            "--report",
+            help="Print a pasteable environment report (safe to share)",
+        ),
+    ] = False,
 ) -> None:
     """Check bridge health and runtime contract conformance."""
     from ._release import doctor_command
 
-    doctor_command(verbose=verbose)
+    doctor_command(verbose=verbose, report=report)
 
 
 def gate_check(

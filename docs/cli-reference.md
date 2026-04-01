@@ -14,7 +14,7 @@ tok install
 tok bridge start
 claude
 tok bridge status
-tok doctor
+tok doctor [--report]
 tok bridge stop
 tok stats
 ```
