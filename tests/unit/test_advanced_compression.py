@@ -1,7 +1,7 @@
-import tok.compression
+import tok.compression._pipeline
 
 # Monkeypatch threshold FIRST before any imports from tok.compression
-tok.compression.TOOL_COMPRESS_THRESHOLD = 0
+tok.compression._pipeline.TOOL_COMPRESS_THRESHOLD = 0
 
 from tok.compression import _detect_tool_content_type, tok_tool_result
 
@@ -78,7 +78,7 @@ def test_json_skeletonization():
 def test_general_result_caching():
     from tok.compression import _apply_result_cache
 
-    cache = {}
+    cache: dict[str, tuple[str, str, float]] = {}
 
     # Tool 1: ls
     context_ls = {"name": "ls", "args": {"path": "."}}

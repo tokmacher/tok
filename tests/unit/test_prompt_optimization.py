@@ -168,13 +168,15 @@ def test_compress_user_prompt_megaprompt():
 
 def test_incremental_stacking():
     """Verify that as prompts 'stack up', the bridge consolidates to the latest goal."""
+    from typing import cast
+
     state = BridgeMemoryState()
 
     sys1 = "Goal: Phase A"
     clean1 = clean_system_context(state, sys1)
     state.turn += 1
 
-    sys2 = clean1 + "\nGoal: Phase B"
+    sys2 = cast(str, clean1) + "\nGoal: Phase B"
     clean_system_context(state, sys2)
     state.turn += 1
 

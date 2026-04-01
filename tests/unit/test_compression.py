@@ -1,6 +1,9 @@
 """Tests for tok.compression — input-side history compression."""
 
+from __future__ import annotations
+
 import tok.compression
+from typing import Any
 
 tok.compression.TOOL_COMPRESS_THRESHOLD = 0
 
@@ -48,7 +51,7 @@ class TestTextOf:
         assert text_of([]) == ""
 
     def test_non_string_non_list(self):
-        assert text_of(123) == "123"
+        assert text_of(123) == "123"  # type: ignore[arg-type]
 
 
 class TestIsSafeCut:
@@ -188,7 +191,7 @@ class TestCompressHistory:
         assert state.index("turns:") < state.index("goal:")
 
     def test_preserves_tool_result_pairs(self):
-        msgs = [
+        msgs: list[dict[str, Any]] = [
             {"role": "user", "content": "use the tool"},
             {
                 "role": "assistant",
@@ -225,7 +228,7 @@ class TestCompressHistory:
                         assert idx > 0
 
     def test_boosts_edited_files_from_tool_use(self):
-        msgs = [
+        msgs: list[dict[str, Any]] = [
             {"role": "user", "content": "please continue"},
             {
                 "role": "assistant",
@@ -249,7 +252,7 @@ class TestCompressHistory:
         assert "src/tok/bridge_memory.py" in state
 
     def test_extracts_explicit_blockers_into_errors_or_next(self):
-        msgs = [
+        msgs: list[dict[str, Any]] = [
             {
                 "role": "user",
                 "content": "blocked on failing tests in tests/unit/test_gateway.py",
@@ -280,7 +283,9 @@ class TestCompressHistory:
 
 
 class TestCompressHistoryCutDiagnostics:
-    def _make_tool_heavy_transcript(self, n_turns: int = 6) -> list[dict]:
+    def _make_tool_heavy_transcript(
+        self, n_turns: int = 6
+    ) -> list[dict[str, Any]]:
         msgs = []
         for i in range(n_turns):
             msgs.append(
@@ -328,7 +333,7 @@ class TestCompressHistoryCutDiagnostics:
     def test_transcript_with_later_plain_user_boundary_compresses_normally(
         self,
     ):
-        msgs = [
+        msgs: list[dict[str, Any]] = [
             {"role": "user", "content": "first question"},
             {"role": "assistant", "content": "first answer"},
             {
@@ -392,8 +397,11 @@ class TestInjectSystemAdditions:
         }
         result = inject_system_additions(body, None, pressure=2)
         assert isinstance(result["system"], list)
-        assert len(result["system"]) == 2
+        assert len(result["system"]) == 3
         assert result["system"][0]["cache_control"]["type"] == "ephemeral"
+        assert result["system"][1]["text"].startswith(
+            "[Tok File Freshness System]"
+        )
         assert "=== MODE: TOK-NATIVE ===" in result["system"][-1]["text"]
         assert "[Tok law]" in result["system"][-1]["text"]
         assert ">>> t:N|usr:X|agt:Y|state:Z" in result["system"][-1]["text"]
@@ -602,7 +610,7 @@ class TestTokToolResult:
 class TestCompressToolResults:
     def _make_messages_with_tool_result(
         self, result_content: str
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "role": "assistant",
@@ -844,7 +852,9 @@ class TestNewCompressors:
 
 
 class TestFileCache:
-    def _tool_result_msg(self, tool_id: str, content: str) -> list[dict]:
+    def _tool_result_msg(
+        self, tool_id: str, content: str
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "role": "assistant",
@@ -885,7 +895,7 @@ class TestFileCache:
         return "\n".join(lines)
 
     def test_first_read_preserves_raw_file_content(self):
-        cache: dict = {}
+        cache: dict[str, tuple[str, str, float]] = {}
         raw = self._big_file(20)
         result, saved = _apply_file_cache(raw, "src/foo.py", cache)
         # It's now keyed by hashed tool:args
@@ -895,7 +905,7 @@ class TestFileCache:
         assert result == raw
 
     def test_second_read_unchanged_is_stubbed(self):
-        cache: dict = {}
+        cache: dict[str, tuple[str, str, float]] = {}
         raw = self._big_file(20)
         _apply_file_cache(raw, "src/foo.py", cache)
         result, saved = _apply_file_cache(raw, "src/foo.py", cache)
@@ -908,7 +918,7 @@ class TestFileCache:
         )
 
     def test_second_read_changed_uses_diff(self):
-        cache: dict = {}
+        cache: dict[str, tuple[str, str, float]] = {}
         raw1 = self._big_file()
         _apply_file_cache(raw1, "src/foo.py", cache)
         # Change a line
@@ -926,7 +936,7 @@ class TestFileCache:
         )
 
     def test_compress_tool_results_deduplicates_repeated_file_reads(self):
-        cache: dict = {}
+        cache: dict[str, tuple[str, str, float]] = {}
         raw = self._big_file(20)
         id_to_context = {
             "t1": {
@@ -956,7 +966,7 @@ class TestFileCache:
         )
 
     def test_file_tools_are_preserved_verbatim(self):
-        cache: dict = {}
+        cache: dict[str, tuple[str, str, float]] = {}
         raw = self._big_file(20)
         id_to_context = {
             "t1": {
@@ -991,7 +1001,7 @@ class TestSavingsBugFix:
         # Build a conversation with many turns (will trigger history compress)
         # plus a large tool result
         pytest_log = _make_pytest_log(80)
-        msgs = []
+        msgs: list[dict[str, Any]] = []
         for i in range(6):
             msgs.append({"role": "user", "content": f"question {i}"})
             msgs.append({"role": "assistant", "content": f"answer {i}"})
@@ -1021,7 +1031,9 @@ class TestSavingsBugFix:
 
 
 class TestCompressRecentWindow:
-    def _make_result_msg(self, content: str, tool_use_id: str = "id1") -> dict:
+    def _make_result_msg(
+        self, content: str, tool_use_id: str = "id1"
+    ) -> dict[str, Any]:
         return {
             "role": "tool",
             "content": [
@@ -1109,7 +1121,11 @@ class TestCompressRecentWindow:
         ctx = {
             "file_id": {
                 "name": "read",
-                "args": {"file_path": "src/tok/foo.py", "offset": 10, "limit": 40},
+                "args": {
+                    "file_path": "src/tok/foo.py",
+                    "offset": 10,
+                    "limit": 40,
+                },
             }
         }
 
@@ -1242,7 +1258,11 @@ REINFORCED_MARKER = "PROTOCOL REINFORCEMENT"
 GRAMMAR_MARKER = "## Grammar"  # Only in TOK_SYSTEM_PROMPT full grammar
 
 
-def _inject(tok_state=None, pressure=0, tool_compatible=False):
+def _inject(
+    tok_state: str | None = None,
+    pressure: int = 0,
+    tool_compatible: bool = False,
+) -> str:
     """Call inject_system_additions with the gateway's actual parameters."""
     body = inject_system_additions(
         {"system": ""},

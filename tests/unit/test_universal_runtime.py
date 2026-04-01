@@ -68,7 +68,7 @@ def test_runtime_prepare_request_injects_memory_and_collects_signals():
 
     assert prepared.body["system"].startswith("Existing system prompt")
     assert "=== MODE: TOK-NATIVE ===" in prepared.body["system"]
-    assert "@pointers" in prepared.body["system"]
+    assert "@macros" in prepared.body["system"]
     assert ">>>" in prepared.body["system"]
     assert prepared.behavior_signals["repeat_file_read"] == 1
     assert (
@@ -765,7 +765,9 @@ def test_tool_compatible_state_with_answer_facts_suppresses_when_unchanged(
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
+    assert (
+        second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
+    )
     assert (
         "Reuse existing File=/Verification= facts" not in second.body["system"]
     )
@@ -2466,7 +2468,10 @@ def test_select_resend_strategy():
 
     # identical non-answer fields → suppress
     assert _select_resend_strategy(fields, fields, False) == "suppress"
-    assert _select_resend_reason(fields, fields, False) == "verified_current_state"
+    assert (
+        _select_resend_reason(fields, fields, False)
+        == "verified_current_state"
+    )
 
     # changed fields, no answer facts → delta
     assert _select_resend_strategy(fields, {}, False) == "delta"
@@ -2583,7 +2588,9 @@ def test_answer_anchor_present_can_suppress_when_state_is_unchanged(tmp_path):
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
     assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
-    assert second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
+    assert (
+        second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
+    )
     assert (
         second.behavior_signals.get(
             "state_resend_reason_answer_anchor_present_kept_full", 0

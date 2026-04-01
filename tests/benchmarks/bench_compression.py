@@ -1,12 +1,15 @@
 """Benchmark: compression ratios at various conversation lengths."""
 
+from __future__ import annotations
+
 import time
+from typing import Any
 
 import pytest
 from tok.compression import compress_history
 
 
-def _make_conversation(turns: int) -> list[dict]:
+def _make_conversation(turns: int) -> list[dict[str, Any]]:
     """Generate a synthetic conversation with N human turns."""
     msgs = []
     for i in range(turns):

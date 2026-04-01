@@ -18,6 +18,7 @@ from ..compression import (
 )
 from ..neuro.ir import Instruction
 from .config import (
+    TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
     TOK_HOT_COMMAND_MAX_CHARS,
     TOK_HOT_COMMAND_MAX_LINES,
     TOK_HOT_FILE_MAX_CHARS,
@@ -45,6 +46,8 @@ from .pipeline.response_processing import translate_request_results
 from .pipeline.request_validation import (
     canonicalize_anthropic_bridge_body,
     detect_prompt_bloat,
+    has_recoverable_immediate_pairing_failures,
+    validate_anthropic_bridge_body,
 )
 from .pipeline.tool_processing import (
     _should_skip_history_rewrite,
@@ -259,6 +262,102 @@ def observe_repeat_target_result_impl(
     return signals
 
 
+def _message_has_tool_result(message: dict[str, Any]) -> bool:
+    if message.get("role") == "tool_result":
+        return bool(str(message.get("tool_use_id", "")).strip())
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content
+    )
+
+
+def _message_has_user_prompt(message: dict[str, Any]) -> bool:
+    content = message.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if not isinstance(content, list):
+        return False
+    for block in content:
+        if (
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and str(block.get("text", "")).strip()
+        ):
+            return True
+    return False
+
+
+def _stream_recovery_winnowing_floor_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Preserve minimal causal context after stream recovery retries."""
+    if not messages:
+        return []
+
+    latest_user_prompt_idx = -1
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("role") == "user" and _message_has_user_prompt(msg):
+            latest_user_prompt_idx = idx
+            break
+
+    assistant_idx = -1
+    assistant_tool_ids: set[str] = set()
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        tool_ids = {
+            str(block.get("id", "")).strip()
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type") == "tool_use"
+            and str(block.get("id", "")).strip()
+        }
+        if tool_ids:
+            assistant_idx = idx
+            assistant_tool_ids = tool_ids
+            break
+
+    paired_user_idx = -1
+    if assistant_idx >= 0:
+        for idx in range(assistant_idx + 1, len(messages)):
+            msg = messages[idx]
+            if msg.get("role") not in {"user", "tool_result"} or not _message_has_tool_result(msg):
+                continue
+            tool_result_ids: set[str]
+            if msg.get("role") == "tool_result":
+                tool_result_id = str(msg.get("tool_use_id", "")).strip()
+                tool_result_ids = {tool_result_id} if tool_result_id else set()
+            else:
+                content = msg.get("content")
+                if not isinstance(content, list):
+                    continue
+                tool_result_ids = {
+                    str(block.get("tool_use_id", "")).strip()
+                    for block in content
+                    if isinstance(block, dict)
+                    and block.get("type") == "tool_result"
+                    and str(block.get("tool_use_id", "")).strip()
+                }
+            if assistant_tool_ids & tool_result_ids:
+                paired_user_idx = idx
+                break
+
+    keep_indexes = sorted(
+        idx
+        for idx in {assistant_idx, paired_user_idx, latest_user_prompt_idx}
+        if idx >= 0
+    )
+    return [messages[idx] for idx in keep_indexes]
+
+
 def prepare_request_impl(
     runtime_self: UniversalTokRuntime,
     request: RuntimeRequest,
@@ -356,9 +455,25 @@ def prepare_request_impl(
             )
 
     id_to_context = build_tool_use_id_to_context(translated_messages)
-    behavior_signals = collect_behavior_signals(
-        translated_messages, id_to_context
+    suppress_reacquisition_once = (
+        session._stream_recovery_reacquisition_budget > 0
     )
+    stream_recovery_history_floor_active = (
+        session._stream_recovery_history_floor_budget > 0
+    )
+    if stream_recovery_history_floor_active:
+        session._stream_recovery_history_floor_budget = max(
+            0, session._stream_recovery_history_floor_budget - 1
+        )
+    behavior_signals = collect_behavior_signals(
+        translated_messages,
+        id_to_context,
+        suppress_reacquisition_once=suppress_reacquisition_once,
+    )
+    if suppress_reacquisition_once:
+        session._stream_recovery_reacquisition_budget = max(
+            0, session._stream_recovery_reacquisition_budget - 1
+        )
     for key, value in collect_tool_context_validation_signals(
         id_to_context
     ).items():
@@ -406,6 +521,9 @@ def prepare_request_impl(
         runtime_hints = (
             [_speculative_macro_hint] if _speculative_macro_hint else []
         )
+        if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
+            runtime_hints.append(TOK_REPEAT_COMMAND_SUPPRESSION_HINT)
+            behavior_signals["repeat_command_suppression_hint_injected"] = 1
         # Add hint for exploring large files efficiently
         from ..runtime.config import TOK_LARGE_FILE_HINT
 
@@ -463,42 +581,45 @@ def prepare_request_impl(
                 behavior_signals[key] = behavior_signals.get(key, 0) + value
 
         session._save_bridge_memory()
-        body["messages"], type_breakdown = compress_tool_results(
-            translated_messages,
-            result_cache=(
-                result_cache
-                if result_cache is not None
-                else session.result_cache
-            ),
-            tool_use_id_to_context=id_to_context,
-            compression_level=policy.tool_levels[mode],
-            semantic_hash_cache=session.semantic_hash_cache,
-            hot_summary_records=session._hot_summary_records,
-        )
-        tool_saved = sum(type_breakdown.values()) // 4
-        if tool_saved > 0:
-            saved_tokens += tool_saved
-            compressed = True
-        file_cache_hits = sum(
-            v for k, v in type_breakdown.items() if k.endswith("_cached")
-        )
-        if file_cache_hits > 0:
-            behavior_signals["tool_result_cache_hit"] = (
-                behavior_signals.get("tool_result_cache_hit", 0) + 1
+        if stream_recovery_history_floor_active:
+            body["messages"] = translated_messages
+        else:
+            body["messages"], type_breakdown = compress_tool_results(
+                translated_messages,
+                result_cache=(
+                    result_cache
+                    if result_cache is not None
+                    else session.result_cache
+                ),
+                tool_use_id_to_context=id_to_context,
+                compression_level=policy.tool_levels[mode],
+                semantic_hash_cache=session.semantic_hash_cache,
+                hot_summary_records=session._hot_summary_records,
             )
-        semantic_dedup_hits = type_breakdown.get("semantic_dedup", 0)
-        if semantic_dedup_hits > 0:
-            behavior_signals["semantic_dedup_hit"] = (
-                behavior_signals.get("semantic_dedup_hit", 0) + 1
+            tool_saved = sum(type_breakdown.values()) // 4
+            if tool_saved > 0:
+                saved_tokens += tool_saved
+                compressed = True
+            file_cache_hits = sum(
+                v for k, v in type_breakdown.items() if k.endswith("_cached")
             )
-            from ..compression import _STABLE_RESULT_EXPLANATION
+            if file_cache_hits > 0:
+                behavior_signals["tool_result_cache_hit"] = (
+                    behavior_signals.get("tool_result_cache_hit", 0) + 1
+                )
+            semantic_dedup_hits = type_breakdown.get("semantic_dedup", 0)
+            if semantic_dedup_hits > 0:
+                behavior_signals["semantic_dedup_hit"] = (
+                    behavior_signals.get("semantic_dedup_hit", 0) + 1
+                )
+                from ..compression import _STABLE_RESULT_EXPLANATION
 
-            runtime_hints.append(_STABLE_RESULT_EXPLANATION)
-        if type_breakdown.get("stable_payload_validation_failed", 0) > 0:
-            behavior_signals["stable_payload_validation_failed"] = (
-                behavior_signals.get("stable_payload_validation_failed", 0)
-                + type_breakdown["stable_payload_validation_failed"]
-            )
+                runtime_hints.append(_STABLE_RESULT_EXPLANATION)
+            if type_breakdown.get("stable_payload_validation_failed", 0) > 0:
+                behavior_signals["stable_payload_validation_failed"] = (
+                    behavior_signals.get("stable_payload_validation_failed", 0)
+                    + type_breakdown["stable_payload_validation_failed"]
+                )
 
         recent: list[dict[str, Any]] = body["messages"]
         tok_state = ""
@@ -508,20 +629,45 @@ def prepare_request_impl(
             keep_turns = 0
             session._tok_memory_snap_triggered = 0
 
-        should_skip_history, skip_reason = _should_skip_history_rewrite(
-            request.messages,
-            normalized_tool_events,
-            tool_compatible=request.tool_compatible,
-        )
+        if stream_recovery_history_floor_active:
+            should_skip_history = True
+            skip_reason = "stream_recovery_history_floor"
+            history_skip_reason = skip_reason
+            behavior_signals["stream_recovery_history_floor_applied"] = 1
+        else:
+            should_skip_history, skip_reason = _should_skip_history_rewrite(
+                request.messages,
+                normalized_tool_events,
+                tool_compatible=request.tool_compatible,
+            )
 
         if should_skip_history:
-            behavior_signals["tok_history_compression_skipped"] = (
-                behavior_signals.get("tok_history_compression_skipped", 0) + 1
-            )
-            if skip_reason:
-                behavior_signals[f"tok_skip_{skip_reason}"] = 1
-                history_skip_reason = skip_reason
-            recent = body["messages"]
+            if stream_recovery_history_floor_active:
+                floored_recent = _stream_recovery_winnowing_floor_messages(
+                    body["messages"]
+                )
+                if floored_recent:
+                    if len(floored_recent) < len(body["messages"]):
+                        compressed = True
+                    recent = floored_recent
+                    body["messages"] = recent
+                    behavior_signals[
+                        "stream_recovery_history_floor_kept_context"
+                    ] = 1
+                else:
+                    recent = body["messages"]
+                    behavior_signals[
+                        "stream_recovery_history_floor_noop"
+                    ] = 1
+            else:
+                behavior_signals["tok_history_compression_skipped"] = (
+                    behavior_signals.get("tok_history_compression_skipped", 0)
+                    + 1
+                )
+                if skip_reason:
+                    behavior_signals[f"tok_skip_{skip_reason}"] = 1
+                    history_skip_reason = skip_reason
+                recent = body["messages"]
         else:
             if skip_reason:
                 behavior_signals[f"tok_soft_{skip_reason}"] = 1
@@ -556,6 +702,53 @@ def prepare_request_impl(
                     tool_compatible=request.tool_compatible,
                 )
                 behavior_signals["bridge_minimum_tail_preserved"] = 1
+            if request.adapter_kind == "claude-bridge" and request.tool_compatible:
+                candidate_body = {
+                    "model": request.model,
+                    "messages": recent,
+                    "system": body.get("system", ""),
+                }
+                pairing_failures = [
+                    failure
+                    for failure in validate_anthropic_bridge_body(
+                        candidate_body
+                    )
+                    if has_recoverable_immediate_pairing_failures([failure])
+                ]
+                if pairing_failures:
+                    logger.warning(
+                        "tok_history_pairing_safety_degraded: rejecting compressed history that breaks immediate tool-result pairing: %s",
+                        pairing_failures,
+                    )
+                    behavior_signals["tok_history_pairing_safety_degraded"] = 1
+                    if (
+                        "assistant_tool_use_missing_next_tool_result"
+                        in pairing_failures
+                    ):
+                        behavior_signals[
+                            "tok_history_pairing_missing_next_tool_result"
+                        ] = 1
+                    if (
+                        "assistant_tool_use_incomplete_next_tool_result_coverage"
+                        in pairing_failures
+                    ):
+                        behavior_signals[
+                            "tok_history_pairing_incomplete_next_tool_result_coverage"
+                        ] = 1
+                    if (
+                        "tool_result_not_immediately_after_assistant_tool_use"
+                        in pairing_failures
+                    ):
+                        behavior_signals[
+                            "tok_history_pairing_ordering_failure"
+                        ] = 1
+                    if "user_tool_result_after_text" in pairing_failures:
+                        behavior_signals[
+                            "tok_history_pairing_user_text_before_tool_result"
+                        ] = 1
+                    recent = body["messages"]
+                    tok_state = ""
+                    recent_breakdown = {}
             for k, v in recent_breakdown.items():
                 type_breakdown[f"recent_{k}"] = (
                     type_breakdown.get(f"recent_{k}", 0) + v
@@ -716,7 +909,7 @@ def prepare_request_impl(
 
     canonical_body, canonicalized, canonical_signals = (
         canonicalize_anthropic_bridge_body(body)
-        if request.adapter_kind == "claude-bridge"
+        if request.adapter_kind in ("claude-bridge", "orchestrator")
         else (body, False, {})
     )
     if canonicalized:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from tok.runtime.config import ANSWER_READY_REPAIR_HINT
 from tok.runtime.core import (
@@ -18,7 +19,7 @@ from tok.runtime.pipeline.tool_processing import (
 )
 
 
-def _make_tool_result_msg(tool_id: str, content: str) -> dict:
+def _make_tool_result_msg(tool_id: str, content: str) -> dict[str, Any]:
     return {
         "role": "user",
         "content": [
@@ -33,7 +34,7 @@ def _make_tool_result_msg(tool_id: str, content: str) -> dict:
 
 def _make_tool_use_msg(
     tool_id: str, tool_name: str, **tool_input: str
-) -> dict:
+) -> dict[str, Any]:
     return {
         "role": "assistant",
         "content": [
@@ -542,7 +543,7 @@ def test_unchanged_prepared_payload_reuses_cached_token_estimate(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _state(turns: int, **kwargs) -> dict[str, list[str]]:
+def _state(turns: int, **kwargs: str | list[str]) -> dict[str, list[str]]:
     base: dict[str, list[str]] = {"turns": [str(turns)]}
     base.update(
         {k: [v] if isinstance(v, str) else v for k, v in kwargs.items()}
@@ -669,3 +670,36 @@ def test_delta_empty_when_only_turns_change():
     assert delta == "", (
         f"Expected empty delta when only turns differ; got: {delta!r}"
     )
+
+
+def test_stream_recovery_budget_suppresses_next_reacquisition_burst(tmp_path):
+    runtime, session = _runtime(tmp_path)
+    content = "\n".join(f"line {idx}" for idx in range(1, 20))
+    session._stream_recovery_reacquisition_budget = 1
+
+    prepared = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Inspect foo."},
+                _make_tool_use_msg("t1", "bash", command="cat src/foo.py"),
+                _make_tool_result_msg("t1", content),
+                {"role": "user", "content": "What did you find?"},
+                _make_tool_use_msg("t2", "view_file", path="./src/foo.py"),
+                _make_tool_result_msg("t2", content),
+                {
+                    "role": "user",
+                    "content": "Answer using what we already have.",
+                },
+            ],
+        ),
+        session,
+    )
+
+    assert prepared.behavior_signals.get("repeat_file_read", 0) == 0
+    assert (
+        prepared.behavior_signals["stream_recovery_reacquisition_suppressed"]
+        == 1
+    )
+    assert session._stream_recovery_reacquisition_budget == 0

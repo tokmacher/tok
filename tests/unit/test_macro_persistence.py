@@ -46,7 +46,9 @@ class TestMacroPersistence(unittest.TestCase):
         self.assertEqual(restored.instructions[0].op, "add")
         self.assertEqual(restored.hit_count, 5)
         self.assertTrue(restored.is_durable)
-        self.assertEqual(restored.provenance.source_code, "add($p0, $p1)")
+        self.assertIsNotNone(restored.provenance)
+        if restored.provenance is not None:
+            self.assertEqual(restored.provenance.source_code, "add($p0, $p1)")
 
     def test_registry_persistence(self):
         registry = MacroRegistry()
@@ -74,7 +76,10 @@ class TestMacroPersistence(unittest.TestCase):
 
         self.assertIn("m1", new_registry.macros)
         self.assertIn("m2", new_registry.macros)
-        self.assertEqual(new_registry.get("m1").hit_count, 10)
+        m1_macro = new_registry.get("m1")
+        self.assertIsNotNone(m1_macro)
+        if m1_macro is not None:
+            self.assertEqual(m1_macro.hit_count, 10)
 
     def test_decay_logic(self):
         registry = MacroRegistry()
@@ -155,10 +160,14 @@ class TestMacroPersistence(unittest.TestCase):
         self.assertEqual(len(discovered), 1)
         new_macro = discovered[0]
         self.assertEqual(new_macro.name, "auto_macro_1")
-        self.assertIn("auto_macro_0", new_macro.provenance.composed_of)
-        self.assertIn(
-            "@auto_macro_0 -> pytest", new_macro.provenance.source_code
-        )
+        self.assertIsNotNone(new_macro.provenance)
+        if new_macro.provenance is not None:
+            self.assertIn("auto_macro_0", new_macro.provenance.composed_of)
+            self.assertIsNotNone(new_macro.provenance.source_code)
+            if new_macro.provenance.source_code is not None:
+                self.assertIn(
+                    "@auto_macro_0 -> pytest", new_macro.provenance.source_code
+                )
 
 
 if __name__ == "__main__":

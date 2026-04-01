@@ -15,16 +15,16 @@ class TestApplyToolCompatibleResendDiagnostics:
 
     def test_suppressed_turn_uses_verified_current_terminology(self):
         """Verify suppressed state uses 'verified_current' not 'suppressed'."""
-        behavior_signals = {}
-        resend_signals = {"state_resend_suppressed_turn": 1}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {"state_resend_suppressed_turn": 1}
+
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
             "test memory",
             resend_signals,
             has_answer_anchor=False,
         )
-        
+
         # Should use new terminology
         assert "state_resend_reason_state_verified_current" in behavior_signals
         # Old terminology should NOT appear
@@ -32,52 +32,52 @@ class TestApplyToolCompatibleResendDiagnostics:
 
     def test_suppressed_with_answer_anchor(self):
         """Verify answer anchor with suppressed state uses new terminology."""
-        behavior_signals = {}
-        resend_signals = {"state_resend_suppressed_turn": 1}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {"state_resend_suppressed_turn": 1}
+
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
             "test memory",
             resend_signals,
             has_answer_anchor=True,
         )
-        
+
         assert "answer_anchor_verified_current" in behavior_signals
         assert "answer_anchor_suppressed" not in behavior_signals
 
     def test_delta_turn_reports_delta_selected(self):
         """Verify delta resend reports correctly."""
-        behavior_signals = {}
-        resend_signals = {"state_resend_delta_turn": 1}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {"state_resend_delta_turn": 1}
+
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
             "test memory",
             resend_signals,
             has_answer_anchor=False,
         )
-        
+
         assert behavior_signals.get("state_resend_reason_delta_selected") == 1
 
     def test_delta_with_answer_anchor(self):
         """Verify delta resend with answer anchor."""
-        behavior_signals = {}
-        resend_signals = {"state_resend_delta_turn": 1}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {"state_resend_delta_turn": 1}
+
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
             "test memory",
             resend_signals,
             has_answer_anchor=True,
         )
-        
+
         assert behavior_signals.get("answer_anchor_delta_allowed") == 1
 
     def test_full_turn_with_answer_anchor(self):
         """Verify full resend with new answer anchor reason."""
-        behavior_signals = {}
-        resend_signals = {"state_resend_full_turn": 1}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {"state_resend_full_turn": 1}
+
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
             "test memory",
@@ -85,35 +85,37 @@ class TestApplyToolCompatibleResendDiagnostics:
             has_answer_anchor=True,
             resend_reason="new_answer_anchor",
         )
-        
+
         assert behavior_signals.get("answer_anchor_forced_full_resend") == 1
 
     def test_payload_chars_recorded(self):
         """Verify payload size is recorded."""
-        behavior_signals = {}
-        resend_signals = {}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {}
+
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
             "test memory payload",
             resend_signals,
             has_answer_anchor=False,
         )
-        
-        assert behavior_signals.get("state_payload_chars") == len("test memory payload")
+
+        assert behavior_signals.get("state_payload_chars") == len(
+            "test memory payload"
+        )
 
     def test_answer_anchor_present_recorded(self):
         """Verify answer anchor presence is recorded."""
-        behavior_signals = {}
-        resend_signals = {}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {}
+
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
             "test",
             resend_signals,
             has_answer_anchor=True,
         )
-        
+
         assert behavior_signals.get("answer_anchor_present") == 1
 
 
@@ -122,9 +124,9 @@ class TestAnnotateFullTurnResend:
 
     def test_new_answer_anchor_reason(self):
         """Verify new answer anchor reason is annotated."""
-        behavior_signals = {}
-        resend_signals = {}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {}
+
         _annotate_full_turn_resend(
             behavior_signals,
             resend_signals,
@@ -134,14 +136,19 @@ class TestAnnotateFullTurnResend:
             tok_history_cut_point_missing=False,
             tool_compatible_compression=False,
         )
-        
-        assert behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full") == 1
+
+        assert (
+            behavior_signals.get(
+                "state_resend_reason_answer_anchor_present_kept_full"
+            )
+            == 1
+        )
 
     def test_history_compression_skip_reason(self):
         """Verify history compression skip reason."""
-        behavior_signals = {}
-        resend_signals = {}
-        
+        behavior_signals: dict[str, int] = {}
+        resend_signals: dict[str, int] = {}
+
         _annotate_full_turn_resend(
             behavior_signals,
             resend_signals,
@@ -151,8 +158,13 @@ class TestAnnotateFullTurnResend:
             tok_history_cut_point_missing=False,
             tool_compatible_compression=False,
         )
-        
-        assert behavior_signals.get("state_resend_reason_history_compression_skipped") == 1
+
+        assert (
+            behavior_signals.get(
+                "state_resend_reason_history_compression_skipped"
+            )
+            == 1
+        )
 
 
 if __name__ == "__main__":

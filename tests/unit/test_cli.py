@@ -4,6 +4,7 @@ import json
 import signal
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from tok.cli import app
 from tok.stats import SavingsTracker
@@ -629,7 +630,7 @@ class TestCLI:
                     raise ProcessLookupError
             return None
 
-        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)  # type: ignore[attr-defined]
 
         _bridge.bridge_stop()
         output = capsys.readouterr().out
@@ -1685,10 +1686,10 @@ class TestCLI:
                 )
 
         class FakeComparison:
-            def __init__(self, mode):
+            def __init__(self, mode: str) -> None:
                 self.mode = mode
 
-            def to_dict(self):
+            def to_dict(self) -> dict[str, Any]:
                 return {
                     "benchmark": "coding-loop",
                     "candidate_mode": self.mode,
@@ -1809,8 +1810,13 @@ class TestStabilityGate:
     """Tests for the --stability-dir gate in gate-check."""
 
     def _make_stability_json(
-        self, tmp_path, benchmark, success_rate, preferred_ttc, runs=5
-    ):
+        self,
+        tmp_path: Path,
+        benchmark: str,
+        success_rate: float,
+        preferred_ttc: int,
+        runs: int = 5,
+    ) -> None:
         """Write a minimal stability JSON file for a benchmark."""
         data = {
             "runs": runs,
@@ -1842,9 +1848,8 @@ class TestStabilityGate:
         }
         f = tmp_path / f"{benchmark}_stability.json"
         f.write_text(json.dumps(data))
-        return f
 
-    def _make_passing_fixture(self, fixtures_dir):
+    def _make_passing_fixture(self, fixtures_dir: Path) -> None:
         """Write a minimal passing fixture + meta that won't fail the replay gate."""
         f = fixtures_dir / "dummy.jsonl"
         f.write_text(

@@ -1,13 +1,14 @@
 import importlib.util
 import json
 from pathlib import Path
+from types import ModuleType
 
 
-def _load_pr_comment_module():
+def _load_pr_comment_module() -> ModuleType:
     path = Path(__file__).resolve().parents[2] / "scripts" / "pr-comment.py"
     spec = importlib.util.spec_from_file_location("pr_comment_script", path)
-    module = importlib.util.module_from_spec(spec)
     assert spec is not None
+    module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import ModuleType
 
 
-def _load_module():
+def _load_module() -> ModuleType:
     module_path = (
         Path(__file__).resolve().parents[2]
         / "scripts"

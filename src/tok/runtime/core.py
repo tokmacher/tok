@@ -238,6 +238,21 @@ class RuntimeSession:
     _drift_detected_previous_turn: bool = field(
         default=False, init=False, repr=False
     )
+    _stream_recovery_reacquisition_budget: int = field(
+        default=0, init=False, repr=False
+    )
+    _stream_recovery_history_floor_budget: int = field(
+        default=0, init=False, repr=False
+    )
+    _stream_recovery_tool_use_only_signature: str = field(
+        default="", init=False, repr=False
+    )
+    _stream_recovery_tool_use_only_repeat_count: int = field(
+        default=0, init=False, repr=False
+    )
+    _invalid_tool_history_recovery_count: int = field(
+        default=0, init=False, repr=False
+    )
     # Project-type markers discovered at session init (e.g. 'package.json', 'go.mod').
     _project_markers: frozenset[str] = field(
         default_factory=frozenset, init=False, repr=False
@@ -288,6 +303,38 @@ class RuntimeSession:
     def reset_fallback_count(self) -> None:
         """Reset the consecutive fallback counter after a successful compressed request."""
         self._consecutive_fallback_count = 0
+
+    def record_invalid_tool_history_recovery(
+        self, *, blocked: bool
+    ) -> dict[str, int]:
+        """Track recovery from broken tool history and clear hot state if it repeats."""
+        self._invalid_tool_history_recovery_count += 1
+        signals: dict[str, int] = {
+            "tok_bridge_invalid_tool_history_recovery": 1
+        }
+
+        if self._invalid_tool_history_recovery_count >= 2:
+            self._last_tool_compatible_state = ""
+            self._last_tool_compatible_state_fields = {}
+            self._observed_tool_result_ids.clear()
+            self._stream_recovery_reacquisition_budget = 0
+            self._stream_recovery_history_floor_budget = 0
+            self._stream_recovery_tool_use_only_signature = ""
+            self._stream_recovery_tool_use_only_repeat_count = 0
+            for key in ("turns", "next", "cmds", "errs", "blockers"):
+                self.bridge_memory.hot.pop(key, None)
+            self.bridge_memory.rolling_cmds = []
+            self._save_bridge_memory()
+            signals["tok_bridge_invalid_tool_history_session_reset"] = 1
+            logger.warning(
+                "tok_bridge_invalid_tool_history_session_reset: cleared hot bridge state after %d repeated tool-history recoveries",
+                self._invalid_tool_history_recovery_count,
+            )
+        return signals
+
+    def reset_invalid_tool_history_recovery(self) -> None:
+        """Clear the repeated invalid-tool-history counter after a clean request."""
+        self._invalid_tool_history_recovery_count = 0
 
     def adaptive_keep_turns(self) -> int:
         """Dynamically reduce history depth as the session grows."""

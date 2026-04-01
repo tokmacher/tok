@@ -12,6 +12,7 @@ import atexit
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,7 +31,10 @@ from ..universal_runtime import (
     collect_behavior_signals,
     response_contract_for_mode,
 )
-from ..runtime.pipeline.request_validation import summarize_message_structure
+from ..runtime.pipeline.request_validation import (
+    normalize_tool_use_blocks,
+    summarize_message_structure,
+)
 
 # Internal gateway support modules
 
@@ -230,6 +234,24 @@ class BridgeSession:
     )
     debug: bool = os.getenv("TOK_DEBUG", "0") == "1"
     fail_open: bool = os.getenv("TOK_FAIL_OPEN", "1") == "1"
+    rate_limit_retry_max_attempts: int = int(
+        os.getenv("TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS", "2")
+    )
+    rate_limit_backoff_base_ms: int = int(
+        os.getenv("TOK_RATE_LIMIT_BACKOFF_BASE_MS", "150")
+    )
+    rate_limit_backoff_cap_ms: int = int(
+        os.getenv("TOK_RATE_LIMIT_BACKOFF_CAP_MS", "1000")
+    )
+    rate_limit_throttle_window_sec: int = int(
+        os.getenv("TOK_RATE_LIMIT_THROTTLE_WINDOW_SEC", "30")
+    )
+    rate_limit_throttle_threshold: int = int(
+        os.getenv("TOK_RATE_LIMIT_THROTTLE_THRESHOLD", "4")
+    )
+    rate_limit_throttle_cooldown_sec: int = int(
+        os.getenv("TOK_RATE_LIMIT_THROTTLE_COOLDOWN_SEC", "20")
+    )
     capture: bool = os.getenv("TOK_CAPTURE", "0") == "1"
     # TOK_MODE controls the default compression path for every request.
     # "tool-compatible" (default): use tok-tool-compatible compressed path.
@@ -242,6 +264,8 @@ class BridgeSession:
     tracker: SavingsTracker = field(default_factory=SavingsTracker)
     # Canonical runtime state: delegates to this
     runtime_session: RuntimeSession = field(default_factory=RuntimeSession)
+    _recent_rate_limit_events: list[float] = field(default_factory=list)
+    _rate_limit_throttle_until: float = 0.0
 
     def __post_init__(self) -> None:
         explicit_memory_dir = self.memory_dir is not None
@@ -329,6 +353,36 @@ class BridgeSession:
         """Delegate bridge memory persistence to runtime session."""
         self.runtime_session._save_bridge_memory()
 
+    def _prune_rate_limit_events(self, now: float) -> None:
+        window_start = now - max(1, self.rate_limit_throttle_window_sec)
+        self._recent_rate_limit_events = [
+            ts for ts in self._recent_rate_limit_events if ts >= window_start
+        ]
+
+    def record_rate_limit_event(self, now: float | None = None) -> bool:
+        """Record upstream 429 and return whether local throttle is now active."""
+        now = now if now is not None else time.time()
+        self._prune_rate_limit_events(now)
+        self._recent_rate_limit_events.append(now)
+        threshold = max(1, self.rate_limit_throttle_threshold)
+        if len(self._recent_rate_limit_events) >= threshold:
+            cooldown = max(1, self.rate_limit_throttle_cooldown_sec)
+            self._rate_limit_throttle_until = max(
+                self._rate_limit_throttle_until, now + cooldown
+            )
+        return self.is_rate_limited_locally(now)
+
+    def is_rate_limited_locally(self, now: float | None = None) -> bool:
+        now = now if now is not None else time.time()
+        return now < self._rate_limit_throttle_until
+
+    def local_rate_limit_retry_after_seconds(
+        self, now: float | None = None
+    ) -> int:
+        now = now if now is not None else time.time()
+        remaining = max(0.0, self._rate_limit_throttle_until - now)
+        return int(remaining) + (1 if remaining > 0 else 0)
+
     @property
     def result_cache(self) -> dict[str, tuple[str, str]]:
         """Delegate to runtime session."""
@@ -361,6 +415,11 @@ async def _buffer_strip_restream(
     behavior_signals: dict[str, int] | None = None,
     prompt_metrics: dict[str, int] | None = None,
     tool_compatible: bool = False,
+    request_method: str = "POST",
+    request_url: str = "",
+    request_headers: dict[str, str] | None = None,
+    request_content: bytes | None = None,
+    request_state: dict[str, bool] | None = None,
 ) -> AsyncIterator[bytes]:
     """Buffer the full SSE stream, translate Tok -> readable English/tool_use, re-emit."""
     from ._app_factory import buffer_strip_restream_impl
@@ -374,6 +433,11 @@ async def _buffer_strip_restream(
         behavior_signals=behavior_signals,
         prompt_metrics=prompt_metrics,
         tool_compatible=tool_compatible,
+        request_method=request_method,
+        request_url=request_url,
+        request_headers=request_headers,
+        request_content=request_content,
+        request_state=request_state,
     ):
         yield chunk
 
@@ -414,7 +478,10 @@ def _materialize_stream_tool_blocks(
                 "input": tool_input,
             }
         )
-    return tool_blocks
+    normalized_tool_blocks, _ = normalize_tool_use_blocks(
+        tool_blocks, seed_prefix="toolu_stream"
+    )
+    return normalized_tool_blocks
 
 
 # FastAPI app factory

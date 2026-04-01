@@ -93,6 +93,43 @@ class TestSavingsTracker:
         assert summary["fail_open_count"] == 0
         assert summary["reacquisition_count"] == 0
 
+    def test_session_summary_includes_recovery_and_repair_counters(
+        self, tracker
+    ):
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=20,
+            output_saved=10,
+            behavior_signals={
+                "stream_recovery_started": 1,
+                "stream_recovery_success_text": 1,
+                "stream_recovery_success_tool_use": 1,
+                "stream_recovery_fallback": 1,
+                "tok_bridge_tool_history_repaired": 1,
+                "tok_bridge_tool_history_pairing_repaired": 1,
+                "tok_bridge_invalid_tool_history_quarantined": 1,
+                "tok_bridge_invalid_tool_history_blocked": 1,
+                "tok_bridge_invalid_tool_history_session_reset": 1,
+            },
+        )
+
+        summary = tracker.session_summary()
+
+        assert summary is not None
+        assert summary["stream_recovery_attempt_count"] == 1
+        assert summary["stream_recovery_success_text_count"] == 1
+        assert summary["stream_recovery_success_tool_use_count"] == 1
+        assert summary["stream_recovery_fallback_count"] == 1
+        assert summary["tool_history_repaired_count"] == 1
+        assert summary["tool_history_pairing_repaired_count"] == 1
+        assert summary["tool_history_quarantined_count"] == 1
+        assert summary["tool_history_blocked_count"] == 1
+        assert summary["invalid_tool_history_session_reset_count"] == 1
+
     def test_last_session_summary_defaults_missing_degradation_fields(
         self, tracker
     ):

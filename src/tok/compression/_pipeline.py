@@ -488,7 +488,7 @@ def tok_tool_result_impl(
 
 def compress_tool_results_impl(
     messages: list[dict[str, Any]],
-    result_cache: dict[str, tuple[str, str]] | None = None,
+    result_cache: dict[str, tuple[str, str, float]] | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
@@ -548,7 +548,9 @@ def compress_tool_results_impl(
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
-                            breakdown.get("stable_payload_validation_failed", 0)
+                            breakdown.get(
+                                "stable_payload_validation_failed", 0
+                            )
                             + 1
                         )
                     if saved > 0:
@@ -605,7 +607,9 @@ def compress_tool_results_impl(
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
-                            breakdown.get("stable_payload_validation_failed", 0)
+                            breakdown.get(
+                                "stable_payload_validation_failed", 0
+                            )
                             + 1
                         )
                     block["content"] = compressed
@@ -704,7 +708,9 @@ def compress_tool_results_impl(
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
-                            breakdown.get("stable_payload_validation_failed", 0)
+                            breakdown.get(
+                                "stable_payload_validation_failed", 0
+                            )
                             + 1
                         )
                     if saved > 0:
@@ -872,6 +878,7 @@ def compress_recent_window_impl(
     tool_compatible: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
+
     def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
         if not context:
             return False
@@ -974,7 +981,7 @@ def compress_recent_window_impl(
     return messages, breakdown
 
 
-TOOL_COMPRESS_THRESHOLD = 0  # chars — always compress if we have a strategy
+# TOOL_COMPRESS_THRESHOLD is imported from __init__.py via globals().update(vars(_compression))
 
 # Heuristic: source code indicators
 _CODE_PATTERNS = re.compile(

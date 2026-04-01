@@ -54,7 +54,8 @@ def test_orchestrator_adapter_prepares_dynamic_messages_with_runtime_contract():
     assert messages[0]["role"] == "system"
     assert "orchestrator system" in messages[0]["content"]
     assert messages[-1]["role"] == "user"
-    assert prepared.body["messages"][-1]["content"] == "audit the codebase"
+    assert messages[-1]["content"][-1]["text"] == "audit the codebase"
+    assert messages[-1]["content"][-1]["type"] == "text"
 
 
 def test_orchestrator_and_text_loop_finalize_with_same_runtime_contract():

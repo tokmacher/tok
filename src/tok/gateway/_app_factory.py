@@ -3,7 +3,12 @@ from __future__ import annotations
 """Gateway app-construction helpers behind the public interface."""
 
 import copy
+import asyncio
+import hashlib
 import json
+import os
+import random
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -13,7 +18,13 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
 from ..runtime.pipeline.request_validation import (
+    bridge_strict_failure_signals,
     canonicalize_anthropic_bridge_body,
+    has_recoverable_immediate_pairing_failures,
+    normalize_tool_use_blocks,
+    quarantine_invalid_tool_history_messages,
+    summarize_bridge_pairing,
+    summarize_message_structure,
     validate_anthropic_bridge_body,
 )
 from ..runtime.policy.translator import IS_TOK
@@ -28,6 +39,530 @@ from . import (
     _response_contract_for_mode,
     logger,
 )
+
+_LOCAL_INVALID_TOOL_HISTORY_FAILURES = frozenset(
+    {
+        "invalid_tool_use_block",
+        "invalid_tool_result_block",
+        "assistant_tool_use_missing_next_tool_result",
+        "assistant_tool_use_incomplete_next_tool_result_coverage",
+        "tool_result_unknown_tool_use_id",
+        "tool_result_not_immediately_after_assistant_tool_use",
+        "user_tool_result_after_text",
+        "bridge_wire_model_invalid",
+    }
+)
+
+_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = int(
+    os.getenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", "2")
+)
+
+
+def _parse_retry_after_seconds(raw_value: Any) -> float:
+    if raw_value is None:
+        return 0.0
+    try:
+        parsed = float(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, parsed)
+
+
+def _compute_rate_limit_backoff_seconds(
+    *,
+    attempt: int,
+    base_ms: int,
+    cap_ms: int,
+) -> float:
+    bounded_attempt = max(1, attempt)
+    bounded_base = max(1, base_ms)
+    bounded_cap = max(bounded_base, cap_ms)
+    exponential_ms = min(
+        bounded_cap, bounded_base * (2 ** (bounded_attempt - 1))
+    )
+    jitter_multiplier = random.uniform(0.5, 1.5)
+    jittered_ms = min(bounded_cap, exponential_ms * jitter_multiplier)
+    return max(0.0, jittered_ms / 1000.0)
+
+
+def _local_rate_limit_response(retry_after_seconds: int) -> Response:
+    return Response(
+        content=json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "rate_limit_error",
+                    "message": "Tok bridge local throttling active after repeated upstream 429 responses. Retry later.",
+                },
+            }
+        ),
+        status_code=429,
+        media_type="application/json",
+        headers={"Retry-After": str(max(1, retry_after_seconds))},
+    )
+
+
+def _should_block_invalid_tool_history_locally(
+    strict_failures: list[str],
+) -> bool:
+    return any(
+        failure in _LOCAL_INVALID_TOOL_HISTORY_FAILURES
+        for failure in strict_failures
+    )
+
+
+def _local_bridge_invalid_history_response(message: str) -> Response:
+    return Response(
+        content=json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": message,
+                },
+            }
+        ),
+        status_code=400,
+        media_type="application/json",
+    )
+
+
+def _merge_signal_counts(
+    target: dict[str, int], extra: dict[str, int] | None
+) -> None:
+    if not extra:
+        return
+    for key, value in extra.items():
+        target[key] = target.get(key, 0) + value
+
+
+def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
+    normalized: list[dict[str, Any]] = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        normalized.append(
+            {
+                "name": str(block.get("name", "")),
+                "input": block.get("input", {}),
+            }
+        )
+    if not normalized:
+        return ""
+    payload = json.dumps(normalized, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _attempt_quarantine_invalid_tool_history(
+    body: dict[str, Any],
+) -> tuple[dict[str, Any], bool, dict[str, int], list[str]]:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body, False, {}, validate_anthropic_bridge_body(body)
+    quarantined_messages, changed, signals = (
+        quarantine_invalid_tool_history_messages(messages)
+    )
+    if not changed:
+        return body, False, signals, validate_anthropic_bridge_body(body)
+    quarantined_body = copy.deepcopy(body)
+    quarantined_body["messages"] = quarantined_messages
+    failures = validate_anthropic_bridge_body(quarantined_body)
+    return quarantined_body, not failures, signals, failures
+
+
+def _tool_history_repair_summary(
+    bridge_signals: dict[str, int],
+) -> tuple[bool, bool]:
+    repaired_ids = any(
+        bridge_signals.get(key, 0)
+        for key in (
+            "tok_bridge_tool_id_sanitized",
+            "tok_bridge_blank_tool_id_synthesized",
+            "tok_bridge_tool_id_deduped",
+        )
+    )
+    pairing_repaired = any(
+        bridge_signals.get(key, 0)
+        for key in (
+            "tok_bridge_tool_result_pairing_repaired",
+            "tok_bridge_tool_result_id_rewritten",
+            "tok_bridge_tool_result_rewrite_complete",
+            "tok_bridge_tool_result_order_repaired",
+            "tok_bridge_user_tool_result_text_split",
+        )
+    )
+    return repaired_ids, pairing_repaired
+
+
+def _count_user_messages_with_mixed_tool_result_content(
+    messages: Any,
+) -> int:
+    if not isinstance(messages, list):
+        return 0
+    mixed_count = 0
+    for message in messages:
+        if (
+            not isinstance(message, dict)
+            or str(message.get("role", "")).strip() != "user"
+        ):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        has_tool_result = any(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in content
+        )
+        has_non_tool_result = any(
+            isinstance(block, dict) and block.get("type") != "tool_result"
+            for block in content
+        )
+        if has_tool_result and has_non_tool_result:
+            mixed_count += 1
+    return mixed_count
+
+
+def _count_user_tool_result_split_boundaries(messages: Any) -> int:
+    if not isinstance(messages, list):
+        return 0
+    boundaries = 0
+    for index in range(len(messages) - 1):
+        current = messages[index]
+        following = messages[index + 1]
+        if (
+            not isinstance(current, dict)
+            or not isinstance(following, dict)
+            or str(current.get("role", "")).strip() != "user"
+            or str(following.get("role", "")).strip() != "user"
+        ):
+            continue
+        current_content = current.get("content")
+        following_content = following.get("content")
+        if not isinstance(current_content, list) or not isinstance(
+            following_content, list
+        ):
+            continue
+        current_has_tool_result = any(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in current_content
+        )
+        current_has_non_tool_result = any(
+            isinstance(block, dict) and block.get("type") != "tool_result"
+            for block in current_content
+        )
+        following_has_tool_result = any(
+            isinstance(block, dict) and block.get("type") == "tool_result"
+            for block in following_content
+        )
+        if (
+            current_has_tool_result
+            and not current_has_non_tool_result
+            and not following_has_tool_result
+        ):
+            boundaries += 1
+    return boundaries
+
+
+def _preflight_event_name(base_event: str, path: str) -> str:
+    if path == "v1/messages/count_tokens":
+        return f"{base_event}_count_tokens"
+    return base_event
+
+
+def _run_bridge_preflight(
+    session: BridgeSession,
+    *,
+    body: dict[str, Any],
+    original_body: dict[str, Any],
+    headers: dict[str, str],
+    behavior_signals: dict[str, int],
+    compressed: bool,
+    request_state: dict[str, bool],
+    path: str,
+    emit_ready_log: bool = True,
+    emit_repair_logs: bool = True,
+    reset_recovery_state: bool = True,
+) -> tuple[dict[str, Any], dict[str, int], bool, Response | None]:
+    """Canonicalize, validate, and recover bridge tool history before send."""
+    (
+        canonical_body,
+        bridge_canonicalized,
+        bridge_signals,
+    ) = canonicalize_anthropic_bridge_body(body)
+    tool_history_recovery_applied = False
+    invalid_tool_history_unrecoverable = False
+    strict_failures = validate_anthropic_bridge_body(canonical_body)
+    request_fingerprint = _request_fingerprint_diff(
+        headers, canonical_body, original_body
+    )
+    should_log_preflight = bool(
+        compressed or bridge_canonicalized or strict_failures
+    )
+    _merge_signal_counts(behavior_signals, bridge_signals)
+    tool_history_repaired, pairing_repaired = _tool_history_repair_summary(
+        bridge_signals
+    )
+    if tool_history_repaired:
+        behavior_signals["tok_bridge_tool_history_repaired"] = 1
+    if pairing_repaired:
+        behavior_signals["tok_bridge_tool_history_pairing_repaired"] = 1
+    if (
+        request_fingerprint["prompt_caching"]
+        and request_fingerprint["body_materially_differs"]
+        and (
+            request_fingerprint["messages_changed"]
+            or request_fingerprint["system_changed"]
+        )
+        and request_fingerprint["cache_topology_changed"]
+    ):
+        strict_failures = list(strict_failures) + [
+            "prompt_caching_request_mutated"
+        ]
+    _merge_signal_counts(
+        behavior_signals,
+        bridge_strict_failure_signals(strict_failures),
+    )
+    if (
+        compressed
+        and strict_failures
+        and has_recoverable_immediate_pairing_failures(strict_failures)
+        and _payloads_materially_differ(
+            json.dumps(canonical_body).encode(),
+            json.dumps(original_body).encode(),
+        )
+    ):
+        degraded_failures = validate_anthropic_bridge_body(original_body)
+        if not degraded_failures:
+            logger.warning(
+                "bridge_preflight_pairing_degraded_to_provider_safe: prepared request violated immediate tool-result pairing; sending provider-safe uncompressed body"
+            )
+            behavior_signals[
+                "tok_bridge_pairing_degraded_to_provider_safe"
+            ] = 1
+            behavior_signals[
+                "tok_bridge_prepared_pairing_rejected_local"
+            ] = 1
+            session.capture_event(
+                {
+                    "event": "bridge_preflight_pairing_degraded_to_provider_safe",
+                    "strict_failures": strict_failures,
+                    "behavior_signals": behavior_signals,
+                }
+            )
+            _log_bridge_body_structure(
+                "bridge_preflight_pairing_degraded_to_provider_safe",
+                body=original_body,
+                headers=headers,
+                original_body=original_body,
+                compressed_request=False,
+                canonicalized_changed=False,
+                strict_failures=[],
+                reverted_to_original=False,
+            )
+            return copy.deepcopy(original_body), behavior_signals, True, None
+    if strict_failures:
+        if _should_block_invalid_tool_history_locally(strict_failures):
+            (
+                quarantined_body,
+                quarantine_valid,
+                quarantine_signals,
+                quarantine_failures,
+            ) = _attempt_quarantine_invalid_tool_history(canonical_body)
+            _merge_signal_counts(behavior_signals, quarantine_signals)
+            if quarantine_valid:
+                recovery_signals = (
+                    session.runtime_session.record_invalid_tool_history_recovery(
+                        blocked=False
+                    )
+                )
+                _merge_signal_counts(behavior_signals, recovery_signals)
+                if recovery_signals.get(
+                    "tok_bridge_invalid_tool_history_session_reset", 0
+                ):
+                    logger.warning(
+                        "bridge_invalid_tool_history_session_reset: cleared hot session state after repeated repair attempts"
+                    )
+                    session.capture_event(
+                        {
+                            "event": "bridge_invalid_tool_history_session_reset",
+                            "behavior_signals": recovery_signals,
+                        }
+                    )
+                canonical_body = quarantined_body
+                bridge_canonicalized = True
+                strict_failures = []
+                tool_history_recovery_applied = True
+                if emit_ready_log and (
+                    should_log_preflight or quarantine_signals
+                ):
+                    _log_bridge_body_structure(
+                        _preflight_event_name(
+                            "bridge_preflight_repaired_quarantined", path
+                        ),
+                        body=canonical_body,
+                        headers=headers,
+                        original_body=original_body,
+                        compressed_request=compressed,
+                        canonicalized_changed=True,
+                        strict_failures=[],
+                        reverted_to_original=False,
+                    )
+                if emit_repair_logs:
+                    logger.warning(
+                        "tok_bridge_preflight_repaired_quarantined: removed a broken tool exchange and continued with repaired history"
+                    )
+                    session.capture_event(
+                        {
+                            "event": _preflight_event_name(
+                                "bridge_preflight_repaired_quarantined", path
+                            ),
+                            "behavior_signals": behavior_signals,
+                        }
+                    )
+            else:
+                canonical_body = quarantined_body
+                strict_failures = quarantine_failures or strict_failures
+                invalid_tool_history_unrecoverable = True
+                _merge_signal_counts(
+                    behavior_signals,
+                    bridge_strict_failure_signals(strict_failures),
+                )
+        if _should_block_invalid_tool_history_locally(
+            strict_failures
+        ) or invalid_tool_history_unrecoverable:
+            recovery_signals = (
+                session.runtime_session.record_invalid_tool_history_recovery(
+                    blocked=True
+                )
+            )
+            _merge_signal_counts(behavior_signals, recovery_signals)
+            if recovery_signals.get(
+                "tok_bridge_invalid_tool_history_session_reset", 0
+            ):
+                logger.warning(
+                    "bridge_invalid_tool_history_session_reset: cleared hot session state after repeated blocked tool-history failures"
+                )
+                session.capture_event(
+                    {
+                        "event": "bridge_invalid_tool_history_session_reset",
+                        "behavior_signals": recovery_signals,
+                    }
+                )
+            _log_bridge_body_structure(
+                _preflight_event_name(
+                    "bridge_preflight_rejected_blocked_local", path
+                ),
+                body=canonical_body,
+                headers=headers,
+                original_body=original_body,
+                compressed_request=compressed,
+                canonicalized_changed=bridge_canonicalized,
+                strict_failures=strict_failures,
+                reverted_to_original=False,
+            )
+            logger.warning(
+                "tok_bridge_preflight_rejected_blocked_local: refusing to send unrepaired invalid tool history upstream"
+            )
+            behavior_signals["tok_bridge_preflight_failed_local"] = 1
+            behavior_signals["tok_bridge_invalid_tool_history_blocked"] = 1
+            session._bump_signals(behavior_signals)
+            session.capture_event(
+                {
+                    "event": _preflight_event_name(
+                        "bridge_preflight_rejected_blocked_local", path
+                    ),
+                    "strict_failures": strict_failures,
+                    "behavior_signals": behavior_signals,
+                }
+            )
+            return (
+                canonical_body,
+                behavior_signals,
+                True,
+                _local_bridge_invalid_history_response(
+                    "Tok bridge preflight rejected unrepaired tool history before send."
+                ),
+            )
+
+        if strict_failures:
+            _log_bridge_body_structure(
+                _preflight_event_name(
+                    "bridge_preflight_rejected_reverted_to_original", path
+                ),
+                body=canonical_body,
+                headers=headers,
+                original_body=original_body,
+                compressed_request=compressed,
+                canonicalized_changed=bridge_canonicalized,
+                strict_failures=strict_failures,
+                reverted_to_original=True,
+            )
+            logger.warning(
+                "tok_bridge_preflight_rejected_reverted_to_original: reverting rewritten bridge body to original request"
+            )
+            behavior_signals["tok_bridge_preflight_rejected"] = 1
+            behavior_signals["tok_fallback_activated"] = 1
+            _record_fallback_once(session, request_state)
+            return (
+                copy.deepcopy(original_body),
+                behavior_signals,
+                tool_history_repaired
+                or pairing_repaired
+                or tool_history_recovery_applied,
+                None,
+            )
+
+    body = canonical_body
+    if reset_recovery_state and not tool_history_recovery_applied:
+        session.runtime_session.reset_invalid_tool_history_recovery()
+    if tool_history_repaired and emit_repair_logs:
+        logger.info(
+            "%s: repaired historical tool IDs before send",
+            _preflight_event_name("bridge_preflight_repaired_tool_history", path),
+        )
+        session.capture_event(
+            {
+                "event": _preflight_event_name(
+                    "bridge_preflight_repaired_tool_history", path
+                ),
+                "behavior_signals": behavior_signals,
+            }
+        )
+    if pairing_repaired and emit_repair_logs:
+        logger.info(
+            "%s: repaired tool-result pairing before send",
+            _preflight_event_name(
+                "bridge_preflight_repaired_tool_result_pairing", path
+            ),
+        )
+        session.capture_event(
+            {
+                "event": _preflight_event_name(
+                    "bridge_preflight_repaired_tool_result_pairing", path
+                ),
+                "behavior_signals": behavior_signals,
+            }
+        )
+    if emit_ready_log and should_log_preflight:
+        _log_bridge_body_structure(
+            _preflight_event_name("bridge_preflight_ready", path),
+            body=body,
+            headers=headers,
+            original_body=original_body,
+            compressed_request=compressed,
+            canonicalized_changed=bridge_canonicalized,
+            strict_failures=[],
+            reverted_to_original=False,
+        )
+    return (
+        body,
+        behavior_signals,
+        tool_history_repaired
+        or pairing_repaired
+        or tool_history_recovery_applied,
+        None,
+    )
+
 from ._bridge_comparison import (
     _payloads_materially_differ,
     _request_fingerprint_diff,
@@ -44,17 +579,24 @@ async def buffer_strip_restream_impl(
     behavior_signals: dict[str, int] | None = None,
     prompt_metrics: dict[str, int] | None = None,
     tool_compatible: bool = False,
+    request_method: str = "POST",
+    request_url: str = "",
+    request_headers: dict[str, str] | None = None,
+    request_content: bytes | None = None,
+    request_state: dict[str, bool] | None = None,
 ) -> AsyncIterator[bytes]:
     """Buffer the full SSE stream, translate Tok -> readable English/tool_use, re-emit."""
     try:
         raw = b""
+        read_error: str | None = None
         try:
             async for chunk in response.aiter_bytes():
                 raw += chunk
         except (httpx.ReadError, httpcore.ReadError) as e:
+            read_error = str(e)
             logger.warning(
                 "Stream read error during buffering, emitting partial content: %s",
-                str(e),
+                read_error,
             )
         text = raw.decode("utf-8", errors="replace")
         sse_events = text.split("\n\n")
@@ -141,15 +683,28 @@ async def buffer_strip_restream_impl(
         if full_text:
             logger.info("Raw text sample: %s", full_text[:200])
 
+        stream_behavior_signals = dict(behavior_signals or {})
+        if read_error:
+            stream_behavior_signals["stream_buffer_read_error"] = 1
+
         tool_blocks = _materialize_stream_tool_blocks(
             stream_blocks, stream_order
         )
         content_blocks = _response_contract_for_mode(
             full_text, tool_compatible=tool_compatible
         ).content_blocks
+        translated_blocks = content_blocks + tool_blocks
+        has_visible_blocks = any(
+            block.get("type") == "tool_use"
+            or (
+                block.get("type") == "text"
+                and str(block.get("text", "")).strip()
+            )
+            for block in translated_blocks
+        )
         logger.info(
             "Translated %d content blocks from %d chars",
-            len(content_blocks) + len(tool_blocks),
+            len(translated_blocks),
             len(full_text),
         )
         if full_text:
@@ -164,7 +719,7 @@ async def buffer_strip_restream_impl(
                 full_text,
                 model=sse_model if sse_model != "unknown" else "",
                 session=session.runtime_session,
-                behavior_signals=behavior_signals or None,
+                behavior_signals=stream_behavior_signals or None,
                 tool_compatible=tool_compatible,
             )
             content_blocks = processed.content_blocks + tool_blocks
@@ -173,13 +728,319 @@ async def buffer_strip_restream_impl(
             logger.info("Response mode: %s", processed.mode)
             logger.info("Response signals: %s", response_signals)
             logger.info("Content blocks count: %d", len(content_blocks))
+            translated_blocks = content_blocks
+            has_visible_blocks = any(
+                block.get("type") == "tool_use"
+                or (
+                    block.get("type") == "text"
+                    and str(block.get("text", "")).strip()
+                )
+                for block in translated_blocks
+            )
+        recovery_required = not has_visible_blocks and (
+            read_error is not None or len(translated_blocks) == 0
+        )
+        if recovery_required:
+            stream_behavior_signals["stream_empty_after_success"] = 1
+            session.runtime_session._stream_recovery_reacquisition_budget = 1
+            session.runtime_session._stream_recovery_history_floor_budget = 1
+            recovered = False
+            recovery_model = ""
+            recovery_usage: dict[str, Any] = {}
+            if request_content and request_url:
+                stream_behavior_signals["stream_recovery_started"] = 1
+                stream_behavior_signals["stream_recovery_retry"] = 1
+                logger.warning(
+                    "stream_recovery_retry_started: empty streamed success detected; retrying upstream non-stream"
+                )
+                recovery_payload = request_content
+                try:
+                    parsed_request = json.loads(request_content)
+                    if isinstance(parsed_request, dict):
+                        parsed_request = dict(parsed_request)
+                        parsed_request["stream"] = False
+                        recovery_payload = json.dumps(parsed_request).encode()
+                except Exception:
+                    recovery_payload = request_content
+                async with httpx.AsyncClient(timeout=300.0) as retry_client:
+                    retry_request = retry_client.build_request(
+                        request_method,
+                        request_url,
+                        headers=request_headers or {},
+                        content=recovery_payload,
+                    )
+                    retry_response = await retry_client.send(
+                        retry_request, stream=False
+                    )
+                    if retry_response.status_code == 200:
+                        try:
+                            retry_json = retry_response.json()
+                        except Exception:
+                            retry_json = None
+                        if isinstance(retry_json, dict):
+                            recovery_model = str(retry_json.get("model", ""))
+                            recovery_usage = retry_json.get("usage", {})
+                            passthrough_blocks = [
+                                block
+                                for block in retry_json.get("content", [])
+                                if isinstance(block, dict)
+                                and block.get("type") != "text"
+                            ]
+                            passthrough_blocks, passthrough_signals = (
+                                normalize_tool_use_blocks(
+                                    passthrough_blocks,
+                                    seed_prefix="toolu_recovery",
+                                )
+                            )
+                            _merge_signal_counts(
+                                stream_behavior_signals, passthrough_signals
+                            )
+                            retry_text = "".join(
+                                str(block.get("text", ""))
+                                for block in retry_json.get("content", [])
+                                if isinstance(block, dict)
+                                and block.get("type") == "text"
+                            )
+                            retry_output_saved = 0
+                            if retry_text:
+                                retry_processed = _RUNTIME.process_response(
+                                    retry_text,
+                                    model=str(retry_json.get("model", "")),
+                                    session=session.runtime_session,
+                                    behavior_signals=stream_behavior_signals
+                                    or None,
+                                    tool_compatible=tool_compatible,
+                                )
+                                response_signals = (
+                                    retry_processed.behavior_signals
+                                )
+                                translated_blocks = (
+                                    retry_processed.content_blocks
+                                    + passthrough_blocks
+                                )
+                                retry_output_saved = (
+                                    retry_processed.output_saved_tokens
+                                )
+                            elif passthrough_blocks:
+                                retry_processed = _RUNTIME.process_response(
+                                    "",
+                                    model=str(retry_json.get("model", "")),
+                                    session=session.runtime_session,
+                                    behavior_signals=stream_behavior_signals
+                                    or None,
+                                    tool_compatible=tool_compatible,
+                                )
+                                response_signals = (
+                                    retry_processed.behavior_signals
+                                )
+                                translated_blocks = passthrough_blocks
+                            else:
+                                response_signals = dict(
+                                    stream_behavior_signals
+                                )
+                                translated_blocks = []
+                            recovered = any(
+                                block.get("type") == "tool_use"
+                                or (
+                                    block.get("type") == "text"
+                                    and str(block.get("text", "")).strip()
+                                )
+                                for block in translated_blocks
+                            )
+                            if recovered:
+                                recovered_text = any(
+                                    block.get("type") == "text"
+                                    and str(block.get("text", "")).strip()
+                                    for block in translated_blocks
+                                )
+                                recovered_tool_use = any(
+                                    block.get("type") == "tool_use"
+                                    for block in translated_blocks
+                                )
+                                if recovered_tool_use and not recovered_text:
+                                    signature = _tool_use_only_signature(
+                                        translated_blocks
+                                    )
+                                    if (
+                                        signature
+                                        and signature
+                                        == session.runtime_session._stream_recovery_tool_use_only_signature
+                                    ):
+                                        session.runtime_session._stream_recovery_tool_use_only_repeat_count += 1
+                                    else:
+                                        session.runtime_session._stream_recovery_tool_use_only_signature = signature
+                                        session.runtime_session._stream_recovery_tool_use_only_repeat_count = 1
+
+                                    if (
+                                        session.runtime_session._stream_recovery_tool_use_only_repeat_count
+                                        >= _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT
+                                    ):
+                                        stream_behavior_signals[
+                                            "stream_recovery_loop_broken"
+                                        ] = 1
+                                        stream_behavior_signals[
+                                            "stream_recovery_fallback"
+                                        ] = 1
+                                        logger.warning(
+                                            "stream_recovery_loop_breaker_triggered: repeated identical tool_use-only recovery detected; falling back to avoid retry loop"
+                                        )
+                                        recovered = False
+                                else:
+                                    session.runtime_session._stream_recovery_tool_use_only_signature = ""
+                                    session.runtime_session._stream_recovery_tool_use_only_repeat_count = 0
+
+                            if recovered:
+                                recovery_success_signals: dict[str, int] = {}
+                                if recovered_text:
+                                    stream_behavior_signals[
+                                        "stream_recovery_success_text"
+                                    ] = 1
+                                    recovery_success_signals[
+                                        "stream_recovery_success_text"
+                                    ] = 1
+                                    logger.info(
+                                        "stream_recovery_succeeded_text: recovered empty streamed success via non-stream retry"
+                                    )
+                                if recovered_tool_use:
+                                    stream_behavior_signals[
+                                        "stream_recovery_success_tool_use"
+                                    ] = 1
+                                    recovery_success_signals[
+                                        "stream_recovery_success_tool_use"
+                                    ] = 1
+                                    logger.info(
+                                        "stream_recovery_succeeded_tool_use: recovered empty streamed success via non-stream retry"
+                                    )
+                                response_signals = dict(
+                                    response_signals or {}
+                                )
+                                _merge_signal_counts(
+                                    response_signals,
+                                    recovery_success_signals,
+                                )
+                                retry_usage = retry_json.get("usage", {})
+                                retry_model = str(
+                                    retry_json.get("model", "")
+                                )
+                                if retry_model and retry_usage:
+                                    session.tracker.record_call(
+                                        model=retry_model,
+                                        actual_input=retry_usage.get(
+                                            "input_tokens", 0
+                                        ),
+                                        actual_output=retry_usage.get(
+                                            "output_tokens", 0
+                                        ),
+                                        cache_read=retry_usage.get(
+                                            "cache_read_input_tokens", 0
+                                        ),
+                                        cache_write=retry_usage.get(
+                                            "cache_creation_input_tokens", 0
+                                        ),
+                                        input_saved=input_saved_tokens,
+                                        output_saved=retry_output_saved,
+                                        type_breakdown=type_breakdown,
+                                        behavior_signals=response_signals
+                                        or None,
+                                        prompt_metrics=prompt_metrics,
+                                    )
+                                message_start = {
+                                    "type": "message_start",
+                                    "message": {
+                                        "model": retry_model or sse_model,
+                                        "usage": retry_usage,
+                                    },
+                                }
+                                yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n".encode()
+                                for i, block in enumerate(translated_blocks):
+                                    if block.get("type") == "text":
+                                        start = {
+                                            "type": "content_block_start",
+                                            "index": i,
+                                            "content_block": {
+                                                "type": "text",
+                                                "text": "",
+                                            },
+                                        }
+                                        delta = {
+                                            "type": "content_block_delta",
+                                            "index": i,
+                                            "delta": {
+                                                "type": "text_delta",
+                                                "text": block.get("text", ""),
+                                            },
+                                        }
+                                    else:
+                                        start = {
+                                            "type": "content_block_start",
+                                            "index": i,
+                                            "content_block": {
+                                                "type": "tool_use",
+                                                "id": block.get("id", ""),
+                                                "name": block.get(
+                                                    "name", "unknown"
+                                                ),
+                                                "input": {},
+                                            },
+                                        }
+                                        delta = {
+                                            "type": "content_block_delta",
+                                            "index": i,
+                                            "delta": {
+                                                "type": "input_json_delta",
+                                                "partial_json": json.dumps(
+                                                    block.get("input", {})
+                                                ),
+                                            },
+                                        }
+                                    stop = {
+                                        "type": "content_block_stop",
+                                        "index": i,
+                                    }
+                                    yield f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
+                                    yield f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
+                                    yield f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
+                                yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
+                                return
+            if not recovered:
+                stream_behavior_signals["stream_recovery_fallback"] = 1
+                logger.warning(
+                    "stream_recovery_fallback: non-stream retry produced no visible content; recording fallback"
+                )
+                if recovery_model and recovery_usage:
+                    empty_processed = _RUNTIME.process_response(
+                        "",
+                        model=recovery_model,
+                        session=session.runtime_session,
+                        behavior_signals=stream_behavior_signals or None,
+                        tool_compatible=tool_compatible,
+                    )
+                    session.tracker.record_call(
+                        model=recovery_model,
+                        actual_input=recovery_usage.get("input_tokens", 0),
+                        actual_output=recovery_usage.get("output_tokens", 0),
+                        cache_read=recovery_usage.get(
+                            "cache_read_input_tokens", 0
+                        ),
+                        cache_write=recovery_usage.get(
+                            "cache_creation_input_tokens", 0
+                        ),
+                        input_saved=input_saved_tokens,
+                        output_saved=0,
+                        type_breakdown=type_breakdown,
+                        behavior_signals=empty_processed.behavior_signals
+                        or None,
+                        prompt_metrics=prompt_metrics,
+                    )
+                if request_state is not None:
+                    _record_fallback_once(session, request_state)
         if sse_model != "unknown" and sse_usage:
             if not full_text:
                 processed = _RUNTIME.process_response(
                     "",
                     model=sse_model,
                     session=session.runtime_session,
-                    behavior_signals=behavior_signals or None,
+                    behavior_signals=stream_behavior_signals or None,
                     tool_compatible=tool_compatible,
                 )
                 output_saved = 0
@@ -315,14 +1176,17 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         headers: dict[str, str],
         content: bytes,
         original_content: bytes | None,
+        retry_content: bytes | None = None,
+        allow_original_retry: bool = True,
         stream: bool = False,
         compressed_request: bool = False,
-    ) -> tuple[httpx.Response, bool]:
+    ) -> tuple[httpx.Response, bool, dict[str, int]]:
         request_obj = client.build_request(
             method, url, headers=headers, content=content
         )
         response = await client.send(request_obj, stream=stream)
         retried_without_tok = False
+        retry_signals: dict[str, int] = {}
 
         logger.warning(
             "Fail-open check: status=%d, compressed=%s, has_orig=%s, fail_open=%s",
@@ -332,13 +1196,60 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             session.fail_open,
         )
 
+        if response.status_code == 429:
+            retry_signals["rate_limit_retry_started"] = 1
+            max_attempts = max(0, session.rate_limit_retry_max_attempts)
+            for attempt in range(1, max_attempts + 1):
+                session.record_rate_limit_event(time.time())
+                retry_after_seconds = _parse_retry_after_seconds(
+                    response.headers.get("retry-after")
+                )
+                computed_backoff_seconds = _compute_rate_limit_backoff_seconds(
+                    attempt=attempt,
+                    base_ms=session.rate_limit_backoff_base_ms,
+                    cap_ms=session.rate_limit_backoff_cap_ms,
+                )
+                sleep_seconds = max(
+                    retry_after_seconds, computed_backoff_seconds
+                )
+                retry_signals["rate_limit_retry_attempt"] = (
+                    retry_signals.get("rate_limit_retry_attempt", 0) + 1
+                )
+                logger.warning(
+                    "rate_limit_retry_attempt: upstream 429 attempt=%d/%d sleep=%.3fs retry_after=%.3fs",
+                    attempt,
+                    max_attempts,
+                    sleep_seconds,
+                    retry_after_seconds,
+                )
+                if stream:
+                    await response.aread()
+                await response.aclose()
+                await asyncio.sleep(sleep_seconds)
+                retry_request = client.build_request(
+                    method, url, headers=headers, content=content
+                )
+                response = await client.send(retry_request, stream=stream)
+                if response.status_code != 429:
+                    retry_signals["rate_limit_retry_succeeded"] = 1
+                    break
+
+            if response.status_code == 429:
+                session.record_rate_limit_event(time.time())
+                retry_signals["rate_limit_retry_exhausted"] = 1
+                logger.warning(
+                    "rate_limit_retry_exhausted: upstream remained at 429 after %d retry attempts",
+                    max_attempts,
+                )
+
         if (
             response.status_code == 400
             and compressed_request
-            and original_content is not None
-            and _payloads_materially_differ(content, original_content)
             and session.fail_open
         ):
+            fallback_content = retry_content
+            if fallback_content is None and allow_original_retry:
+                fallback_content = original_content
             if stream:
                 await response.aread()
             error_text = response.text
@@ -349,17 +1260,154 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 original_content=original_content,
                 compressed_request=compressed_request,
             )
+            prepared_summary: dict[str, Any] | str = {}
+            prepared_pairing: list[dict[str, Any]] = []
+            prepared_failures: list[str] = []
+            provider_safe_summary: dict[str, Any] | str = {}
+            provider_safe_pairing: list[dict[str, Any]] = []
+            provider_safe_failures: list[str] = []
+            prepared_mixed_user_tool_result_messages = 0
+            prepared_split_boundaries = 0
+            provider_safe_mixed_user_tool_result_messages = 0
+            provider_safe_split_boundaries = 0
+            try:
+                prepared_body = json.loads(content)
+            except Exception:
+                prepared_body = None
+            if isinstance(prepared_body, dict):
+                prepared_summary = summarize_message_structure(
+                    prepared_body.get("messages", [])
+                )
+                prepared_pairing = summarize_bridge_pairing(
+                    prepared_body.get("messages", [])
+                )
+                prepared_failures = validate_anthropic_bridge_body(prepared_body)
+                prepared_mixed_user_tool_result_messages = (
+                    _count_user_messages_with_mixed_tool_result_content(
+                        prepared_body.get("messages", [])
+                    )
+                )
+                prepared_split_boundaries = (
+                    _count_user_tool_result_split_boundaries(
+                        prepared_body.get("messages", [])
+                    )
+                )
+            try:
+                fallback_body = (
+                    json.loads(fallback_content)
+                    if fallback_content is not None
+                    else None
+                )
+            except Exception:
+                fallback_body = None
+            if isinstance(fallback_body, dict):
+                provider_safe_summary = summarize_message_structure(
+                    fallback_body.get("messages", [])
+                )
+                provider_safe_pairing = summarize_bridge_pairing(
+                    fallback_body.get("messages", [])
+                )
+                provider_safe_failures = validate_anthropic_bridge_body(
+                    fallback_body
+                )
+                provider_safe_mixed_user_tool_result_messages = (
+                    _count_user_messages_with_mixed_tool_result_content(
+                        fallback_body.get("messages", [])
+                    )
+                )
+                provider_safe_split_boundaries = (
+                    _count_user_tool_result_split_boundaries(
+                        fallback_body.get("messages", [])
+                    )
+                )
+            retry_signals["fail_open_retry_prepared_forensics_logged"] = 1
             logger.warning(
-                "Upstream 400 after Tok request preparation: %s; retrying with original payload",
-                error_text[:500],
+                "bridge_pairing_forensics prepared_failures=%s prepared_pairing=%s prepared_summary=%s prepared_mixed_user_tool_result_messages=%s prepared_split_boundaries=%s provider_safe_failures=%s provider_safe_pairing=%s provider_safe_summary=%s provider_safe_mixed_user_tool_result_messages=%s provider_safe_split_boundaries=%s",
+                prepared_failures,
+                prepared_pairing,
+                prepared_summary,
+                prepared_mixed_user_tool_result_messages,
+                prepared_split_boundaries,
+                provider_safe_failures,
+                provider_safe_pairing,
+                provider_safe_summary,
+                provider_safe_mixed_user_tool_result_messages,
+                provider_safe_split_boundaries,
             )
-            await response.aclose()
-            request_obj = client.build_request(
-                method, url, headers=headers, content=original_content
-            )
-            response = await client.send(request_obj, stream=stream)
-            retried_without_tok = True
-        return response, retried_without_tok
+            if (
+                "`tool_use` ids were found without `tool_result` blocks immediately after"
+                in error_text
+                and not prepared_failures
+            ):
+                retry_signals[
+                    "fail_open_retry_upstream_pairing_disagreement"
+                ] = 1
+                if prepared_mixed_user_tool_result_messages > 0:
+                    retry_signals[
+                        "fail_open_retry_upstream_pairing_disagreement_mixed_user_message_present"
+                    ] = 1
+                    logger.warning(
+                        "fail_open_retry_upstream_pairing_disagreement_mixed_user_message_present: prepared payload still contained mixed user tool_result+non-tool blocks"
+                    )
+                elif prepared_split_boundaries > 0:
+                    retry_signals[
+                        "fail_open_retry_upstream_pairing_disagreement_after_user_message_split"
+                    ] = 1
+                    logger.warning(
+                        "fail_open_retry_upstream_pairing_disagreement_after_user_message_split: prepared payload had user tool_result/text split boundaries"
+                    )
+                else:
+                    retry_signals[
+                        "fail_open_retry_upstream_pairing_disagreement_without_mixed_user_message"
+                    ] = 1
+                    logger.warning(
+                        "fail_open_retry_upstream_pairing_disagreement_without_mixed_user_message: no mixed user message or split boundary detected in prepared payload"
+                    )
+                logger.warning(
+                    "fail_open_retry_upstream_pairing_disagreement: upstream reported pairing failure while local strict validation passed (prepared_mixed_user_tool_result_messages=%s prepared_split_boundaries=%s)",
+                    prepared_mixed_user_tool_result_messages,
+                    prepared_split_boundaries,
+                )
+            if fallback_content is not None and _payloads_materially_differ(
+                content, fallback_content
+            ):
+                if provider_safe_failures:
+                    logger.warning(
+                        "fail_open_retry_provider_safe_invalid: refusing retry because provider-safe payload failed local strict validation: %s",
+                        provider_safe_failures,
+                    )
+                    retry_signals["fail_open_retry_provider_safe_invalid"] = 1
+                    return response, retried_without_tok, retry_signals
+                retry_signals["fail_open_retry_provider_safe_validated"] = 1
+                logger.info(
+                    "fail_open_retry_provider_safe_validated: provider-safe fallback passed local strict validation"
+                )
+                retry_kind = (
+                    "provider-safe"
+                    if retry_content is not None
+                    else "original"
+                )
+                logger.warning(
+                    "Upstream 400 after Tok request preparation: %s; retrying with %s payload",
+                    error_text[:500],
+                    retry_kind,
+                )
+                await response.aclose()
+                request_obj = client.build_request(
+                    method, url, headers=headers, content=fallback_content
+                )
+                response = await client.send(request_obj, stream=stream)
+                retried_without_tok = True
+                if retry_content is not None:
+                    retry_signals["fail_open_retry_provider_safe"] = 1
+                if not allow_original_retry:
+                    retry_signals["fail_open_raw_retry_blocked"] = 1
+            elif not allow_original_retry and original_content is not None:
+                logger.warning(
+                    "fail_open_raw_retry_blocked: refusing to resend raw original payload after tool-history repair"
+                )
+                retry_signals["fail_open_raw_retry_blocked"] = 1
+        return response, retried_without_tok, retry_signals
 
     @app.api_route("/", methods=["GET", "HEAD"])
     async def root() -> dict[str, str]:
@@ -469,6 +1517,39 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "state_resend_suppressed_count": int(
                 signals.get("state_resend_suppressed_turn", 0)
             ),
+            "stream_recovery_attempt_count": int(
+                session_summary.get("stream_recovery_attempt_count", 0)
+            ),
+            "stream_recovery_success_text_count": int(
+                session_summary.get("stream_recovery_success_text_count", 0)
+            ),
+            "stream_recovery_success_tool_use_count": int(
+                session_summary.get(
+                    "stream_recovery_success_tool_use_count", 0
+                )
+            ),
+            "stream_recovery_fallback_count": int(
+                session_summary.get("stream_recovery_fallback_count", 0)
+            ),
+            "tool_history_repaired_count": int(
+                session_summary.get("tool_history_repaired_count", 0)
+            ),
+            "tool_history_pairing_repaired_count": int(
+                session_summary.get(
+                    "tool_history_pairing_repaired_count", 0
+                )
+            ),
+            "tool_history_quarantined_count": int(
+                session_summary.get("tool_history_quarantined_count", 0)
+            ),
+            "tool_history_blocked_count": int(
+                session_summary.get("tool_history_blocked_count", 0)
+            ),
+            "invalid_tool_history_session_reset_count": int(
+                session_summary.get(
+                    "invalid_tool_history_session_reset_count", 0
+                )
+            ),
             "session_quality": str(
                 session_summary.get("session_quality", "clean")
             ),
@@ -531,156 +1612,181 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "reacquisition_tokens_avoided_estimate": 0,
         }
         request_tool_compatible = False
+        provider_safe_original_body_bytes = original_body_bytes
+        raw_retry_forbidden = False
 
-        if path == "v1/messages" and request.method == "POST" and body_bytes:
+        if (
+            path in {"v1/messages", "v1/messages/count_tokens"}
+            and request.method == "POST"
+            and body_bytes
+        ):
             try:
                 body = json.loads(body_bytes)
                 original_body = (
                     copy.deepcopy(body) if isinstance(body, dict) else body
                 )
-                messages = body.get("messages", [])
-                request_model = str(body.get("model", ""))
-                tok_tool_header = request.headers.get(
-                    "x-tok-tool-compatible", ""
+                if not isinstance(body, dict) or not isinstance(
+                    original_body, dict
+                ):
+                    raise ValueError("request body must be a JSON object")
+
+                provider_safe_original_body, behavior_signals, source_retry_forbidden, preflight_response = _run_bridge_preflight(
+                    session,
+                    body=copy.deepcopy(body),
+                    original_body=original_body,
+                    headers=headers,
+                    behavior_signals=behavior_signals,
+                    compressed=False,
+                    request_state=request_state,
+                    path=path,
+                    emit_ready_log=(path == "v1/messages/count_tokens"),
+                    emit_repair_logs=(path == "v1/messages/count_tokens"),
+                    reset_recovery_state=(path == "v1/messages/count_tokens"),
                 )
-                if tok_tool_header.lower() in {"0", "false", "off", "no"}:
-                    request_tool_compatible = False
-                elif session.runtime_session._baseline_only:
-                    request_tool_compatible = False
-                    behavior_signals["baseline_only_session"] = 1
-                    behavior_signals["tok_fallback_activated"] = 1
-                    logger.warning(
-                        "tok_fallback_activated: session is in baseline-only mode, serving without compression"
+                if preflight_response is not None:
+                    return preflight_response
+                provider_safe_original_body_bytes = json.dumps(
+                    provider_safe_original_body
+                ).encode()
+                raw_retry_forbidden = source_retry_forbidden
+                source_behavior_signals = dict(behavior_signals)
+
+                request_model = str(provider_safe_original_body.get("model", ""))
+                messages = provider_safe_original_body.get("messages", [])
+
+                if path == "v1/messages":
+                    tok_tool_header = request.headers.get(
+                        "x-tok-tool-compatible", ""
                     )
-                else:
-                    request_tool_compatible = session.tool_compatible_default
+                    if tok_tool_header.lower() in {
+                        "0",
+                        "false",
+                        "off",
+                        "no",
+                    }:
+                        request_tool_compatible = False
+                    elif session.runtime_session._baseline_only:
+                        request_tool_compatible = False
+                        behavior_signals["baseline_only_session"] = 1
+                        behavior_signals["tok_fallback_activated"] = 1
+                        logger.warning(
+                            "tok_fallback_activated: session is in baseline-only mode, serving without compression"
+                        )
+                    else:
+                        request_tool_compatible = (
+                            session.tool_compatible_default
+                        )
 
-                logger.info(
-                    "Request mode: model=%s, tool_compatible=%s (tools present: %s, header=%s)",
-                    request_model,
-                    request_tool_compatible,
-                    bool(body.get("tools")),
-                    tok_tool_header or "<unset>",
-                )
+                    logger.info(
+                        "Request mode: model=%s, tool_compatible=%s (tools present: %s, header=%s)",
+                        request_model,
+                        request_tool_compatible,
+                        bool(provider_safe_original_body.get("tools")),
+                        tok_tool_header or "<unset>",
+                    )
 
-                prepared = _RUNTIME.prepare_request(
-                    RuntimeRequest(
-                        model=request_model,
-                        messages=messages,
-                        system=body.get("system", ""),
-                        adapter_kind="claude-bridge",
-                        tool_compatible=request_tool_compatible,
-                    ),
-                    session.runtime_session,
-                    result_cache=session.result_cache,
-                )
-                compressed = prepared.compressed
-                saved_toks = prepared.input_saved_tokens
-                tool_breakdown = prepared.type_breakdown
-                behavior_signals = prepared.behavior_signals
-                prompt_metrics = {
-                    "baseline_prompt_tokens": prepared.baseline_prompt_tokens,
-                    "prepared_prompt_tokens": prepared.prepared_prompt_tokens,
-                    "saved_prompt_tokens": prepared.saved_prompt_tokens,
-                    "hot_hint_tokens_added": prepared.hot_hint_tokens_added,
-                    "reacquisition_tokens_avoided_estimate": prepared.reacquisition_tokens_avoided_estimate,
-                }
-                body["messages"] = prepared.body.get("messages", [])
-                body["system"] = prepared.body.get(
-                    "system", body.get("system", "")
-                )
-
-                session.capture_request(
-                    {
-                        "event": "request",
-                        "messages": messages,
-                        "system": body.get("system", ""),
-                        "model": request_model,
-                        "tool_compatible": request_tool_compatible,
+                    prepared = _RUNTIME.prepare_request(
+                        RuntimeRequest(
+                            model=request_model,
+                            messages=messages,
+                            system=provider_safe_original_body.get(
+                                "system", ""
+                            ),
+                            adapter_kind="claude-bridge",
+                            tool_compatible=request_tool_compatible,
+                        ),
+                        session.runtime_session,
+                        result_cache=session.result_cache,
+                    )
+                    compressed = prepared.compressed
+                    saved_toks = prepared.input_saved_tokens
+                    tool_breakdown = prepared.type_breakdown
+                    behavior_signals = dict(prepared.behavior_signals)
+                    _merge_signal_counts(
+                        behavior_signals, source_behavior_signals
+                    )
+                    prompt_metrics = {
+                        "baseline_prompt_tokens": prepared.baseline_prompt_tokens,
+                        "prepared_prompt_tokens": prepared.prepared_prompt_tokens,
+                        "saved_prompt_tokens": prepared.saved_prompt_tokens,
+                        "hot_hint_tokens_added": prepared.hot_hint_tokens_added,
+                        "reacquisition_tokens_avoided_estimate": prepared.reacquisition_tokens_avoided_estimate,
                     }
-                )
+                    body = copy.deepcopy(provider_safe_original_body)
+                    body["messages"] = prepared.body.get("messages", [])
+                    body["system"] = prepared.body.get(
+                        "system", body.get("system", "")
+                    )
 
-                (
-                    canonical_body,
-                    bridge_canonicalized,
-                    bridge_signals,
-                ) = canonicalize_anthropic_bridge_body(body)
-                strict_failures = validate_anthropic_bridge_body(
-                    canonical_body
-                )
-                request_fingerprint = _request_fingerprint_diff(
-                    headers, canonical_body, original_body
-                )
-                should_log_preflight = bool(
-                    compressed or bridge_canonicalized or strict_failures
-                )
-                if bridge_signals:
-                    behavior_signals.update(
+                    session.capture_request(
                         {
-                            key: behavior_signals.get(key, 0) + value
-                            for key, value in bridge_signals.items()
+                            "event": "request",
+                            "messages": messages,
+                            "system": body.get("system", ""),
+                            "model": request_model,
+                            "tool_compatible": request_tool_compatible,
                         }
                     )
-                if (
-                    request_fingerprint["prompt_caching"]
-                    and request_fingerprint["body_materially_differs"]
-                    and (
-                        request_fingerprint["messages_changed"]
-                        or request_fingerprint["system_changed"]
-                    )
-                    and request_fingerprint["cache_topology_changed"]
-                ):
-                    strict_failures = list(strict_failures) + [
-                        "prompt_caching_request_mutated"
-                    ]
-                if strict_failures:
-                    _log_bridge_body_structure(
-                        "bridge_preflight_rejected",
-                        body=canonical_body,
-                        headers=headers,
-                        original_body=original_body,
-                        compressed_request=compressed,
-                        canonicalized_changed=bridge_canonicalized,
-                        strict_failures=strict_failures,
-                        reverted_to_original=True,
-                    )
-                    logger.warning(
-                        "tok_bridge_preflight_rejected: reverting rewritten bridge body to original request"
-                    )
-                    body = copy.deepcopy(original_body)
-                    behavior_signals["tok_bridge_preflight_rejected"] = 1
-                    behavior_signals["tok_fallback_activated"] = 1
-                    compressed = False
-                    saved_toks = 0
-                    tool_breakdown = {}
-                    _record_fallback_once(session, request_state)
-                else:
-                    body = canonical_body
-                    if should_log_preflight:
-                        _log_bridge_body_structure(
-                            "bridge_preflight_ready",
-                            body=body,
-                            headers=headers,
-                            original_body=original_body,
-                            compressed_request=compressed,
-                            canonicalized_changed=bridge_canonicalized,
-                            strict_failures=[],
-                            reverted_to_original=False,
-                        )
-                body_bytes = json.dumps(body).encode()
 
-                if tool_breakdown:
-                    logger.info(
-                        "Tool results: ~%d tokens saved %s",
-                        sum(tool_breakdown.values()) // 4,
-                        {k: v // 4 for k, v in tool_breakdown.items()},
+                    (
+                        body,
+                        behavior_signals,
+                        prepared_retry_forbidden,
+                        preflight_response,
+                    ) = _run_bridge_preflight(
+                        session,
+                        body=body,
+                        original_body=provider_safe_original_body,
+                        headers=headers,
+                        behavior_signals=behavior_signals,
+                        compressed=compressed,
+                        request_state=request_state,
+                        path=path,
                     )
-                if compressed:
-                    logger.info(
-                        "Prepared request via runtime | ~%d tokens saved",
-                        saved_toks,
+                    if preflight_response is not None:
+                        return preflight_response
+                    raw_retry_forbidden = (
+                        raw_retry_forbidden or prepared_retry_forbidden
                     )
-                    session.runtime_session.reset_fallback_count()
+                    if behavior_signals.get(
+                        "tok_bridge_pairing_degraded_to_provider_safe", 0
+                    ):
+                        compressed = False
+                        saved_toks = 0
+                        tool_breakdown = {}
+                        prompt_metrics = {
+                            "baseline_prompt_tokens": 0,
+                            "prepared_prompt_tokens": 0,
+                            "saved_prompt_tokens": 0,
+                            "hot_hint_tokens_added": 0,
+                            "reacquisition_tokens_avoided_estimate": 0,
+                        }
+                    body_bytes = json.dumps(body).encode()
+
+                    if tool_breakdown:
+                        logger.info(
+                            "Tool results: ~%d tokens saved %s",
+                            sum(tool_breakdown.values()) // 4,
+                            {k: v // 4 for k, v in tool_breakdown.items()},
+                        )
+                    if compressed:
+                        logger.info(
+                            "Prepared request via runtime | ~%d tokens saved",
+                            saved_toks,
+                        )
+                        session.runtime_session.reset_fallback_count()
+                else:
+                    body = provider_safe_original_body
+                    body_bytes = provider_safe_original_body_bytes
+                    session.capture_request(
+                        {
+                            "event": "count_tokens_request",
+                            "messages": messages,
+                            "system": body.get("system", ""),
+                            "model": request_model,
+                            "tool_compatible": False,
+                        }
+                    )
 
             # Handle specific exception types for better error classification
             except (json.JSONDecodeError, ValueError) as exc:
@@ -738,6 +1844,15 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         if request.url.query:
             target_url += f"?{request.url.query}"
 
+        if session.is_rate_limited_locally():
+            retry_after_seconds = session.local_rate_limit_retry_after_seconds()
+            behavior_signals["rate_limit_local_throttle_active"] = 1
+            logger.warning(
+                "rate_limit_local_throttle_active: blocking upstream request during local cooldown retry_after=%ss",
+                retry_after_seconds,
+            )
+            return _local_rate_limit_response(retry_after_seconds)
+
         is_streaming = False
         try:
             body_dict = json.loads(body_bytes)
@@ -756,6 +1871,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     (
                         response,
                         retried_without_tok,
+                        retry_signals,
                     ) = await _send_with_tok_fail_open_retry(
                         client,
                         method=request.method,
@@ -763,9 +1879,14 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         headers=headers,
                         content=body_bytes,
                         original_content=original_body_bytes,
+                        retry_content=provider_safe_original_body_bytes,
+                        allow_original_retry=not raw_retry_forbidden,
                         stream=True,
                         compressed_request=compressed,
                     )
+                    _merge_signal_counts(behavior_signals, retry_signals)
+                    if session.is_rate_limited_locally():
+                        behavior_signals["rate_limit_local_throttle_opened"] = 1
                     if retried_without_tok:
                         compressed = False
                         saved_toks = 0
@@ -781,11 +1902,24 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             "tok_fail_open_retry": 1,
                             "tok_fallback_activated": 1,
                         }
+                        _merge_signal_counts(
+                            behavior_signals, retry_signals
+                        )
                         logger.warning(
                             "tok_fallback_activated: upstream 400 retry, serving without compression"
                         )
                         _record_fallback_once(session, request_state)
                     resp_headers = _safe_headers(response.headers)
+                    if response.status_code >= 400:
+                        error_content = await response.aread()
+                        return Response(
+                            content=error_content,
+                            status_code=response.status_code,
+                            headers=resp_headers,
+                            media_type=response.headers.get(
+                                "content-type", "application/json"
+                            ),
+                        )
 
                     if path == "v1/messages":
                         return StreamingResponse(
@@ -804,6 +1938,15 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                 if compressed
                                 else None,
                                 tool_compatible=request_tool_compatible,
+                                request_method=request.method,
+                                request_url=target_url,
+                                request_headers=headers,
+                                request_content=(
+                                    provider_safe_original_body_bytes
+                                    if retried_without_tok
+                                    else body_bytes
+                                ),
+                                request_state=request_state,
                             ),
                             status_code=response.status_code,
                             headers=resp_headers,
@@ -833,15 +1976,21 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             (
                                 response,
                                 retried,
+                                retry_signals,
                             ) = await _send_with_tok_fail_open_retry(
                                 retry_client,
                                 method=request.method,
                                 url=target_url,
                                 headers=headers,
-                                content=original_body_bytes,
+                                content=provider_safe_original_body_bytes,
                                 original_content=original_body_bytes,
+                                retry_content=provider_safe_original_body_bytes,
+                                allow_original_retry=not raw_retry_forbidden,
                                 stream=True,
                                 compressed_request=False,
+                            )
+                            _merge_signal_counts(
+                                behavior_signals, retry_signals
                             )
                             if path == "v1/messages":
                                 return StreamingResponse(
@@ -854,6 +2003,11 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                         behavior_signals=behavior_signals,
                                         prompt_metrics=None,
                                         tool_compatible=request_tool_compatible,
+                                        request_method=request.method,
+                                        request_url=target_url,
+                                        request_headers=headers,
+                                        request_content=provider_safe_original_body_bytes,
+                                        request_state=request_state,
                                     ),
                                     status_code=response.status_code,
                                     headers=_safe_headers(response.headers),
@@ -871,6 +2025,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             (
                 response,
                 retried_without_tok,
+                retry_signals,
             ) = await _send_with_tok_fail_open_retry(
                 client,
                 method=request.method,
@@ -878,8 +2033,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 headers=headers,
                 content=body_bytes,
                 original_content=original_body_bytes,
+                retry_content=provider_safe_original_body_bytes,
+                allow_original_retry=not raw_retry_forbidden,
                 compressed_request=compressed,
             )
+            _merge_signal_counts(behavior_signals, retry_signals)
+            if session.is_rate_limited_locally():
+                behavior_signals["rate_limit_local_throttle_opened"] = 1
             if retried_without_tok:
                 compressed = False
                 saved_toks = 0
@@ -895,6 +2055,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     "tok_fail_open_retry": 1,
                     "tok_fallback_activated": 1,
                 }
+                _merge_signal_counts(behavior_signals, retry_signals)
                 logger.warning(
                     "tok_fallback_activated: upstream 400 retry, serving without compression"
                 )
@@ -918,6 +2079,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         for block in resp_json.get("content", [])
                         if isinstance(block, dict) and block.get("type") != "text"
                     ]
+                    passthrough_blocks, passthrough_signals = (
+                        normalize_tool_use_blocks(
+                            passthrough_blocks, seed_prefix="toolu_upstream"
+                        )
+                    )
+                    _merge_signal_counts(behavior_signals, passthrough_signals)
 
                     logger.info(
                         "Raw response content: %s",

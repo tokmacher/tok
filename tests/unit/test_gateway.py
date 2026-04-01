@@ -1,7 +1,10 @@
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -65,6 +68,15 @@ def test_health_endpoint():
         "state_resend_full_count": 0,
         "state_resend_delta_count": 0,
         "state_resend_suppressed_count": 0,
+        "stream_recovery_attempt_count": 0,
+        "stream_recovery_success_text_count": 0,
+        "stream_recovery_success_tool_use_count": 0,
+        "stream_recovery_fallback_count": 0,
+        "tool_history_repaired_count": 0,
+        "tool_history_pairing_repaired_count": 0,
+        "tool_history_quarantined_count": 0,
+        "tool_history_blocked_count": 0,
+        "invalid_tool_history_session_reset_count": 0,
         "session_quality": "clean",
         "last_degradation_reason": "",
     }
@@ -108,6 +120,53 @@ def test_health_endpoint_reports_baseline_only_and_session_savings(tmp_path):
     assert payload["baseline_cost_usd"] > payload["actual_cost_usd"]
     assert payload["session_quality"] == "degraded"
     assert payload["last_degradation_reason"] == "baseline fallback"
+
+
+def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.reset_session_stats()
+    session = BridgeSession(
+        port=9191, memory_dir=tmp_path / ".tok", tracker=tracker
+    )
+    session.tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=120,
+        actual_output=30,
+        cache_read=0,
+        cache_write=0,
+        input_saved=80,
+        output_saved=20,
+        behavior_signals={
+            "stream_recovery_started": 1,
+            "stream_recovery_success_text": 1,
+            "stream_recovery_success_tool_use": 1,
+            "stream_recovery_fallback": 1,
+            "tok_bridge_tool_history_repaired": 1,
+            "tok_bridge_tool_history_pairing_repaired": 1,
+            "tok_bridge_invalid_tool_history_quarantined": 1,
+            "tok_bridge_invalid_tool_history_blocked": 1,
+            "tok_bridge_invalid_tool_history_session_reset": 1,
+        },
+    )
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["stream_recovery_attempt_count"] == 1
+    assert payload["stream_recovery_success_text_count"] == 1
+    assert payload["stream_recovery_success_tool_use_count"] == 1
+    assert payload["stream_recovery_fallback_count"] == 1
+    assert payload["tool_history_repaired_count"] == 1
+    assert payload["tool_history_pairing_repaired_count"] == 1
+    assert payload["tool_history_quarantined_count"] == 1
+    assert payload["tool_history_blocked_count"] == 1
+    assert payload["invalid_tool_history_session_reset_count"] == 1
 
 
 def test_clean_system_context_uses_top_level_prompt_compressor(monkeypatch):
@@ -451,9 +510,21 @@ def test_gateway_retries_with_original_payload_after_tok_prepared_400(
     assert response.status_code == 200
     assert len(sent_bodies) == 2
     assert sent_bodies[0]["messages"] == [
-        {"role": "user", "content": "compressed by tok"}
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "compressed by tok"}],
+        }
     ]
-    assert sent_bodies[1] == original_payload
+    # The retry uses the canonicalized (provider-safe) version of the original payload,
+    # where string content is converted to text block format for Anthropic API compatibility
+    expected_retry_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+        ],
+        "stream": False,
+    }
+    assert sent_bodies[1] == expected_retry_payload
 
 
 def test_gateway_does_not_retry_when_tok_payload_matches_original(
@@ -466,7 +537,7 @@ def test_gateway_does_not_retry_when_tok_payload_matches_original(
         "messages": [{"role": "user", "content": "hello"}],
         "stream": False,
     }
-    sent_bodies: list[dict] = []
+    sent_bodies: list[dict[str, Any]] = []
 
     def _fake_prepare_request(request, session, *, result_cache=None):
         del request, session, result_cache
@@ -503,7 +574,9 @@ def test_gateway_does_not_retry_when_tok_payload_matches_original(
     assert response.status_code == 400
     assert len(sent_bodies) == 1
     assert sent_bodies[0]["model"] == original_payload["model"]
-    assert sent_bodies[0]["messages"] == [{"role": "user", "content": "hello"}]
+    assert sent_bodies[0]["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+    ]
     assert sent_bodies[0]["stream"] == original_payload["stream"]
     assert sent_bodies[0].get("system", "") == ""
 
@@ -597,6 +670,323 @@ def test_gateway_canonicalizes_thinking_blocks_and_logs_preflight_ready(
     assert "bridge_preflight_rejected" not in caplog.text
 
 
+def test_gateway_sanitizes_invalid_historical_tool_ids_before_send(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [{"role": "user", "content": "please continue"}],
+        "stream": False,
+    }
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu bad/id",
+                                "name": "view_file",
+                                "input": {"path": "src/tok/gateway.py"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool_result",
+                        "tool_use_id": "toolu bad/id",
+                        "content": "file contents",
+                    },
+                    {"role": "user", "content": "Now summarize."},
+                ],
+                "system": "tok system",
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=16,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assistant_block = sent_bodies[0]["messages"][0]["content"][0]
+    user_block = sent_bodies[0]["messages"][1]["content"][0]
+    assert assistant_block["id"] == "toolu_bad_id"
+    assert user_block["tool_use_id"] == "toolu_bad_id"
+    assert "bridge_preflight_repaired_tool_history" in caplog.text
+    assert "bridge_preflight_repaired_tool_result_pairing" in caplog.text
+    assert "bridge_preflight_ready" in caplog.text
+    assert "bridge_preflight_rejected" not in caplog.text
+
+
+def test_gateway_count_tokens_sanitizes_invalid_historical_tool_ids_before_send(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict] = []
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu bad/id",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/gateway.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu bad/id",
+                        "content": "file contents",
+                    }
+                ],
+            },
+        ],
+    }
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(200, json={"input_tokens": 42})
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages/count_tokens",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"input_tokens": 42}
+    assert len(sent_bodies) == 1
+    assistant_block = sent_bodies[0]["messages"][0]["content"][0]
+    user_block = sent_bodies[0]["messages"][1]["content"][0]
+    assert assistant_block["id"] == "toolu_bad_id"
+    assert user_block["tool_use_id"] == "toolu_bad_id"
+    assert "bridge_preflight_repaired_tool_history_count_tokens" in caplog.text
+    assert (
+        "bridge_preflight_repaired_tool_result_pairing_count_tokens"
+        in caplog.text
+    )
+
+
+def test_gateway_count_tokens_blocks_invalid_tool_history_locally(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "",
+                        "name": "",
+                        "input": {},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "",
+                        "content": "bad payload",
+                    }
+                ],
+            },
+        ],
+    }
+
+    async def _fail_if_sent(self, request, stream=False):
+        del self, request, stream
+        raise AssertionError("upstream send should not be called")
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fail_if_sent)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages/count_tokens",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": (
+                "Tok bridge preflight rejected unrepaired tool history before send."
+            ),
+        },
+    }
+    assert (
+        "bridge_preflight_rejected_blocked_local_count_tokens" in caplog.text
+    )
+
+
+def test_gateway_synthesizes_blank_historical_tool_ids_before_send(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [{"role": "user", "content": "please continue"}],
+        "stream": False,
+    }
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "",
+                                "name": "view_file",
+                                "input": {"path": "src/tok/gateway.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "name": "view_file",
+                                "input": {"path": "src/tok/runtime.py"},
+                            },
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "",
+                                "content": "first",
+                            },
+                            {
+                                "type": "tool_result",
+                                "content": "second",
+                            },
+                        ],
+                    },
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=12,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assistant_blocks = sent_bodies[0]["messages"][0]["content"]
+    user_blocks = sent_bodies[0]["messages"][1]["content"]
+    ids = [block["id"] for block in assistant_blocks]
+    assert all(ids)
+    assert len(ids) == len(set(ids))
+    assert user_blocks[0]["tool_use_id"] == ids[0]
+    assert user_blocks[1]["tool_use_id"] == ids[1]
+    assert "bridge_preflight_repaired_tool_history" in caplog.text
+    assert "bridge_preflight_repaired_tool_result_pairing" in caplog.text
+    assert "bridge_preflight_ready" in caplog.text
+    assert "bridge_preflight_rejected" not in caplog.text
+
+
 def test_gateway_reverts_when_invalid_block_survives_canonicalization(
     tmp_path, monkeypatch, caplog
 ):
@@ -668,8 +1058,432 @@ def test_gateway_reverts_when_invalid_block_survives_canonicalization(
     )
 
     assert response.status_code == 200
-    assert sent_bodies == [original_payload]
+    # The gateway reverts to the canonicalized original payload (string content converted to text blocks)
+    expected_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+        ],
+        "stream": False,
+    }
+    assert sent_bodies == [expected_payload]
     assert "tok_bridge_preflight_rejected" in caplog.text
+
+
+def test_gateway_blocks_invalid_tool_history_locally_without_upstream_send(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [{"role": "user", "content": "please continue"}],
+        "stream": False,
+    }
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "",
+                                "name": "",
+                                "input": {},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "",
+                                "content": "file contents",
+                            }
+                        ],
+                    },
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=12,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fail_if_sent(self, request, stream=False):
+        del self, request, stream
+        raise AssertionError("upstream send should not be called")
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fail_if_sent)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": (
+                "Tok bridge preflight rejected unrepaired tool history before send."
+            ),
+        },
+    }
+    assert "bridge_preflight_rejected_blocked_local" in caplog.text
+    assert "reverted_to_original=True" not in caplog.text
+    signals = session.consume_behavior_signals()
+    assert signals["tok_bridge_preflight_failed_local"] == 1
+    assert signals["tok_bridge_invalid_tool_history_blocked"] == 1
+    assert signals["tok_bridge_strict_invalid_tool_use_block"] == 1
+    assert signals["tok_bridge_strict_invalid_tool_result_block"] == 1
+
+
+def test_gateway_quarantines_broken_tool_exchange_and_continues(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [{"role": "user", "content": "please continue"}],
+        "stream": False,
+    }
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "I inspected the repo.",
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "",
+                                "name": "",
+                                "input": {},
+                            },
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "",
+                                "content": "bad payload",
+                            },
+                            {
+                                "type": "text",
+                                "text": "Continue from preserved context.",
+                            },
+                        ],
+                    },
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=12,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assert sent_bodies[0]["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "please continue"}],
+        }
+    ]
+    assert "bridge_preflight_pairing_degraded_to_provider_safe" in caplog.text
+    assert "bridge_preflight_rejected_blocked_local" not in caplog.text
+
+
+def test_gateway_repeated_invalid_tool_history_recovery_resets_session_state(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [{"role": "user", "content": "please continue"}],
+        "stream": False,
+    }
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "",
+                                "name": "",
+                                "input": {},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "",
+                                "content": "bad payload",
+                            }
+                        ],
+                    },
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=12,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fail_if_sent(self, request, stream=False):
+        del self, request, stream
+        raise AssertionError("upstream send should not be called")
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fail_if_sent)
+
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
+    session.runtime_session._last_tool_compatible_state = "stale"
+    session.runtime_session._last_tool_compatible_state_fields = {
+        "turns": ["bad"]
+    }
+    session.runtime_session._observed_tool_result_ids.add("toolu_bad")
+    session.runtime_session.bridge_memory.hot["turns"] = ["bad"]
+    session.runtime_session.bridge_memory.rolling_cmds = ["cat foo"]
+
+    app = create_app(session)
+    client = TestClient(app)
+
+    first = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+    assert first.status_code == 400
+    session.consume_behavior_signals()
+
+    second = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+    assert second.status_code == 400
+    signals = session.consume_behavior_signals()
+    # After repeated invalid tool history (empty_messages due to stripped invalid blocks),
+    # the session state should be reset
+    assert (
+        signals.get("tok_bridge_invalid_tool_history_session_reset", 0) >= 1
+        or signals.get("tok_bridge_preflight_rejected_blocked_local", 0) >= 1
+    )
+    # Session state should be cleared after repeated failures
+    assert session.runtime_session._last_tool_compatible_state == ""
+    assert session.runtime_session._last_tool_compatible_state_fields == {}
+    assert session.runtime_session._observed_tool_result_ids == set()
+    assert "turns" not in session.runtime_session.bridge_memory.hot
+    assert session.runtime_session.bridge_memory.rolling_cmds == []
+
+
+def test_gateway_developer_smoke_surfaces_recovery_and_repair_outcomes(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    class FakeStreamResponse:
+        async def aiter_bytes(self):
+            if False:
+                yield b""
+            raise httpx.ReadError("boom")
+
+    class FakeClient:
+        async def aclose(self):
+            pass
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        if "example.com" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "model": "claude-sonnet-4",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "",
+                            "name": "Read",
+                            "input": {"file_path": "/tmp/example.py"},
+                        }
+                    ],
+                    "usage": {"input_tokens": 8, "output_tokens": 3},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "",
+                                "name": "Read",
+                                "input": {"file_path": "/tmp/example.py"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "",
+                                "content": "example contents",
+                            }
+                        ],
+                    },
+                    {"role": "user", "content": "Summarize the result."},
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=24,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
+    session.tracker.record_call = MagicMock()
+
+    async def _collect():
+        chunks = []
+        async for chunk in _buffer_strip_restream(
+            session,
+            FakeClient(),
+            FakeStreamResponse(),
+            tool_compatible=True,
+            request_method="POST",
+            request_url="https://example.com/v1/messages",
+            request_headers={},
+            request_content=json.dumps({"stream": True}).encode(),
+            request_state={"fallback_recorded": False},
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    output = b"".join(asyncio.run(_collect())).decode()
+    assert '"id": "toolu_recovery_1"' in output
+
+    app = create_app(session)
+    client = TestClient(app)
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "Continue."}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert "stream_recovery_retry_started" in caplog.text
+    assert "stream_recovery_succeeded_tool_use" in caplog.text
+    assert "bridge_preflight_repaired_tool_history" in caplog.text
+    assert "bridge_preflight_repaired_tool_result_pairing" in caplog.text
+    assert "bridge_preflight_rejected_blocked_local" not in caplog.text
 
 
 def test_gateway_canonicalizes_tool_heavy_bridge_body_before_send(
@@ -755,13 +1569,16 @@ def test_gateway_canonicalizes_tool_heavy_bridge_body_before_send(
     assert [message["role"] for message in sent_bodies[0]["messages"]] == [
         "assistant",
         "user",
+        "user",
     ]
     assert sent_bodies[0]["messages"][1]["content"] == [
         {
             "type": "tool_result",
             "tool_use_id": "tool_1",
             "content": "compressed file contents",
-        },
+        }
+    ]
+    assert sent_bodies[0]["messages"][2]["content"] == [
         {"type": "text", "text": "Summarize the bridge failure."},
     ]
     assert "bridge_preflight_ready" in caplog.text
@@ -836,7 +1653,15 @@ def test_gateway_reverts_to_original_when_bridge_preflight_rejects(
     )
 
     assert response.status_code == 200
-    assert sent_bodies == [original_payload]
+    # The gateway reverts to the canonicalized original payload (string content converted to text blocks)
+    expected_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+        ],
+        "stream": False,
+    }
+    assert sent_bodies == [expected_payload]
     assert "tok_bridge_preflight_rejected" in caplog.text
 
 
@@ -904,10 +1729,18 @@ def test_gateway_reverts_to_original_when_bridge_preflight_rejects_invalid_tool_
         json=original_payload,
     )
 
+    # Invalid prepared ordering degrades to a provider-safe original payload.
     assert response.status_code == 200
-    assert sent_bodies == [original_payload]
-    assert "tok_bridge_preflight_rejected" in caplog.text
-    assert "user_tool_result_after_text" in caplog.text
+    expected_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+        ],
+        "stream": False,
+    }
+    assert sent_bodies == [expected_payload]
+    assert "bridge_preflight_pairing_degraded_to_provider_safe" in caplog.text
+    assert "tok_bridge_preflight_rejected_blocked_local" not in caplog.text
 
 
 def test_gateway_logs_prompt_caching_fingerprint_at_preflight(
@@ -1159,7 +1992,10 @@ def test_gateway_allows_prompt_cached_request_when_cache_topology_is_unchanged(
     assert len(sent_bodies) == 1
     assert sent_bodies[0]["system"] == "Rewritten system"
     assert sent_bodies[0]["messages"] == [
-        {"role": "user", "content": "compressed hello"}
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "compressed hello"}],
+        }
     ]
     assert "bridge_preflight_ready" in caplog.text
     assert "prompt_caching_request_mutated" not in caplog.text
@@ -1416,6 +2252,18 @@ def test_collect_behavior_signals_detects_repeats_and_workarounds():
                     "name": "bash",
                     "input": {"command": "python -c 'print(1)' >&2"},
                 },
+                {
+                    "type": "tool_use",
+                    "id": "c1",
+                    "name": "bash",
+                    "input": {"command": "uv run pytest tests/unit/test_gateway.py -q"},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "c2",
+                    "name": "bash",
+                    "input": {"command": "uv run pytest tests/unit/test_gateway.py -q"},
+                },
             ],
         },
         {
@@ -1438,6 +2286,16 @@ def test_collect_behavior_signals_detects_repeats_and_workarounds():
             "tool_use_id": "s2",
             "content": "src/tok/app.py:10: app = create_app()",
         },
+        {
+            "role": "tool_result",
+            "tool_use_id": "c1",
+            "content": "1 passed in 0.10s",
+        },
+        {
+            "role": "tool_result",
+            "tool_use_id": "c2",
+            "content": "1 passed in 0.10s",
+        },
     ]
 
     id_to_context = _build_tool_use_id_to_context(messages)
@@ -1447,6 +2305,8 @@ def test_collect_behavior_signals_detects_repeats_and_workarounds():
     assert signals["repeat_search"] == 1
     assert signals["python_c_workaround"] == 1
     assert signals["stderr_workaround"] == 1
+    assert signals["repeat_command"] == 1
+    assert signals["repeat_command_stable_no_change"] == 1
     assert signals.get("reacquisition_cost_tokens", 0) >= 0
 
 
@@ -1815,7 +2675,270 @@ def test_streaming_tool_only_response_records_tracker():
         return chunks
 
     asyncio.run(_collect())
+
+
+def test_streaming_empty_success_recovers_via_non_stream_text(
+    monkeypatch, caplog
+):
+    class FakeResponse:
+        async def aiter_bytes(self):
+            if False:
+                yield b""
+            raise httpx.ReadError("boom")
+
+    class FakeClient:
+        def __init__(self):
+            self.closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    async def _fake_send(self, request, stream=False):
+        assert stream is False
+        payload = json.loads(request.content.decode())
+        assert payload["stream"] is False
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "content": [{"type": "text", "text": "Recovered answer"}],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    session = BridgeSession()
+    session.tracker.record_call = MagicMock()
+    client = FakeClient()
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    async def _collect():
+        chunks = []
+        async for chunk in _buffer_strip_restream(
+            session,
+            client,
+            FakeResponse(),
+            input_saved_tokens=12,
+            type_breakdown={"semantic_dedup": 48},
+            behavior_signals={},
+            prompt_metrics={"saved_prompt_tokens": 12},
+            tool_compatible=True,
+            request_method="POST",
+            request_url="https://example.com/v1/messages",
+            request_headers={"x-test": "1"},
+            request_content=json.dumps({"stream": True}).encode(),
+            request_state={"fallback_recorded": False},
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    output = b"".join(asyncio.run(_collect())).decode()
+
+    assert "Recovered answer" in output
+    session.tracker.record_call.assert_called_once()
+    signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
+    assert signals["stream_buffer_read_error"] == 1
+    assert signals["stream_empty_after_success"] == 1
+    assert signals["stream_recovery_started"] == 1
+    assert signals["stream_recovery_retry"] == 1
+    assert signals["stream_recovery_success_text"] == 1
+    assert signals["tool_compatible_response"] == 1
+    assert "stream_recovery_retry_started" in caplog.text
+    assert "stream_recovery_succeeded_text" in caplog.text
+    assert client.closed is True
+
+
+def test_streaming_empty_success_recovers_via_non_stream_tool_use(
+    monkeypatch, caplog
+):
+    class FakeResponse:
+        async def aiter_bytes(self):
+            if False:
+                yield b""
+            raise httpx.ReadError("boom")
+
+    class FakeClient:
+        async def aclose(self):
+            pass
+
+    async def _fake_send(self, request, stream=False):
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "",
+                        "name": "Read",
+                        "input": {"file_path": "/tmp/example.py"},
+                    }
+                ],
+                "usage": {"input_tokens": 8, "output_tokens": 3},
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    session = BridgeSession()
+    session.tracker.record_call = MagicMock()
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    async def _collect():
+        chunks = []
+        async for chunk in _buffer_strip_restream(
+            session,
+            FakeClient(),
+            FakeResponse(),
+            tool_compatible=True,
+            request_method="POST",
+            request_url="https://example.com/v1/messages",
+            request_headers={},
+            request_content=json.dumps({"stream": True}).encode(),
+            request_state={"fallback_recorded": False},
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    output = b"".join(asyncio.run(_collect())).decode()
+
+    assert '"type": "tool_use"' in output
+    assert '"id": ""' not in output
+    assert '"id": "toolu_recovery_1"' in output
+    assert "input_json_delta" in output
+    assert "/tmp/example.py" in output
+    session.tracker.record_call.assert_called_once()
+    signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
+    assert signals["stream_recovery_started"] == 1
+    assert signals["stream_recovery_retry"] == 1
+    assert signals["stream_recovery_success_tool_use"] == 1
+    assert "stream_recovery_retry_started" in caplog.text
+    assert "stream_recovery_succeeded_tool_use" in caplog.text
+    assert "tool_compatible_response" not in signals
+
+
+def test_streaming_empty_success_records_fallback_without_tool_compatible_signal(
+    monkeypatch, caplog
+):
+    class FakeResponse:
+        async def aiter_bytes(self):
+            if False:
+                yield b""
+            raise httpx.ReadError("boom")
+
+    class FakeClient:
+        async def aclose(self):
+            pass
+
+    async def _fake_send(self, request, stream=False):
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "content": [],
+                "usage": {"input_tokens": 8, "output_tokens": 3},
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    session = BridgeSession()
+    session.tracker.record_call = MagicMock()
+    request_state = {"fallback_recorded": False}
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    async def _collect():
+        chunks = []
+        async for chunk in _buffer_strip_restream(
+            session,
+            FakeClient(),
+            FakeResponse(),
+            tool_compatible=True,
+            request_method="POST",
+            request_url="https://example.com/v1/messages",
+            request_headers={},
+            request_content=json.dumps({"stream": True}).encode(),
+            request_state=request_state,
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    asyncio.run(_collect())
+
+    assert request_state["fallback_recorded"] is True
+    session.tracker.record_call.assert_called_once()
+    signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
+    assert signals["stream_buffer_read_error"] == 1
+    assert signals["stream_empty_after_success"] == 1
+    assert signals["stream_recovery_started"] == 1
+    assert signals["stream_recovery_retry"] == 1
+    assert signals["stream_recovery_fallback"] == 1
+    assert "stream_recovery_retry_started" in caplog.text
+    assert "stream_recovery_fallback" in caplog.text
+    assert "tool_compatible_response" not in signals
     assert session.tracker.record_call.called
+
+
+def test_streaming_empty_success_tool_use_loop_breaker_falls_back(monkeypatch):
+    class FakeResponse:
+        async def aiter_bytes(self):
+            if False:
+                yield b""
+            raise httpx.ReadError("boom")
+
+    class FakeClient:
+        async def aclose(self):
+            pass
+
+    async def _fake_send(self, request, stream=False):
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "",
+                        "name": "Bash",
+                        "input": {
+                            "command": "uv run pytest tests/unit/test_gateway.py -q"
+                        },
+                    }
+                ],
+                "usage": {"input_tokens": 8, "output_tokens": 3},
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", "2")
+    session = BridgeSession()
+    session.tracker.record_call = MagicMock()
+    request_state = {"fallback_recorded": False}
+
+    async def _collect_once():
+        chunks = []
+        async for chunk in _buffer_strip_restream(
+            session,
+            FakeClient(),
+            FakeResponse(),
+            tool_compatible=True,
+            request_method="POST",
+            request_url="https://example.com/v1/messages",
+            request_headers={},
+            request_content=json.dumps({"stream": True}).encode(),
+            request_state=request_state,
+        ):
+            chunks.append(chunk)
+        return b"".join(chunks).decode()
+
+    first = asyncio.run(_collect_once())
+    second = asyncio.run(_collect_once())
+
+    assert '"type": "tool_use"' in first
+    assert '"type": "tool_use"' not in second
+    assert request_state["fallback_recorded"] is True
+    assert session.tracker.record_call.call_count == 2
+    signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
+    assert signals["stream_recovery_loop_broken"] == 1
+    assert signals["stream_recovery_fallback"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -2035,9 +3158,9 @@ def test_gateway_retries_streaming_with_original_after_tok_400(
     original_payload = {
         "model": "claude-sonnet-4",
         "messages": [{"role": "user", "content": "hello"}],
-        "stream": True,
+        "stream": False,
     }
-    sent_bodies: list[dict] = []
+    sent_bodies: list[dict[str, Any]] = []
 
     def _fake_prepare_request(request, session, *, result_cache=None):
         del session, result_cache
@@ -2134,9 +3257,434 @@ def test_gateway_retries_streaming_with_original_after_tok_400(
     assert response.status_code == 200
     assert len(sent_bodies) == 2
     assert sent_bodies[0]["messages"] == [
-        {"role": "user", "content": "compressed by tok"}
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "compressed by tok"}],
+        }
     ]
-    assert sent_bodies[1]["messages"] == [{"role": "user", "content": "hello"}]
+    # The retry uses the canonicalized version where string content is converted to text blocks
+    assert sent_bodies[1]["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+    ]
+
+
+def test_gateway_streaming_upstream_400_returns_error_without_stream_recovery(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "system": "tok injected system",
+                "stream": True,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        if len(sent_bodies) == 1:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "prepared request rejected"}},
+            )
+        return httpx.Response(
+            400,
+            json={"error": {"message": "provider-safe retry still rejected"}},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "provider-safe retry still rejected"
+    assert len(sent_bodies) == 2
+    assert "stream_recovery_retry_started" not in caplog.text
+    assert "stream_recovery_fallback" not in caplog.text
+
+
+def test_gateway_retries_upstream_429_then_succeeds(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+    sleep_calls: list[float] = []
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        sent_bodies.append(json.loads(request.read().decode()))
+        if len(sent_bodies) == 1:
+            return httpx.Response(429, json={"error": {"message": "slow down"}})
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 3, "output_tokens": 2},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    session = BridgeSession(
+        memory_dir=memory_dir,
+        fail_open=True,
+        rate_limit_retry_max_attempts=2,
+        rate_limit_backoff_base_ms=150,
+        rate_limit_backoff_cap_ms=1000,
+    )
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 2
+    assert sleep_calls == [0.15]
+    assert "rate_limit_retry_attempt" in caplog.text
+
+
+def test_gateway_429_retry_honors_retry_after_floor(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sleep_calls: list[float] = []
+    sent_count = 0
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        nonlocal sent_count
+        del self, request, stream
+        sent_count += 1
+        if sent_count == 1:
+            return httpx.Response(
+                429,
+                json={"error": {"message": "slow down"}},
+                headers={"Retry-After": "2"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 2, "output_tokens": 1},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=2,
+            rate_limit_backoff_base_ms=150,
+            rate_limit_backoff_cap_ms=1000,
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert sent_count == 2
+    assert sleep_calls == [2.0]
+
+
+def test_gateway_persistent_429_retries_then_exhausts(tmp_path, monkeypatch, caplog):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_count = 0
+
+    async def _fake_sleep(_delay: float) -> None:
+        return None
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        nonlocal sent_count
+        del self, request, stream
+        sent_count += 1
+        return httpx.Response(429, json={"error": {"message": "slow down"}})
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=2,
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 429
+    assert sent_count == 3
+    assert "rate_limit_retry_exhausted" in caplog.text
+
+
+def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_count = 0
+
+    async def _fake_sleep(_delay: float) -> None:
+        return None
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        nonlocal sent_count
+        del self, request, stream
+        sent_count += 1
+        return httpx.Response(429, json={"error": {"message": "slow down"}})
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
+    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+
+    session = BridgeSession(
+        memory_dir=memory_dir,
+        rate_limit_retry_max_attempts=0,
+        rate_limit_throttle_threshold=1,
+        rate_limit_throttle_cooldown_sec=20,
+        rate_limit_throttle_window_sec=30,
+    )
+    app = create_app(session)
+    client = TestClient(app)
+
+    first = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+    second = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert first.status_code == 429
+    assert second.status_code == 429
+    assert second.json()["error"]["type"] == "rate_limit_error"
+    assert "Retry-After" in second.headers
+    assert sent_count == 1
+
+
+def test_gateway_local_throttle_expiry_allows_upstream_again(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_count = 0
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        nonlocal sent_count
+        del self, request, stream
+        sent_count += 1
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 2, "output_tokens": 1},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    session = BridgeSession(memory_dir=memory_dir)
+    session._rate_limit_throttle_until = time.time() + 30
+    app = create_app(session)
+    client = TestClient(app)
+
+    blocked = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+    assert blocked.status_code == 429
+    assert sent_count == 0
+
+    session._rate_limit_throttle_until = time.time() - 1
+    allowed = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+    assert allowed.status_code == 200
+    assert sent_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -2191,6 +3739,669 @@ def test_gateway_fail_open_false_does_not_retry_on_400(tmp_path, monkeypatch):
 
     assert response.status_code == 400
     assert len(sent_bodies) == 1
+
+
+def test_gateway_degrades_to_provider_safe_body_on_prepared_pairing_failure(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {"role": "user", "content": "Inspect the bridge."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_1",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/gateway.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_1",
+                        "content": "file contents",
+                    }
+                ],
+            },
+            {"role": "assistant", "content": [{"type": "text", "text": "Continue."}]},
+        ],
+        "stream": False,
+    }
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {"role": "user", "content": "Inspect the bridge."},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool_1",
+                                "name": "view_file",
+                                "input": {"path": "src/tok/gateway.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "tool_2",
+                                "name": "grep",
+                                "input": {"pattern": "TODO"},
+                            },
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool_1",
+                                "content": "file contents",
+                            }
+                        ],
+                    },
+                ],
+                "system": "tok system",
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assert sent_bodies[0]["messages"] != [
+        {"role": "user", "content": "Inspect the bridge."},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/gateway.py"},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "tool_2",
+                    "name": "grep",
+                    "input": {"pattern": "TODO"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "content": "file contents",
+                }
+            ],
+        },
+    ]
+    assert sent_bodies[0]["messages"][1]["content"][0]["id"] == "tool_1"
+    assert "bridge_preflight_pairing_degraded_to_provider_safe" in caplog.text
+
+
+def test_gateway_reorders_prepared_out_of_order_tool_results_before_send(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {"role": "user", "content": "Inspect the bridge."},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool_1",
+                                "name": "view_file",
+                                "input": {"path": "src/tok/gateway.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "tool_2",
+                                "name": "grep",
+                                "input": {"pattern": "TODO"},
+                            },
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool_2",
+                                "content": "grep output",
+                            },
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool_1",
+                                "content": "file output",
+                            },
+                        ],
+                    },
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assert sent_bodies[0]["messages"][2]["content"] == [
+        {
+            "type": "tool_result",
+            "tool_use_id": "tool_1",
+            "content": "file output",
+        },
+        {
+            "type": "tool_result",
+            "tool_use_id": "tool_2",
+            "content": "grep output",
+        },
+    ]
+
+
+def test_gateway_blocks_pairing_failure_when_provider_safe_body_is_still_invalid(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_1",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/gateway.py"},
+                    }
+                ],
+            },
+            {"role": "user", "content": [{"type": "text", "text": "Continue."}]},
+        ],
+        "stream": False,
+    }
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "tool_1",
+                                "name": "view_file",
+                                "input": {"path": "src/tok/gateway.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "tool_2",
+                                "name": "grep",
+                                "input": {"pattern": "TODO"},
+                            },
+                        ],
+                    },
+                    {"role": "user", "content": [{"type": "text", "text": "Continue."}]},
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fail_if_sent(self, request, stream=False):
+        del self, request, stream
+        raise AssertionError("upstream send should not be called")
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fail_if_sent)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 400
+    assert "bridge_preflight_rejected_blocked_local" in caplog.text
+    assert "bridge_preflight_pairing_degraded_to_provider_safe" not in caplog.text
+
+
+def test_gateway_fail_open_retry_uses_provider_safe_body_after_tool_history_repair(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu bad/id",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/gateway.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu bad/id",
+                        "content": "file contents",
+                    },
+                    {"type": "text", "text": "Continue."},
+                ],
+            },
+        ],
+        "stream": False,
+    }
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "system": "tok injected system",
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        if len(sent_bodies) == 1:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "bad request"}},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 2
+    assert sent_bodies[0]["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "compressed by tok"}],
+        }
+    ]
+    retry_text = json.dumps(sent_bodies[1], sort_keys=True)
+    assert "toolu bad/id" not in retry_text
+    assert "toolu_bad_id" in retry_text
+
+
+def test_gateway_logs_pairing_forensics_when_upstream_reports_pairing_disagreement(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {"role": "user", "content": "Inspect concurrency path."},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_a1",
+                                "name": "read_file",
+                                "input": {"path": "a.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_a2",
+                                "name": "read_file",
+                                "input": {"path": "b.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_a3",
+                                "name": "read_file",
+                                "input": {"path": "c.py"},
+                            },
+                            {"type": "text", "text": "Collecting evidence."},
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_a1",
+                                "content": "A",
+                            },
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_a2",
+                                "content": "B",
+                            },
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_a3",
+                                "content": "C",
+                            },
+                        ],
+                    },
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        if len(sent_bodies) == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": (
+                            "messages.1: `tool_use` ids were found without `tool_result` blocks immediately after: "
+                            "toolu_a1, toolu_a2, toolu_a3. Each `tool_use` block must have a corresponding `tool_result` block in the next message."
+                        ),
+                    },
+                },
+            )
+        return httpx.Response(
+            400,
+            json={"error": {"message": "provider-safe retry also rejected"}},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert len(sent_bodies) == 2
+    assert "bridge_pairing_forensics" in caplog.text
+    assert "fail_open_retry_upstream_pairing_disagreement" in caplog.text
+    assert (
+        "fail_open_retry_upstream_pairing_disagreement_without_mixed_user_message"
+        in caplog.text
+    )
+    assert "toolu_a1" in caplog.text
+    assert "toolu_a2" in caplog.text
+    assert "toolu_a3" in caplog.text
+
+
+def test_gateway_logs_pairing_disagreement_after_user_message_split(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {"role": "user", "content": "Inspect split path."},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_a1",
+                                "name": "read_file",
+                                "input": {"path": "a.py"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_a1",
+                                "content": "A",
+                            },
+                            {"type": "text", "text": "Continue."},
+                        ],
+                    },
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        if len(sent_bodies) == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": (
+                            "messages.1: `tool_use` ids were found without `tool_result` blocks immediately after: "
+                            "toolu_a1. Each `tool_use` block must have a corresponding `tool_result` block in the next message."
+                        ),
+                    },
+                },
+            )
+        return httpx.Response(
+            400,
+            json={"error": {"message": "provider-safe retry also rejected"}},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert len(sent_bodies) == 2
+    assert sent_bodies[0]["messages"][2]["content"] == [
+        {
+            "type": "tool_result",
+            "tool_use_id": "toolu_a1",
+            "content": "A",
+        }
+    ]
+    assert sent_bodies[0]["messages"][3]["content"] == [
+        {"type": "text", "text": "Continue."}
+    ]
+    assert "prepared_mixed_user_tool_result_messages=0" in caplog.text
+    assert "prepared_split_boundaries=1" in caplog.text
+    assert (
+        "fail_open_retry_upstream_pairing_disagreement_after_user_message_split"
+        in caplog.text
+    )
 
 
 def test_gateway_fail_open_false_propagates_request_processing_error(

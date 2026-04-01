@@ -1,4 +1,5 @@
-from tok.bridge_memory import PointerRegistry, BridgeMemoryState, MemoryEntry
+from tok.memory.pointers import PointerRegistry
+from tok.bridge_memory import BridgeMemoryState, MemoryEntry
 from tok.universal_runtime import SemanticValidator
 
 

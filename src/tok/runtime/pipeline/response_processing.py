@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ...protocol.models import TokNode
 from ...protocol.parser import TokParser, serialize
 from ...runtime.policy.translator import IS_TOK, postprocess_response
+from .request_validation import normalize_tool_use_blocks
 from ..types import ProcessedRuntimeResponse
 from ..memory.answer_memory import extract_structured_answer_memory
 
@@ -540,7 +541,10 @@ def translate_response_tools(text: str) -> list[dict[str, Any]]:
         if full_text:
             content_blocks.append({"type": "text", "text": full_text})
 
-    return content_blocks
+    normalized_blocks, _ = normalize_tool_use_blocks(
+        content_blocks, seed_prefix="toolu_rsp"
+    )
+    return normalized_blocks
 
 
 def parse_tok_response(

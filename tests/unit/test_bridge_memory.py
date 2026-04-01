@@ -519,7 +519,8 @@ def test_wire_state_field_ordering_is_deterministic():
 
 def test_wire_state_respects_profile_limits():
     """Profile limits must override default HOT_LIMITS."""
-    from tok.bridge_memory import BridgeMemoryState, MemoryProjectionProfile
+    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.policy.smart_policy import MemoryProjectionProfile
 
     mem = BridgeMemoryState()
     mem.ingest_wire_state(">>> cmds:ls,cat,grep,rm,mv|errs:e1,e2,e3,e4")
@@ -581,7 +582,8 @@ def test_edited_file_triggers_was_edited_digest_branch():
 
 def test_durable_facts_scale_to_new_limit():
     """Verify that we can hold 32 facts in durable memory and answer facts still win."""
-    from tok.bridge_memory import BridgeMemoryState, MemoryProjectionProfile
+    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.policy.smart_policy import MemoryProjectionProfile
 
     state = BridgeMemoryState()
 

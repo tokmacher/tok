@@ -12,7 +12,21 @@ import time as time_module
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+__all__ = [
+    "TOOL_COMPRESS_THRESHOLD",
+]
+
+# Threshold in characters for when to compress tool results
+# Set to 0 to always compress if we have a strategy
+TOOL_COMPRESS_THRESHOLD = 0
 
 logger = logging.getLogger("tok.compression")
 
@@ -43,9 +57,7 @@ class StableResultPayload(BaseModel):
 
     @field_validator("summary", "skeleton")
     @classmethod
-    def _normalize_optional_payload_text(
-        cls, value: str | None
-    ) -> str | None:
+    def _normalize_optional_payload_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         cleaned = str(value).strip()
@@ -69,7 +81,9 @@ class StableResultPayload(BaseModel):
             payload_lines.append(f"@stable_skeleton |> {self.skeleton}")
         payload = "\n".join(payload_lines)
         if self.replayed_cached_bytes:
-            payload = ">>> replayed_cached_bytes|verified_unchanged\n" + payload
+            payload = (
+                ">>> replayed_cached_bytes|verified_unchanged\n" + payload
+            )
         return payload
 
 
@@ -542,7 +556,7 @@ def tok_tool_result(content: str, compression_level: str = "balanced") -> str:
 def _apply_result_cache(
     raw: str,
     context: dict[str, Any],
-    result_cache: dict[str, tuple[str, str]],
+    result_cache: dict[str, tuple[str, str, float]],
     compression_level: str = "balanced",
     bypass_cache: bool = False,
     ttl_seconds: int = 1800,
@@ -640,9 +654,17 @@ def _apply_result_cache(
             # If we replayed a host stub, preserve cached bytes (do not overwrite
             # with the stub). Refresh timestamp so TTL behaves as expected.
             if host_stub_replayed and len(cached_entry) == 3:
-                result_cache[cache_key] = (cached_hash, cached_raw, time_module.time())
+                result_cache[cache_key] = (
+                    cached_hash,
+                    cached_raw,
+                    time_module.time(),
+                )
             else:
-                result_cache[cache_key] = (content_hash, raw, time_module.time())
+                result_cache[cache_key] = (
+                    content_hash,
+                    raw,
+                    time_module.time(),
+                )
             return raw, 0
         if normalized_tool_name in FILE_LIKE_TOOLS:
             try:
@@ -652,10 +674,13 @@ def _apply_result_cache(
                 )
 
                 stable_hash = _compute_semantic_hash(raw)
-                summary = build_file_summary(
-                    raw, max_chars=280, max_lines=12
-                ) or " ".join(raw.split())[:280]
-                skeleton = build_file_skeleton(raw, max_chars=280, max_lines=14)
+                summary = (
+                    build_file_summary(raw, max_chars=280, max_lines=12)
+                    or " ".join(raw.split())[:280]
+                )
+                skeleton = build_file_skeleton(
+                    raw, max_chars=280, max_lines=14
+                )
                 payload = StableResultPayload.model_validate(
                     {
                         "semantic_hash": stable_hash,
@@ -733,7 +758,7 @@ def _apply_result_cache(
 def _apply_file_cache(
     raw: str,
     path: str,
-    file_cache: dict[str, tuple[str, str]],
+    file_cache: dict[str, tuple[str, str, float]],
 ) -> tuple[str, int]:
     """Compatibility wrapper for old file cache tests."""
     context = {"name": "view_file", "path": path, "args": {"path": path}}
@@ -776,7 +801,11 @@ def _make_semantic_cache_key(
         context.get("path")
         or (raw_args.get("path") if isinstance(raw_args, dict) else None)
         or (raw_args.get("file_path") if isinstance(raw_args, dict) else None)
-        or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
+        or (
+            raw_args.get("AbsolutePath")
+            if isinstance(raw_args, dict)
+            else None
+        )
         or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
     )
     raw_query = (
@@ -812,7 +841,7 @@ def _make_semantic_cache_key(
 
 def compress_tool_results(
     messages: list[dict[str, Any]],
-    result_cache: dict[str, tuple[str, str]] | None = None,
+    result_cache: dict[str, tuple[str, str, float]] | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,

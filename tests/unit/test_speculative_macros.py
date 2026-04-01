@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import tok.compression
+from typing import Any
 
-tok.compression.TOOL_COMPRESS_THRESHOLD = 0
+import tok.compression._pipeline
+
+tok.compression._pipeline.TOOL_COMPRESS_THRESHOLD = 0
 
 from tok.compression import (
     _compute_semantic_hash,
@@ -35,7 +37,7 @@ from tok.universal_runtime import (
 
 def _make_tool_use_msg(
     tool_id: str, tool_name: str, path: str = "src/tok/foo.py"
-):
+) -> dict[str, Any]:
     return {
         "role": "assistant",
         "content": [
@@ -49,7 +51,7 @@ def _make_tool_use_msg(
     }
 
 
-def _make_tool_result_block(tool_id: str, content: str):
+def _make_tool_result_block(tool_id: str, content: str) -> dict[str, Any]:
     return {
         "role": "user",
         "content": [
@@ -62,7 +64,9 @@ def _make_tool_result_block(tool_id: str, content: str):
     }
 
 
-def _make_id_to_context(tool_id: str, tool_name: str, path: str):
+def _make_id_to_context(
+    tool_id: str, tool_name: str, path: str
+) -> dict[str, Any]:
     return {
         tool_id: {
             "name": tool_name,
@@ -204,7 +208,7 @@ class TestSemanticHashDedup:
         content: str,
         tool_name: str = "view_file",
         path: str = "src/tok/foo.py",
-    ):
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
         tool_id = "tid1"
         messages = [_make_tool_result_block(tool_id, content)]
         id_to_ctx = _make_id_to_context(tool_id, tool_name, path)
@@ -341,15 +345,16 @@ class TestSemanticHashDedup:
             "    def m(self):\n"
             "        pass\n\n"
             "def top():\n"
-            "    return 1\n"
-            + ("# filler\n" * 200)
+            "    return 1\n" + ("# filler\n" * 200)
         )
         cache: dict[str, str] = {}
 
         # Seed semantic hash cache
         compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
-            tool_use_id_to_context=_make_id_to_context(tool_id, "view_file", path),
+            tool_use_id_to_context=_make_id_to_context(
+                tool_id, "view_file", path
+            ),
             semantic_hash_cache=cache,
         )
 
@@ -381,20 +386,23 @@ class TestSemanticHashDedup:
             "async def coro():\n"
             "    return 1\n\n"
             "def top():\n"
-            "    return 2\n"
-            + ("# filler\n" * 200)
+            "    return 2\n" + ("# filler\n" * 200)
         )
         cache: dict[str, str] = {}
 
         compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
-            tool_use_id_to_context=_make_id_to_context(tool_id, "view_file", path),
+            tool_use_id_to_context=_make_id_to_context(
+                tool_id, "view_file", path
+            ),
             semantic_hash_cache=cache,
         )
 
         result2, _breakdown2 = compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
-            tool_use_id_to_context=_make_id_to_context(tool_id, "view_file", path),
+            tool_use_id_to_context=_make_id_to_context(
+                tool_id, "view_file", path
+            ),
             semantic_hash_cache=cache,
             hot_summary_records={},
         )
@@ -540,11 +548,10 @@ class TestResultCacheStablePayload:
             "    def m(self):\n"
             "        pass\n\n"
             "def top():\n"
-            "    return 1\n"
-            + ("# filler\n" * 400)
+            "    return 1\n" + ("# filler\n" * 400)
         )
         id_to_ctx = _make_id_to_context(tool_id, "Read", path)
-        result_cache: dict[str, tuple[str, str]] = {}
+        result_cache: dict[str, tuple[str, str, float]] = {}
 
         # First pass seeds result_cache (file-like tool returns raw first time).
         compress_tool_results(
@@ -576,7 +583,7 @@ class TestResultCacheStablePayload:
                 "args": {"file_path": path, "offset": 10, "limit": 20},
             }
         }
-        result_cache: dict[str, tuple[str, str]] = {}
+        result_cache: dict[str, tuple[str, str, float]] = {}
 
         compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
@@ -605,7 +612,7 @@ class TestResultCacheStablePayload:
                 "args": {"file_path": path, "offset": 10, "limit": 20},
             }
         }
-        result_cache: dict[str, tuple[str, str]] = {}
+        result_cache: dict[str, tuple[str, str, float]] = {}
 
         # Seed with real content.
         compress_tool_results(
@@ -625,7 +632,9 @@ class TestResultCacheStablePayload:
         block_content = result2[0]["content"][0]["content"]
         assert block_content == content
 
-    def test_host_unchanged_stub_replays_stable_payload_for_non_precision(self):
+    def test_host_unchanged_stub_replays_stable_payload_for_non_precision(
+        self,
+    ):
         tool_id = "tid1"
         path = "src/tok/foo.py"
         content = (
@@ -633,11 +642,10 @@ class TestResultCacheStablePayload:
             "    def m(self):\n"
             "        pass\n\n"
             "def top():\n"
-            "    return 1\n"
-            + ("# filler\n" * 400)
+            "    return 1\n" + ("# filler\n" * 400)
         )
         id_to_ctx = _make_id_to_context(tool_id, "Read", path)
-        result_cache: dict[str, tuple[str, str]] = {}
+        result_cache: dict[str, tuple[str, str, float]] = {}
 
         compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
@@ -654,7 +662,9 @@ class TestResultCacheStablePayload:
             semantic_hash_cache=None,
         )
         block_content = result2[0]["content"][0]["content"]
-        assert block_content.startswith(">>> replayed_cached_bytes|verified_unchanged")
+        assert block_content.startswith(
+            ">>> replayed_cached_bytes|verified_unchanged"
+        )
         assert "@stable_result(hash:" in block_content
 
     def test_invalid_stable_payload_metadata_falls_back_to_failure_stub(
@@ -666,7 +676,7 @@ class TestResultCacheStablePayload:
         path = "src/tok/foo.py"
         content = "class A:\n    pass\n" + ("# filler\n" * 400)
         id_to_ctx = _make_id_to_context(tool_id, "Read", path)
-        result_cache: dict[str, tuple[str, str]] = {}
+        result_cache: dict[str, tuple[str, str, float]] = {}
 
         compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
@@ -719,7 +729,9 @@ class TestPrecisionReadVerbatim:
         tool_id = "tid1"
         path = "src/tok/foo.py"
         content = "\n".join(f"line {i}" for i in range(800))
-        messages = [{"role": "tool_result", "tool_use_id": tool_id, "content": content}]
+        messages = [
+            {"role": "tool_result", "tool_use_id": tool_id, "content": content}
+        ]
         id_to_ctx = {
             tool_id: {
                 "name": "Read",
@@ -727,7 +739,7 @@ class TestPrecisionReadVerbatim:
                 "args": {"file_path": path, "offset": 10, "limit": 40},
             }
         }
-        result_cache: dict[str, tuple[str, str]] = {}
+        result_cache: dict[str, tuple[str, str, float]] = {}
 
         result, _breakdown = compress_tool_results(
             messages,
@@ -752,7 +764,7 @@ class TestSemanticDedupSignal:
 
         large_output = "file content line\n" * 50  # > 200 chars
 
-        def _req(tool_id: str):
+        def _req(tool_id: str) -> RuntimeRequest:
             return RuntimeRequest(
                 model="claude-sonnet-4-6",
                 messages=[

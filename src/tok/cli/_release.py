@@ -408,7 +408,7 @@ def replay_command(
     history_before = 0
     history_after = 0
     history_turns = 0
-    file_cache: dict[str, tuple[str, str]] = {}
+    file_cache: dict[str, tuple[str, str, float]] = {}
     behavior_totals: dict[str, int] = {}
 
     lines_read = 0

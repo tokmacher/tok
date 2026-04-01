@@ -124,6 +124,10 @@ TOK_LARGE_FILE_HINT = (
     "For files >500 lines, use session.explore_file(path) or session.get_file_overview(path) "
     "to get a Tok-formatted overview before reading specific sections with Read(offset=X, limit=Y)."
 )
+TOK_REPEAT_COMMAND_SUPPRESSION_HINT = (
+    "You just ran an identical command and got the same successful result. "
+    "Do not rerun it unless files or constraints changed; proceed to synthesis or next distinct step."
+)
 TOK_NEIGHBORHOOD_TRIGGER_ANCHORS: int = int(
     os.getenv("TOK_NEIGHBORHOOD_TRIGGER_ANCHORS", "3")
 )
@@ -192,6 +196,7 @@ __all__ = [
     "TOK_NOVELTY_REQUIRED_HINT",
     "TOK_NEIGHBORHOOD_THRASH_HINT",
     "TOK_LARGE_FILE_HINT",
+    "TOK_REPEAT_COMMAND_SUPPRESSION_HINT",
     "TOK_NEIGHBORHOOD_TRIGGER_ANCHORS",
     "TOK_NEIGHBORHOOD_WINDOW_TURNS",
     "_TOOL_REQUIRED_PROMPT_PATTERNS",

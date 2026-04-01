@@ -1,7 +1,8 @@
 import json
+from typing import Any
 from types import SimpleNamespace
 
-from tok.live_benchmark import (
+from tok.testing.live_benchmark import (
     BenchmarkDefinition,
     BenchmarkResult,
     LiveBenchmarkRunner,
@@ -118,7 +119,7 @@ def _result(
 
 
 def test_normalize_fixture_messages_converts_tools_and_appends_followup():
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Read the file"},
         {
             "role": "assistant",
@@ -145,7 +146,7 @@ def test_normalize_fixture_messages_converts_tools_and_appends_followup():
 
 
 def test_chunk_messages_respects_replay_turn_boundaries():
-    fixture = [
+    fixture: list[dict[str, Any]] = [
         {
             "role": "user",
             "content": "Find where history compression is implemented.",

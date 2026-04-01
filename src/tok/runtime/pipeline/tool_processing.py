@@ -58,6 +58,7 @@ def _is_supported_bypass_target(
         for key in ("path", "file_path", "AbsolutePath", "TargetFile")
     )
 
+
 try:
     import tiktoken
 
@@ -148,9 +149,9 @@ def build_tool_use_id_to_context(
             if not tool_id or not isinstance(tool_input, dict):
                 if bypass_next_tool_use:
                     invalid_bypass_index += 1
-                    result[f"__invalid_bypass_marker__:{invalid_bypass_index}"] = {
-                        "invalid_bypass_marker": True
-                    }
+                    result[
+                        f"__invalid_bypass_marker__:{invalid_bypass_index}"
+                    ] = {"invalid_bypass_marker": True}
                     bypass_next_tool_use = False
                 continue
             path = (
@@ -196,7 +197,9 @@ def build_tool_use_id_to_context(
             except ValidationError:
                 context_dict = {
                     "name": str(tool_name or "").strip(),
-                    "args": dict(tool_input) if isinstance(tool_input, dict) else {},
+                    "args": dict(tool_input)
+                    if isinstance(tool_input, dict)
+                    else {},
                     "path": str(path).strip() if path else None,
                     "query": str(query).strip() if query else None,
                     "tool_context_validation_failed": True,
@@ -482,7 +485,7 @@ def _track_file_read_repeats(
     file_reads_seen_raw: dict[str, int],
     file_reads_seen_logical: dict[str, int],
     repeat_file_read_ids: list[str],
-    result_cache: dict[str, tuple[str, str]] | None,
+    result_cache: dict[str, tuple[str, str, float]] | None,
     bump: Callable[[str], None],
 ) -> None:
     """Track file read operations and detect repeats."""
@@ -654,7 +657,7 @@ def _is_cached_hit(
     tool_name: str,
     context: dict[str, Any],
     raw_content: str,
-    result_cache: dict[str, tuple[str, str]] | None,
+    result_cache: dict[str, tuple[str, str, float]] | None,
 ) -> bool:
     """Check if a tool result is cached and matches."""
     if result_cache is None:
@@ -677,7 +680,7 @@ def _process_repeat_file_results(
     result_text: str,
     is_repeat_file: bool,
     file_reads_seen_logical: dict[str, int],
-    result_cache: dict[str, tuple[str, str]] | None,
+    result_cache: dict[str, tuple[str, str, float]] | None,
     bump: Callable[[str], None],
 ) -> None:
     """Process repeat file read results and calculate reacquisition costs."""
@@ -709,7 +712,7 @@ def _process_repeat_search_results(
     query: str,
     is_repeat_search: bool,
     searches_seen_logical: dict[str, int],
-    result_cache: dict[str, tuple[str, str]] | None,
+    result_cache: dict[str, tuple[str, str, float]] | None,
     bump: Callable[[str], None],
 ) -> None:
     """Process repeat search results and calculate reacquisition costs."""
@@ -733,24 +736,47 @@ def _process_repeat_search_results(
 def _process_repeat_command_results(
     logical_target: str,
     family: str,
+    result_text: str,
     is_repeat_command: bool,
     commands_seen_logical: dict[str, int],
+    command_result_state: dict[str, tuple[str, bool]],
     bump: Callable[[str], None],
 ) -> None:
     """Process repeat command results."""
     if family != "command":
         return
+
+    text = str(result_text or "")
+    digest = hashlib.sha256(text.encode()).hexdigest() if text else ""
+    lowered = text.lower()
+    current_success = bool(text.strip()) and not any(
+        token in lowered
+        for token in ("error", "failed", "traceback", "exception")
+    )
+    previous_state = command_result_state.get(logical_target)
+    command_result_state[logical_target] = (digest, current_success)
+
     if commands_seen_logical.get(logical_target, 0) <= 1:
         return
 
     if is_repeat_command:
-        bump("repeated_tool_call")
+        bump("repeat_command")
+        if (
+            previous_state
+            and previous_state[1]
+            and current_success
+            and previous_state[0]
+            and previous_state[0] == digest
+        ):
+            bump("repeat_command_stable_no_change")
+            bump("repeated_tool_call")
 
 
 def collect_behavior_signals(
     messages: list[dict[str, Any]],
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
-    result_cache: dict[str, tuple[str, str]] | None = None,
+    result_cache: dict[str, tuple[str, str, float]] | None = None,
+    suppress_reacquisition_once: bool = False,
 ) -> dict[str, int]:
     """Track patterns that indicate Tok is helping or being routed around."""
     signals: dict[str, int] = {}
@@ -809,6 +835,20 @@ def collect_behavior_signals(
             bump("blocker_rediscovery")
             break
 
+    if suppress_reacquisition_once:
+        suppressed = False
+        for key in (
+            "repeat_file_read",
+            "repeat_search",
+            "reacquisition_cost_tokens",
+            "file_reacquisition_cost_tokens",
+            "search_reacquisition_cost_tokens",
+        ):
+            if signals.pop(key, 0):
+                suppressed = True
+        if suppressed:
+            bump("stream_recovery_reacquisition_suppressed")
+
     return signals
 
 
@@ -822,7 +862,7 @@ def _track_assistant_tool_usage(
     repeat_search_ids: list[str],
     repeat_command_ids: list[str],
     repeated_tool_targets: set[tuple[str, str]],
-    result_cache: dict[str, tuple[str, str]] | None,
+    result_cache: dict[str, tuple[str, str, float]] | None,
     bump: Callable[[str], None],
 ) -> None:
     for msg in messages:
@@ -918,9 +958,10 @@ def _process_cached_tool_results(
     file_reads_seen_logical: dict[str, int],
     searches_seen_logical: dict[str, int],
     commands_seen_logical: dict[str, int],
-    result_cache: dict[str, tuple[str, str]] | None,
+    result_cache: dict[str, tuple[str, str, float]] | None,
     bump: Callable[[str], None],
 ) -> None:
+    command_result_state: dict[str, tuple[str, bool]] = {}
     for tool_id, result_text in _iter_tool_results(messages):
         context = tool_use_id_to_context.get(tool_id)
         if not context:
@@ -980,8 +1021,10 @@ def _process_cached_tool_results(
         _process_repeat_command_results(
             logical_target,
             family,
+            result_text,
             is_repeat_command,
             commands_seen_logical,
+            command_result_state,
             bump,
         )
 

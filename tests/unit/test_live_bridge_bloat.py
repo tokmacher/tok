@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from tok.analysis.live_bridge_bloat import (
     generate_live_bridge_bloat_report,
     measure_live_bridge_bloat_scenarios,
@@ -26,17 +28,17 @@ def test_prepared_request_bloat_attribution_tracks_cold_start_floor(tmp_path):
         session,
     )
 
-    attribution = prepared.bloat_attribution
+    attribution: dict[str, Any] = prepared.bloat_attribution
 
     if not attribution:
         return
 
-    assert (
-        attribution["system_additions"]["directive_variant"]
-        == "tool-compatible"
-    )
-    assert attribution["system_additions"]["tok_state_tokens"] == 0
-    assert attribution["state_resend"]["mode"] == "none"
+    system_additions: dict[str, Any] = attribution["system_additions"]
+    state_resend: dict[str, Any] = attribution["state_resend"]
+
+    assert system_additions["directive_variant"] == "tool-compatible"
+    assert system_additions["tok_state_tokens"] == 0
+    assert state_resend["mode"] == "none"
 
 
 def test_live_bridge_scenarios_keep_second_warm_turn_no_larger_than_first():

@@ -39,6 +39,14 @@ def _degradation_reason(
 ) -> str:
     if baseline_only or signals.get(BASELINE_ONLY_SIGNAL, 0):
         return "baseline fallback"
+    if signals.get("stream_recovery_retry", 0) or signals.get(
+        "stream_recovery_fallback", 0
+    ):
+        return "stream recovery"
+    if signals.get("tok_bridge_invalid_tool_history_quarantined", 0) or signals.get(
+        "tok_bridge_invalid_tool_history_blocked", 0
+    ):
+        return "invalid tool history recovery"
     if signals.get("fail_open_compat_response", 0) or signals.get(
         "processing_error", 0
     ):
@@ -66,10 +74,16 @@ def _session_quality(
 ) -> str:
     if baseline_only:
         return "degraded"
+    if signals.get("tok_bridge_invalid_tool_history_session_reset", 0):
+        return "degraded"
     if (
         signals.get(FALLBACK_SIGNAL, 0)
         or signals.get("semantic_drift_detected", 0)
         or signals.get("fail_open_compat_response", 0)
+        or signals.get("stream_recovery_retry", 0)
+        or signals.get("stream_recovery_fallback", 0)
+        or signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
+        or signals.get("tok_bridge_invalid_tool_history_blocked", 0)
         or signals.get("repeat_file_read", 0)
         or signals.get("repeat_search", 0)
         or (
@@ -480,6 +494,33 @@ class SavingsTracker:
             signals,
             baseline_only=baseline_only,
         )
+        stream_recovery_attempt_count = int(
+            signals.get("stream_recovery_started", 0)
+        ) or int(signals.get("stream_recovery_retry", 0))
+        stream_recovery_success_text_count = int(
+            signals.get("stream_recovery_success_text", 0)
+        )
+        stream_recovery_success_tool_use_count = int(
+            signals.get("stream_recovery_success_tool_use", 0)
+        )
+        stream_recovery_fallback_count = int(
+            signals.get("stream_recovery_fallback", 0)
+        )
+        tool_history_repaired_count = int(
+            signals.get("tok_bridge_tool_history_repaired", 0)
+        )
+        tool_history_pairing_repaired_count = int(
+            signals.get("tok_bridge_tool_history_pairing_repaired", 0)
+        )
+        tool_history_quarantined_count = int(
+            signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
+        )
+        tool_history_blocked_count = int(
+            signals.get("tok_bridge_invalid_tool_history_blocked", 0)
+        )
+        invalid_tool_history_session_reset_count = int(
+            signals.get("tok_bridge_invalid_tool_history_session_reset", 0)
+        )
 
         return {
             "calls": calls,
@@ -504,6 +545,15 @@ class SavingsTracker:
             "non_tok_count": non_tok_count,
             "answer_anchor_miss_count": answer_anchor_miss_count,
             "reacquisition_count": reacquisition_count,
+            "stream_recovery_attempt_count": stream_recovery_attempt_count,
+            "stream_recovery_success_text_count": stream_recovery_success_text_count,
+            "stream_recovery_success_tool_use_count": stream_recovery_success_tool_use_count,
+            "stream_recovery_fallback_count": stream_recovery_fallback_count,
+            "tool_history_repaired_count": tool_history_repaired_count,
+            "tool_history_pairing_repaired_count": tool_history_pairing_repaired_count,
+            "tool_history_quarantined_count": tool_history_quarantined_count,
+            "tool_history_blocked_count": tool_history_blocked_count,
+            "invalid_tool_history_session_reset_count": invalid_tool_history_session_reset_count,
             "session_quality": quality,
             "last_degradation_reason": degradation_reason,
         }

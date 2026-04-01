@@ -1,3 +1,5 @@
+from typing import cast
+
 from tok.neuro.ir import Instruction, TokIR, Macro, MacroRegistry
 from tok.neuro.distill import MemoryDistiller
 from tok.neuro.llm_clients import StubClient
@@ -32,7 +34,8 @@ def test_negative_distillation_redundancy():
     distiller = MemoryDistiller(llm=StubClient(), threshold=10)
     distiller.registry = registry  # Use our primed registry
 
-    negative_lessons = distiller.mine_negative_patterns(memory)
+    typed_memory = cast(list[EpisodeMemory], memory)
+    negative_lessons = distiller.mine_negative_patterns(typed_memory)
 
     assert len(negative_lessons) == 1
     assert isinstance(negative_lessons[0], ConstraintMemory)

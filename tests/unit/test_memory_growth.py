@@ -3,7 +3,7 @@
 import json
 
 try:
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - optional
     plt = None
 

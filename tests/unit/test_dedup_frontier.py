@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from tok.analysis import canonicalize_tool_result_text, run_dedup_frontier
 from tok.compression import _SEMANTIC_HASH_MIN_CHARS
 
 
-def _write_fixture(path: Path, messages: list[dict]) -> Path:
+def _write_fixture(path: Path, messages: list[dict[str, Any]]) -> Path:
     path.write_text(json.dumps({"messages": messages}) + "\n")
     return path
 
 
-def _load_ledger(path: Path) -> list[dict]:
-    rows: list[dict] = []
+def _load_ledger(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     for line in path.read_text().splitlines():
         line = line.strip()
         if line:
@@ -21,11 +22,13 @@ def _load_ledger(path: Path) -> list[dict]:
     return rows
 
 
-def _load_summary(path: Path) -> dict:
+def _load_summary(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def test_canonicalize_tool_result_text_normalizes_noise(tmp_path: Path):
+def test_canonicalize_tool_result_text_normalizes_noise(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir()
     raw_a = (
@@ -55,7 +58,9 @@ def test_canonicalize_tool_result_text_normalizes_noise(tmp_path: Path):
     assert "<uuid>" in canonical_a
 
 
-def test_dedup_frontier_classifies_incremental_repeat_classes(tmp_path: Path):
+def test_dedup_frontier_classifies_incremental_repeat_classes(
+    tmp_path: Path,
+) -> None:
     large = "A" * (_SEMANTIC_HASH_MIN_CHARS + 20)
     small_file = "def helper():\n    return 'ok'\n" * 4
     volatile_a = (
@@ -64,7 +69,7 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(tmp_path: Path):
     volatile_b = (
         "build started 2026-03-29T13:00:00Z\nstatus: ok\n" * 8
     ).strip()
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Read foo once"},
         {
             "role": "assistant",
@@ -199,7 +204,9 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(tmp_path: Path):
 
     assert by_tool["hit2"]["current_outcome"] == "exact_dedup_hit"
     assert by_tool["hit2"]["repeat_class"] == "same_identity_repeat"
-    assert by_tool["small_file2"]["miss_reason"] == "below_min_chars"
+    assert by_tool["small_file2"]["current_outcome"] == "exact_dedup_hit"
+    assert by_tool["small_file2"]["repeat_class"] == "same_identity_repeat"
+    assert by_tool["small_file2"]["miss_reason"] is None
     assert by_tool["small_file2"]["opportunity_class"] == "small_file_repeat"
     assert by_tool["small_file2"]["incremental_headroom_chars"] > 0
     assert by_tool["small_file2"]["candidate_strategy"].startswith(
@@ -215,16 +222,16 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(tmp_path: Path):
     assert by_tool["identity2"]["logical_target_identity"] == "src/shared.py"
     assert by_tool["identity2"]["incremental_headroom_chars"] > 0
     assert by_tool["hit2"]["trusted_source"] is True
-    assert by_tool["small_file2"]["actionable_miss"] is True
+    assert by_tool["small_file2"]["actionable_miss"] is False
     assert by_tool["hit1"]["actionable_miss"] is False
     assert by_tool["hit1"]["repeat_opportunity_exists"] is False
 
 
 def test_cache_hit_rows_with_worse_semantic_token_have_zero_incremental_headroom(
     tmp_path: Path,
-):
+) -> None:
     repeated_output = "cached pytest status ok\n" * 4
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Run pytest"},
         {
             "role": "assistant",
@@ -271,15 +278,17 @@ def test_cache_hit_rows_with_worse_semantic_token_have_zero_incremental_headroom
     ledger = _load_ledger(artifacts["ledger"])
     by_tool = {row["tool_use_id"]: row for row in ledger}
 
-    assert by_tool["cmd2"]["current_outcome"] == "cache_hit"
+    assert by_tool["cmd2"]["current_outcome"] == "no_compression"
     assert by_tool["cmd2"]["repeat_class"] == "same_identity_repeat"
     assert by_tool["cmd2"]["logical_target_identity"] == '{"family":"pytest"}'
     assert by_tool["cmd2"]["incremental_headroom_chars"] == 0
     assert by_tool["cmd2"]["candidate_strategy"] is None
 
 
-def test_dedup_frontier_writes_replay_and_stress_artifacts(tmp_path: Path):
-    fixture_messages = [
+def test_dedup_frontier_writes_replay_and_stress_artifacts(
+    tmp_path: Path,
+) -> None:
+    fixture_messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Show gateway"},
         {
             "role": "assistant",
@@ -408,7 +417,9 @@ def test_dedup_frontier_writes_replay_and_stress_artifacts(tmp_path: Path):
     assert "actionable_headroom_chars" in summary
 
 
-def test_benign_first_turn_cut_failures_are_not_actionable(tmp_path: Path):
+def test_benign_first_turn_cut_failures_are_not_actionable(
+    tmp_path: Path,
+) -> None:
     fixture_path = _write_fixture(
         tmp_path / "single_turn.jsonl",
         [{"role": "user", "content": "hello"}],
@@ -432,8 +443,8 @@ def test_benign_first_turn_cut_failures_are_not_actionable(tmp_path: Path):
 
 def test_small_command_repeat_with_better_cache_does_not_drive_patch_queue(
     tmp_path: Path,
-):
-    messages = [
+) -> None:
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Run small check"},
         {
             "role": "assistant",
@@ -482,7 +493,7 @@ def test_small_command_repeat_with_better_cache_does_not_drive_patch_queue(
 
 def test_malformed_replay_fixture_is_excluded_from_trusted_summary(
     tmp_path: Path,
-):
+) -> None:
     fixture_path = _write_fixture(
         tmp_path / "malformed.jsonl",
         [
@@ -521,7 +532,7 @@ def test_malformed_replay_fixture_is_excluded_from_trusted_summary(
 
 def test_repo_dedup_opportunity_corpus_surfaces_runtime_candidates(
     tmp_path: Path,
-):
+) -> None:
     workspace_root = Path.cwd()
     fixture_path = (
         workspace_root / "tests/fixtures/replay/dedup_opportunity_corpus.jsonl"

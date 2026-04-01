@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from tok.runtime.pipeline.request_validation import (
     canonicalize_anthropic_bridge_messages,
     validate_anthropic_bridge_body,
@@ -6,7 +8,7 @@ from tok.runtime.pipeline.request_validation import (
 
 
 def test_top_level_tool_result_rewritten_and_merged():
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Start work."},
         {"role": "tool_result", "tool_use_id": "t1", "content": "result 1"},
         {"role": "tool_result", "tool_use_id": "t2", "content": "result 2"},
@@ -35,7 +37,7 @@ def test_top_level_tool_result_rewritten_and_merged():
 
 
 def test_assistant_tool_use_preserved():
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Action!"},
         {
             "role": "assistant",
@@ -50,6 +52,39 @@ def test_assistant_tool_use_preserved():
     assert changed is True
     assert len(canonical) == 2
     assert canonical[1]["role"] == "assistant"
+
+
+def test_invalid_tool_ids_are_sanitized_after_adjacent_user_merge():
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Start work."},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "bad/id",
+                    "name": "test",
+                    "input": {},
+                }
+            ],
+        },
+        {
+            "role": "tool_result",
+            "tool_use_id": "bad/id",
+            "content": "result 1",
+        },
+        {"role": "user", "content": "Continue work."},
+    ]
+    canonical, changed, signals = canonicalize_anthropic_bridge_messages(
+        messages
+    )
+
+    assert changed is True
+    assert signals["tok_bridge_adjacent_user_merged"] == 1
+    assert signals["tok_bridge_tool_id_sanitized"] == 1
+    assert signals["tok_bridge_tool_result_id_rewritten"] == 1
+    rewritten_id = canonical[1]["content"][0]["id"]
+    assert rewritten_id == canonical[2]["content"][0]["tool_use_id"]
 
 
 def test_validator_rejects_invalid_roles():
@@ -103,7 +138,7 @@ def test_validator_rejects_cross_role_blocks():
 
 
 def test_validator_rejects_empty_content():
-    body = {
+    body: dict[str, Any] = {
         "model": "claude-3-5",
         "messages": [{"role": "user", "content": []}],
     }
@@ -202,7 +237,7 @@ def test_validator_rejects_tool_results_not_immediately_after_assistant_tool_use
 
 
 def test_summarize_structure():
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Hello"},
         {
             "role": "assistant",
@@ -217,7 +252,7 @@ def test_summarize_structure():
             ],
         },
     ]
-    summary = summarize_message_structure(messages)
+    summary = cast(dict[str, Any], summarize_message_structure(messages))
     assert summary["count"] == 3
     assert summary["user_msgs"] == 2
     assert summary["assistant_msgs"] == 1

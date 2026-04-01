@@ -1,6 +1,8 @@
 """Tests for Local Mesh Discovery and Macro Healing."""
 
 from __future__ import annotations
+
+from typing import Any
 import os
 import pytest
 from unittest.mock import patch
@@ -38,7 +40,9 @@ def mock_tok_storage():
 # ---------------------------------------------------------------------------
 
 
-def _make_request(messages=None):
+def _make_request(
+    messages: list[dict[str, Any]] | None = None,
+) -> RuntimeRequest:
     return RuntimeRequest(
         model="claude-sonnet-4-6",
         messages=messages or [{"role": "user", "content": "hello"}],

@@ -1,3 +1,5 @@
+from typing import cast
+
 from tok.neuro.ir import Instruction, Macro, MacroRegistry
 from tok.neuro.distill import MemoryDistiller
 from tok.neuro.llm_clients import StubClient
@@ -69,7 +71,8 @@ def test_production_distiller_compaction():
         )
 
     initial_tokens = estimated_token_count(memory)
-    new_memory = distiller.compress(memory)
+    typed_memory = cast(list[EpisodeMemory], memory)
+    new_memory = distiller.compress(typed_memory)
     final_tokens = estimated_token_count(new_memory)
 
     assert len(new_memory) == 1

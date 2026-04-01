@@ -22,8 +22,10 @@ def _recursive_data() -> st.SearchStrategy[Any]:
 
     return st.recursive(
         base,
-        lambda children: st.lists(children, max_size=3)
-        | st.dictionaries(letter_text, children, max_size=3),
+        lambda children: (
+            st.lists(children, max_size=3)
+            | st.dictionaries(letter_text, children, max_size=3)
+        ),
         max_leaves=30,
     )
 
@@ -72,7 +74,7 @@ def test_parser_roundtrip_nodes(sample: Any) -> None:
 
 
 def test_deep_nesting_roundtrip() -> None:
-    data = {
+    data: dict[str, Any] = {
         "alpha": {"beta": {"gamma": {"delta": {"epsilon": {"zeta": "end"}}}}}
     }
     for _ in range(10):

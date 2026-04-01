@@ -8,6 +8,7 @@ Tests account for this with structural assertions (key presence) rather than exa
 """
 
 import json
+from typing import Any
 
 import pytest
 
@@ -189,7 +190,7 @@ class TestBridgeDataFidelityScore:
         from rich.console import Console
         from rich.table import Table
 
-        test_cases = [
+        test_cases: list[tuple[str, dict[str, Any], str]] = [
             ("int_attr", {"count": 42}, "int"),
             ("float_attr", {"ratio": 3.14}, "float"),
             ("bool_true", {"enabled": True}, "bool"),
@@ -201,7 +202,7 @@ class TestBridgeDataFidelityScore:
 
         passing = 0
         total = len(test_cases)
-        results = []
+        results: list[tuple[str, str, bool, str]] = []
 
         for test_id, data, data_type in test_cases:
             json_str = json.dumps(data)
@@ -216,18 +217,19 @@ class TestBridgeDataFidelityScore:
                 results.append((test_id, data_type, False, "No JSON output"))
                 continue
 
-            recovered = json.loads(recovered_json)
+            recovered: Any = json.loads(recovered_json)
+            data_keys = data.keys()
 
             # Check type preservation for each attr
-            keys_match = all(k in recovered for k in data.keys())
+            keys_match = all(k in recovered for k in data_keys)
             types_match = all(
                 type(recovered.get(k)) is type(data[k])
-                for k in data.keys()
+                for k in data_keys
                 if k in recovered
             )
             values_match = all(
                 recovered.get(k) == data[k]
-                for k in data.keys()
+                for k in data_keys
                 if k in recovered
             )
 
@@ -272,7 +274,7 @@ class TestBridgeDataFidelityScore:
         Single-key unwrapping (_rehydrate line 341-342) strips the wrapper.
         We accept this as structural loss and measure key presence, not structure identity.
         """
-        test_cases = [
+        test_cases: list[tuple[str, dict[str, Any]]] = [
             ("nested_simple", {"user": {"name": "Alice", "age": 30}}),
             ("nested_empty", {"data": {}}),
             ("nested_single", {"config": {"timeout": 60}}),
@@ -285,17 +287,20 @@ class TestBridgeDataFidelityScore:
             json_str = json.dumps(data)
             tok_text = Bridge.json(json_str)
             recovered_json = Bridge.to_json(tok_text)
-            recovered = json.loads(recovered_json) if recovered_json else {}
+            recovered: Any = (
+                json.loads(recovered_json) if recovered_json else {}
+            )
 
             # Measure: does original nested data appear somewhere in recovered structure?
             # Due to unwrapping, {"user": {..}} becomes {..}, so we check if nested
             # keys exist
-            original_nested_keys = set()
-            for v in data.values():
+            original_nested_keys: set[str] = set()
+            data_values: Any = data.values()
+            for v in data_values:
                 if isinstance(v, dict):
                     original_nested_keys.update(v.keys())
 
-            recovered_nested_keys = set()
+            recovered_nested_keys: set[str] = set()
             # Only iterate if recovered is a dict
             if isinstance(recovered, dict):
                 for v in recovered.values():
@@ -417,7 +422,7 @@ class TestBridgeConsistency:
         )
 
 
-def analyze_losses() -> dict:
+def analyze_losses() -> dict[str, Any]:
     """Audit Bridge._rehydrate() loss points systematically.
 
     Returns dict with one entry per loss point:
@@ -566,7 +571,7 @@ def analyze_losses() -> dict:
 
     # ============ LP4: Single-key wrapper strip ============
     lp4_results = []
-    lp4_cases = [
+    lp4_cases: list[tuple[str, dict[str, Any]]] = [
         ("self_referential_scalar", {"data": "scalar_value"}),
         ("self_referential_nested", {"data": {"nested": "val"}}),
         ("multi_key_dict", {"name": "Alice", "age": 30}),
@@ -582,19 +587,23 @@ def analyze_losses() -> dict:
             continue
 
         recovered_json = Bridge.to_json(tok_text)
-        recovered = json.loads(recovered_json) if recovered_json else {}
+        lp4_recovered: Any = (
+            json.loads(recovered_json) if recovered_json else {}
+        )
 
         # LP4: when single key == node.type ("data"), wrapper is stripped
         # Original has "data" key, recovered might not
         has_data_key_original = "data" in data
         has_data_key_recovered = (
-            "data" in recovered if isinstance(recovered, dict) else False
+            "data" in lp4_recovered
+            if isinstance(lp4_recovered, dict)
+            else False
         )
 
         # Lossless if structure is maintained (either both have "data" or
         # structure survived)
         passed = (has_data_key_original == has_data_key_recovered) or len(
-            str(recovered)
+            str(lp4_recovered)
         ) > 2
         lp4_results.append((case_id, passed))
 
@@ -659,12 +668,12 @@ def analyze_losses() -> dict:
     total_lossy = 0
 
     for lp_key in sorted(results.keys()):
-        lp_data = results[lp_key]
+        lp_data: Any = results[lp_key]
         total_tested += lp_data["tested"]
         total_lossy += lp_data["lossy"]
 
         table.add_row(
-            lp_key.replace("_", " ").title(),
+            str(lp_key.replace("_", " ").title()),
             lp_data["trigger_path"],
             str(lp_data["tested"]),
             str(lp_data["lossy"]),

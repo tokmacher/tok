@@ -6,7 +6,7 @@ import ast
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger("tok.explorer")
 
@@ -20,24 +20,26 @@ def get_file_overview(filepath: str) -> dict[str, Any]:
         dict with keys: path, line_count, classes, functions, is_large
     """
     path = Path(filepath)
-    
+
     # Validate file path and existence
     if not path.exists():
         return {"error": f"File not found: {filepath}"}
-    
+
     # Security check: ensure path is within reasonable bounds
     try:
         path.resolve().relative_to(Path.cwd())
     except ValueError:
         # Path is outside current directory - allow but log warning
-        logger.warning("Accessing file outside current directory: %s", filepath)
-    
+        logger.warning(
+            "Accessing file outside current directory: %s", filepath
+        )
+
     # Ensure it's a file (not directory)
     if not path.is_file():
         return {"error": f"Path is not a file: {filepath}"}
-    
+
     # Check if it's a Python file
-    if path.suffix != '.py':
+    if path.suffix != ".py":
         return {"error": f"Not a Python file: {filepath}"}
 
     try:
@@ -107,13 +109,16 @@ def explore_file(filepath: str, mode: str = "overview") -> str:
         return f"@error File not found: {filepath}"
 
     if mode == "skeleton":
-        result = Sifter.from_file(filepath, naked=False, minify=True)
-        return result["skeleton"]
+        result: dict[str, Any] = Sifter.from_file(
+            filepath, naked=False, minify=True
+        )
+        return cast(str, result["skeleton"])
 
     # overview mode
-    overview = get_file_overview(filepath)
+    overview: dict[str, Any] = get_file_overview(filepath)
     if "error" in overview:
-        return f"@error {overview['error']}"
+        error_msg = overview["error"]
+        return f"@error {error_msg}" if error_msg else "@error Unknown error"
 
     lines = [
         f"@file {path.name}",
@@ -148,12 +153,12 @@ def list_large_files(root: str = "src/tok") -> list[dict[str, Any]]:
         List of dicts with file info
     """
     root_path = Path(root)
-    
+
     # Validate root path
     if not root_path.exists():
         logger.warning("Root path does not exist: %s", root)
         return []
-    
+
     if not root_path.is_dir():
         # If root is not a directory, try its parent
         if root_path.parent.exists() and root_path.parent.is_dir():
@@ -173,7 +178,7 @@ def list_large_files(root: str = "src/tok") -> list[dict[str, Any]]:
             # Skip directories outside the root
             dirs[:] = []
             continue
-            
+
         # Skip common non-code directories
         dirs[:] = [
             d

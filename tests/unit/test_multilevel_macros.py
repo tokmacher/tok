@@ -103,7 +103,7 @@ def build_layered_registry() -> MacroRegistry:
     return registry
 
 
-def test_layer_1():
+def test_layer_1() -> None:
     """@double(5) = 10"""
     registry = build_layered_registry()
     ir = TokIR(instructions=(Instruction(op="@double", args=(5,)),))
@@ -112,7 +112,7 @@ def test_layer_1():
     print(f"  ✅ Layer 1: @double(5) = {result}")
 
 
-def test_layer_2():
+def test_layer_2() -> None:
     """@quad(5) = 20"""
     registry = build_layered_registry()
     ir = TokIR(instructions=(Instruction(op="@quad", args=(5,)),))
@@ -121,7 +121,7 @@ def test_layer_2():
     print(f"  ✅ Layer 2: @quad(5) = {result}")
 
 
-def test_layer_3():
+def test_layer_3() -> None:
     """@octet(5) = 40"""
     registry = build_layered_registry()
     ir = TokIR(instructions=(Instruction(op="@octet", args=(5,)),))
@@ -130,7 +130,7 @@ def test_layer_3():
     print(f"  ✅ Layer 3: @octet(5) = {result}")
 
 
-def test_layer_4():
+def test_layer_4() -> None:
     """@hex(5) = 80"""
     registry = build_layered_registry()
     ir = TokIR(instructions=(Instruction(op="@hex", args=(5,)),))
@@ -139,7 +139,7 @@ def test_layer_4():
     print(f"  ✅ Layer 4: @hex(5) = {result}")
 
 
-def test_provenance_chain():
+def test_provenance_chain() -> None:
     """Verify that provenance tracks the full composition chain."""
     registry = build_layered_registry()
     hex_macro = registry.get("hex")
@@ -147,7 +147,11 @@ def test_provenance_chain():
     quad_macro = registry.get("quad")
     double_macro = registry.get("double")
 
-    assert hex_macro is not None
+    assert hex_macro is not None, "hex macro not found"
+    assert octet_macro is not None, "octet macro not found"
+    assert quad_macro is not None, "quad macro not found"
+    assert double_macro is not None, "double macro not found"
+
     assert hex_macro.provenance is not None
     assert "octet" in hex_macro.provenance.composed_of
     assert "double" in hex_macro.provenance.composed_of
@@ -172,7 +176,7 @@ def test_provenance_chain():
     print("  ✅ Provenance: @double is a leaf macro (no composition)")
 
 
-def test_mixed_ir_with_macros():
+def test_mixed_ir_with_macros() -> None:
     """Test an IR program that mixes raw ops with multi-level macro calls."""
     registry = build_layered_registry()
 
@@ -190,7 +194,7 @@ def test_mixed_ir_with_macros():
     print(f"  ✅ Mixed IR: @quad(3) + 1 = {result}")
 
 
-def test_deep_chain_with_variable_input():
+def test_deep_chain_with_variable_input() -> None:
     """Full 4-layer chain from variable scope."""
     registry = build_layered_registry()
 
@@ -206,7 +210,7 @@ def test_deep_chain_with_variable_input():
     print(f"  ✅ Deep chain with variable: const(7) -> @hex = {result}")
 
 
-def test_serialization_round_trip():
+def test_serialization_round_trip() -> None:
     """Test that multi-level macros survive BridgeMemoryState serialization."""
     from tok.bridge_memory import BridgeMemoryState
 

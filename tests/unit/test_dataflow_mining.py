@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from tok.neuro.ir import Instruction, Macro, MacroRegistry, TokIR
@@ -64,7 +66,9 @@ def test_context_requirements_loads_from_legacy_dict_without_key():
 # ---------------------------------------------------------------------------
 
 
-def _ir(*ops_args: tuple) -> TokIR:
+def _ir(
+    *ops_args: tuple[str, tuple[str, ...], str] | tuple[str, tuple[str, ...]],
+) -> TokIR:
     """Build a TokIR from (op, args, target?) tuples."""
     instructions = []
     for item in ops_args:
