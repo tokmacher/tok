@@ -498,6 +498,17 @@ def compress_tool_results_impl(
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     breakdown: dict[str, int] = {}
 
+    def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
+        if not context:
+            return False
+        tool_name = str(context.get("name", "")).lower()
+        if tool_name not in FILE_LIKE_TOOLS:
+            return False
+        args = context.get("args")
+        if not isinstance(args, dict):
+            return False
+        return any(k in args for k in ("offset", "limit", "start", "end"))
+
     def _truncate_stable_snippet(text: str, limit: int) -> str:
         cleaned = " ".join(str(text or "").split())
         if len(cleaned) <= limit:
@@ -522,6 +533,9 @@ def compress_tool_results_impl(
                     and isinstance(context.get("args"), dict)
                     and context["args"].get("tok_bypass_cache")
                 ):
+                    breakdown["tok_bypass_cache_applied"] = (
+                        breakdown.get("tok_bypass_cache_applied", 0) + 1
+                    )
                     continue
                 if context:
                     compressed, saved = _apply_result_cache(
@@ -532,6 +546,11 @@ def compress_tool_results_impl(
                         bypass_cache=bypass_result_cache,
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                     )
+                    if "stable_payload_validation_failed" in compressed:
+                        breakdown["stable_payload_validation_failed"] = (
+                            breakdown.get("stable_payload_validation_failed", 0)
+                            + 1
+                        )
                     if saved > 0:
                         kind = _detect_tool_content_type_impl(content)
                         key = (
@@ -562,7 +581,37 @@ def compress_tool_results_impl(
                     and isinstance(ctx.get("args"), dict)
                     and ctx["args"].get("tok_bypass_cache")
                 ):
+                    breakdown["tok_bypass_cache_applied"] = (
+                        breakdown.get("tok_bypass_cache_applied", 0) + 1
+                    )
                     continue
+
+            # Precision file reads (offset/limit/start/end) must remain verbatim.
+            # Skip semantic dedup, result-cache stubbing, and tok_tool_result compression.
+            if _is_precision_read_context(ctx):
+                if (
+                    result_cache is not None
+                    and ctx is not None
+                    and tool_use_id_to_context is not None
+                    and not bypass_result_cache
+                ):
+                    compressed, _saved = _apply_result_cache(
+                        raw,
+                        ctx,
+                        result_cache,
+                        compression_level=compression_level,
+                        bypass_cache=bypass_result_cache,
+                        ttl_seconds=RESULT_CACHE_TTL_SECONDS,
+                    )
+                    if "stable_payload_validation_failed" in compressed:
+                        breakdown["stable_payload_validation_failed"] = (
+                            breakdown.get("stable_payload_validation_failed", 0)
+                            + 1
+                        )
+                    block["content"] = compressed
+                else:
+                    block["content"] = raw
+                continue
 
             if (
                 semantic_hash_cache is not None
@@ -570,6 +619,11 @@ def compress_tool_results_impl(
                 and tool_use_id_to_context is not None
             ):
                 cache_key = _make_semantic_cache_key(ctx, raw)
+                ctx_args = ctx.get("args") if isinstance(ctx, dict) else None
+                if isinstance(ctx_args, dict) and any(
+                    k in ctx_args for k in ("offset", "limit", "start", "end")
+                ):
+                    cache_key = None
                 if cache_key is not None:
                     content_hash = _compute_semantic_hash(raw)
                     prev_hash = semantic_hash_cache.get(cache_key)
@@ -648,6 +702,11 @@ def compress_tool_results_impl(
                         bypass_cache=bypass_result_cache,
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                     )
+                    if "stable_payload_validation_failed" in compressed:
+                        breakdown["stable_payload_validation_failed"] = (
+                            breakdown.get("stable_payload_validation_failed", 0)
+                            + 1
+                        )
                     if saved > 0:
                         kind = _detect_tool_content_type_impl(raw)
                         key = (
@@ -690,7 +749,7 @@ def inject_system_additions_impl(
         if isinstance(sys_prompt, str):
             if "[Tok File Freshness System]" not in sys_prompt:
                 sys_prompt = (
-                    TOK_FRESHNESS_SIGNALS_EXPLANATION + "\n\n" + sys_prompt
+                    sys_prompt + "\n\n" + TOK_FRESHNESS_SIGNALS_EXPLANATION
                 )
                 body["system"] = sys_prompt
         elif isinstance(sys_prompt, list):
@@ -702,10 +761,9 @@ def inject_system_additions_impl(
                 for block in sys_prompt
             )
             if not has_freshness:
-                # Prepend the freshness explanation as a new text block
-                sys_prompt = [
+                sys_prompt = sys_prompt + [
                     {"type": "text", "text": TOK_FRESHNESS_SIGNALS_EXPLANATION}
-                ] + sys_prompt
+                ]
                 body["system"] = sys_prompt
 
     directive_parts = []
@@ -814,6 +872,17 @@ def compress_recent_window_impl(
     tool_compatible: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
+    def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
+        if not context:
+            return False
+        tool_name = str(context.get("name", "")).lower()
+        if tool_name not in FILE_LIKE_TOOLS:
+            return False
+        args = context.get("args")
+        if not isinstance(args, dict):
+            return False
+        return any(k in args for k in ("offset", "limit", "start", "end"))
+
     breakdown: dict[str, int] = {}
     compressors = {
         "file": _compress_file_read,
@@ -833,6 +902,8 @@ def compress_recent_window_impl(
         if msg.get("role") == "tool_result" and isinstance(content, str):
             tool_id = str(msg.get("tool_use_id", ""))
             ctx = (tool_use_id_to_context or {}).get(tool_id, {})
+            if _is_precision_read_context(ctx):
+                continue
             tool_name = str(ctx.get("name", "")).lower()
             kind = _detect_tool_content_type_impl(content)
             if tool_name in FILE_LIKE_TOOLS:
@@ -872,6 +943,8 @@ def compress_recent_window_impl(
             if kind in {"raw", "file"}:
                 tool_id = block.get("tool_use_id", "")
                 ctx = (tool_use_id_to_context or {}).get(tool_id, {})
+                if _is_precision_read_context(ctx):
+                    continue
                 tool_name = str(ctx.get("name", "")).lower()
                 if tool_name in FILE_LIKE_TOOLS:
                     kind = "file"

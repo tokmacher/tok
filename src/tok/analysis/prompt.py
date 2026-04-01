@@ -35,7 +35,7 @@ You use Tok: token-efficient agent markup.
 - Use `read_file` with offset/limit for sections.
 - Use `tok.explorer` tools: explore_file(), list_large_files() for >500 lines.
 - Work WITH compression system.
-- WHEN @stable_result appears: content unchanged from previous turn. Do NOT re-read with different offsets — synthesize from context or @hot_recent_file summaries. If you truly need verbatim bytes, do ONE tool call with tok_bypass_cache=true.
+- WHEN @stable_result appears: content unchanged from previous turn. Do NOT re-read with different offsets — synthesize from context or @hot_recent_file summaries. If you truly need verbatim bytes, emit `@tok_bypass_next_read` immediately before ONE supported read tool call.
 
 ## Primitives
 
@@ -71,7 +71,7 @@ Goal: Trace call chains and locate definitions with MINIMAL tokens.
 - Use `read_file` with precise `offset`/`limit` to read only the implementation.
 - Use `tok.explorer` tools: explore_file(), list_large_files() for >500 line files.
 - WORK WITH Tok bridge caching - it optimizes, doesn't interfere.
-- WHEN you see @stable_result(hash:...): content unchanged. Do NOT re-read — synthesize from context, @hot_recent_file summaries, or ask the user for key facts. If you truly need verbatim bytes, do ONE tool call with tok_bypass_cache=true.
+- WHEN you see @stable_result(hash:...): content unchanged. Do NOT re-read — synthesize from context, @hot_recent_file summaries, or ask the user for key facts. If you truly need verbatim bytes, emit `@tok_bypass_next_read` immediately before ONE supported read tool call.
 - AVOID repeating identical operations - use unique queries to get fresh content.
 - Summarize findings; do not repeat code in @thought blocks.
 - Priority: Speed and token savings.
@@ -83,7 +83,7 @@ MINIMAL_PULSE_PROMPT = """\
 Maintain Tok syntax: @Tool, |> inversion, >>> delta.
 STRIP all Markdown/Styling (NAKED MODE).
 Tok bridge caching HELPS - use grep_search, read_file, explore_file().
-If @stable_result appears: do NOT re-read. Use what is in context or @hot_recent_file summaries. If you truly need verbatim bytes, do ONE tool call with tok_bypass_cache=true.
+If @stable_result appears: do NOT re-read. Use what is in context or @hot_recent_file summaries. If you truly need verbatim bytes, emit `@tok_bypass_next_read` immediately before ONE supported read tool call.
 """
 
 
@@ -136,5 +136,5 @@ MINIMAL_PULSE_PROMPT = """\
 Maintain Tok syntax: @Tool, |> inversion, >>> delta.
 STRIP all Markdown/Styling (NAKED MODE).
 Tok bridge caching HELPS - use grep_search, read_file, explore_file().
-If @stable_result appears: do NOT re-read. Use what is in context or @hot_recent_file summaries. If you truly need verbatim bytes, do ONE tool call with tok_bypass_cache=true.
+If @stable_result appears: do NOT re-read. Use what is in context or @hot_recent_file summaries. If you truly need verbatim bytes, emit `@tok_bypass_next_read` immediately before ONE supported read tool call.
 """

@@ -68,7 +68,8 @@ def test_runtime_prepare_request_injects_memory_and_collects_signals():
 
     assert prepared.body["system"].startswith("Existing system prompt")
     assert "=== MODE: TOK-NATIVE ===" in prepared.body["system"]
-    assert "g:" in prepared.body["system"]
+    assert "@pointers" in prepared.body["system"]
+    assert ">>>" in prepared.body["system"]
     assert prepared.behavior_signals["repeat_file_read"] == 1
     assert (
         prepared.normalized_tool_events[0].compressibility_class == "file_read"
@@ -764,7 +765,7 @@ def test_tool_compatible_state_with_answer_facts_suppresses_when_unchanged(
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert second.behavior_signals.get("answer_anchor_suppressed", 0) == 1
+    assert second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
     assert (
         "Reuse existing File=/Verification= facts" not in second.body["system"]
     )
@@ -2431,7 +2432,7 @@ def test_replay_gate_evaluates_pressure_and_failures():
 
 
 def test_select_resend_strategy():
-    """_select_resend_strategy: unchanged suppresses; new answer anchor full; else delta."""
+    """_select_resend_strategy: verified-current suppresses; new answer anchor full; else delta."""
     from tok.runtime.core import _select_resend_reason, _select_resend_strategy
 
     fields = {"goal": ["fix bug"], "files": ["src/tok/gateway.py"]}
@@ -2454,7 +2455,7 @@ def test_select_resend_strategy():
     )
     assert (
         _select_resend_reason(answer_fields, answer_fields, True)
-        == "unchanged_state"
+        == "verified_current_state"
     )
 
     # new answer-bearing state → full
@@ -2465,7 +2466,7 @@ def test_select_resend_strategy():
 
     # identical non-answer fields → suppress
     assert _select_resend_strategy(fields, fields, False) == "suppress"
-    assert _select_resend_reason(fields, fields, False) == "unchanged_state"
+    assert _select_resend_reason(fields, fields, False) == "verified_current_state"
 
     # changed fields, no answer facts → delta
     assert _select_resend_strategy(fields, {}, False) == "delta"
@@ -2582,7 +2583,7 @@ def test_answer_anchor_present_can_suppress_when_state_is_unchanged(tmp_path):
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
     assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
-    assert second.behavior_signals.get("answer_anchor_suppressed", 0) == 1
+    assert second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
     assert (
         second.behavior_signals.get(
             "state_resend_reason_answer_anchor_present_kept_full", 0
@@ -2945,6 +2946,85 @@ def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
     assert (
         "Answer now using the existing File=/Verification= evidence."
         in prepared.body["system"]
+    )
+
+
+def test_prepare_request_tool_results_only_do_not_trigger_answer_ready(
+    tmp_path,
+):
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "call_1",
+                        "content": "src/tok/gateway.py: health endpoint handler",
+                    }
+                ],
+            }
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.behavior_signals.get("answer_ready_turn", 0) == 0
+    assert session._late_answer_followthrough_pending is False
+    assert (
+        "Answer now using the existing File=/Verification= evidence."
+        not in prepared.body["system"]
+    )
+
+
+def test_prepare_request_read_only_audit_turn_suppresses_answer_repairs(
+    tmp_path,
+):
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/protocol/schema.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:canonical_idl",
+        score_delta=3,
+    )
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "Read-only audit. No edits, no tests, no installs, no network. "
+                    "Determine whether the protocol surface is coherent, but do not answer yet."
+                ),
+            }
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.behavior_signals.get("answer_ready_turn", 0) == 0
+    assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 0
+    assert (
+        prepared.behavior_signals.get("late_answer_followthrough_active", 0)
+        == 0
+    )
+    assert session._answer_ready_repair_pending is False
+    assert session._late_answer_followthrough_pending is False
+    assert (
+        "Answer now using the existing File=/Verification= evidence."
+        not in prepared.body["system"]
     )
 
 

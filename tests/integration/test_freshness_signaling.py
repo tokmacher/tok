@@ -328,3 +328,102 @@ class TestStableResultPayloadIntegration:
         )
         assert tool_result3 == raw
         assert "@stable_result" not in tool_result3
+
+    def test_host_unchanged_stub_replays_cached_precision_bytes(self):
+        runtime = UniversalTokRuntime()
+        session = RuntimeSession()
+
+        tool_id = "t1"
+        raw = "line\n" * 300
+
+        def _req(tool_result_content: str) -> RuntimeRequest:
+            return RuntimeRequest(
+                model="claude-sonnet-4-6",
+                messages=[
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": tool_id,
+                                "name": "Read",
+                                "input": {
+                                    "file_path": "src/tok/runtime/core.py",
+                                    "offset": 180,
+                                    "limit": 40,
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": tool_result_content,
+                            }
+                        ],
+                    },
+                ],
+            )
+
+        # Seed cache with real content.
+        runtime.prepare_request(_req(raw), session)
+
+        # Host returns an empty/stub payload; Tok should replay cached bytes for precision reads.
+        prepared2 = runtime.prepare_request(_req(""), session)
+        tool_result2 = self._extract_first_tool_result(
+            prepared2.body.get("messages", [])
+        )
+        assert tool_result2 == raw
+
+    def test_precision_read_recent_window_preserves_raw_on_stub(self):
+        runtime = UniversalTokRuntime()
+        session = RuntimeSession()
+
+        tool_id = "t1"
+        raw = "line\n" * 2000  # > recent-window threshold
+
+        def _req(tool_result_content: str) -> RuntimeRequest:
+            return RuntimeRequest(
+                model="claude-sonnet-4-6",
+                tool_compatible=True,
+                messages=[
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": tool_id,
+                                "name": "Read",
+                                "input": {
+                                    "file_path": "src/tok/runtime/core.py",
+                                    "offset": 180,
+                                    "limit": 40,
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": tool_result_content,
+                            }
+                        ],
+                    },
+                ],
+            )
+
+        runtime.prepare_request(_req(raw), session)
+
+        prepared2 = runtime.prepare_request(
+            _req("Unchanged since last read"), session
+        )
+        tool_result2 = self._extract_first_tool_result(
+            prepared2.body.get("messages", [])
+        )
+        assert tool_result2 == raw

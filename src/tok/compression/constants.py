@@ -186,13 +186,14 @@ Recent responses show protocol drift. Strict compliance required:
 _STABLE_RESULT_EXPLANATION = (
     "@stable_result(hash:...) means the tool output is identical to a previous turn —"
     " the file or query result is unchanged."
-    " The cached payload may be provided as three lines:"
-    " @stable_result(hash:...) then @stable_summary |> ... then @stable_skeleton |> ...."
+    " The cached payload may be provided as a compact stable block:"
+    " @stable_result(hash:...), optionally @stable_status |> verified_unchanged,"
+    " then @stable_summary |> ... and @stable_skeleton |> ...."
     " DO NOT attempt re-reads with different offsets or patterns; they will also be stable."
     " Instead: (1) If the content is still in your context window, use it directly."
     " (2) If @hot_recent_file or file facts show a structural summary, reason from that."
     " (3) If the content has scrolled out of context, say so and ask the user to resend the key sections."
-    " (4) If you truly need verbatim bytes, do ONE tool call with tok_bypass_cache=true."
+    " (4) If you truly need verbatim bytes, emit @tok_bypass_next_read immediately before ONE supported read tool call."
     " (5) Never spiral on stable results."
 )
 

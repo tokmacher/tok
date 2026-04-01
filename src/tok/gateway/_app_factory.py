@@ -292,8 +292,12 @@ async def buffer_strip_restream_impl(
             except (json.JSONDecodeError, KeyError):
                 yield (event_str + "\n\n").encode()
     finally:
-        await response.aclose()
-        await client.aclose()
+        response_aclose = getattr(response, "aclose", None)
+        if callable(response_aclose):
+            await response_aclose()
+        client_aclose = getattr(client, "aclose", None)
+        if callable(client_aclose):
+            await client_aclose()
 
 
 def create_app_impl(session: BridgeSession | None = None) -> FastAPI:

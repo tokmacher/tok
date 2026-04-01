@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-"""Top-level Tok package with lazy exports to avoid eager import cascades."""
+"""Top-level Tok package with lazy exports to avoid eager import cascades.
+
+Convenience re-exports live here, but the canonical 0.1.0 protocol IDL lives in
+`tok.protocol.schema` and `tok.protocol.models`.
+"""
 
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast

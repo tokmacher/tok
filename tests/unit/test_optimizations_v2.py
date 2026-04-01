@@ -13,6 +13,12 @@ from tok.compression import (
     _SEMANTIC_HASH_MIN_CHARS,
     compress_tool_results,
 )
+from tok.analysis.prompt import MINIMAL_PULSE_PROMPT, TOK_EXPLORE_PROMPT
+from tok.runtime.config import (
+    ANSWER_READY_REPAIR_HINT,
+    LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
+)
+from tok.runtime.pipeline.tool_processing import build_tool_use_id_to_context
 from tok.bridge_memory import BridgeMemoryState
 from tok.neuro.ir import Instruction, Macro
 from tok.universal_runtime import (
@@ -355,7 +361,7 @@ class TestSemanticHashDedup:
                 "args": {"path": path, "tok_bypass_cache": True},
             }
         }
-        result2, _breakdown2 = compress_tool_results(
+        result2, breakdown2 = compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
             tool_use_id_to_context=id_to_ctx_bypass,
             semantic_hash_cache=cache,
@@ -363,6 +369,7 @@ class TestSemanticHashDedup:
         block_content = result2[0]["content"][0]["content"]
         assert block_content == content
         assert "@stable_result" not in block_content
+        assert breakdown2.get("tok_bypass_cache_applied", 0) == 1
 
     def test_stable_payload_includes_skeleton_for_code(self):
         path = "src/tok/foo.py"
@@ -395,6 +402,341 @@ class TestSemanticHashDedup:
         assert block_content.startswith("@stable_result(hash:")
         assert "\n@stable_summary |>" in block_content
         assert "\n@stable_skeleton |>" in block_content
+
+
+class TestStableResultGuidance:
+    def test_stable_result_explanation_uses_supported_bypass_marker(self):
+        assert "@tok_bypass_next_read" in _STABLE_RESULT_EXPLANATION
+        assert "tok_bypass_cache=true" not in _STABLE_RESULT_EXPLANATION
+
+    def test_runtime_repair_hints_use_supported_bypass_marker(self):
+        assert "@tok_bypass_next_read" in ANSWER_READY_REPAIR_HINT
+        assert (
+            "@tok_bypass_next_read"
+            in LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT
+        )
+        assert "tok_bypass_cache=true" not in ANSWER_READY_REPAIR_HINT
+        assert (
+            "tok_bypass_cache=true"
+            not in LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT
+        )
+
+    def test_analysis_prompts_use_supported_bypass_marker(self):
+        assert "@tok_bypass_next_read" in TOK_EXPLORE_PROMPT
+        assert "@tok_bypass_next_read" in MINIMAL_PULSE_PROMPT
+        assert "tok_bypass_cache=true" not in TOK_EXPLORE_PROMPT
+        assert "tok_bypass_cache=true" not in MINIMAL_PULSE_PROMPT
+
+
+class TestBypassMarkerContext:
+    def test_bypass_marker_sets_tok_bypass_cache_on_next_tool_use(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "@tok_bypass_next_read"},
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "Read",
+                        "input": {"file_path": "/tmp/x.py", "offset": 0},
+                    },
+                ],
+            }
+        ]
+        ctx = build_tool_use_id_to_context(messages)
+        assert ctx["t1"]["args"].get("tok_bypass_cache") is True
+
+    def test_bypass_marker_is_one_shot_per_message(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "@tok_bypass_next_read"},
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "Read",
+                        "input": {"file_path": "/tmp/a.py"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "t2",
+                        "name": "Read",
+                        "input": {"file_path": "/tmp/b.py"},
+                    },
+                ],
+            }
+        ]
+        ctx = build_tool_use_id_to_context(messages)
+        assert ctx["t1"]["args"].get("tok_bypass_cache") is True
+        assert ctx["t2"]["args"].get("tok_bypass_cache") is not True
+
+    def test_bypass_marker_on_non_read_tool_emits_invalid_signal(self):
+        from tok.runtime.pipeline.tool_processing import (
+            collect_tool_context_validation_signals,
+        )
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "@tok_bypass_next_read"},
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "grep_search",
+                        "input": {"query": "tok", "search_path": "src/tok"},
+                    },
+                ],
+            }
+        ]
+
+        ctx = build_tool_use_id_to_context(messages)
+        assert ctx["t1"]["args"].get("tok_bypass_cache") is not True
+        assert (
+            collect_tool_context_validation_signals(ctx).get(
+                "invalid_bypass_marker_application", 0
+            )
+            == 1
+        )
+
+    def test_bypass_marker_with_malformed_next_tool_emits_invalid_signal(self):
+        from tok.runtime.pipeline.tool_processing import (
+            collect_tool_context_validation_signals,
+        )
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "@tok_bypass_next_read"},
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "Read",
+                        "input": "not-a-dict",
+                    },
+                ],
+            }
+        ]
+
+        ctx = build_tool_use_id_to_context(messages)
+        assert "t1" not in ctx
+        assert (
+            collect_tool_context_validation_signals(ctx).get(
+                "invalid_bypass_marker_application", 0
+            )
+            == 1
+        )
+
+
+class TestResultCacheStablePayload:
+    def test_file_cache_hit_emits_stable_payload(self):
+        tool_id = "tid1"
+        path = "src/tok/foo.py"
+        content = (
+            "class A:\n"
+            "    def m(self):\n"
+            "        pass\n\n"
+            "def top():\n"
+            "    return 1\n"
+            + ("# filler\n" * 400)
+        )
+        id_to_ctx = _make_id_to_context(tool_id, "Read", path)
+        result_cache: dict[str, tuple[str, str]] = {}
+
+        # First pass seeds result_cache (file-like tool returns raw first time).
+        compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+
+        # Second pass should be a cache hit and now emit stable payload lines.
+        result2, _breakdown2 = compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        block_content = result2[0]["content"][0]["content"]
+        assert block_content.startswith("@stable_result(hash:")
+        assert "\n@stable_summary |>" in block_content
+
+    def test_precision_read_cache_hit_returns_raw(self):
+        tool_id = "tid1"
+        path = "src/tok/foo.py"
+        content = "line\n" * 500
+        id_to_ctx = {
+            tool_id: {
+                "name": "Read",
+                "path": path,
+                "args": {"file_path": path, "offset": 10, "limit": 20},
+            }
+        }
+        result_cache: dict[str, tuple[str, str]] = {}
+
+        compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+
+        result2, _breakdown2 = compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        block_content = result2[0]["content"][0]["content"]
+        assert block_content == content
+
+    def test_host_unchanged_stub_replays_cached_precision_bytes(self):
+        tool_id = "tid1"
+        path = "src/tok/foo.py"
+        content = "line\n" * 500
+        id_to_ctx = {
+            tool_id: {
+                "name": "Read",
+                "path": path,
+                "args": {"file_path": path, "offset": 10, "limit": 20},
+            }
+        }
+        result_cache: dict[str, tuple[str, str]] = {}
+
+        # Seed with real content.
+        compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+
+        # Host "unchanged" stub (empty payload) should replay cached bytes.
+        result2, _breakdown2 = compress_tool_results(
+            [_make_tool_result_block(tool_id, "")],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        block_content = result2[0]["content"][0]["content"]
+        assert block_content == content
+
+    def test_host_unchanged_stub_replays_stable_payload_for_non_precision(self):
+        tool_id = "tid1"
+        path = "src/tok/foo.py"
+        content = (
+            "class A:\n"
+            "    def m(self):\n"
+            "        pass\n\n"
+            "def top():\n"
+            "    return 1\n"
+            + ("# filler\n" * 400)
+        )
+        id_to_ctx = _make_id_to_context(tool_id, "Read", path)
+        result_cache: dict[str, tuple[str, str]] = {}
+
+        compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+
+        # Tiny stub simulates host "unchanged" UI optimization.
+        result2, _breakdown2 = compress_tool_results(
+            [_make_tool_result_block(tool_id, "Unchanged since last read")],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        block_content = result2[0]["content"][0]["content"]
+        assert block_content.startswith(">>> replayed_cached_bytes|verified_unchanged")
+        assert "@stable_result(hash:" in block_content
+
+    def test_invalid_stable_payload_metadata_falls_back_to_failure_stub(
+        self, monkeypatch
+    ):
+        from tok import compression as compression_module
+
+        tool_id = "tid1"
+        path = "src/tok/foo.py"
+        content = "class A:\n    pass\n" + ("# filler\n" * 400)
+        id_to_ctx = _make_id_to_context(tool_id, "Read", path)
+        result_cache: dict[str, tuple[str, str]] = {}
+
+        compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+
+        monkeypatch.setattr(
+            compression_module, "_compute_semantic_hash", lambda _content: ""
+        )
+
+        result2, breakdown2 = compression_module.compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        block_content = result2[0]["content"][0]["content"]
+        assert "stable_payload_validation_failed" in block_content
+        assert breakdown2.get("stable_payload_validation_failed", 0) == 1
+
+
+class TestPrecisionReadVerbatim:
+    def test_inline_precision_tool_result_not_skeletonized(self):
+        tool_id = "tid1"
+        path = "src/tok/foo.py"
+        # Long enough that tok_tool_result would normally compress/skeletonize.
+        content = "\n".join(f"line {i}" for i in range(800))
+        messages = [_make_tool_result_block(tool_id, content)]
+        id_to_ctx = {
+            tool_id: {
+                "name": "Read",
+                "path": path,
+                "args": {"file_path": path, "offset": 10, "limit": 40},
+            }
+        }
+
+        result, _breakdown = compress_tool_results(
+            messages,
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=None,
+            semantic_hash_cache=None,
+        )
+        block_content = result[0]["content"][0]["content"]
+        assert block_content == content
+        assert ">>> tok_compressed" not in block_content
+
+    def test_top_level_precision_tool_result_not_skeletonized(self):
+        tool_id = "tid1"
+        path = "src/tok/foo.py"
+        content = "\n".join(f"line {i}" for i in range(800))
+        messages = [{"role": "tool_result", "tool_use_id": tool_id, "content": content}]
+        id_to_ctx = {
+            tool_id: {
+                "name": "Read",
+                "path": path,
+                "args": {"file_path": path, "offset": 10, "limit": 40},
+            }
+        }
+        result_cache: dict[str, tuple[str, str]] = {}
+
+        result, _breakdown = compress_tool_results(
+            messages,
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        msg_content = result[0]["content"]
+        assert msg_content == content
 
 
 # ---------------------------------------------------------------------------

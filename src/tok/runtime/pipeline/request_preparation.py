@@ -3,6 +3,7 @@
 import shlex
 from pathlib import Path
 from typing import Any
+from pydantic import BaseModel, ConfigDict
 from ...compression import FILE_LIKE_TOOLS, text_of, inject_system_additions
 from ..config import (
     _TOOL_REQUIRED_PROMPT_PATTERNS,
@@ -147,6 +148,115 @@ def _message_has_tool_results(message: dict[str, Any] | None) -> bool:
     )
 
 
+def _message_user_text(message: dict[str, Any] | None) -> str:
+    """Return only user-authored text from a message, excluding tool results."""
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if (
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and str(block.get("text", "")).strip()
+        ):
+            parts.append(str(block.get("text", "")).strip())
+    return "\n".join(parts)
+
+
+_READ_ONLY_AUDIT_HINT_PATTERNS = (
+    "read-only",
+    "no edits",
+    "no tests",
+    "no installs",
+    "no network",
+    "tool budget",
+    "use these anchors",
+)
+_READ_ONLY_AUDIT_SCOPE_PATTERNS = ("audit", "explor", "stress", "investigat")
+_NO_ANSWER_PATTERNS = ("do not answer", "do not answer yet")
+_ANSWER_READY_TEXT_PATTERNS = (
+    "use the evidence",
+    "use the evidence you just retrieved",
+    "answer now",
+    "reply now",
+    "summarize your findings",
+    "summarize the findings",
+    "what did you find",
+    "what's the verdict",
+    "what is the verdict",
+    "what's the answer",
+    "what is the answer",
+    "confirm",
+)
+
+
+class AuditTurnIntent(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    read_only: bool = False
+    no_answer: bool = False
+    no_network: bool = False
+    tool_budget: bool = False
+    audit_scope: bool = False
+
+    @property
+    def is_read_only_audit(self) -> bool:
+        return self.no_answer or (
+            self.read_only
+            and self.audit_scope
+            and (self.no_network or self.tool_budget)
+        )
+
+
+def _audit_turn_intent(messages: list[dict[str, Any]]) -> AuditTurnIntent:
+    """Return a typed classification of the latest user turn's audit intent."""
+    latest_user = _latest_user_message(messages)
+    lowered = _message_user_text(latest_user).lower()
+    if not lowered:
+        return AuditTurnIntent()
+    return AuditTurnIntent(
+        read_only="read-only" in lowered,
+        no_answer=any(pattern in lowered for pattern in _NO_ANSWER_PATTERNS),
+        no_network="no network" in lowered,
+        tool_budget="tool budget" in lowered,
+        audit_scope=any(
+            pattern in lowered for pattern in _READ_ONLY_AUDIT_SCOPE_PATTERNS
+        ),
+    )
+
+
+def _is_read_only_audit_turn(messages: list[dict[str, Any]]) -> bool:
+    """Return True when the latest user turn explicitly requests read-only exploration."""
+    latest_user = _latest_user_message(messages)
+    lowered = _message_user_text(latest_user).lower()
+    if not lowered:
+        return False
+    intent = _audit_turn_intent(messages)
+    if intent.is_read_only_audit:
+        return True
+    has_read_only_contract = any(
+        pattern in lowered for pattern in _READ_ONLY_AUDIT_HINT_PATTERNS
+    )
+    return has_read_only_contract and intent.audit_scope
+
+
+def _message_explicitly_requests_answer(
+    message: dict[str, Any] | None,
+) -> bool:
+    """Return True when the latest user-authored text explicitly asks for an answer."""
+    lowered = _message_user_text(message).lower()
+    if not lowered:
+        return False
+    if any(pattern in lowered for pattern in _NO_ANSWER_PATTERNS):
+        return False
+    return any(pattern in lowered for pattern in _ANSWER_READY_TEXT_PATTERNS)
+
+
 def _has_unresolved_tool_required_conditions(
     messages: list[dict[str, Any]],
 ) -> bool:
@@ -173,8 +283,14 @@ def _is_answer_ready_turn(
     latest_user = _latest_user_message(messages)
     if not latest_user:
         return False
+    if _is_read_only_audit_turn(messages):
+        return False
     if _message_has_tool_results(latest_user):
-        return True
+        if _message_explicitly_requests_answer(latest_user):
+            return True
+        if not has_answer_anchor:
+            return False
+        return not _has_unresolved_tool_required_conditions(messages)
     if not has_answer_anchor:
         return False
     return not _has_unresolved_tool_required_conditions(messages)

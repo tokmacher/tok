@@ -66,6 +66,20 @@ If any error occurs during compression or translation, the bridge transparently 
 
 ## Runtime Contract
 
+### Canonical IDL Ownership
+
+For `0.1.0`, Tok should be described as having one canonical protocol IDL and two
+derived translation layers:
+
+- Canonical protocol IDL: `src/tok/protocol/schema.py` and `src/tok/protocol/models.py`
+- Derived runtime tool-input contract: `TOOL_SCHEMAS` in `src/tok/protocol/models.py`, enforced by `RuntimeToolExecutor._compiler_guard()` in `src/tok/runtime/tools.py`
+- Bridge / wire adaptation: request shaping in `src/tok/runtime/pipeline/request_preparation.py` and transport canonicalization in `src/tok/runtime/pipeline/request_validation.py`
+
+Top-level exports in `src/tok/__init__.py` are convenience re-exports, not an
+independent source of truth. Release audits should score schema drift against the
+protocol layer first, then classify any runtime-tool or bridge-wire divergence as
+derived-contract drift rather than a competing second IDL.
+
 ### Wire Memory Schema
 
 - The working-memory state is a sparse `>>>` line emitted in canonical order: `turns`, `goal`, `files`, `cmds`, `tests`, `errs`, `constraints`, `next`.
@@ -102,24 +116,31 @@ If any error occurs during compression or translation, the bridge transparently 
 
 ```
 src/tok/
-├── universal_runtime.py  # Canonical runtime
-├── adapters.py           # Thin adapter shells over the runtime
-├── gateway/__init__.py   # Primary Claude bridge adapter
-├── cli/__init__.py       # CLI and replay entry points
-├── stats.py              # Shared telemetry and savings ledger
-├── compression/__init__.py  # Request compression primitives
-├── format_bridge.py      # Explicit Tok language/conversion layer
-├── parser.py             # TokParser (AST)
-├── encoder.py            # TokEncoder (emit Tok)
-└── schema.py             # Protocol schema
+├── universal_runtime.py          # Canonical runtime facade
+├── protocol/
+│   ├── schema.py                 # Canonical protocol schema registry
+│   ├── models.py                 # Canonical protocol AST/data model
+│   ├── parser.py                 # TokParser
+│   ├── encoder.py                # TokEncoder
+│   └── format_bridge.py          # Explicit Tok language/conversion layer
+├── runtime/
+│   ├── core.py                   # Shared runtime implementation
+│   ├── tools.py                  # Derived runtime tool-input validation/execution
+│   └── pipeline/request_validation.py  # Bridge request canonicalization
+├── gateway/__init__.py           # Primary Claude bridge adapter
+├── cli/__init__.py               # CLI and replay entry points
+├── stats.py                      # Shared telemetry and savings ledger
+└── compression/__init__.py       # Request compression primitives
 ```
 
 ## Repo Classification
 
-- Canonical runtime: `universal_runtime.py`
+- Canonical runtime: `universal_runtime.py`, `runtime/core.py`
 - Primary adapter: `gateway/__init__.py`
 - Secondary adapters: `adapters.py`, `live_runner.py`, `agent.py`, partial `tok_orchestrator.py`
-- Protocol substrate: `format_bridge.py`, `parser.py`, `encoder.py`, `schema.py`
+- Canonical protocol IDL: `protocol/schema.py`, `protocol/models.py`
+- Derived runtime contract: `runtime/tools.py`
+- Bridge transport adaptation: `runtime/pipeline/request_preparation.py`, `runtime/pipeline/request_validation.py`
 - Experimental / legacy: deeper orchestrator internals and archive material
 
 This means Tok should currently be described as bridge-first infrastructure, not as a

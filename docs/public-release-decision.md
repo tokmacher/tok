@@ -62,6 +62,24 @@ A public release requires:
 8. The release shape is narrow, explicit, and defensible
 9. The release candidate is cut from a clean, fully revalidated tree
 
+## Paired IDL Audit Rule
+
+The bounded IDL stress audit now has two required interpretations:
+
+1. A baseline run is the source of truth for protocol-IDL coherence. It decides whether `src/tok/protocol/schema.py` and `src/tok/protocol/models.py` still describe one coherent canonical surface.
+2. A Tok-captured run is a runtime-product audit. It decides whether caching, answer-repair heuristics, or fail-open behavior distort that same bounded audit.
+
+Release review should classify findings this way:
+
+- Protocol-schema drift: canonical IDL blocker
+- Runtime tool-input drift: derived-contract blocker
+- Bridge transport / canonicalization drift: transport blocker
+- Tok-only capture anomalies: product blocker, but not evidence of a second canonical IDL by themselves
+
+The release decision should remain red if a bounded read-only audit still degrades to `watch`
+because of unsupported reread instructions, false answer-ready escalation, repair churn, or
+ambiguous `fail-open compatibility` noise.
+
 ## Deferred Follow-Ups
 
 These items are intentionally deferred after the first public release:

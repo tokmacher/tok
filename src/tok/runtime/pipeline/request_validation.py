@@ -2,10 +2,132 @@
 
 import copy
 import os
-from typing import Any
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
 
 _ALLOWED_BLOCK_TYPES = frozenset({"text", "tool_use", "tool_result"})
+
+
+class _CanonicalTextBlock(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["text"]
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def _text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("blank text block")
+        return value
+
+
+class _CanonicalToolUseBlock(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["tool_use"]
+    id: str
+    name: str
+    input: dict[str, Any]
+
+    @model_validator(mode="after")
+    def _validate_tool_use(self) -> "_CanonicalToolUseBlock":
+        if not self.id.strip() or not self.name.strip():
+            raise ValueError("invalid tool_use block")
+        return self
+
+
+class _CanonicalToolResultBlock(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["tool_result"]
+    tool_use_id: str
+    content: str | list[dict[str, Any]]
+
+    @model_validator(mode="after")
+    def _validate_tool_result(self) -> "_CanonicalToolResultBlock":
+        if not self.tool_use_id.strip():
+            raise ValueError("invalid tool_result block")
+        return self
+
+
+_CanonicalContentBlock = Annotated[
+    _CanonicalTextBlock | _CanonicalToolUseBlock | _CanonicalToolResultBlock,
+    Field(discriminator="type"),
+]
+_CANONICAL_CONTENT_ADAPTER = TypeAdapter(list[_CanonicalContentBlock])
+
+
+class _CanonicalBridgeMessage(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    role: Literal["user", "assistant"]
+    content: list[_CanonicalContentBlock]
+
+    @field_validator("content")
+    @classmethod
+    def _content_must_not_be_empty(
+        cls, value: list[_CanonicalContentBlock]
+    ) -> list[_CanonicalContentBlock]:
+        if not value:
+            raise ValueError("empty content blocks")
+        return value
+
+    @model_validator(mode="after")
+    def _enforce_cross_role_shapes(self) -> "_CanonicalBridgeMessage":
+        for block in self.content:
+            if self.role == "user" and block.type == "tool_use":
+                raise ValueError("user contains tool_use")
+            if self.role == "assistant" and block.type == "tool_result":
+                raise ValueError("assistant contains tool_result")
+        return self
+
+
+class _CanonicalBridgeBody(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    messages: list[_CanonicalBridgeMessage]
+    system: str | list[dict[str, Any]] | None = None
+
+    @field_validator("model")
+    @classmethod
+    def _model_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("missing model")
+        return value
+
+    @field_validator("messages")
+    @classmethod
+    def _messages_must_not_be_empty(
+        cls, value: list[_CanonicalBridgeMessage]
+    ) -> list[_CanonicalBridgeMessage]:
+        if not value:
+            raise ValueError("empty messages")
+        return value
+
+    @field_validator("system")
+    @classmethod
+    def _validate_system_blocks(
+        cls, value: str | list[dict[str, Any]] | None
+    ) -> str | list[dict[str, Any]] | None:
+        if isinstance(value, list):
+            _CANONICAL_CONTENT_ADAPTER.validate_python(value)
+        return value
+
+
+def _validate_canonical_bridge_body_model(body: dict[str, Any]) -> list[str]:
+    """Validate the canonical bridge body with Pydantic for shape drift."""
+    try:
+        _CanonicalBridgeBody.model_validate(body)
+        return []
+    except ValidationError as exc:
+        errors = exc.errors()
+        if errors and all(err.get("loc") == ("messages",) for err in errors):
+            return []
+        return ["bridge_wire_model_invalid"]
 
 
 def _normalize_message_content_to_blocks(
@@ -50,6 +172,11 @@ def _check_changed_content(
     canonical_blocks = canonical_message.get("content")
     if not isinstance(canonical_blocks, list):
         canonical_blocks = []
+    if isinstance(original_content, str):
+        normalized_blocks, _ = _normalize_message_content_to_blocks(
+            original_content
+        )
+        return True if normalized_blocks or original_content != "" else False
     if isinstance(original_content, list):
         original_blocks = [
             block for block in original_content if isinstance(block, dict)
@@ -235,6 +362,11 @@ def canonicalize_anthropic_bridge_body(
 
     new_body = copy.deepcopy(body)
     new_body["messages"] = canonical_messages
+    validation_failures = _validate_canonical_bridge_body_model(new_body)
+    if validation_failures:
+        failed_signals = dict(signals)
+        failed_signals["tok_bridge_canonical_validation_failed"] = 1
+        return copy.deepcopy(body), False, failed_signals
     return new_body, True, signals
 
 
@@ -528,6 +660,8 @@ def validate_anthropic_bridge_body(body: dict[str, Any]) -> list[str]:
     system = body.get("system")
     if system is not None and not isinstance(system, str | list):
         failures.append("invalid_system_type")
+    if not failures:
+        failures.extend(_validate_canonical_bridge_body_model(body))
     return list(set(failures))  # Unique stable codes
 
 

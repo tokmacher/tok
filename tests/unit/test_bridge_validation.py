@@ -47,7 +47,7 @@ def test_assistant_tool_use_preserved():
     canonical, changed, signals = canonicalize_anthropic_bridge_messages(
         messages
     )
-    assert not changed
+    assert changed is True
     assert len(canonical) == 2
     assert canonical[1]["role"] == "assistant"
 

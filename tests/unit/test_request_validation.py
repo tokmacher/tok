@@ -93,6 +93,27 @@ def test_strict_bridge_validation_rejects_empty_messages_after_canonicalization(
     assert failures == ["empty_messages"]
 
 
+def test_canonicalization_falls_back_to_original_on_validation_failure():
+    body = {
+        "model": "claude-sonnet-4",
+        "system": 123,
+        "messages": [
+            {"role": "user", "content": "Inspect the bridge."},
+            {
+                "role": "tool_result",
+                "tool_use_id": "tool_1",
+                "content": "compressed log",
+            },
+        ],
+    }
+
+    canonical, changed, signals = canonicalize_anthropic_bridge_body(body)
+
+    assert changed is False
+    assert canonical == body
+    assert signals.get("tok_bridge_canonical_validation_failed", 0) == 1
+
+
 def test_strict_bridge_validation_rejects_cross_role_tool_shapes():
     failures = validate_anthropic_bridge_body(
         {

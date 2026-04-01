@@ -1080,6 +1080,46 @@ class TestCompressRecentWindow:
         assert "file" in breakdown
         assert len(msgs[0]["content"][0]["content"]) < len(medium_content)
 
+    def test_precision_read_inline_not_compressed(self):
+        content = "\n".join(f"line {i}" for i in range(2000))
+        assert len(content) > 1_200
+        msg = self._make_result_msg(content, tool_use_id="file_id")
+        ctx = {
+            "file_id": {
+                "name": "read",
+                "args": {"path": "src/tok/foo.py", "offset": 10, "limit": 40},
+            }
+        }
+
+        msgs, breakdown = compress_recent_window(
+            [msg], tool_use_id_to_context=ctx, tool_compatible=True
+        )
+
+        assert breakdown == {}
+        assert msgs[0]["content"][0]["content"] == content
+
+    def test_precision_read_top_level_not_compressed(self):
+        content = "\n".join(f"line {i}" for i in range(2000))
+        assert len(content) > 1_200
+        msg = {
+            "role": "tool_result",
+            "tool_use_id": "file_id",
+            "content": content,
+        }
+        ctx = {
+            "file_id": {
+                "name": "read",
+                "args": {"file_path": "src/tok/foo.py", "offset": 10, "limit": 40},
+            }
+        }
+
+        msgs, breakdown = compress_recent_window(
+            [msg], tool_use_id_to_context=ctx, tool_compatible=True
+        )
+
+        assert breakdown == {}
+        assert msgs[0]["content"] == content
+
     def test_non_tool_compatible_recent_window_keeps_legacy_threshold(self):
         code_lines = []
         for i in range(60):

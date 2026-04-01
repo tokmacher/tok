@@ -37,6 +37,7 @@ from .memory.session_helpers import extract_memory_items
 from .pipeline.request_preparation import (
     _capture_repeat_target_snapshots,
     _inject_system,
+    _is_read_only_audit_turn,
     collect_transient_error_snippets,
     mutation_signals,
 )
@@ -48,6 +49,7 @@ from .pipeline.request_validation import (
 from .pipeline.tool_processing import (
     _should_skip_history_rewrite,
     build_tool_use_id_to_context,
+    collect_tool_context_validation_signals,
     collect_behavior_signals,
     count_tokens,
     logical_target_key_from_context,
@@ -357,6 +359,10 @@ def prepare_request_impl(
     behavior_signals = collect_behavior_signals(
         translated_messages, id_to_context
     )
+    for key, value in collect_tool_context_validation_signals(
+        id_to_context
+    ).items():
+        behavior_signals[key] = behavior_signals.get(key, 0) + value
     behavior_signals["_project_markers_proxy"] = len(session._project_markers)
     for err_snippet in collect_transient_error_snippets(translated_messages):
         session.bridge_memory._upsert(
@@ -407,16 +413,22 @@ def prepare_request_impl(
         answer_ready = False
         resend_signals = {}
         has_answer_anchor = False
+        read_only_audit_turn = (
+            request.tool_compatible
+            and _is_read_only_audit_turn(translated_messages)
+        )
         late_answer_followthrough_active = (
             request.tool_compatible
             and session._late_answer_followthrough_pending
             and not session._baseline_only
+            and not read_only_audit_turn
         )
         late_answer_assembly_repair_active = (
             request.tool_compatible
             and session._late_answer_assembly_repair_pending
             and not session._baseline_only
             and not late_answer_followthrough_active
+            and not read_only_audit_turn
         )
         late_answer_assembly_repair_mode = (
             session._late_answer_assembly_repair_mode_pending
@@ -429,6 +441,7 @@ def prepare_request_impl(
             and not session._baseline_only
             and not late_answer_followthrough_active
             and not late_answer_assembly_repair_active
+            and not read_only_audit_turn
         )
         session._late_answer_followthrough_active = (
             late_answer_followthrough_active
@@ -481,6 +494,11 @@ def prepare_request_impl(
             from ..compression import _STABLE_RESULT_EXPLANATION
 
             runtime_hints.append(_STABLE_RESULT_EXPLANATION)
+        if type_breakdown.get("stable_payload_validation_failed", 0) > 0:
+            behavior_signals["stable_payload_validation_failed"] = (
+                behavior_signals.get("stable_payload_validation_failed", 0)
+                + type_breakdown["stable_payload_validation_failed"]
+            )
 
         recent: list[dict[str, Any]] = body["messages"]
         tok_state = ""
@@ -681,7 +699,11 @@ def prepare_request_impl(
             session._answer_ready_repair_pending = False
             session._late_answer_followthrough_pending = False
             session._late_answer_assembly_repair_pending = False
-        elif request.tool_compatible and not session._baseline_only:
+        elif (
+            request.tool_compatible
+            and not session._baseline_only
+            and not read_only_audit_turn
+        ):
             if has_answer_anchor and not answer_ready:
                 session._answer_ready_repair_pending = True
             elif answer_ready and not has_answer_anchor:
