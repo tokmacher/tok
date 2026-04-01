@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 import tok.compression as _compression
+from ._registry import build_default_registry
 from . import (
     EDIT_LIKE_TOOLS,
     FILE_LIKE_TOOLS,
@@ -436,37 +437,24 @@ def tok_tool_result_impl(
 
     kind = _detect_tool_content_type_impl(content)
     original_chars = len(content)
-
-    if kind == "pytest":
-        compressed = _compress_pytest(content)
-    elif kind == "grep":
-        compressed = _compress_grep(content)
-    elif kind == "git_diff":
-        compressed = _compress_git_diff(content)
-    elif kind == "ls":
-        compressed = _compress_ls(content)
-    elif kind == "install":
-        compressed = _compress_install(content)
-    elif kind == "git_log":
-        compressed = _compress_git_log_impl(content)
-    elif kind == "repetitive":
-        compressed = _compress_repetitive(content)
-    elif kind == "file":
-        compressed = _compress_file_read(content)
-    elif kind == "search_results":
-        compressed = _compress_search_results(content)
-    elif kind == "stack_trace":
-        compressed = _compress_stack_traces(content)
-    elif kind == "ps_output":
-        compressed = _compress_env_ps(content, kind)
-    elif kind == "env_output":
-        compressed = _compress_env_ps(content, kind)
-    elif kind == "grep_context":
-        compressed = _compress_grep_context(content)
-    elif kind in {"config_json", "json_skeleton"}:
-        compressed = _compress_config_json(content)
-    else:
-        compressed = content
+    registry = build_default_registry(
+        compress_pytest=_compress_pytest,
+        compress_grep=_compress_grep,
+        compress_git_diff=_compress_git_diff,
+        compress_ls=_compress_ls,
+        compress_install=_compress_install,
+        compress_git_log=_compress_git_log_impl,
+        compress_repetitive=_compress_repetitive,
+        compress_file_read=_compress_file_read,
+        compress_search_results=_compress_search_results,
+        compress_stack_traces=_compress_stack_traces,
+        compress_grep_context=_compress_grep_context,
+        compress_config_json=_compress_config_json,
+        compress_ps_output=lambda text: _compress_env_ps(text, "ps_output"),
+        compress_env_output=lambda text: _compress_env_ps(text, "env_output"),
+    )
+    compressor = registry.get(kind)
+    compressed = compressor(content) if compressor else content
 
     compressed = _tighten_compressed_output(
         kind, compressed, compression_level

@@ -17,106 +17,28 @@ from ..runtime.policy.semantic_validation import (
 )
 from .pricing import get_pricing
 from .telemetry import emit_event_sync
+from ._savings_persistence import (
+    STATS_KEY_MAP_INV,
+    default_ledger_path,
+    default_savings_file,
+    empty_stats,
+    legacy_ledger_path,
+    parse_model_line,
+)
+from ._savings_quality import (
+    BASELINE_ONLY_SIGNAL,
+    FALLBACK_SIGNAL,
+    PROMPT_METRIC_KEYS as _PROMPT_METRIC_KEYS,
+    degradation_reason as _degradation_reason,
+    session_quality as _session_quality,
+)
 from typing import Any
 
 logger = logging.getLogger("tok.savings_tracker")
 
-SESSION_STATS_FILENAME = "tok_savings.tok"
-GLOBAL_LEDGER_FILENAME = "global_savings.tok"
-BASELINE_ONLY_SIGNAL = "baseline_only_session"
-FALLBACK_SIGNAL = "tok_fallback_activated"
-_PROMPT_METRIC_KEYS = (
-    "baseline_prompt_tokens",
-    "prepared_prompt_tokens",
-    "saved_prompt_tokens",
-    "hot_hint_tokens_added",
-    "reacquisition_tokens_avoided_estimate",
-)
-
-
-def _degradation_reason(
-    signals: dict[str, int], *, baseline_only: bool
-) -> str:
-    if baseline_only or signals.get(BASELINE_ONLY_SIGNAL, 0):
-        return "baseline fallback"
-    if signals.get("stream_recovery_retry", 0) or signals.get(
-        "stream_recovery_fallback", 0
-    ):
-        return "stream recovery"
-    if signals.get(
-        "tok_bridge_invalid_tool_history_quarantined", 0
-    ) or signals.get("tok_bridge_invalid_tool_history_blocked", 0):
-        return "invalid tool history recovery"
-    if signals.get("fail_open_compat_response", 0) or signals.get(
-        "processing_error", 0
-    ):
-        return "fail-open compatibility"
-    if signals.get("semantic_drift_detected", 0) or signals.get(
-        "non_tok_response", 0
-    ):
-        return "response contract drift"
-    if signals.get("repeat_file_read", 0) or signals.get("repeat_search", 0):
-        return "context reacquisition"
-    if signals.get("answer_anchor_present", 0) == 0 and (
-        signals.get("state_resend_suppressed_turn", 0)
-        or signals.get("state_resend_delta_turn", 0)
-        or signals.get("state_resend_full_turn", 0)
-    ):
-        return "answer anchor retention"
-    return ""
-
-
-def _session_quality(
-    signals: dict[str, int],
-    *,
-    baseline_only: bool,
-    tokens_saved: int = 0,
-) -> str:
-    if baseline_only:
-        return "degraded"
-    if signals.get("tok_bridge_invalid_tool_history_session_reset", 0):
-        return "degraded"
-    if (
-        signals.get(FALLBACK_SIGNAL, 0)
-        or signals.get("semantic_drift_detected", 0)
-        or signals.get("fail_open_compat_response", 0)
-        or signals.get("stream_recovery_retry", 0)
-        or signals.get("stream_recovery_fallback", 0)
-        or signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
-        or signals.get("tok_bridge_invalid_tool_history_blocked", 0)
-        or signals.get("repeat_file_read", 0)
-        or signals.get("repeat_search", 0)
-        or (
-            tokens_saved > 0
-            and signals.get("answer_anchor_present", 0) == 0
-            and (
-                signals.get("state_resend_suppressed_turn", 0)
-                or signals.get("state_resend_delta_turn", 0)
-                or signals.get("state_resend_full_turn", 0)
-            )
-        )
-    ):
-        return "watch"
-    return "clean"
-
-
-def _default_savings_file() -> str:
-    """Per-session stats live in /tmp unless overridden."""
-    return os.getenv("TOK_SAVINGS_FILE", f"/tmp/{SESSION_STATS_FILENAME}")
-
-
-def _default_ledger_path() -> Path:
-    tok_dir = os.getenv("TOK_PROJECT_DIR", "")
-    if tok_dir:
-        return Path(tok_dir) / GLOBAL_LEDGER_FILENAME
-    return Path.home() / ".tok" / GLOBAL_LEDGER_FILENAME
-
-
-def _legacy_ledger_path() -> Path:
-    tok_dir = os.getenv("TOK_PROJECT_DIR", "")
-    if tok_dir:
-        return Path(tok_dir) / "savings.tok"
-    return Path.home() / ".tok" / "savings.tok"
+_default_savings_file = default_savings_file
+_default_ledger_path = default_ledger_path
+_legacy_ledger_path = legacy_ledger_path
 
 
 class SavingsTracker:
@@ -127,13 +49,13 @@ class SavingsTracker:
         savings_file: str | None = None,
         ledger_path: Path | None = None,
     ) -> None:
-        self._savings_file = savings_file or _default_savings_file()
-        self._ledger_path = ledger_path or _default_ledger_path()
+        self._savings_file = savings_file or default_savings_file()
+        self._ledger_path = ledger_path or default_ledger_path()
         self._lock = threading.Lock()
         self._migrate_legacy_ledger()
 
     def _migrate_legacy_ledger(self) -> None:
-        legacy = _legacy_ledger_path()
+        legacy = legacy_ledger_path()
         if legacy == self._ledger_path:
             return
         if not legacy.exists() or self._ledger_path.exists():
@@ -154,63 +76,11 @@ class SavingsTracker:
     def ledger_path(self) -> Path:
         return self._ledger_path
 
-    @staticmethod
-    def _parse_kv_string(s: str) -> dict[str, int]:
-        pairs: dict[str, int] = {}
-        for pair in s.split(","):
-            if "=" in pair:
-                k, v = pair.split("=", 1)
-                try:
-                    pairs[k] = int(v)
-                except ValueError:
-                    pass
-        return pairs
-
-    _STATS_KEY_MAP: dict[str, str] = {
-        "c": "calls",
-        "in": "actual_input_tokens",
-        "out": "actual_output_tokens",
-        "cr": "cache_read_tokens",
-        "cw": "cache_write_tokens",
-        "ins": "input_saved_tokens",
-        "outs": "output_saved_tokens",
-        "act": "actual_cost_usd",
-        "base": "baseline_cost_usd",
-        "bpt": "baseline_prompt_tokens",
-        "ppt": "prepared_prompt_tokens",
-        "spt": "saved_prompt_tokens",
-        "hht": "hot_hint_tokens_added",
-        "rat": "reacquisition_tokens_avoided_estimate",
-    }
-
     def _parse_model_line(self, line: str) -> tuple[str, dict[str, Any]]:
-        parts = line.split(" m:", 1)[1].strip().split("|")
-        model_name = parts[0]
-        m: dict[str, Any] = {
-            "type_breakdown": {},
-            "behavior_signals": {},
-        }
-        for p in parts[1:]:
-            if ":" not in p:
-                continue
-            k, v = p.split(":", 1)
-            if k == "breakdown":
-                m["type_breakdown"] = self._parse_kv_string(v)
-            elif k == "signals":
-                m["behavior_signals"] = self._parse_kv_string(v)
-            elif k in self._STATS_KEY_MAP:
-                m[self._STATS_KEY_MAP[k]] = (
-                    float(v) if "." in v or k in ("act", "base") else int(v)
-                )
-        return model_name, m
+        return parse_model_line(line)
 
     def _empty_stats(self) -> dict[str, Any]:
-        return {
-            "session_start": time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-            ),
-            "models": {},
-        }
+        return empty_stats()
 
     def load_stats(self) -> dict[str, Any]:
         try:
@@ -236,25 +106,9 @@ class SavingsTracker:
         """Save stats atomically to prevent race conditions."""
         try:
             lines = [f">>> session:{stats.get('session_start', 'unknown')}"]
-            key_map_inv = {
-                "calls": "c",
-                "actual_input_tokens": "in",
-                "actual_output_tokens": "out",
-                "cache_read_tokens": "cr",
-                "cache_write_tokens": "cw",
-                "input_saved_tokens": "ins",
-                "output_saved_tokens": "outs",
-                "actual_cost_usd": "act",
-                "baseline_cost_usd": "base",
-                "baseline_prompt_tokens": "bpt",
-                "prepared_prompt_tokens": "ppt",
-                "saved_prompt_tokens": "spt",
-                "hot_hint_tokens_added": "hht",
-                "reacquisition_tokens_avoided_estimate": "rat",
-            }
             for model, m in sorted(stats["models"].items()):
                 parts = [model]
-                for full_k, short_k in key_map_inv.items():
+                for full_k, short_k in STATS_KEY_MAP_INV.items():
                     val = m.get(full_k, 0)
                     if isinstance(val, float):
                         parts.append(f"{short_k}:{val:.6f}")
