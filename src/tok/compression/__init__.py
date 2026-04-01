@@ -10,7 +10,7 @@ import os
 import re
 import time as time_module
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from pydantic import (
     BaseModel,
@@ -668,15 +668,20 @@ def _evict_cache_entry(
 
 
 def _unpack_cache_entry(
-    entry: tuple[str, ...],
+    entry: tuple[Any, ...],
 ) -> tuple[str, str, float | None, int]:
     entry_length = len(entry)
     if entry_length >= 3:
-        return entry[0], entry[1], entry[2], entry_length
+        return (
+            str(entry[0]),
+            str(entry[1]),
+            cast(float | None, entry[2]),
+            entry_length,
+        )
     if entry_length == 2:
-        return entry[0], entry[1], None, entry_length
+        return str(entry[0]), str(entry[1]), None, entry_length
     if entry_length == 1:
-        return entry[0], "", None, entry_length
+        return str(entry[0]), "", None, entry_length
     return "", "", None, entry_length
 
 

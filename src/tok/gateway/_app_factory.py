@@ -77,12 +77,21 @@ def _compute_rate_limit_backoff_seconds(
     bounded_attempt = max(1, attempt)
     bounded_base = max(1, base_ms)
     bounded_cap = max(bounded_base, cap_ms)
-    exponential_ms = min(
-        bounded_cap, bounded_base * (2 ** (bounded_attempt - 1))
+    exponential_ms = float(
+        min(bounded_cap, bounded_base * (2 ** (bounded_attempt - 1)))
     )
-    jitter_multiplier = random.uniform(0.5, 1.5)
-    jittered_ms = min(bounded_cap, exponential_ms * jitter_multiplier)
+    jitter_multiplier = _random_jitter_multiplier()
+    jittered_ms = float(
+        min(float(bounded_cap), exponential_ms * jitter_multiplier)
+    )
     return max(0.0, jittered_ms / 1000.0)
+
+
+def _random_jitter_multiplier() -> float:
+    value = random.uniform(0.5, 1.5)
+    if isinstance(value, int | float):
+        return float(value)
+    return 1.0
 
 
 def _local_rate_limit_response(retry_after_seconds: int) -> Response:

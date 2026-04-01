@@ -400,12 +400,12 @@ def _opportunity_class_for(
     repeat_class: str,
     miss_reason: str | None,
 ) -> str | None:
-    if miss_reason in _STRUCTURAL_MISS_REASONS:
-        return "structural_cliff"
     if repeat_class == "canonical_repeat":
         return "volatile_repeat"
     if repeat_class in {"alias_repeat", "cross_tool_same_output"}:
         return "alias_miss"
+    if miss_reason in _STRUCTURAL_MISS_REASONS:
+        return "structural_cliff"
     if repeat_class == "first_seen":
         return None
     if raw_content_length < _SEMANTIC_HASH_MIN_CHARS:

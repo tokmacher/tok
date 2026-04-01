@@ -252,7 +252,7 @@ class TestAIFreshnessSignalUnderstanding:
 
         pattern = r"~\d+t"
         assert re.search(pattern, fact_value), (
-            f"Expected ~NUMBERt format in: {fact_value}"
+            f"Expected ~<token-count>t format in: {fact_value}"
         )
 
     def test_verified_current_vs_changed_delta(self):

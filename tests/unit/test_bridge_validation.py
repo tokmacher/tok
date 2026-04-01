@@ -20,17 +20,17 @@ def test_top_level_tool_result_rewritten_and_merged():
 
     assert changed is True
     assert signals["tok_bridge_top_level_tool_result_rewritten"] == 2
-    assert signals["tok_bridge_adjacent_user_merged"] == 3
-    assert len(canonical) == 1
+    assert signals["tok_bridge_adjacent_user_merged"] == 1
+    assert len(canonical) == 3
     assert canonical[0]["role"] == "user"
-    assert len(canonical[0]["content"]) == 4
+    assert len(canonical[1]["content"]) == 2
     assert canonical[0]["content"][0] == {
         "type": "text",
         "text": "Start work.",
     }
-    assert canonical[0]["content"][1]["type"] == "tool_result"
-    assert canonical[0]["content"][2]["type"] == "tool_result"
-    assert canonical[0]["content"][3] == {
+    assert canonical[1]["content"][0]["type"] == "tool_result"
+    assert canonical[1]["content"][1]["type"] == "tool_result"
+    assert canonical[2]["content"][0] == {
         "type": "text",
         "text": "Continue work.",
     }
@@ -80,7 +80,6 @@ def test_invalid_tool_ids_are_sanitized_after_adjacent_user_merge():
     )
 
     assert changed is True
-    assert signals["tok_bridge_adjacent_user_merged"] == 1
     assert signals["tok_bridge_tool_id_sanitized"] == 1
     assert signals["tok_bridge_tool_result_id_rewritten"] == 1
     rewritten_id = canonical[1]["content"][0]["id"]

@@ -1169,7 +1169,7 @@ def _collect_bridge_tool_result_shape_risks(
                     risks.get("assistant_tool_use_missing_next_tool_result", 0)
                     + len(pending_tool_use_ids)
                 )
-            pending_tool_use_ids = set()
+            pending_tool_use_ids = []
             continue
 
         (

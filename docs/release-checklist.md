@@ -21,6 +21,16 @@ Steps for cutting a Tok release.
 - [ ] Confirm README badges and repository URLs resolve publicly
 - [ ] Confirm the deferred `0.1.0` follow-ups are documented: CLI decomposition and dependency upper-bound policy
 
+Recommended local gate sequence for the exact release candidate:
+
+```bash
+pre-commit run --all-files
+ruff check src/tok tests
+mypy src/tok
+pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
+python -m build
+```
+
 ## Release
 
 - [ ] Reconfirm the exact release candidate still passes the supported bridge-first live validation path
