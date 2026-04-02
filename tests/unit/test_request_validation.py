@@ -11,8 +11,63 @@ from tok.runtime.pipeline.request_validation import (
     summarize_bridge_pairing,
     summarize_message_structure,
     validate_anthropic_bridge_body,
+    validate_anthropic_outgoing_bridge_body,
 )
 from tok.runtime.types import RuntimeRequest
+
+
+def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
+    tool_uses = [
+        {
+            "type": "tool_use",
+            "id": f"toolu_batch_{index + 1}",
+            "name": "read_file",
+            "input": {"path": f"file_{index + 1}.py"},
+        }
+        for index in range(18)
+    ]
+    assistant_content = (
+        tool_uses[:9]
+        + [{"type": "text", "text": "Collecting evidence."}]
+        + tool_uses[9:]
+    )
+    tool_results = [
+        {
+            "type": "tool_result",
+            "tool_use_id": f"toolu_batch_{index + 1}",
+            "content": f"result {index + 1}",
+        }
+        for index in range(18)
+    ]
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Inspect concurrency path."}],
+        },
+        {"role": "assistant", "content": assistant_content},
+        {"role": "user", "content": tool_results},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_tail_1",
+                    "name": "grep_search",
+                    "input": {"pattern": "stream_recovery"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_tail_1",
+                    "content": "tail result",
+                }
+            ],
+        },
+    ]
 
 
 def test_top_level_tool_result_is_rewritten_and_merged_into_user_blocks():
@@ -461,6 +516,25 @@ def test_strict_bridge_validation_accepts_alternating_multi_turn_tool_pairs():
     assert timeline[1]["next_tool_result_ids"] == ["tool_b1"]
 
 
+def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
+    body = {
+        "model": "claude-sonnet-4",
+        "messages": _provider_sensitive_large_tool_batch_messages(),
+    }
+
+    assert validate_anthropic_bridge_body(body) == []
+    assert validate_anthropic_outgoing_bridge_body(body) == [
+        "provider_sensitive_large_tool_use_text_interleaving"
+    ]
+    summary = summarize_message_structure(body["messages"])
+    assert summary["provider_sensitivity_risks"] == {
+        "assistant_large_tool_use_batch": 1,
+        "assistant_tool_use_text_interleaving": 1,
+        "assistant_large_tool_use_text_interleaving": 1,
+        "provider_sensitive_large_tool_use_text_interleaving": 1,
+    }
+
+
 def test_strict_bridge_validation_rejects_alternating_multi_turn_reordered_first_exchange():
     body = {
         "model": "claude-sonnet-4",
@@ -852,19 +926,48 @@ def test_prepare_request_applies_stream_recovery_history_floor(
         prepared.behavior_signals["stream_recovery_history_floor_kept_context"]
         == 1
     )
+
+
+def test_stream_recovery_history_floor_leaves_safe_outgoing_body(
+    tmp_path,
+):
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._stream_recovery_history_floor_budget = 1
+    runtime = UniversalTokRuntime()
+    messages = _provider_sensitive_large_tool_batch_messages()
+
+    prepared = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            messages=messages,
+            system="System context",
+            adapter_kind="claude-bridge",
+            tool_compatible=True,
+        ),
+        session,
+    )
+
+    assert (
+        prepared.behavior_signals["stream_recovery_history_floor_applied"] == 1
+    )
+    assert validate_anthropic_outgoing_bridge_body(prepared.body) == []
     kept = prepared.body["messages"]
     assert len(kept) == 3
-    assert kept[0]["role"] == "assistant"
+    assert kept[0]["role"] == "user"
+    assert kept[1]["role"] == "assistant"
     assert any(
-        isinstance(block, dict) and block.get("type") == "tool_use"
-        for block in kept[0].get("content", [])
-    )
-    assert kept[1]["role"] == "user"
-    assert any(
-        isinstance(block, dict) and block.get("type") == "tool_result"
+        isinstance(block, dict)
+        and block.get("type") == "tool_use"
+        and block.get("id") == "toolu_tail_1"
         for block in kept[1].get("content", [])
     )
     assert kept[2]["role"] == "user"
+    assert any(
+        isinstance(block, dict)
+        and block.get("type") == "tool_result"
+        and block.get("tool_use_id") == "toolu_tail_1"
+        for block in kept[2].get("content", [])
+    )
 
 
 def test_canonicalization_strips_thinking_blocks_from_assistant_message():

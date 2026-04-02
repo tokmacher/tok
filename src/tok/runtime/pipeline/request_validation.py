@@ -39,6 +39,9 @@ _STRICT_FAILURE_SIGNAL_MAP = {
     "bridge_wire_model_invalid": (
         "tok_bridge_strict_bridge_wire_model_invalid"
     ),
+    "provider_sensitive_large_tool_use_text_interleaving": (
+        "tok_bridge_strict_provider_sensitive_large_tool_use_text_interleaving"
+    ),
 }
 _INVALID_TOOL_HISTORY_FAILURES = frozenset(
     {
@@ -59,6 +62,10 @@ _RECOVERABLE_IMMEDIATE_PAIRING_FAILURES = frozenset(
         "tool_result_not_immediately_after_assistant_tool_use",
         "user_tool_result_after_text",
     }
+)
+_PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD = 16
+_PROVIDER_SENSITIVE_FAILURES = frozenset(
+    {"provider_sensitive_large_tool_use_text_interleaving"}
 )
 
 
@@ -1209,6 +1216,84 @@ def _collect_bridge_tool_result_shape_risks(
     return risks
 
 
+def _collect_bridge_provider_sensitivity_risks(
+    messages: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Return provider-sensitive mixed assistant tool/text batch risks."""
+    if not isinstance(messages, list):
+        return {}
+
+    risks: dict[str, int] = {}
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role", "")).strip() != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+
+        tool_positions = [
+            block_index
+            for block_index, block in enumerate(content)
+            if isinstance(block, dict) and block.get("type") == "tool_use"
+        ]
+        if not tool_positions:
+            continue
+        first_tool = tool_positions[0]
+        last_tool = tool_positions[-1]
+        tool_use_count = len(tool_positions)
+        has_text_between_tool_uses = any(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and first_tool < block_index < last_tool
+            for block_index, block in enumerate(content)
+        )
+        if tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD:
+            risks["assistant_large_tool_use_batch"] = (
+                risks.get("assistant_large_tool_use_batch", 0) + 1
+            )
+        if has_text_between_tool_uses:
+            risks["assistant_tool_use_text_interleaving"] = (
+                risks.get("assistant_tool_use_text_interleaving", 0) + 1
+            )
+        if (
+            tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD
+            and has_text_between_tool_uses
+        ):
+            next_message = (
+                messages[index + 1] if index + 1 < len(messages) else None
+            )
+            next_content = (
+                next_message.get("content")
+                if isinstance(next_message, dict)
+                else None
+            )
+            next_tool_result_count = 0
+            if isinstance(next_content, list):
+                next_tool_result_count = sum(
+                    1
+                    for block in next_content
+                    if isinstance(block, dict)
+                    and block.get("type") == "tool_result"
+                )
+            risks["assistant_large_tool_use_text_interleaving"] = (
+                risks.get("assistant_large_tool_use_text_interleaving", 0) + 1
+            )
+            if next_tool_result_count:
+                risks[
+                    "provider_sensitive_large_tool_use_text_interleaving"
+                ] = (
+                    risks.get(
+                        "provider_sensitive_large_tool_use_text_interleaving",
+                        0,
+                    )
+                    + 1
+                )
+
+    return risks
+
+
 def _summarize_message_blocks(
     content: Any,
     summary: dict[str, Any],
@@ -1274,6 +1359,9 @@ def summarize_message_structure(
     summary["sequence"] = role_seq
     summary["field_shape_risks"] = _collect_bridge_tool_result_shape_risks(
         messages
+    )
+    summary["provider_sensitivity_risks"] = (
+        _collect_bridge_provider_sensitivity_risks(messages)
     )
     return summary
 
@@ -1467,6 +1555,25 @@ def validate_anthropic_bridge_body(body: dict[str, Any]) -> list[str]:
     return list(set(failures))  # Unique stable codes
 
 
+def validate_anthropic_outgoing_bridge_body(body: dict[str, Any]) -> list[str]:
+    """Validate the exact outgoing bridge body with provider-sensitive guards."""
+    failures = validate_anthropic_bridge_body(body)
+    if failures:
+        return failures
+
+    messages = body.get("messages")
+    provider_risks = _collect_bridge_provider_sensitivity_risks(messages)
+    if provider_risks.get(
+        "provider_sensitive_large_tool_use_text_interleaving", 0
+    ):
+        failures.append("provider_sensitive_large_tool_use_text_interleaving")
+    return failures
+
+
+def has_provider_sensitive_failures(failures: list[str]) -> bool:
+    return any(failure in _PROVIDER_SENSITIVE_FAILURES for failure in failures)
+
+
 def has_recoverable_immediate_pairing_failures(
     failures: list[str],
 ) -> bool:
@@ -1619,9 +1726,11 @@ __all__ = [
     "normalize_tool_use_blocks",
     "quarantine_invalid_tool_history_messages",
     "has_recoverable_immediate_pairing_failures",
+    "has_provider_sensitive_failures",
     "summarize_message_structure",
     "summarize_bridge_pairing",
     "validate_anthropic_bridge_body",
+    "validate_anthropic_outgoing_bridge_body",
     "detect_prompt_bloat",
     "should_optimize_prompts",
 ]

@@ -22,8 +22,6 @@ __all__ = [
 ]
 
 import copy
-import hashlib
-import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -126,25 +124,19 @@ from .policy.semantic_validation import (
     SemanticValidator,
     calculate_invisible_pressure,
     calculate_semantic_regression_score,  # noqa: F401
-    pressure_score as _semantic_pressure_score,
 )
 from .memory.answer_memory import (
-    _process_answer_memory,
-    _should_persist_to_durable,
     compact_structured_answer_memory,  # noqa: F401
     extract_structured_answer_memory,  # noqa: F401
     ground_structured_answer_memory,  # noqa: F401
     reinforce_structured_answer_memory,  # noqa: F401
+    _should_persist_to_durable,  # noqa: F401
 )
 from .pipeline.response_processing import (
-    heal_drift,
-    response_behavior_signals,
-    _is_answer_like_visible_text,
     translate_request_results,
     response_contract_for_mode,
 )
 from .policy.macro_handling import (
-    _attribute_macro_savings,
     _jit_context_matches,
     execute_jit_macro,
 )
@@ -161,11 +153,7 @@ from .pipeline.request_preparation import (
 )
 from .pipeline.response_handling import (
     sort_cache_control_blocks,
-    handle_answer_repair,
     evaluate_replay_gate,  # noqa: F401
-)
-from .policy.answer_repair import (
-    _mark_late_answer_assembly_mode_signal,
 )
 from .memory.session_helpers import (
     calculate_reasoning_depth,
@@ -175,8 +163,36 @@ from .memory.session_helpers import (
     _discover_project_markers,
     extract_memory_items,
 )
-from .metrics import (
-    report_protocol_drift,
+from ._runtime_orchestration import (
+    build_tool_compatible_resend,
+    pressure_score as runtime_pressure_score,
+    process_response_impl,
+)
+from ._session_observation import (
+    apply_predictive_cache_warming as apply_predictive_cache_warming_impl,
+    evidence_intent_advisories as evidence_intent_advisories_impl,
+    hot_recent_runtime_hints as hot_recent_runtime_hints_impl,
+    prepared_prompt_tokens as prepared_prompt_tokens_impl,
+    record_file_snapshot as record_file_snapshot_impl,
+    record_history_snapshot as record_history_snapshot_impl,
+    record_metadata_snapshot as record_metadata_snapshot_impl,
+    record_search_snapshot as record_search_snapshot_impl,
+)
+from ._session_persistence import (
+    bridge_memory_file,
+    episode_ledger_file,
+    initialize_session_storage,
+    load_bridge_memory,
+    load_episode_ledger,
+    load_fallback_memory,
+    load_result_cache,
+    record_episode as record_episode_impl,
+    result_cache_file,
+    save_bridge_memory,
+    save_episode_ledger,
+    save_fallback_memory,
+    save_result_cache,
+    fallback_memory_file,
 )
 
 
@@ -343,223 +359,48 @@ class RuntimeSession:
     def __post_init__(self) -> None:
         """Initialize memory directory and load persisted bridge memory."""
         explicit_memory_dir = self.memory_dir is not None
-        if self.memory_dir is None:
-            project_dir = os.getenv("TOK_PROJECT_DIR", "")
-            if project_dir:
-                self.memory_dir = Path(project_dir) / ".tok"
-            else:
-                self.memory_dir = Path.home() / ".tok"
-        # Preserve load_global_macros from passed bridge_memory if it's explicitly False
-        # Otherwise, set based on explicit_memory_dir
-        if not self.bridge_memory.load_global_macros:
-            self._load_global_macros = False
-        else:
-            self._load_global_macros = not explicit_memory_dir
-            self.bridge_memory = self._load_bridge_memory()
-        self.result_cache = self._load_result_cache()
-        self.fallback_memory = self._load_fallback_memory()
-        if self.fallback_memory and not self.bridge_memory.wire_state():
-            self.bridge_memory.ingest_wire_state(self.fallback_memory)
-            self._save_bridge_memory()
-        # Local Mesh Discovery: scan CWD for project markers and warm file heat so
-        # macros whose context_requirements reference these markers get speculative
-        # injection from the very first turn.
-        if explicit_memory_dir:
-            self._project_markers = frozenset()
-        else:
-            self._project_markers = _discover_project_markers()
-            for marker in self._project_markers:
-                self.bridge_memory.bump_file_heat(marker, weight=0.1)
+        initialize_session_storage(
+            self, explicit_memory_dir=explicit_memory_dir
+        )
 
     def _bridge_memory_file(self) -> Path:
-        assert self.memory_dir is not None
-        return self.memory_dir / "bridge_memory.tok"
+        return bridge_memory_file(self)
 
     def _load_bridge_memory(self) -> BridgeMemoryState:
-        """Load bridge memory from persisted file."""
-        path = self._bridge_memory_file()
-        if not path.exists():
-            return BridgeMemoryState(
-                load_global_macros=self._load_global_macros
-            )
-        try:
-            return BridgeMemoryState.from_tok(
-                path.read_text(),
-                load_global_macros=self._load_global_macros,
-            )
-        except FileNotFoundError:
-            return BridgeMemoryState(
-                load_global_macros=self._load_global_macros
-            )
-        except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as exc:
-            logger.warning(
-                "Bridge memory file corrupted at %s: %s — starting with empty memory",
-                path,
-                exc,
-            )
-            return BridgeMemoryState(
-                load_global_macros=self._load_global_macros
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to load bridge memory from %s: %s",
-                path,
-                exc,
-            )
-            return BridgeMemoryState(
-                load_global_macros=self._load_global_macros
-            )
+        return load_bridge_memory(self)
 
     def _save_bridge_memory(self) -> None:
-        """Save bridge memory to persisted file."""
-        try:
-            assert self.memory_dir is not None
-            self.memory_dir.mkdir(parents=True, exist_ok=True)
-            self._bridge_memory_file().write_text(self.bridge_memory.to_tok())
-        except Exception as exc:
-            logger.warning(
-                "Failed to save bridge memory to %s: %s",
-                self._bridge_memory_file(),
-                exc,
-            )
+        save_bridge_memory(self)
 
     def _result_cache_file(self) -> Path:
-        assert self.memory_dir is not None
-        return self.memory_dir / "result_cache.tok"
+        return result_cache_file(self)
 
     def _load_result_cache(self) -> dict[str, Any]:
-        """Load result cache from persisted file."""
-        import time as time_module
-
-        path = self._result_cache_file()
-        if not path.exists():
-            return {}
-        try:
-            result = json.loads(path.read_text())
-            if isinstance(result, dict):
-                cleaned = {}
-                current_time = time_module.time()
-                for k, v in result.items():
-                    if isinstance(v, list) and len(v) == 3:
-                        cached_hash, raw, timestamp = v
-                        if current_time - timestamp < RESULT_CACHE_TTL_SECONDS:
-                            cleaned[k] = v
-                    elif isinstance(v, list) and len(v) == 2:
-                        cleaned[k] = v
-                    else:
-                        cleaned[k] = v
-                return cleaned
-            logger.warning(
-                "Result cache at %s is not a dict — starting empty", path
-            )
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            logger.warning(
-                "Result cache corrupted at %s: %s — starting empty", path, exc
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to load result cache from %s: %s", path, exc
-            )
-        return {}
+        return load_result_cache(self)
 
     def _save_result_cache(self) -> None:
-        """Save result cache to persisted file."""
-        try:
-            assert self.memory_dir is not None
-            self.memory_dir.mkdir(parents=True, exist_ok=True)
-            trimmed = {
-                k: (v[0], v[1][:10240], v[2])
-                if isinstance(v, tuple) and len(v) == 3
-                else (v[0], v[1][:10240])
-                if isinstance(v, tuple) and len(v) == 2
-                else v
-                for k, v in self.result_cache.items()
-            }
-            self._result_cache_file().write_text(json.dumps(trimmed))
-        except Exception as exc:
-            logger.warning(
-                "Failed to save result cache to %s: %s",
-                self._result_cache_file(),
-                exc,
-            )
+        save_result_cache(self)
 
     def _fallback_memory_file(self) -> Path:
-        assert self.memory_dir is not None
-        return self.memory_dir / "memory.tok"
+        return fallback_memory_file(self)
 
     def _load_fallback_memory(self) -> str:
-        """Load persisted raw fallback memory from disk."""
-        path = self._fallback_memory_file()
-        if not path.exists():
-            return ""
-        try:
-            return path.read_text().strip()
-        except (UnicodeDecodeError, PermissionError) as exc:
-            logger.warning(
-                "Failed to load fallback memory from %s: %s", path, exc
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to load fallback memory from %s: %s", path, exc
-            )
-        return ""
+        return load_fallback_memory(self)
 
     def _save_fallback_memory(self) -> None:
-        """Save raw fallback memory to persisted file."""
-        try:
-            assert self.memory_dir is not None
-            self.memory_dir.mkdir(parents=True, exist_ok=True)
-            self._fallback_memory_file().write_text(
-                self.fallback_memory + "\n"
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to save fallback memory to %s: %s",
-                self._fallback_memory_file(),
-                exc,
-            )
+        save_fallback_memory(self)
 
     def _episode_ledger_file(self) -> Path:
-        assert self.memory_dir is not None
-        return self.memory_dir / "episode_ledger.tok"
+        return episode_ledger_file(self)
 
     def _load_episode_ledger(self) -> EpisodeLedger:
-        path = self._episode_ledger_file()
-        if not path.exists():
-            return EpisodeLedger()
-        try:
-            return EpisodeLedger.from_tok(path.read_text())
-        except (ValueError, UnicodeDecodeError) as exc:
-            logger.warning(
-                "Episode ledger corrupted at %s: %s — starting empty",
-                path,
-                exc,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to load episode ledger from %s: %s", path, exc
-            )
-        return EpisodeLedger()
+        return load_episode_ledger(self)
 
     def _save_episode_ledger(self) -> None:
-        try:
-            assert self.memory_dir is not None
-            self.memory_dir.mkdir(parents=True, exist_ok=True)
-            self._episode_ledger_file().write_text(
-                self.episode_ledger.to_tok()
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to save episode ledger to %s: %s",
-                self._episode_ledger_file(),
-                exc,
-            )
+        save_episode_ledger(self)
 
     def record_episode(self, entry: EpisodeEntry) -> None:
-        """Log a completed reasoning episode and persist the ledger."""
-        self.episode_ledger.record(entry)
-        self._save_episode_ledger()
-        self._bump_signals({"episode_recorded": 1})
+        record_episode_impl(self, entry)
 
     def reasoning_depth_per_token(self) -> float:
         """Dual-axis metric: reasoning diversity per token consumed.
@@ -606,41 +447,20 @@ class RuntimeSession:
         return session_write_memory(self, text)
 
     def record_file_snapshot(self, path: str, snippet: str) -> bool:
-        """Persist a file snippet so the model can reuse it without rereading."""
-        recorded = self.bridge_memory.record_file_snapshot(path, snippet)
-        if recorded:
-            self._bump_signals({"file_snapshot_recorded": 1})
-            self._save_bridge_memory()
-        return recorded
+        return record_file_snapshot_impl(self, path, snippet)
 
     def record_search_snapshot(self, query: str, snippet: str) -> bool:
-        """Persist a search snippet so future turns can reuse the result."""
-        recorded = self.bridge_memory.record_search_snapshot(query, snippet)
-        if recorded:
-            self._bump_signals({"search_snapshot_recorded": 1})
-            self._save_bridge_memory()
-        return recorded
+        return record_search_snapshot_impl(self, query, snippet)
 
     def record_history_snapshot(
         self, path: str, revision: str, snippet: str
     ) -> bool:
-        recorded = self.bridge_memory.record_history_snapshot(
-            path, revision, snippet
-        )
-        if recorded:
-            self._bump_signals({"history_snapshot_recorded": 1})
-            self._save_bridge_memory()
-        return recorded
+        return record_history_snapshot_impl(self, path, revision, snippet)
 
     def record_metadata_snapshot(
         self, path: str, subtype: str, snippet: str
     ) -> bool:
-        recorded = self.bridge_memory.record_metadata_snapshot(
-            path, subtype, snippet
-        )
-        if recorded:
-            self._save_bridge_memory()
-        return recorded
+        return record_metadata_snapshot_impl(self, path, subtype, snippet)
 
     # ---------------------------------------------------------------------------
     # Explorer helpers - available on session for agent exploration
@@ -720,23 +540,7 @@ class RuntimeSession:
         return None
 
     def prepared_prompt_tokens(self, payload: dict[str, Any]) -> int:
-        """Estimate prompt tokens for the system/messages payload with per-session caching."""
-        prompt_payload = {
-            "system": copy.deepcopy(payload.get("system", "")),
-            "messages": copy.deepcopy(payload.get("messages", [])),
-        }
-        fingerprint = hashlib.sha256(
-            json.dumps(prompt_payload, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:16]
-        if fingerprint in self._prepared_prompt_token_cache:
-            self._bump_signals({"prepared_prompt_token_cache_hit": 1})
-            return self._prepared_prompt_token_cache[fingerprint]
-        token_count = count_tokens(json.dumps(prompt_payload, sort_keys=True))
-        self._prepared_prompt_token_cache[fingerprint] = token_count
-        if len(self._prepared_prompt_token_cache) > 32:
-            oldest_key = next(iter(self._prepared_prompt_token_cache))
-            self._prepared_prompt_token_cache.pop(oldest_key, None)
-        return token_count
+        return prepared_prompt_tokens_impl(self, payload)
 
     def _trim_repeat_target_state(self) -> None:
         if len(self._recent_repeat_target_events) > 16:
@@ -786,165 +590,13 @@ class RuntimeSession:
     def apply_predictive_cache_warming(
         self, logical_target: str
     ) -> dict[str, int]:
-        """Warm nearby session-local cache entries using already known snapshots only."""
-        candidate_keys: list[str] = []
-        record = self._hot_summary_records.get(f"file_read|{logical_target}")
-        if not record:
-            return {}
-        normalized_path = logical_target
-        sibling_prefix = str(Path(normalized_path).parent)
-        for key, other in sorted(
-            self._hot_summary_records.items(),
-            key=lambda item: item[1].last_seen_turn,
-            reverse=True,
-        ):
-            if key == f"file_read|{logical_target}":
-                continue
-            if (
-                other.tool_family == "file_read"
-                and str(Path(other.logical_target).parent) == sibling_prefix
-            ):
-                candidate_keys.append(key)
-            if other.tool_family == "search":
-                same_turn = any(
-                    event.turn_index == record.last_seen_turn
-                    and event.tool_family == "search"
-                    and f"{event.tool_family}|{event.logical_target}" == key
-                    for event in self._recent_repeat_target_events
-                )
-                if same_turn:
-                    candidate_keys.append(key)
-        for event in sorted(
-            self._recent_repeat_target_events,
-            key=lambda item: item.turn_index,
-            reverse=True,
-        ):
-            key = f"{event.tool_family}|{event.logical_target}"
-            if key == f"file_read|{logical_target}":
-                continue
-            same_turn = any(
-                other.turn_index == event.turn_index
-                and other.tool_family == "file_read"
-                and other.logical_target == logical_target
-                for other in self._recent_repeat_target_events
-            )
-            if same_turn and event.tool_family == "file_read":
-                candidate_keys.append(key)
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for key in candidate_keys:
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(key)
-        warmed = 0
-        selected = deduped[:TOK_PREDICTIVE_CACHE_TOP_K]
-        for key in selected:
-            if key in self._hot_summary_records:
-                self._predictive_cache_warm_keys.add(key)
-                warmed += 1
-        if not selected:
-            return {}
-        return {
-            "predictive_cache_warm_applied": 1,
-            "predictive_cache_candidates": len(selected),
-            "predictive_cache_hits": warmed,
-        }
+        return apply_predictive_cache_warming_impl(self, logical_target)
 
     def hot_recent_runtime_hints(self) -> tuple[list[str], dict[str, int]]:
-        """Build ranked hot-target reminders for the next prepared request."""
-        current_turn = max(1, self.bridge_memory.turn)
-        candidates: list[HotSummaryRecord] = []
-        for key, record in self._hot_summary_records.items():
-            del key
-            promoted_turn = max(
-                record.hot_promotion_turn, record.stuck_promotion_turn
-            )
-            if not promoted_turn or promoted_turn <= record.last_injected_turn:
-                continue
-            if current_turn < promoted_turn:
-                continue
-            candidates.append(record)
-        candidates.sort(
-            key=lambda record: (
-                record.stuck_window_count,
-                record.last_seen_turn,
-                record.token_cost,
-            ),
-            reverse=True,
-        )
-        selected = candidates[:TOK_HOT_RECENT_MAX_HINTS]
-        hints: list[str] = []
-        metrics = {
-            "repeat_tool_collapse_applied": 0,
-            "hot_recent_hint_injected": 0,
-            "hot_hint_tokens_added": 0,
-            "reacquisition_tokens_avoided_estimate": 0,
-        }
-        for record in selected:
-            label = record.display_target
-            if record.tool_family == "file_read":
-                reminder = f"@hot_recent_file:{label} |> {record.summary}"
-            elif record.tool_family == "search":
-                reminder = f"@hot_recent_search:{label} |> {record.summary}"
-            else:
-                reminder = f"@hot_recent_command:{label} |> {record.summary}"
-            guidance = (
-                "This target is stuck and unchanged. Reuse the cached result and move forward without rereading it."
-                if record.tool_family == "file_read"
-                and record.stuck_promotion_turn
-                else "Reuse this cached result unless you have a concrete reason to reacquire it."
-            )
-            block = reminder + "\n" + guidance
-            hints.append(block)
-            metrics["hot_recent_hint_injected"] += 1
-            metrics["reacquisition_tokens_avoided_estimate"] += (
-                record.token_cost
-            )
-            if (
-                record.tool_family in {"search", "command"}
-                and record.unchanged_result_count > 0
-            ):
-                metrics["repeat_tool_collapse_applied"] += 1
-            record.last_injected_turn = current_turn
-        if hints:
-            metrics["hot_hint_tokens_added"] = count_tokens("\n\n".join(hints))
-        return hints, metrics
+        return hot_recent_runtime_hints_impl(self)
 
     def evidence_intent_advisories(self) -> list[str]:
-        current_turn = max(1, self.bridge_memory.turn)
-        for record in self._hot_summary_records.values():
-            if not record.evidence_intent:
-                continue
-            if not (record.hot_promotion_turn or record.stuck_promotion_turn):
-                continue
-            anchor = record.evidence_intent.anchor
-            novelty_keys = self._evidence_anchor_novelty_keys.get(anchor)
-            if novelty_keys and record.repeat_count > 1:
-                return [
-                    TOK_NOVELTY_REQUIRED_HINT.format(
-                        anchor=record.display_target
-                    )
-                ]
-        for (
-            neighborhood,
-            anchors,
-        ) in self._evidence_neighborhoods.items():
-            if len(anchors) < TOK_NEIGHBORHOOD_TRIGGER_ANCHORS:
-                continue
-            recent_count = sum(
-                1
-                for e in self._recent_repeat_target_events
-                if e.evidence_anchor in anchors
-                and current_turn - e.turn_index < TOK_NEIGHBORHOOD_WINDOW_TURNS
-            )
-            if recent_count >= TOK_NEIGHBORHOOD_TRIGGER_ANCHORS:
-                return [
-                    TOK_NEIGHBORHOOD_THRASH_HINT.format(
-                        neighborhood=neighborhood
-                    )
-                ]
-        return []
+        return evidence_intent_advisories_impl(self)
 
     def is_predictive_cache_hit(
         self, family: str, logical_target: str
@@ -1064,145 +716,19 @@ class UniversalTokRuntime:
         dict[str, Any],
         bool,
     ]:
-        """Build tool-compatible resend state and return processed memory, hints, signals."""
-        if request.tool_compatible:
-            pre_resend_memory = memory
-            previous_comparable = dict(
-                session._last_tool_compatible_state_fields
-            )
-            (
-                _,
-                comparable_state,
-                has_answer_anchor,
-            ) = _prepare_tool_compatible_state(
-                pre_resend_memory, previous_comparable
-            )
-
-            # Use provided parameter or determine from signals
-            if has_answer_anchor_param is not None:
-                has_answer_anchor = has_answer_anchor_param
-
-            resend_reason = _select_resend_reason(
-                comparable_state, previous_comparable, has_answer_anchor
-            )
-            (
-                processed_memory,
-                resend_signals,
-            ) = session.maybe_suppress_tool_compatible_state(memory)
-            behavior_signals.update(
-                {
-                    key: behavior_signals.get(key, 0) + value
-                    for key, value in resend_signals.items()
-                }
-            )
-            _apply_tool_compatible_resend_diagnostics(
-                behavior_signals,
-                processed_memory,
-                resend_signals,
-                has_answer_anchor=has_answer_anchor,
-                resend_reason=resend_reason,
-                skip_reason_hint=skip_reason if should_skip_history else None,
-                tok_history_compression_skipped=bool(
-                    behavior_signals.get("tok_history_compression_skipped", 0)
-                ),
-                tool_compatible_compression=bool(
-                    behavior_signals.get("tool_compatible_compression", 0)
-                ),
-            )
-            if translated_messages is None:
-                answer_ready = False
-            else:
-                answer_ready = _is_answer_ready_turn(
-                    translated_messages,
-                    tool_compatible=request.tool_compatible,
-                    has_answer_anchor=behavior_signals.get(
-                        "answer_anchor_present", 0
-                    )
-                    > 0,
-                    baseline_only=session._baseline_only,
-                )
-            if answer_ready:
-                behavior_signals["answer_ready_turn"] = 1
-            if session._late_answer_followthrough_active:
-                behavior_signals["late_answer_followthrough_active"] = 1
-            if session._answer_ready_repair_active:
-                behavior_signals["answer_ready_repair_active"] = 1
-            if session._late_answer_assembly_repair_active:
-                behavior_signals["late_answer_assembly_repair_active"] = 1
-            _mark_late_answer_assembly_mode_signal(
-                behavior_signals,
-                session._late_answer_assembly_repair_mode_active,
-            )
-            runtime_hints.extend(
-                _runtime_hints_for_turn(
-                    answer_ready=answer_ready,
-                    answer_ready_repair_active=session._answer_ready_repair_active,
-                    late_answer_followthrough_active=session._late_answer_followthrough_active,
-                    late_answer_assembly_repair_mode=session._late_answer_assembly_repair_mode_active,
-                )
-            )
-            if not runtime_hints:
-                evidence_hints = session.evidence_intent_advisories()
-                if evidence_hints:
-                    runtime_hints.extend(evidence_hints)
-            (
-                hot_recent_hints,
-                hot_metrics,
-            ) = session.hot_recent_runtime_hints()
-            if hot_recent_hints:
-                runtime_hints.extend(hot_recent_hints)
-                for key, value in hot_metrics.items():
-                    hot_hint_metrics[key] = (
-                        hot_hint_metrics.get(key, 0) + value
-                    )
-            _annotate_reacquisition_diagnostics(
-                behavior_signals,
-                answer_ready=answer_ready,
-                answer_ready_repair_active=session._answer_ready_repair_active,
-            )
-            logger.debug(
-                "tool-compatible resend: mode=%s payload_chars=%d anchor=%d",
-                next(
-                    (
-                        k
-                        for k in resend_signals
-                        if k.startswith("state_resend_")
-                    ),
-                    "none",
-                ),
-                len(processed_memory),
-                behavior_signals.get("answer_anchor_present", 0),
-            )
-            processed_body = _inject_system(
-                {},  # Will be replaced by caller
-                processed_memory,
-                runtime_hints,
-                tool_compatible=request.tool_compatible,
-                grammar=bool(request.grammar),
-                todo=request.todo or "",
-                deltas=bool(request.deltas),
-                pressure=current_pressure,
-                behavior_signals=behavior_signals,
-            )
-
-            return (
-                processed_memory,
-                runtime_hints,
-                behavior_signals,
-                hot_hint_metrics,
-                processed_body,
-                resend_signals,
-                answer_ready,
-            )
-
-        return (
+        return build_tool_compatible_resend(
+            self,
+            request,
+            session,
             memory,
-            runtime_hints,
+            skip_reason,
             behavior_signals,
+            runtime_hints,
+            current_pressure,
             hot_hint_metrics,
-            {},
-            {},
-            False,
+            translated_messages=translated_messages,
+            should_skip_history=should_skip_history,
+            has_answer_anchor_param=has_answer_anchor_param,
         )
 
     def prepare_request(
@@ -1230,140 +756,15 @@ class UniversalTokRuntime:
         behavior_signals: dict[str, int] | None = None,
         tool_compatible: bool = False,
     ) -> ProcessedRuntimeResponse:
-        contract = response_contract_for_mode(
-            text, tool_compatible=tool_compatible, session=session
-        )
-        drift_signals = (
-            self.semantic_validator.validate_drift(
-                text, contract.behavior_signals
-            )
-            if not tool_compatible
-            else {}
-        )
-        merged_signals: dict[str, int] = {
-            **session.consume_behavior_signals(),
-            **(behavior_signals or {}),
-            **response_behavior_signals(text, tool_compatible=tool_compatible),
-            **contract.behavior_signals,
-            **drift_signals,
-        }
-
-        # Apply Self-Healing if drift is detected in non-Tok response
-        healed_text = heal_drift(
-            text, merged_signals, tool_compatible=tool_compatible
-        )
-        if healed_text != text:
-            merged_signals["tok_drift_healed"] = 1
-            # Re-evaluating contract with healed text ensures blocks are correctly extracted
-            contract = response_contract_for_mode(
-                healed_text, tool_compatible=tool_compatible, session=session
-            )
-
-        visible_text = "\n".join(
-            cast(str, block.get("text", ""))
-            for block in contract.content_blocks
-            if block.get("type") == "text"
-            and str(block.get("text", "")).strip()
-        ).strip()
-        has_tool = any(
-            block.get("type") == "tool_use"
-            for block in contract.content_blocks
-        )
-        has_answer_text = _is_answer_like_visible_text(visible_text)
-        handle_answer_repair(
-            session,
-            merged_signals=merged_signals,
-            has_tool=has_tool,
-            has_answer_text=has_answer_text,
-            tool_compatible=tool_compatible,
-        )
-        structured_fields = _process_answer_memory(session, visible_text)
-        if structured_fields:
-            for field, values in structured_fields.items():
-                for value in values:
-                    session.bridge_memory._upsert(
-                        session.bridge_memory.hot,
-                        field,
-                        value,
-                        score_delta=3,
-                    )
-                    if _should_persist_to_durable(field, value):
-                        session.bridge_memory._upsert(
-                            session.bridge_memory.durable,
-                            field,
-                            value,
-                            score_delta=2,
-                        )
-            session._save_bridge_memory()
-
-        should_write_healed_memory = not (
-            tool_compatible and merged_signals.get("tok_drift_healed")
-        )
-        updated_memory = (
-            session.write_memory(healed_text)
-            if should_write_healed_memory
-            else ""
-        )
-        if updated_memory:
-            _attribute_macro_savings(session, updated_memory)
-        family_mode = session.update_family_mode(model, merged_signals)
-
-        # Telemetry: Protocol Drift
-        report_protocol_drift(
+        return process_response_impl(
+            self,
+            text,
             model=model,
-            merged_signals=merged_signals,
-            mode=contract.mode,
             session=session,
-            content_blocks=contract.content_blocks,
-        )
-
-        # Update reasoning-depth accumulators
-        session._step_count += 1
-        session._token_count += count_tokens(text)
-        for block in contract.content_blocks:
-            if block.get("type") == "tool_use" and block.get("name"):
-                session._tool_names_seen.add(cast(str, block["name"]))
-
-        # Macro JIT Execution: Intercept and execute autonomous macros
-        if (
-            os.getenv("TOK_NEURO_REACTOR", "0") == "1"
-            and "EXECUTE_JIT(@" in text
-        ):
-            import re
-
-            jit_match = re.search(r"EXECUTE_JIT\(@(\w+)\((.*?)\)\)", text)
-            if jit_match:
-                m_name = jit_match.group(1)
-                m_args_raw = jit_match.group(2)
-
-                # Execute symbolically
-                jit_result = execute_jit_macro(session, m_name, m_args_raw)
-
-                # Append result to content_blocks
-                contract.content_blocks.append(
-                    {
-                        "type": "text",
-                        "text": f"\n\n[JIT Execution Result for @{m_name}]:\n{jit_result}",
-                    }
-                )
-
-                # Add telemetry signals
-                merged_signals["jit_executed"] = 1
-                merged_signals[f"jit_macro_executed_{m_name}"] = 1
-
-        session._drift_detected_previous_turn = bool(
-            merged_signals.get("semantic_drift_detected")
-            or merged_signals.get("non_tok_response")
-        )
-
-        return ProcessedRuntimeResponse(
-            content_blocks=contract.content_blocks,
-            output_saved_tokens=contract.output_saved_tokens,
-            behavior_signals=merged_signals,
-            mode=contract.mode,
-            family_mode=family_mode,
-            updated_memory=updated_memory,
+            behavior_signals=behavior_signals,
+            tool_compatible=tool_compatible,
+            jit_executor=execute_jit_macro,
         )
 
     def pressure_score(self, signals: dict[str, int]) -> int:
-        return _semantic_pressure_score(signals)
+        return runtime_pressure_score(signals)

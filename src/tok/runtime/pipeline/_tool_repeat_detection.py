@@ -12,6 +12,8 @@ from ..config import TOOL_DENSITY_THRESHOLD, TOOL_VOLUME_HEAVY_BYTES
 from ..repeat_targets import SEARCH_LIKE_TOOLS, extract_shell_file_read_path
 from ._tool_context import logical_target_key_from_context
 
+SignalBump = Callable[[str, int], None]
+
 
 def _count_tool_density(messages: list[dict[str, Any]]) -> tuple[int, int]:
     tool_uses = 0
@@ -149,7 +151,7 @@ def _track_file_read_repeats(
     file_reads_seen_logical: dict[str, int],
     repeat_file_read_ids: list[str],
     result_cache: dict[str, tuple[str, str, float]] | None,
-    bump: Callable[[str], None],
+    bump: SignalBump,
 ) -> None:
     if family != "file_read" or logical_target == "path-missing":
         return
@@ -160,12 +162,12 @@ def _track_file_read_repeats(
         file_reads_seen_logical.get(logical_target, 0) + 1
     )
     if is_shell_file_read:
-        bump("shell_file_read_normalized")
+        bump("shell_file_read_normalized", 1)
     if file_reads_seen_logical[logical_target] > 1:
         if tool_id and result_cache is not None:
             repeat_file_read_ids.append(tool_id)
         else:
-            bump("repeat_file_read")
+            bump("repeat_file_read", 1)
 
 
 def _track_search_repeats(
@@ -175,7 +177,7 @@ def _track_search_repeats(
     tool_id: str,
     searches_seen_logical: dict[str, int],
     repeat_search_ids: list[str],
-    bump: Callable[[str], None],
+    bump: SignalBump,
 ) -> None:
     if tool_name not in SEARCH_LIKE_TOOLS or not query:
         return
@@ -186,7 +188,7 @@ def _track_search_repeats(
         if tool_id:
             repeat_search_ids.append(tool_id)
         else:
-            bump("repeat_search")
+            bump("repeat_search", 1)
 
 
 def _track_command_repeats(
@@ -196,7 +198,7 @@ def _track_command_repeats(
     commands_seen_logical: dict[str, int],
     repeat_command_ids: list[str],
     repeated_tool_targets: set[tuple[str, str]],
-    _bump: Callable[[str], None],
+    _bump: SignalBump,
 ) -> None:
     if family != "command" or not logical_target:
         return
@@ -214,14 +216,14 @@ def _detect_repeated_tool_calls(
     family: str,
     logical_target: str,
     repeated_tool_targets: set[tuple[str, str]],
-    bump: Callable[[str], None],
+    bump: SignalBump,
 ) -> None:
     if family not in {"search", "command"} or not logical_target:
         return
     target_key = (family, logical_target)
     if target_key in repeated_tool_targets:
-        bump("repeated_tool_call")
-        bump("error_detected")
+        bump("repeated_tool_call", 1)
+        bump("error_detected", 1)
         return
     count = sum(
         1
@@ -255,8 +257,8 @@ def _detect_repeated_tool_calls(
         == target_key
     )
     if count > 1:
-        bump("repeated_tool_call")
-        bump("error_detected")
+        bump("repeated_tool_call", 1)
+        bump("error_detected", 1)
 
 
 def _make_cache_key(tool_name: str, context: dict[str, Any]) -> str:
@@ -292,7 +294,7 @@ def _process_repeat_file_results(
     is_repeat_file: bool,
     file_reads_seen_logical: dict[str, int],
     result_cache: dict[str, tuple[str, str, float]] | None,
-    bump: Callable[[str, int], None],
+    bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:
     if family != "file_read":
@@ -323,7 +325,7 @@ def _process_repeat_search_results(
     is_repeat_search: bool,
     searches_seen_logical: dict[str, int],
     result_cache: dict[str, tuple[str, str, float]] | None,
-    bump: Callable[[str, int], None],
+    bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:
     if tool_name not in SEARCH_LIKE_TOOLS or not query:
@@ -349,7 +351,7 @@ def _process_repeat_command_results(
     is_repeat_command: bool,
     commands_seen_logical: dict[str, int],
     command_result_state: dict[str, tuple[str, bool]],
-    bump: Callable[[str], None],
+    bump: SignalBump,
 ) -> None:
     if family != "command":
         return
@@ -365,7 +367,7 @@ def _process_repeat_command_results(
     if commands_seen_logical.get(logical_target, 0) <= 1:
         return
     if is_repeat_command:
-        bump("repeat_command")
+        bump("repeat_command", 1)
         if (
             previous_state
             and previous_state[1]
@@ -373,8 +375,8 @@ def _process_repeat_command_results(
             and previous_state[0]
             and previous_state[0] == digest
         ):
-            bump("repeat_command_stable_no_change")
-            bump("repeated_tool_call")
+            bump("repeat_command_stable_no_change", 1)
+            bump("repeated_tool_call", 1)
 
 
 def _process_cached_tool_results(
@@ -387,7 +389,7 @@ def _process_cached_tool_results(
     searches_seen_logical: dict[str, int],
     commands_seen_logical: dict[str, int],
     result_cache: dict[str, tuple[str, str, float]] | None,
-    bump: Callable[[str], None],
+    bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:
     command_result_state: dict[str, tuple[str, bool]] = {}

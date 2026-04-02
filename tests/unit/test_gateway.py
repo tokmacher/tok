@@ -19,8 +19,63 @@ from tok.gateway import (
     _response_contract,
     create_app,
 )
+from tok.gateway._bridge_request_handler import send_with_tok_fail_open_retry
 from tok.stats import SavingsTracker
 from tok.universal_runtime import PreparedRuntimeRequest
+
+
+def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
+    tool_uses = [
+        {
+            "type": "tool_use",
+            "id": f"toolu_batch_{index + 1}",
+            "name": "read_file",
+            "input": {"path": f"file_{index + 1}.py"},
+        }
+        for index in range(18)
+    ]
+    assistant_content = (
+        tool_uses[:9]
+        + [{"type": "text", "text": "Collecting evidence."}]
+        + tool_uses[9:]
+    )
+    tool_results = [
+        {
+            "type": "tool_result",
+            "tool_use_id": f"toolu_batch_{index + 1}",
+            "content": f"result {index + 1}",
+        }
+        for index in range(18)
+    ]
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Inspect concurrency path."}],
+        },
+        {"role": "assistant", "content": assistant_content},
+        {"role": "user", "content": tool_results},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_tail_1",
+                    "name": "grep_search",
+                    "input": {"pattern": "stream_recovery"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_tail_1",
+                    "content": "tail result",
+                }
+            ],
+        },
+    ]
 
 
 def test_health_endpoint():
@@ -77,6 +132,7 @@ def test_health_endpoint():
         "tool_history_quarantined_count": 0,
         "tool_history_blocked_count": 0,
         "invalid_tool_history_session_reset_count": 0,
+        "provider_pairing_disagreement_count": 0,
         "session_quality": "clean",
         "last_degradation_reason": "",
     }
@@ -149,6 +205,7 @@ def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
             "tok_bridge_invalid_tool_history_quarantined": 1,
             "tok_bridge_invalid_tool_history_blocked": 1,
             "tok_bridge_invalid_tool_history_session_reset": 1,
+            "fail_open_retry_upstream_pairing_disagreement": 1,
         },
     )
     app = create_app(session)
@@ -167,6 +224,7 @@ def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
     assert payload["tool_history_quarantined_count"] == 1
     assert payload["tool_history_blocked_count"] == 1
     assert payload["invalid_tool_history_session_reset_count"] == 1
+    assert payload["provider_pairing_disagreement_count"] == 1
 
 
 def test_clean_system_context_uses_top_level_prompt_compressor(monkeypatch):
@@ -4205,6 +4263,108 @@ def test_gateway_fail_open_retry_uses_provider_safe_body_after_tool_history_repa
     assert "toolu_bad_id" in retry_text
 
 
+def test_gateway_blocks_provider_sensitive_large_tool_batch_before_send(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    async def _fail_if_sent(self, request, stream=False):
+        del self, request, stream
+        raise AssertionError("upstream send should not be called")
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fail_if_sent)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": _provider_sensitive_large_tool_batch_messages(),
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "provider-sensitive tool concurrency payload" in response.text
+    assert "bridge_preflight_rejected_outgoing_guard_local" in caplog.text
+
+
+def test_gateway_degrades_provider_sensitive_prepared_body_to_safe_original(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": _provider_sensitive_large_tool_batch_messages(),
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert sent_bodies == [
+        {
+            "model": "claude-sonnet-4",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "hello"}],
+                }
+            ],
+            "stream": False,
+        }
+    ]
+    assert "bridge_preflight_outgoing_degraded_to_provider_safe" in caplog.text
+
+
 def test_gateway_logs_pairing_forensics_when_upstream_reports_pairing_disagreement(
     tmp_path, monkeypatch, caplog
 ):
@@ -4436,6 +4596,83 @@ def test_gateway_logs_pairing_disagreement_after_user_message_split(
         "fail_open_retry_upstream_pairing_disagreement_after_user_message_split"
         in caplog.text
     )
+
+
+def test_retry_blocks_provider_sensitive_provider_safe_payload(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
+    sent_bodies: list[dict[str, Any]] = []
+    prepared_body = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "compressed"}],
+            }
+        ],
+        "stream": False,
+    }
+    retry_body = {
+        "model": "claude-sonnet-4",
+        "messages": _provider_sensitive_large_tool_batch_messages(),
+        "stream": False,
+    }
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            400,
+            json={
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": (
+                        "messages.1: `tool_use` ids were found without "
+                        "`tool_result` blocks immediately after: toolu_batch_1"
+                    ),
+                },
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient() as client:
+            (
+                response,
+                retried_without_tok,
+                retry_signals,
+            ) = await send_with_tok_fail_open_retry(
+                session,
+                client,
+                method="POST",
+                url="https://example.invalid/v1/messages",
+                headers={"x-api-key": "test"},
+                content=json.dumps(prepared_body).encode(),
+                original_content=json.dumps(prepared_body).encode(),
+                retry_content=json.dumps(retry_body).encode(),
+                compressed_request=True,
+            )
+            assert retried_without_tok is False
+            assert retry_signals["fail_open_retry_provider_safe_invalid"] == 1
+            assert (
+                retry_signals["fail_open_retry_provider_safe_blocked_local"]
+                == 1
+            )
+            return response
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 400
+    assert len(sent_bodies) == 1
+    assert "fail_open_retry_provider_safe_invalid" in caplog.text
+    assert "provider-safe payload failed final local validation" in caplog.text
 
 
 def test_gateway_fail_open_false_propagates_request_processing_error(

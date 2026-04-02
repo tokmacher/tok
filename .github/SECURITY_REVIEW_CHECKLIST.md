@@ -62,7 +62,7 @@ This checklist must be completed for all dependency updates before merging.
 - [GitHub Advisory Database](https://github.com/advisories)
 
 ## 📞 Emergency Contacts
-- Security Team: security@tok-protocol.dev
+- Security Team: tokmacher@protonmail.com
 - Team Lead: [Contact info]
 - Emergency Response: [Contact info]
 

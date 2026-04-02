@@ -17,9 +17,9 @@ updates:
       - dependency-type: "production"
       - dependency-type: "development"
     assignees:
-      - "tok-team"
+      - "tokmacher"
     reviewers:
-      - "tok-team"
+      - "tokmacher"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -35,6 +35,6 @@ updates:
       prefix: "ci"
       include: "scope"
     assignees:
-      - "tok-team"
+      - "tokmacher"
     reviewers:
-      - "tok-team"
+      - "tokmacher"

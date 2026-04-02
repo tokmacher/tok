@@ -130,6 +130,32 @@ class TestSavingsTracker:
         assert summary["tool_history_blocked_count"] == 1
         assert summary["invalid_tool_history_session_reset_count"] == 1
 
+    def test_session_summary_surfaces_provider_pairing_disagreement(
+        self, tracker
+    ):
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=20,
+            output_saved=10,
+            behavior_signals={
+                "fail_open_retry_upstream_pairing_disagreement": 1,
+                "tok_bridge_provider_pairing_risk_detected": 1,
+            },
+        )
+
+        summary = tracker.session_summary()
+
+        assert summary is not None
+        assert summary["provider_pairing_disagreement_count"] == 2
+        assert summary["session_quality"] == "watch"
+        assert summary["last_degradation_reason"] == (
+            "provider pairing disagreement"
+        )
+
     def test_last_session_summary_defaults_missing_degradation_fields(
         self, tracker
     ):

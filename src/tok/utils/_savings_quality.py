@@ -18,6 +18,10 @@ PROMPT_METRIC_KEYS = (
 def degradation_reason(signals: dict[str, int], *, baseline_only: bool) -> str:
     if baseline_only or signals.get(BASELINE_ONLY_SIGNAL, 0):
         return "baseline fallback"
+    if signals.get(
+        "fail_open_retry_upstream_pairing_disagreement", 0
+    ) or signals.get("tok_bridge_provider_pairing_risk_detected", 0):
+        return "provider pairing disagreement"
     if signals.get("stream_recovery_retry", 0) or signals.get(
         "stream_recovery_fallback", 0
     ):
@@ -59,6 +63,8 @@ def session_quality(
         signals.get(FALLBACK_SIGNAL, 0)
         or signals.get("semantic_drift_detected", 0)
         or signals.get("fail_open_compat_response", 0)
+        or signals.get("fail_open_retry_upstream_pairing_disagreement", 0)
+        or signals.get("tok_bridge_provider_pairing_risk_detected", 0)
         or signals.get("stream_recovery_retry", 0)
         or signals.get("stream_recovery_fallback", 0)
         or signals.get("tok_bridge_invalid_tool_history_quarantined", 0)

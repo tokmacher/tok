@@ -3,7 +3,7 @@ name = "tok-protocol"
 version = "0.1.0"
 description = "Bridge-first CLI and runtime for Claude Code that compresses conversations and exposes savings and fallback health"
 authors = [
-    { name = "Tok Team" }
+    { name = "tokmacher", email = "tokmacher@protonmail.com" }
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"
@@ -27,6 +27,7 @@ dependencies = [
     "python-dotenv>=1.0.0,<2.0.0",
     "pydantic>=2.0.0,<3.0.0",
     "typer>=0.9.0,<1.0.0",
+    "pygments>=2.20.0",
     "rich>=13.0.0,<14.0.0",
     "fastapi>=0.110.0,<1.0.0",
     "uvicorn[standard]>=0.27.0,<1.0.0",
@@ -45,7 +46,7 @@ dev = [
     "pre-commit>=3.0",
     "hypothesis>=6.0",
     "safety>=2.0.0",
-    "requests>=2.25.0",
+    "requests>=2.33.0",
 ]
 
 [project.urls]
@@ -82,11 +83,16 @@ max-complexity = 15
 [tool.ruff.lint.per-file-ignores]
 "src/tok/gateway/_cache_control.py" = ["C901"]
 "src/tok/gateway/_app_factory.py" = ["C901"]
+"src/tok/gateway/_bridge_preflight.py" = ["C901"]
+"src/tok/gateway/_bridge_request_handler.py" = ["C901"]
+"src/tok/gateway/_bridge_streaming.py" = ["C901"]
 "src/tok/cli/_release.py" = ["C901"]
 "src/tok/cli/__init__.py" = ["F401"]
 "src/tok/gateway/__init__.py" = ["F401"]
 "src/tok/compression/__init__.py" = ["F401"]
 "src/tok/compression/_pipeline.py" = ["C901"]
+"src/tok/compression/_history_pipeline.py" = ["C901"]
+"src/tok/compression/_tool_result_codecs.py" = ["C901"]
 "src/tok/runtime/core.py" = ["F401"]
 "src/tok/runtime/_request_preparation.py" = ["C901"]
 "tests/integration/test_bridge_fidelity.py" = ["C901"]

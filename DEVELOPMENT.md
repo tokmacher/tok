@@ -55,6 +55,7 @@ python -m build
 - `src/tok/cli/` - CLI surface
 - `src/tok/protocol/` - Tok language/protocol layer
 - `src/tok/compression/` - compression engine
+- Private `src/tok/gateway/_*.py`, `src/tok/runtime/_*.py`, and `src/tok/compression/_*.py` helpers hold the larger subsystem internals; keep public entrypoints stable when refactoring them
 - `tests/unit/` - unit tests
 - `tests/integration/` - integration tests
 - `tests/benchmarks/` - performance benchmarks

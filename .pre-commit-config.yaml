@@ -62,7 +62,7 @@ repos:
         pass_filenames: false
       - id: security-audit
         name: security audit
-        entry: pip-audit --strict --requirement uv.lock
+        entry: python scripts/run_security_audit.py
         language: system
         files: ^(uv\.lock|pyproject\.toml)$
         pass_filenames: false

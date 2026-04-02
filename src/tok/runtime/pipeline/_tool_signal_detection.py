@@ -57,7 +57,7 @@ def _detect_blocker_rediscovery(
 
 
 def _detect_shell_workarounds(
-    tool_name: str, command: str, bump: Callable[[str], None]
+    tool_name: str, command: str, bump: Callable[[str, int], None]
 ) -> None:
     if not (
         tool_name in {"bash", "sh", "run_terminal", "computer"} and command
@@ -65,9 +65,9 @@ def _detect_shell_workarounds(
         return
     lowered = command.lower()
     if "python -c" in lowered or "python3 -c" in lowered:
-        bump("python_c_workaround")
+        bump("python_c_workaround", 1)
     if "/dev/stderr" in lowered or ">&2" in lowered or "2>&1" in lowered:
-        bump("stderr_workaround")
+        bump("stderr_workaround", 1)
 
 
 def _detect_prose_leaks(
@@ -115,7 +115,7 @@ def _track_assistant_tool_usage(
     repeat_command_ids: list[str],
     repeated_tool_targets: set[tuple[str, str]],
     result_cache: dict[str, tuple[str, str, float]] | None,
-    bump: Callable[[str], None],
+    bump: Callable[[str, int], None],
 ) -> None:
     for msg in messages:
         if msg.get("role") != "assistant":

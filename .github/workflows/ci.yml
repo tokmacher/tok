@@ -24,11 +24,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-      - run: pip install -e ".[dev]" pip-audit safety
+      - run: pip install -e ".[dev]" pip-audit safety uv
       - run: python scripts/check_repo_hygiene.py
       - run: pre-commit run --all-files
       - run: ruff check src/tok tests
-      - run: pip-audit --strict --requirement uv.lock
+      - run: python scripts/run_security_audit.py
       - run: safety check --json --output safety-report.json || echo "Safety check found issues"
       - run: python scripts/verify_dependency_integrity.py
 

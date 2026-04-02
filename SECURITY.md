@@ -19,4 +19,4 @@ Please include:
 
 ## Contact
 
-Send security reports to `security@tok-protocol.dev` when private reporting is not available.
+Send security reports to `tokmacher@protonmail.com` when private reporting is not available.

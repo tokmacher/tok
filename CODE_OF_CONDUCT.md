@@ -30,4 +30,4 @@ behavior makes the project unsafe or unproductive.
 
 ## Contact
 
-If you experience or witness unacceptable behavior, contact the maintainers at `security@tok-protocol.dev`.
+If you experience or witness unacceptable behavior, contact the maintainers at `tokmacher@protonmail.com`.

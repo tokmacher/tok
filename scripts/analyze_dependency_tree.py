@@ -158,7 +158,7 @@ def create_secure_session() -> requests.Session:
     retry_strategy = Retry(
         total=SECURITY_CONFIG["max_retries"],
         status_forcelist=[429, 500, 502, 503, 504],
-        method_whitelist=["HEAD", "GET", "OPTIONS"],
+        allowed_methods=["HEAD", "GET", "OPTIONS"],
         backoff_factor=1,
         raise_on_status=False,
     )

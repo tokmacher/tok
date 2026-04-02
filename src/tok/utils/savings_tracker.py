@@ -18,6 +18,8 @@ from ..runtime.policy.semantic_validation import (
 from .pricing import get_pricing
 from .telemetry import emit_event_sync
 from ._savings_persistence import (
+    GLOBAL_LEDGER_FILENAME,
+    SESSION_STATS_FILENAME,
     STATS_KEY_MAP_INV,
     default_ledger_path,
     default_savings_file,
@@ -39,6 +41,19 @@ logger = logging.getLogger("tok.savings_tracker")
 _default_savings_file = default_savings_file
 _default_ledger_path = default_ledger_path
 _legacy_ledger_path = legacy_ledger_path
+
+__all__ = [
+    "BASELINE_ONLY_SIGNAL",
+    "FALLBACK_SIGNAL",
+    "GLOBAL_LEDGER_FILENAME",
+    "SESSION_STATS_FILENAME",
+    "SavingsTracker",
+    "_default_ledger_path",
+    "_default_savings_file",
+    "_degradation_reason",
+    "_legacy_ledger_path",
+    "_session_quality",
+]
 
 
 class SavingsTracker:
@@ -375,6 +390,9 @@ class SavingsTracker:
         invalid_tool_history_session_reset_count = int(
             signals.get("tok_bridge_invalid_tool_history_session_reset", 0)
         )
+        provider_pairing_disagreement_count = int(
+            signals.get("fail_open_retry_upstream_pairing_disagreement", 0)
+        ) + int(signals.get("tok_bridge_provider_pairing_risk_detected", 0))
 
         return {
             "calls": calls,
@@ -408,6 +426,7 @@ class SavingsTracker:
             "tool_history_quarantined_count": tool_history_quarantined_count,
             "tool_history_blocked_count": tool_history_blocked_count,
             "invalid_tool_history_session_reset_count": invalid_tool_history_session_reset_count,
+            "provider_pairing_disagreement_count": provider_pairing_disagreement_count,
             "session_quality": quality,
             "last_degradation_reason": degradation_reason,
         }

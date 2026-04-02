@@ -64,6 +64,9 @@ def collect_behavior_signals(
     def bump(key: str, amount: int = 1) -> None:
         signals[key] = signals.get(key, 0) + amount
 
+    def bump_one(key: str) -> None:
+        bump(key, 1)
+
     _detect_blocker_rediscovery(messages, blocker_phrases_seen)
     _track_assistant_tool_usage(
         messages,
@@ -76,7 +79,7 @@ def collect_behavior_signals(
         repeat_command_ids,
         repeated_tool_targets,
         result_cache,
-        lambda key: bump(key, 1),
+        bump,
     )
 
     if tool_use_id_to_context:
@@ -90,12 +93,12 @@ def collect_behavior_signals(
             searches_seen_logical,
             commands_seen_logical,
             result_cache,
-            lambda key, amount=1: bump(key, amount),
+            bump,
             count_tokens,
         )
 
-    _detect_prose_leaks(messages, lambda key: bump(key, 1))
-    _detect_error_patterns(messages, lambda key: bump(key, 1))
+    _detect_prose_leaks(messages, bump_one)
+    _detect_error_patterns(messages, bump_one)
 
     for count in blocker_phrases_seen.values():
         if count > 1:

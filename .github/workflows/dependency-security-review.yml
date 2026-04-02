@@ -28,57 +28,59 @@ jobs:
 
       - name: Install security tools
         run: |
-          pip install pip-audit safety
+          pip install pip-audit safety uv
 
       - name: Check dependency age
         id: check_age
         run: |
-          # Check if dependencies are at least 90 days old
           python3 << 'EOF'
-          import subprocess
-          import json
-          from datetime import datetime, timedelta
+          import tomllib
+          from datetime import datetime, timezone
           import sys
-
-          def get_package_publish_date(package_name, version):
-              try:
-                  result = subprocess.run([
-                      'curl', '-s',
-                      f'https://pypi.org/pypi/{package_name}/{version}/json'
-                  ], capture_output=True, text=True, timeout=10)
-                  if result.returncode == 0:
-                      data = json.loads(result.stdout)
-                      upload_time = datetime.fromisoformat(data['uploads'][0]['upload_time'].replace('Z', '+00:00'))
-                      return upload_time
-              except Exception as e:
-                  print(f"Error checking {package_name}@{version}: {e}")
-              return None
 
           def check_dependencies():
               violations = []
-              with open('uv.lock', 'r') as f:
-                  content = f.read()
+              with open('uv.lock', 'rb') as f:
+                  lock = tomllib.load(f)
 
-              # Simple parsing for package versions
-              lines = content.split('\n')
-              current_package = None
-              current_version = None
+              for package in lock.get('package', []):
+                  source = package.get('source', {})
+                  if isinstance(source, dict) and 'editable' in source:
+                      continue
 
-              for line in lines:
-                  line = line.strip()
-                  if line.startswith('name = '):
-                      current_package = line.split('=')[1].strip().strip('"')
-                  elif line.startswith('version = '):
-                      current_version = line.split('=')[1].strip().strip('"')
+                  artifacts = []
+                  sdist = package.get('sdist')
+                  if isinstance(sdist, dict):
+                      artifacts.append(sdist)
+                  wheels = package.get('wheels', [])
+                  if isinstance(wheels, list):
+                      artifacts.extend(
+                          artifact
+                          for artifact in wheels
+                          if isinstance(artifact, dict)
+                      )
 
-                      if current_package and current_version:
-                          publish_date = get_package_publish_date(current_package, current_version)
-                          if publish_date:
-                              age = datetime.now(publish_date.tzinfo) - publish_date
-                              if age.days < 90:
-                                  violations.append(f"{current_package}@{current_version} is only {age.days} days old")
-                          current_package = None
-                          current_version = None
+                  upload_times = []
+                  for artifact in artifacts:
+                      upload_time = artifact.get('upload-time')
+                      if isinstance(upload_time, str):
+                          upload_times.append(
+                              datetime.fromisoformat(
+                                  upload_time.replace('Z', '+00:00')
+                              )
+                          )
+
+                  if not upload_times:
+                      continue
+
+                  package_age_days = (
+                      datetime.now(timezone.utc) - min(upload_times)
+                  ).days
+                  if package_age_days < 90:
+                      violations.append(
+                          f"{package['name']}@{package['version']} "
+                          f"is only {package_age_days} days old"
+                      )
 
               return violations
 
@@ -96,7 +98,7 @@ jobs:
 
       - name: Run security audit
         run: |
-          pip-audit --requirement uv.lock --strict || echo "Security issues found - manual review required"
+          python scripts/run_security_audit.py || echo "Security issues found - manual review required"
 
       - name: Add security review comment
         if: steps.check_age.outcome == 'failure'
@@ -113,7 +115,7 @@ jobs:
 
               - Dependencies must be at least 90 days old
               - Security audit must pass
-              - Manual review by tok-team members required
+              - Manual review by tokmacher members required
 
               ### Review Checklist:
               - [ ] Verify no known vulnerabilities in updated packages

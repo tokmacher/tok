@@ -54,7 +54,7 @@ def generate_spdx_sbom(packages: list) -> dict:
         .replace("+00:00", "Z"),
         "creators": [
             "Tool: tok-security-pipeline-1.0.0",
-            "Organization: Tok Team",
+            "Organization: tokmacher",
         ],
     }
 
@@ -80,7 +80,7 @@ def generate_spdx_sbom(packages: list) -> dict:
         "filesAnalyzed": False,
         "licenseConcluded": "Apache-2.0",
         "licenseDeclared": "Apache-2.0",
-        "copyrightText": "Copyright 2024 Tok Team",
+        "copyrightText": "Copyright 2024 tokmacher",
         "externalRefs": [
             {
                 "referenceCategory": "PACKAGE-MANAGER",
