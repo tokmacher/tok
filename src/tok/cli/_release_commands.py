@@ -182,6 +182,13 @@ def gate_check(
             help="Directory of *_stability.json files from live-benchmark runs. Checked against --required-benchmarks pass criteria.",
         ),
     ] = None,
+    frontier_report: Annotated[
+        Path | None,
+        typer.Option(
+            "--frontier-report",
+            help="Compression frontier JSON report from `tok dev compression-frontier`. Validates that the current-head release lane is stable enough for release.",
+        ),
+    ] = None,
     required_benchmarks: Annotated[
         str,
         typer.Option(
@@ -202,6 +209,7 @@ def gate_check(
         fixture_set=fixture_set,
         emit_metrics=emit_metrics,
         stability_dir=stability_dir,
+        frontier_report=frontier_report,
         required_benchmarks=required_benchmarks,
     )
 

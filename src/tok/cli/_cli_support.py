@@ -343,6 +343,26 @@ def session_signals_text(payload: dict[str, Any]) -> str:
         ("drift", int(payload.get("semantic_drift_count", 0))),
         ("fail-open", int(payload.get("fail_open_count", 0))),
         ("reacq", reacq_count),
+        (
+            "shape-orig",
+            int(payload.get("preflight_block_original_payload_count", 0)),
+        ),
+        (
+            "shape-rewrite",
+            int(payload.get("preflight_block_rewritten_payload_count", 0)),
+        ),
+        (
+            "stream-empty",
+            int(payload.get("stream_recovery_empty_success_count", 0)),
+        ),
+        (
+            "stream-read",
+            int(payload.get("stream_recovery_read_error_count", 0)),
+        ),
+        (
+            "held",
+            int(payload.get("request_policy_held_by_recovery_count", 0)),
+        ),
     )
     for label, value in signal_map:
         if value > 0:
@@ -408,6 +428,7 @@ def session_status_rows(
     tok_active: bool,
     baseline_only: bool,
     mode: str | None = None,
+    request_policy: str | None = None,
     fallback_count: int | None = None,
     session_quality: str | None = None,
     degradation_reason: str | None = None,
@@ -440,6 +461,8 @@ def session_status_rows(
     ]
     if mode is not None:
         rows.append(("Mode", mode))
+    if request_policy is not None:
+        rows.append(("Request policy", request_policy))
     if session_quality or (
         summary is not None and summary.get("session_quality")
     ):
@@ -474,6 +497,32 @@ def session_status_rows(
         )
     if session_signals is not None:
         rows.append(("Session signals", session_signals))
+    if summary is not None:
+        request_shape_blocks = int(
+            summary.get("preflight_block_original_payload_count", 0)
+        ) + int(summary.get("preflight_block_rewritten_payload_count", 0))
+        if request_shape_blocks > 0:
+            rows.append(
+                (
+                    "Request-shape blocks",
+                    f"{int(summary.get('preflight_block_original_payload_count', 0))} original, {int(summary.get('preflight_block_rewritten_payload_count', 0))} rewritten",
+                )
+            )
+        stream_transport_recoveries = int(
+            summary.get("stream_recovery_empty_success_count", 0)
+        ) + int(summary.get("stream_recovery_read_error_count", 0))
+        if stream_transport_recoveries > 0:
+            rows.append(
+                (
+                    "Stream transport",
+                    f"{int(summary.get('stream_recovery_empty_success_count', 0))} empty, {int(summary.get('stream_recovery_read_error_count', 0))} read-error",
+                )
+            )
+        held_recovery = int(
+            summary.get("request_policy_held_by_recovery_count", 0)
+        )
+        if held_recovery > 0:
+            rows.append(("Recovery holdovers", str(held_recovery)))
     if summary is not None:
         rows.extend(
             [

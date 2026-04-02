@@ -524,7 +524,6 @@ def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
 
     assert validate_anthropic_bridge_body(body) == []
     assert validate_anthropic_outgoing_bridge_body(body) == [
-        "provider_sensitive_assistant_tool_use_text_interleaving",
         "provider_sensitive_large_tool_use_text_interleaving",
     ]
     summary = summarize_message_structure(body["messages"])
@@ -594,9 +593,11 @@ def test_outgoing_bridge_validation_flags_small_interleaved_tool_use_batch():
     }
 
     assert validate_anthropic_bridge_body(body) == []
-    assert validate_anthropic_outgoing_bridge_body(body) == [
-        "provider_sensitive_assistant_tool_use_text_interleaving"
-    ]
+    assert validate_anthropic_outgoing_bridge_body(body) == []
+    summary = summarize_message_structure(body["messages"])
+    assert summary["provider_sensitivity_risks"] == {
+        "assistant_tool_use_text_interleaving": 1
+    }
 
 
 def test_strict_bridge_validation_rejects_alternating_multi_turn_reordered_first_exchange():

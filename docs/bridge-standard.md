@@ -13,7 +13,7 @@ Tok is standardized around the bridge-first runtime in `src/tok/gateway/__init__
 - Primary runtime: the Claude Code bridge
 - Secondary runtime: `tok_orchestrator.py` and related archived/custom-agent paths
 - Acceptance target: invisible operation inside the bridge, not protocol purity in isolation
-- Current release target: a trustworthy bridge-first public release, not cross-surface standardization
+- Current release target: a trustworthy Claude-first public release, not cross-surface standardization
 
 ## Wire Memory Contract
 

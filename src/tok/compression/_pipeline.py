@@ -70,11 +70,15 @@ def _sync_threshold() -> None:
 
 
 def tok_tool_result_impl(
-    content: str, compression_level: str = "balanced"
+    content: str,
+    compression_level: str = "balanced",
+    tool_context: dict[str, Any] | None = None,
 ) -> str:
     _sync_threshold()
     return _history.tok_tool_result_impl(
-        content, compression_level=compression_level
+        content,
+        compression_level=compression_level,
+        tool_context=tool_context,
     )
 
 

@@ -106,12 +106,10 @@ def _default_request_policy() -> str:
     )
     if explicit_policy:
         return explicit_policy
-    return "legacy_tool_compatible"
+    return "natural_first"
 
 
 def _request_policy_mode_label(policy: str) -> str:
-    if policy == "natural_first":
-        return "natural-first"
     if policy == "forced_baseline":
         return "baseline"
     return "tool-compatible"
@@ -294,8 +292,8 @@ class BridgeSession:
     )
     capture: bool = os.getenv("TOK_CAPTURE", "0") == "1"
     # TOK_MODE=baseline still forces the conservative baseline path.
-    # Otherwise, TOK_REQUEST_POLICY controls how aggressively Tok shapes
-    # Claude's request personality while compression stays available.
+    # Otherwise, TOK_REQUEST_POLICY can explicitly override the stable
+    # tool-compatible request policy default.
     request_policy_default: str = field(
         default_factory=_default_request_policy
     )
@@ -592,8 +590,9 @@ def run_bridge(
     logger.info("Keeping last %d human turns verbatim", keep_turns)
     logger.info("Fail-open: %s", "enabled" if fail_open else "disabled")
     logger.info(
-        "Default mode: %s (TOK_MODE=%s, TOK_REQUEST_POLICY=%s)",
+        "Default Claude bridge mode: %s (request_policy=%s, TOK_MODE=%s, TOK_REQUEST_POLICY=%s)",
         _request_policy_mode_label(session.request_policy_default),
+        session.request_policy_default,
         os.getenv("TOK_MODE", "tool-compatible"),
         os.getenv("TOK_REQUEST_POLICY", "<unset>"),
     )

@@ -116,6 +116,143 @@ def _should_block_invalid_tool_history_locally(
     )
 
 
+def _should_return_read_burst_hint(failures: list[str]) -> bool:
+    return "provider_sensitive_large_tool_use_text_interleaving" in failures
+
+
+def _assistant_tool_use_text_segments(
+    content: list[dict[str, Any]],
+) -> list[dict[str, list[dict[str, Any]]]]:
+    segments: list[dict[str, list[dict[str, Any]]]] = []
+    prefix_text: list[dict[str, Any]] = []
+    tool_uses: list[dict[str, Any]] = []
+    suffix_text: list[dict[str, Any]] = []
+
+    def flush_segment() -> None:
+        nonlocal prefix_text, tool_uses, suffix_text
+        if not tool_uses:
+            prefix_text = []
+            suffix_text = []
+            return
+        segments.append(
+            {
+                "prefix_text": prefix_text,
+                "tool_uses": tool_uses,
+                "suffix_text": suffix_text,
+            }
+        )
+        prefix_text = []
+        tool_uses = []
+        suffix_text = []
+
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "tool_use":
+            if tool_uses and suffix_text:
+                flush_segment()
+            tool_uses.append(copy.deepcopy(block))
+            continue
+        if block_type == "text":
+            if tool_uses:
+                suffix_text.append(copy.deepcopy(block))
+            else:
+                prefix_text.append(copy.deepcopy(block))
+    flush_segment()
+    return segments
+
+
+def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
+    body: dict[str, Any],
+) -> tuple[dict[str, Any], bool, dict[str, int]]:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body, False, {}
+
+    rewritten_messages: list[dict[str, Any]] = []
+    changed = False
+    signals: dict[str, int] = {}
+    index = 0
+
+    while index < len(messages):
+        message = messages[index]
+        if not isinstance(message, dict):
+            rewritten_messages.append(copy.deepcopy(message))
+            index += 1
+            continue
+
+        role = str(message.get("role", "")).strip()
+        content = message.get("content")
+        if role != "assistant" or not isinstance(content, list):
+            rewritten_messages.append(copy.deepcopy(message))
+            index += 1
+            continue
+
+        segments = _assistant_tool_use_text_segments(content)
+        if len(segments) <= 1:
+            rewritten_messages.append(copy.deepcopy(message))
+            index += 1
+            continue
+
+        next_message = (
+            messages[index + 1] if index + 1 < len(messages) else None
+        )
+        if not (
+            isinstance(next_message, dict)
+            and str(next_message.get("role", "")).strip() == "user"
+            and isinstance(next_message.get("content"), list)
+        ):
+            rewritten_messages.append(copy.deepcopy(message))
+            index += 1
+            continue
+
+        next_content = next_message.get("content")
+        user_tool_result_blocks = [
+            copy.deepcopy(block)
+            for block in next_content
+            if isinstance(block, dict) and block.get("type") == "tool_result"
+        ]
+        if len(user_tool_result_blocks) != sum(
+            len(segment["tool_uses"]) for segment in segments
+        ):
+            rewritten_messages.append(copy.deepcopy(message))
+            index += 1
+            continue
+        if len(user_tool_result_blocks) != len(next_content):
+            rewritten_messages.append(copy.deepcopy(message))
+            index += 1
+            continue
+
+        changed = True
+        signals["tok_bridge_large_file_read_burst_rewritten"] = (
+            signals.get("tok_bridge_large_file_read_burst_rewritten", 0) + 1
+        )
+        result_index = 0
+        for segment in segments:
+            assistant_message = copy.deepcopy(message)
+            assistant_message["content"] = (
+                segment["prefix_text"]
+                + segment["tool_uses"]
+                + segment["suffix_text"]
+            )
+            rewritten_messages.append(assistant_message)
+            segment_tool_use_count = len(segment["tool_uses"])
+            if segment_tool_use_count:
+                user_message = copy.deepcopy(next_message)
+                user_message["content"] = user_tool_result_blocks[
+                    result_index : result_index + segment_tool_use_count
+                ]
+                rewritten_messages.append(user_message)
+                result_index += segment_tool_use_count
+        index += 2
+        continue
+
+    rewritten_body = copy.deepcopy(body)
+    rewritten_body["messages"] = rewritten_messages
+    return rewritten_body, changed, signals
+
+
 def _local_bridge_invalid_history_response(message: str) -> Response:
     return Response(
         content=json.dumps(
@@ -124,6 +261,32 @@ def _local_bridge_invalid_history_response(message: str) -> Response:
                 "error": {
                     "type": "invalid_request_error",
                     "message": message,
+                },
+            }
+        ),
+        status_code=400,
+        media_type="application/json",
+    )
+
+
+def _large_file_read_burst_response(message: str) -> Response:
+    return Response(
+        content=json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": message,
+                    "hint": (
+                        "Chunk the file reads into smaller batches, start with "
+                        "explore_file/list_large_files, and summarize before "
+                        "continuing."
+                    ),
+                    "recovery": {
+                        "strategy": "chunk_large_reads",
+                        "max_parallel_file_reads": 2,
+                        "step": "emit a compact ReadPlan before the next batch",
+                    },
                 },
             }
         ),
@@ -149,26 +312,26 @@ def _capture_outgoing_guard_forensics(
     original_body: dict[str, Any],
     failures: list[str],
     behavior_signals: dict[str, int],
+    payload_source: str | None = None,
 ) -> None:
-    session.capture_event(
-        {
-            "event": event,
-            "strict_failures": failures,
-            "behavior_signals": behavior_signals,
-            "prepared_summary": summarize_message_structure(
-                body.get("messages", [])
-            ),
-            "prepared_pairing": summarize_bridge_pairing(
-                body.get("messages", [])
-            ),
-            "provider_safe_summary": summarize_message_structure(
-                original_body.get("messages", [])
-            ),
-            "provider_safe_pairing": summarize_bridge_pairing(
-                original_body.get("messages", [])
-            ),
-        }
-    )
+    payload_event = {
+        "event": event,
+        "strict_failures": failures,
+        "behavior_signals": behavior_signals,
+        "prepared_summary": summarize_message_structure(
+            body.get("messages", [])
+        ),
+        "prepared_pairing": summarize_bridge_pairing(body.get("messages", [])),
+        "provider_safe_summary": summarize_message_structure(
+            original_body.get("messages", [])
+        ),
+        "provider_safe_pairing": summarize_bridge_pairing(
+            original_body.get("messages", [])
+        ),
+    }
+    if payload_source:
+        payload_event["payload_source"] = payload_source
+    session.capture_event(payload_event)
 
 
 def _is_assistant_tool_use_text_interleaving_failure(
@@ -177,6 +340,19 @@ def _is_assistant_tool_use_text_interleaving_failure(
     return (
         "provider_sensitive_assistant_tool_use_text_interleaving" in failures
     )
+
+
+def _provider_sensitive_payload_source(
+    *,
+    canonical_body: dict[str, Any],
+    original_body: dict[str, Any],
+) -> str:
+    if _payloads_materially_differ(
+        json.dumps(canonical_body).encode(),
+        json.dumps(original_body).encode(),
+    ):
+        return "rewritten"
+    return "original"
 
 
 def _attempt_quarantine_invalid_tool_history(
@@ -537,10 +713,79 @@ def _run_bridge_preflight(
 
     outgoing_failures = validate_anthropic_outgoing_bridge_body(canonical_body)
     if outgoing_failures:
+        outgoing_payload_source = _provider_sensitive_payload_source(
+            canonical_body=canonical_body,
+            original_body=original_body,
+        )
         _merge_signal_counts(
             behavior_signals,
             bridge_strict_failure_signals(outgoing_failures),
         )
+        if _should_return_read_burst_hint(outgoing_failures):
+            rewritten_body, rewritten_changed, rewrite_signals = (
+                _rewrite_provider_sensitive_large_tool_use_text_interleaving(
+                    canonical_body
+                )
+            )
+            if rewritten_changed:
+                rewritten_failures = validate_anthropic_outgoing_bridge_body(
+                    rewritten_body
+                )
+                if not rewritten_failures:
+                    behavior_signals.update(rewrite_signals)
+                    behavior_signals[
+                        "tok_bridge_provider_sensitive_degraded_to_provider_safe"
+                    ] = 1
+                    behavior_signals[
+                        "tok_bridge_prepared_pairing_rejected_local"
+                    ] = 1
+                    behavior_signals[
+                        "tok_bridge_assistant_tool_use_text_interleaving_blocked"
+                    ] = 1
+                    behavior_signals[
+                        "request_policy_interleaving_downgrades"
+                    ] = 1
+                    behavior_signals["preflight_block_rewritten_payload"] = 1
+                    event_name = _preflight_event_name(
+                        "bridge_preflight_large_file_read_burst_rewritten",
+                        path,
+                    )
+                    logger.warning(
+                        "%s: rewritten provider-sensitive large file-read burst into provider-safe segments",
+                        event_name,
+                    )
+                    session.capture_event(
+                        {
+                            "event": event_name,
+                            "strict_failures": outgoing_failures,
+                            "behavior_signals": behavior_signals,
+                        }
+                    )
+                    _capture_outgoing_guard_forensics(
+                        session,
+                        event=f"{event_name}_forensics",
+                        body=rewritten_body,
+                        original_body=original_body,
+                        failures=outgoing_failures,
+                        behavior_signals=behavior_signals,
+                        payload_source="rewritten",
+                    )
+                    _log_bridge_body_structure(
+                        event_name,
+                        body=rewritten_body,
+                        headers=headers,
+                        original_body=original_body,
+                        compressed_request=False,
+                        canonicalized_changed=True,
+                        strict_failures=[],
+                        reverted_to_original=False,
+                    )
+                    return (
+                        rewritten_body,
+                        behavior_signals,
+                        True,
+                        None,
+                    )
         if compressed and _payloads_materially_differ(
             json.dumps(canonical_body).encode(),
             json.dumps(original_body).encode(),
@@ -580,8 +825,9 @@ def _run_bridge_preflight(
                     behavior_signals[
                         "request_policy_interleaving_downgrades"
                     ] = 1
+                behavior_signals["preflight_block_rewritten_payload"] = 1
                 logger.warning(
-                    "%s: prepared request failed final outgoing validation%s; sending provider-safe body",
+                    "%s: prepared request failed final outgoing validation%s; sending provider-safe body (payload_source=rewritten)",
                     event_name,
                     (
                         " due to assistant text interleaved within tool_use batch"
@@ -603,6 +849,7 @@ def _run_bridge_preflight(
                     original_body=original_body,
                     failures=outgoing_failures,
                     behavior_signals=behavior_signals,
+                    payload_source="rewritten",
                 )
                 _log_bridge_body_structure(
                     event_name,
@@ -635,10 +882,14 @@ def _run_bridge_preflight(
             reverted_to_original=False,
         )
         logger.warning(
-            "tok_bridge_preflight_rejected_outgoing_guard_local: refusing to send provider-sensitive bridge payload upstream"
+            "tok_bridge_preflight_rejected_outgoing_guard_local: refusing to send provider-sensitive bridge payload upstream (payload_source=%s)",
+            outgoing_payload_source,
         )
         behavior_signals["tok_bridge_preflight_failed_local"] = 1
         behavior_signals["tok_bridge_provider_sensitive_blocked_local"] = 1
+        behavior_signals[
+            f"preflight_block_{outgoing_payload_source}_payload"
+        ] = 1
         if has_provider_sensitive_failures(outgoing_failures):
             behavior_signals["tok_bridge_provider_pairing_risk_detected"] = 1
         if _is_assistant_tool_use_text_interleaving_failure(outgoing_failures):
@@ -654,14 +905,21 @@ def _run_bridge_preflight(
             original_body=original_body,
             failures=outgoing_failures,
             behavior_signals=behavior_signals,
+            payload_source=outgoing_payload_source,
         )
+        if _should_return_read_burst_hint(outgoing_failures):
+            local_response = _large_file_read_burst_response(
+                "Tok bridge preflight rejected a large file-read burst before send."
+            )
+        else:
+            local_response = _local_bridge_invalid_history_response(
+                "Tok bridge preflight rejected a provider-sensitive tool concurrency payload before send."
+            )
         return (
             canonical_body,
             behavior_signals,
             True,
-            _local_bridge_invalid_history_response(
-                "Tok bridge preflight rejected a provider-sensitive tool concurrency payload before send."
-            ),
+            local_response,
         )
 
     body = canonical_body

@@ -449,6 +449,9 @@ def test_live_benchmark_runner_reports_prompt_and_response_metrics(tmp_path):
 
     assert tool_compatible.task_success is True
     assert tool_compatible.diagnostics["tool_compatible_requested"] is True
+    assert tool_compatible.turns[0]["diagnostics"]["request_policy"] == (
+        "natural_first"
+    )
     assert (
         tool_compatible.response_metrics["response_mode"] == "tool-compatible"
     )
@@ -508,3 +511,28 @@ def test_live_benchmark_runner_accepts_plain_pytest_verification(tmp_path):
 
     assert result.task_success is True
     assert result.notes == []
+
+
+def test_live_benchmark_runner_rejects_bare_failed_verification(tmp_path):
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(
+        json.dumps({"messages": [{"role": "user", "content": "Fix gateway"}]})
+        + "\n"
+    )
+    definition = BenchmarkDefinition(
+        name="coding-loop",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a coding loop.",
+        followup_prompt="File=<the file that was changed>\nVerification=<the result>",
+        success_terms=("gateway.py", "passed"),
+        min_success_terms=2,
+        expected_file_terms=("gateway.py",),
+        expected_verification_terms=("passed", "1 passed", "pytest"),
+    )
+    client = _FakeClient("File=src/tok/gateway.py\nVerification=FAILED")
+    runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
+
+    result = runner.run(definition, mode="baseline", turns=1)
+
+    assert result.task_success is False
+    assert "unexpected_verification_field" in result.notes

@@ -42,9 +42,6 @@ _STRICT_FAILURE_SIGNAL_MAP = {
     "provider_sensitive_large_tool_use_text_interleaving": (
         "tok_bridge_strict_provider_sensitive_large_tool_use_text_interleaving"
     ),
-    "provider_sensitive_assistant_tool_use_text_interleaving": (
-        "tok_bridge_strict_provider_sensitive_assistant_tool_use_text_interleaving"
-    ),
 }
 _INVALID_TOOL_HISTORY_FAILURES = frozenset(
     {
@@ -70,7 +67,6 @@ _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD = 16
 _PROVIDER_SENSITIVE_FAILURES = frozenset(
     {
         "provider_sensitive_large_tool_use_text_interleaving",
-        "provider_sensitive_assistant_tool_use_text_interleaving",
     }
 )
 
@@ -1569,10 +1565,6 @@ def validate_anthropic_outgoing_bridge_body(body: dict[str, Any]) -> list[str]:
 
     messages = body.get("messages")
     provider_risks = _collect_bridge_provider_sensitivity_risks(messages)
-    if provider_risks.get("assistant_tool_use_text_interleaving", 0):
-        failures.append(
-            "provider_sensitive_assistant_tool_use_text_interleaving"
-        )
     if provider_risks.get(
         "provider_sensitive_large_tool_use_text_interleaving", 0
     ):

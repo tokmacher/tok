@@ -355,6 +355,9 @@ def compress_history_impl(
             _bump(test_scores, match.group(1), 2 + recency, 24)
         for line in text.splitlines():
             stripped = line.strip()
+            if stripped.lower().startswith("verification:"):
+                _bump(test_scores, stripped[:96], 5 + recency, 96)
+                continue
             if "FAILED" in stripped or "PASSED" in stripped:
                 _bump(test_scores, stripped[:48], 2 + recency, 48)
 
@@ -451,8 +454,26 @@ def _compress_git_log_impl(text: str) -> str:
     return _compress_git_log(text)
 
 
+def _tool_command_hint(tool_context: dict[str, Any] | None) -> str:
+    if not isinstance(tool_context, dict):
+        return ""
+    args = tool_context.get("args")
+    if isinstance(args, dict):
+        for key in ("command", "cmd"):
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    for key in ("command", "cmd"):
+        value = tool_context.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
+
+
 def tok_tool_result_impl(
-    content: str, compression_level: str = "balanced"
+    content: str,
+    compression_level: str = "balanced",
+    tool_context: dict[str, Any] | None = None,
 ) -> str:
     if len(content) <= TOOL_COMPRESS_THRESHOLD:
         return content
@@ -460,7 +481,9 @@ def tok_tool_result_impl(
     kind = _detect_tool_content_type_impl(content)
     original_chars = len(content)
     registry = build_default_registry(
-        compress_pytest=_compress_pytest,
+        compress_pytest=lambda text: _compress_pytest(
+            text, command=_tool_command_hint(tool_context)
+        ),
         compress_grep=_compress_grep,
         compress_git_diff=_compress_git_diff,
         compress_ls=_compress_ls,
@@ -732,7 +755,9 @@ def compress_tool_results_impl(
                     continue
 
             compressed = tok_tool_result_impl(
-                raw, compression_level=compression_level
+                raw,
+                compression_level=compression_level,
+                tool_context=ctx,
             )
             saved = len(raw) - len(compressed)
             if saved > 0:

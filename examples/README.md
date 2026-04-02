@@ -2,9 +2,10 @@
 
 Tok ships one supported example for the v0.1.0 public release.
 
-## Supported Example
+## Supported Examples
 
 - [`tok_wrap_example.py`](./tok_wrap_example.py): minimal experimental Python wrapper flow using `RuntimeSession`, `tok.wrap(...)`, and `tok.process(...)`
+- [`natural_first_openrouter.py`](./natural_first_openrouter.py): exercises the same wrapper flow against OpenRouter with the natural-first request policy for cheap iteration.
 
 Older playground/demo scripts are intentionally not shipped as part of the public example set because they are broader than the supported bridge-first and wrapper flows.
 

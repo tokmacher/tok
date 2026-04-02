@@ -145,12 +145,36 @@ def _detect_tool_content_type(text: str) -> str:
     return "raw"
 
 
-def _compress_pytest(text: str) -> str:
+def _compress_pytest(text: str, command: str = "") -> str:
     lines = text.splitlines()
     result: list[str] = []
     in_failure = False
     passed = 0
     failed = 0
+    first_passed = ""
+    first_failed = ""
+
+    def _normalize_verification_command(command: str) -> str:
+        cleaned = " ".join(command.split())
+        if not cleaned:
+            return ""
+        return cleaned[:120]
+
+    def _extract_failure_label(line: str) -> str:
+        if not line:
+            return ""
+        label = line.strip()
+        if label.endswith(" FAILED"):
+            label = label[: -len(" FAILED")].strip()
+        return label[:120]
+
+    def _extract_pass_label(line: str) -> str:
+        if not line:
+            return ""
+        label = line.strip()
+        if label.endswith(" PASSED"):
+            label = label[: -len(" PASSED")].strip()
+        return label[:120]
 
     for line in lines:
         if re.match(r"=+\s+\d+.*\s+=+\s*$", line):
@@ -159,10 +183,14 @@ def _compress_pytest(text: str) -> str:
             continue
         if " PASSED" in line or line.endswith(" PASSED"):
             passed += 1
+            if not first_passed:
+                first_passed = _extract_pass_label(line)
             in_failure = False
             continue
         if " FAILED" in line or line.endswith(" FAILED"):
             failed += 1
+            if not first_failed:
+                first_failed = _extract_failure_label(line)
             in_failure = True
             result.append(line)
             continue
@@ -182,7 +210,37 @@ def _compress_pytest(text: str) -> str:
             result.append(line)
 
     header = f">>> tool:pytest|passed:{passed}|failed:{failed}"
-    return header + "\n" + "\n".join(result)
+    verification_line = ""
+    command = _normalize_verification_command(command)
+    if failed:
+        failure_count = "1 failed" if failed == 1 else f"{failed} failed"
+        if command and first_failed:
+            verification_line = (
+                f"verification: {command} -> {first_failed} ({failure_count})"
+            )
+        elif command:
+            verification_line = f"verification: {command} ({failure_count})"
+        elif first_failed:
+            verification_line = (
+                f"verification: {first_failed} ({failure_count})"
+            )
+        else:
+            verification_line = f"verification: {failure_count}"
+    elif passed:
+        pass_count = "1 passed" if passed == 1 else f"{passed} passed"
+        if command:
+            verification_line = f"verification: {command} {pass_count}"
+        elif first_passed:
+            verification_line = f"verification: {first_passed} ({pass_count})"
+        else:
+            verification_line = f"verification: {pass_count}"
+
+    parts = [header]
+    if verification_line:
+        parts.append(verification_line)
+    if result:
+        parts.append("\n".join(result))
+    return "\n".join(parts)
 
 
 def _compress_grep(text: str) -> str:

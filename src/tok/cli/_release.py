@@ -614,6 +614,59 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
                     savings_pct=float(payload.get("session_savings_pct", 0.0)),
                     tokens_saved=int(payload.get("session_tokens_saved", 0)),
                 )
+                session_view_summary = dict(session_summary or {})
+                session_view_summary.update(
+                    {
+                        "actual_tokens": int(payload.get("actual_tokens", 0)),
+                        "baseline_tokens": int(
+                            payload.get("baseline_tokens", 0)
+                        ),
+                        "tokens_saved": int(
+                            payload.get("session_tokens_saved", 0)
+                        ),
+                        "savings_pct": float(
+                            payload.get("session_savings_pct", 0.0)
+                        ),
+                        "actual_cost_usd": float(
+                            payload.get("actual_cost_usd", 0.0)
+                        ),
+                        "baseline_cost_usd": float(
+                            payload.get("baseline_cost_usd", 0.0)
+                        ),
+                        "cost_saved_usd": float(
+                            payload.get("cost_saved_usd", 0.0)
+                        ),
+                        "session_quality": str(
+                            payload.get("session_quality", "clean")
+                        ),
+                        "last_degradation_reason": str(
+                            payload.get("last_degradation_reason", "")
+                        ),
+                        "preflight_block_original_payload_count": int(
+                            payload.get(
+                                "preflight_block_original_payload_count", 0
+                            )
+                        ),
+                        "preflight_block_rewritten_payload_count": int(
+                            payload.get(
+                                "preflight_block_rewritten_payload_count", 0
+                            )
+                        ),
+                        "stream_recovery_empty_success_count": int(
+                            payload.get(
+                                "stream_recovery_empty_success_count", 0
+                            )
+                        ),
+                        "stream_recovery_read_error_count": int(
+                            payload.get("stream_recovery_read_error_count", 0)
+                        ),
+                        "request_policy_held_by_recovery_count": int(
+                            payload.get(
+                                "request_policy_held_by_recovery_count", 0
+                            )
+                        ),
+                    }
+                )
                 console.print(
                     render_stats_panel(
                         "Current Session",
@@ -627,7 +680,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
                         ),
                         subhead=f"{verdict} • {subhead}",
                         rows=session_status_rows(
-                            summary=session_summary,
+                            summary=session_view_summary,
                             tok_active=True,
                             baseline_only=baseline_only,
                             mode=mode,
@@ -764,6 +817,7 @@ def gate_check_command(
     fixture_set: str | None = None,
     emit_metrics: Path | None = None,
     stability_dir: Path | None = None,
+    frontier_report: Path | None = None,
     required_benchmarks: str = "coding-loop-5,research-loop-5",
 ) -> None:
     """Run gate checks over a directory of replay fixtures."""
@@ -935,6 +989,20 @@ def gate_check_command(
         stability_check = check_stability_artifacts(
             stability_dir, required_benchmark_list
         )
+    frontier_check = None
+    if frontier_report is not None:
+        from ..testing.frontier import check_frontier_report
+
+        frontier_check = check_frontier_report(frontier_report)
+        release_summary["frontier_release_profile"] = str(
+            frontier_check.get("release_profile", "baseline")
+        )
+        release_summary["frontier_status"] = (
+            "pass" if frontier_check.get("passed", False) else "fail"
+        )
+        release_summary["frontier_probe_present"] = bool(
+            frontier_check.get("openrouter_probe_present", False)
+        )
 
     if export is not None:
         payload: dict[str, Any] = {
@@ -945,6 +1013,8 @@ def gate_check_command(
         }
         if stability_check is not None:
             payload["stability_check"] = stability_check
+        if frontier_check is not None:
+            payload["frontier_check"] = frontier_check
         export.write_text(json.dumps(payload, indent=2))
         console.print(f"[green]Wrote gate results:[/green] {export}")
 
@@ -973,3 +1043,18 @@ def gate_check_command(
             raise typer.Exit(1)
         console.print("[green]STABILITY PASS[/green]")
         console.print("[green]Stability gate: PASS[/green]")
+
+    if frontier_check is not None:
+        if not frontier_check.get("passed", False):
+            reason = frontier_check.get("reason", "criteria_failed")
+            profile = frontier_check.get("release_profile", "baseline")
+            console.print(
+                f"[red]FRONTIER FAIL[/red] profile={profile} ({reason})"
+            )
+            console.print("[red]Compression frontier gate: FAIL[/red]")
+            raise typer.Exit(1)
+        console.print(
+            "[green]FRONTIER PASS[/green] "
+            f"profile={frontier_check.get('release_profile', 'unknown')}"
+        )
+        console.print("[green]Compression frontier gate: PASS[/green]")

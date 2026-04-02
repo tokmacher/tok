@@ -894,6 +894,11 @@ class LiveBenchmarkRunner:
         original_system_tokens = _estimate_tokens(definition.system_prompt)
         runtime = UniversalTokRuntime()
         tool_compatible = mode in {"tok-tool-compatible", "tok-minimal"}
+        request_policy = (
+            "natural_first"
+            if mode == "tok-tool-compatible"
+            else "legacy_tool_compatible"
+        )
 
         # Identity logging for pointer registry continuity
         session_id = id(runtime)
@@ -1009,6 +1014,7 @@ class LiveBenchmarkRunner:
                     }
                     turn_diagnostics: dict[str, Any] = {
                         "tool_compatible_requested": False,
+                        "request_policy": "forced_baseline",
                         "request_messages_before": len(conversation),
                         "request_messages_after": len(chat_messages),
                     }
@@ -1024,6 +1030,7 @@ class LiveBenchmarkRunner:
                             system=definition.system_prompt,
                             adapter_kind="text-loop",
                             tool_compatible=tool_compatible,
+                            request_policy=request_policy,
                         ),
                         session,
                     )
@@ -1096,6 +1103,7 @@ class LiveBenchmarkRunner:
                     }
                     turn_diagnostics = {
                         "tool_compatible_requested": tool_compatible,
+                        "request_policy": request_policy,
                         "request_messages_before": len(conversation),
                         "request_messages_after": len(chat_messages),
                         "runtime_mode": prepared.mode,

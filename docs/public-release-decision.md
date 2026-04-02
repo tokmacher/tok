@@ -2,6 +2,9 @@
 
 Supported workflows, limitations, and the release bar for Tok's first public release.
 
+Tok is released as a Claude-first bridge. OpenRouter and frontier probes are useful
+for validation, but they do not define the public default behavior.
+
 ## Supported Workflows
 
 The first public release supports exactly this workflow:
@@ -45,6 +48,7 @@ The following are explicitly out of scope for the first release:
 - Token savings depend on conversation length; very short sessions may not show clear savings
 - The bridge requires Claude Code to be installed and configured
 - Model families beyond Anthropic, OpenAI, DeepSeek, and Qwen are not yet validated
+- Frontier and OpenRouter probes are experimental validation, not release drivers
 - `src/tok/cli/__init__.py` remains larger than we want for the long term; the extracted helper modules are now the canonical implementation, and further decomposition is deferred until after `0.1.0`
 - Dependency policy for `0.1.0` is lockfile-backed validation plus CI coverage, not blanket upper bounds on every published requirement
 

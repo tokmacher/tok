@@ -6,6 +6,7 @@ import tok.compression
 from typing import Any
 
 tok.compression.TOOL_COMPRESS_THRESHOLD = 0
+from tok.compression._tool_result_codecs import _compress_pytest
 
 from tok.compression import (
     CANONICAL_MEMORY_FIELDS,
@@ -421,7 +422,10 @@ class TestInjectSystemAdditions:
         result = inject_system_additions(body, None, tool_compatible=True)
 
         assert "=== MODE: TOOL-COMPATIBLE ===" not in result["system"]
-        assert "Native tools only. Plain text." in result["system"]
+        assert (
+            "Plain text. Tool calls only. Omit all headers."
+            in result["system"]
+        )
         assert "Omit all headers." in result["system"]
         assert "Respond in Tok-native mode." not in result["system"]
 
@@ -445,7 +449,10 @@ class TestInjectSystemAdditions:
             ],
         )
 
-        assert "Native tools only. Plain text." in result["system"]
+        assert (
+            "Plain text. Tool calls only. Omit all headers."
+            in result["system"]
+        )
         assert (
             "Reuse existing File=/Verification= facts when they already answer the request; reacquire only if the compressed history is insufficient."
             in result["system"]
@@ -516,6 +523,22 @@ class TestTokToolResult:
         out = tok_tool_result(log)
         assert "FAILED" in out or "failed:2" in out
         assert "AssertionError" in out
+
+    def test_pytest_preserves_verification_grade_command_evidence(self):
+        log = _make_pytest_log(80)
+        out = _compress_pytest(
+            log, command="pytest tests/unit/test_gateway.py -q"
+        )
+        assert "verification: pytest tests/unit/test_gateway.py -q" in out
+        assert "80 passed" in out
+        assert "PASSED" not in out
+
+    def test_pytest_failure_preserves_first_failing_test(self):
+        log = _make_pytest_log(n_passed=10, n_failed=2)
+        out = _compress_pytest(log, command="pytest tests/test_bar.py -q")
+        assert "verification: pytest tests/test_bar.py -q" in out
+        assert "tests/test_bar.py::test_fail_0" in out
+        assert "2 failed" in out
 
     def test_pytest_deterministic(self):
         log = _make_pytest_log(80)
@@ -657,6 +680,24 @@ class TestCompressToolResults:
         assert self._total_saved(breakdown) > 0
         compressed_content = out[1]["content"][0]["content"]
         assert "PASSED" not in compressed_content
+
+    def test_pytest_tool_result_uses_tool_command_for_verification(self):
+        log = _make_pytest_log(80)
+        msgs = self._make_messages_with_tool_result(log)
+        out, breakdown = compress_tool_results(
+            msgs,
+            tool_use_id_to_context={
+                "t1": {
+                    "name": "bash",
+                    "args": {"command": "pytest tests/unit/test_gateway.py"},
+                }
+            },
+        )
+        assert self._total_saved(breakdown) > 0
+        compressed_content = out[1]["content"][0]["content"]
+        assert "verification: pytest tests/unit/test_gateway.py 80 passed" in (
+            compressed_content
+        )
 
     def test_chars_saved_accurate(self):
         log = _make_pytest_log(80)

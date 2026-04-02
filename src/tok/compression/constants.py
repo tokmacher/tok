@@ -165,9 +165,7 @@ TOK_OUTPUT_DIRECTIVE = """\
 Turn 2+: Omit header and @msg if mode unchanged. No prose.
 """
 
-TOK_TOOL_COMPAT_DIRECTIVE = (
-    "Native tools only. Plain text. Omit all headers.\n"
-)
+TOK_TOOL_COMPAT_DIRECTIVE = "Plain text. Tool calls only. Omit all headers.\n"
 
 TOK_OUTPUT_DIRECTIVE_MINIMAL = (
     ">>> t:N|usr:X|agt:Y|state:Z\n@msg role:assistant |> Reply\n"

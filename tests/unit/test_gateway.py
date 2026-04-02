@@ -19,9 +19,17 @@ from tok.gateway import (
     _response_contract,
     create_app,
 )
+from tok.gateway._bridge_preflight import (
+    _rewrite_provider_sensitive_large_tool_use_text_interleaving,
+)
 from tok.gateway._bridge_request_handler import send_with_tok_fail_open_retry
 from tok.stats import SavingsTracker
 from tok.universal_runtime import PreparedRuntimeRequest
+from tok.runtime.pipeline.request_validation import (
+    summarize_bridge_pairing,
+    summarize_message_structure,
+    validate_anthropic_outgoing_bridge_body,
+)
 
 
 def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
@@ -78,7 +86,63 @@ def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
     ]
 
 
-def test_health_endpoint():
+def _interleaved_tool_batch_messages() -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Inspect concurrency path."}],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_small_1",
+                    "name": "read_file",
+                    "input": {"path": "file_1.py"},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "toolu_small_2",
+                    "name": "read_file",
+                    "input": {"path": "file_2.py"},
+                },
+                {"type": "text", "text": "Collecting evidence."},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_small_3",
+                    "name": "read_file",
+                    "input": {"path": "file_3.py"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_small_1",
+                    "content": "result 1",
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_small_2",
+                    "content": "result 2",
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_small_3",
+                    "content": "result 3",
+                },
+            ],
+        },
+    ]
+
+
+def test_health_endpoint(monkeypatch):
+    monkeypatch.delenv("TOK_MODE", raising=False)
+    monkeypatch.delenv("TOK_REQUEST_POLICY", raising=False)
+
     tracker = SavingsTracker(
         savings_file="/tmp/test_health_endpoint_tok_savings.tok",
         ledger_path=Path("/tmp/test_health_endpoint_global_savings.tok"),
@@ -95,7 +159,7 @@ def test_health_endpoint():
         "bridge": "tok",
         "port": 9191,
         "mode": "tool-compatible",
-        "request_policy": "legacy_tool_compatible",
+        "request_policy": "natural_first",
         "baseline_only": False,
         "fallback_count": 0,
         "actual_tokens": 0,
@@ -128,6 +192,8 @@ def test_health_endpoint():
         "stream_recovery_success_text_count": 0,
         "stream_recovery_success_tool_use_count": 0,
         "stream_recovery_fallback_count": 0,
+        "stream_recovery_empty_success_count": 0,
+        "stream_recovery_read_error_count": 0,
         "tool_history_repaired_count": 0,
         "tool_history_pairing_repaired_count": 0,
         "tool_history_quarantined_count": 0,
@@ -135,14 +201,48 @@ def test_health_endpoint():
         "invalid_tool_history_session_reset_count": 0,
         "provider_pairing_disagreement_count": 0,
         "assistant_tool_use_text_interleaving_blocked_count": 0,
+        "preflight_block_original_payload_count": 0,
+        "preflight_block_rewritten_payload_count": 0,
         "request_policy_natural_first_count": 0,
         "request_policy_tool_compatible_count": 0,
         "request_policy_escalations_count": 0,
         "request_policy_deescalations_count": 0,
         "request_policy_interleaving_downgrades_count": 0,
+        "request_policy_reason_stream_recovery_count": 0,
+        "request_policy_reason_tool_recovery_count": 0,
+        "request_policy_reason_structured_tool_loop_count": 0,
+        "request_policy_held_by_recovery_count": 0,
         "session_quality": "clean",
         "last_degradation_reason": "",
     }
+
+
+def test_bridge_session_defaults_request_policy_to_natural_first(
+    monkeypatch,
+):
+    monkeypatch.delenv("TOK_MODE", raising=False)
+    monkeypatch.delenv("TOK_REQUEST_POLICY", raising=False)
+
+    session = BridgeSession()
+
+    assert session.request_policy_default == "natural_first"
+    assert session.tool_compatible_default is True
+
+
+@pytest.mark.parametrize(
+    "request_policy_env",
+    ["legacy_tool_compatible", "tool-compatible"],
+)
+def test_bridge_session_accepts_legacy_request_policy_escape_hatch(
+    monkeypatch,
+    request_policy_env: str,
+):
+    monkeypatch.delenv("TOK_MODE", raising=False)
+    monkeypatch.setenv("TOK_REQUEST_POLICY", request_policy_env)
+
+    session = BridgeSession()
+
+    assert session.request_policy_default == "legacy_tool_compatible"
 
 
 def test_health_endpoint_reports_baseline_only_and_session_savings(tmp_path):
@@ -207,6 +307,8 @@ def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
             "stream_recovery_success_text": 1,
             "stream_recovery_success_tool_use": 1,
             "stream_recovery_fallback": 1,
+            "stream_recovery_empty_success": 1,
+            "stream_recovery_read_error": 1,
             "tok_bridge_tool_history_repaired": 1,
             "tok_bridge_tool_history_pairing_repaired": 1,
             "tok_bridge_invalid_tool_history_quarantined": 1,
@@ -214,7 +316,13 @@ def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
             "tok_bridge_invalid_tool_history_session_reset": 1,
             "fail_open_retry_upstream_pairing_disagreement": 1,
             "tok_bridge_assistant_tool_use_text_interleaving_blocked": 1,
+            "preflight_block_original_payload": 1,
+            "preflight_block_rewritten_payload": 1,
             "request_policy_interleaving_downgrades": 1,
+            "request_policy_reason_stream_recovery": 1,
+            "request_policy_reason_tool_recovery": 1,
+            "request_policy_reason_structured_tool_loop": 1,
+            "request_policy_held_by_recovery": 1,
         },
     )
     app = create_app(session)
@@ -228,6 +336,8 @@ def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
     assert payload["stream_recovery_success_text_count"] == 1
     assert payload["stream_recovery_success_tool_use_count"] == 1
     assert payload["stream_recovery_fallback_count"] == 1
+    assert payload["stream_recovery_empty_success_count"] == 1
+    assert payload["stream_recovery_read_error_count"] == 1
     assert payload["tool_history_repaired_count"] == 1
     assert payload["tool_history_pairing_repaired_count"] == 1
     assert payload["tool_history_quarantined_count"] == 1
@@ -235,7 +345,16 @@ def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
     assert payload["invalid_tool_history_session_reset_count"] == 1
     assert payload["provider_pairing_disagreement_count"] == 1
     assert payload["assistant_tool_use_text_interleaving_blocked_count"] == 1
+    assert payload["preflight_block_original_payload_count"] == 1
+    assert payload["preflight_block_rewritten_payload_count"] == 1
     assert payload["request_policy_interleaving_downgrades_count"] == 1
+    assert payload["request_policy_reason_stream_recovery_count"] == 1
+    assert payload["request_policy_reason_tool_recovery_count"] == 1
+    assert payload["request_policy_reason_structured_tool_loop_count"] == 1
+    assert payload["request_policy_held_by_recovery_count"] == 1
+    assert (
+        payload["last_degradation_reason"] == "request-shape incompatibility"
+    )
 
 
 def test_clean_system_context_uses_top_level_prompt_compressor(monkeypatch):
@@ -432,7 +551,8 @@ def test_tool_compatible_request_skips_trivial_compressed_history(
 
     assert response.status_code == 200
     forwarded = captured["body"].decode()
-    assert "Native tools only. Plain text." in forwarded
+    assert "TOK-NATIVE" in forwarded
+    assert "Plain text. Tool calls only. Omit all headers." not in forwarded
     assert "[Tok compressed history]" not in forwarded
 
 
@@ -473,7 +593,8 @@ def test_bridge_defaults_to_tool_compatible_without_tools(
 
     assert response.status_code == 200
     forwarded = captured["body"].decode()
-    assert "Native tools only. Plain text." in forwarded
+    assert "TOK-NATIVE" in forwarded
+    assert "Plain text. Tool calls only. Omit all headers." not in forwarded
 
 
 def test_bridge_can_opt_out_of_tool_compatible_via_header(
@@ -810,21 +931,19 @@ def test_gateway_degrades_interleaved_assistant_tool_use_batch_to_provider_safe(
 
     assert response.status_code == 200
     assert len(sent_bodies) == 1
-    assert sent_bodies[0] == {
-        "model": "claude-sonnet-4",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Inspect concurrency path.",
-                    }
-                ],
-            }
-        ],
-        "stream": False,
+    assert sent_bodies[0]["model"] == "claude-sonnet-4"
+    assert sent_bodies[0]["messages"][0]["content"] == [
+        {
+            "type": "text",
+            "text": "Inspect concurrency path.",
+        }
+    ]
+    assert sent_bodies[0]["messages"][1]["content"][2] == {
+        "type": "text",
+        "text": "Collecting evidence.",
     }
+    assert sent_bodies[0]["stream"] is False
+    assert sent_bodies[0]["system"] == ""
 
 
 def test_gateway_interleaving_downgrade_updates_health_counters(tmp_path):
@@ -846,6 +965,7 @@ def test_gateway_interleaving_downgrade_updates_health_counters(tmp_path):
         output_saved=20,
         behavior_signals={
             "tok_bridge_assistant_tool_use_text_interleaving_blocked": 2,
+            "preflight_block_rewritten_payload": 2,
             "request_policy_interleaving_downgrades": 2,
         },
     )
@@ -857,6 +977,7 @@ def test_gateway_interleaving_downgrade_updates_health_counters(tmp_path):
     assert response.status_code == 200
     payload = response.json()
     assert payload["assistant_tool_use_text_interleaving_blocked_count"] == 2
+    assert payload["preflight_block_rewritten_payload_count"] == 2
     assert payload["request_policy_interleaving_downgrades_count"] == 2
 
 
@@ -2909,7 +3030,7 @@ def test_tool_compatible_system_injection_present_when_tools_used(
     forwarded = captured["body"].decode()
     body = __import__("json").loads(forwarded)
     system = body.get("system", "")
-    assert "Native tools only. Plain text." in system
+    assert "TOK-NATIVE" in system
 
 
 def test_response_contract_ignores_python_repl_noise_in_tool_compatible_mode():
@@ -3000,7 +3121,7 @@ def test_cold_start_no_injection_when_tool_compatible_and_no_memory():
         body=body, tok_state=None, tool_compatible=True
     )
     sys = result["system"]
-    assert "Native tools only. Plain text." in sys
+    assert "Plain text. Tool calls only. Omit all headers." in sys
     assert "[Tok compressed history]" not in sys
 
 
@@ -3012,7 +3133,7 @@ def test_tool_compat_with_memory_injects_compat_directive_not_protocol_law():
         body=body, tok_state=">>> g:fix|t:2", tool_compatible=True
     )
     sys = result["system"]
-    assert "Native tools only. Plain text." in sys
+    assert "Plain text. Tool calls only. Omit all headers." in sys
     assert "Always invert multi-line content" not in sys
 
 
@@ -3156,6 +3277,7 @@ def test_streaming_empty_success_recovers_via_non_stream_text(
     signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
     assert signals["stream_buffer_read_error"] == 1
     assert signals["stream_empty_after_success"] == 1
+    assert signals["stream_recovery_read_error"] == 1
     assert signals["stream_recovery_started"] == 1
     assert signals["stream_recovery_retry"] == 1
     assert signals["stream_recovery_success_text"] == 1
@@ -3225,12 +3347,67 @@ def test_streaming_empty_success_recovers_via_non_stream_tool_use(
     assert "/tmp/example.py" in output
     session.tracker.record_call.assert_called_once()
     signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
+    assert signals["stream_recovery_read_error"] == 1
     assert signals["stream_recovery_started"] == 1
     assert signals["stream_recovery_retry"] == 1
     assert signals["stream_recovery_success_tool_use"] == 1
     assert "stream_recovery_retry_started" in caplog.text
     assert "stream_recovery_succeeded_tool_use" in caplog.text
     assert "tool_compatible_response" not in signals
+
+
+def test_streaming_empty_success_without_read_error_records_empty_counter(
+    monkeypatch, caplog
+):
+    class FakeResponse:
+        async def aiter_bytes(self):
+            yield b""
+
+    class FakeClient:
+        async def aclose(self):
+            pass
+
+    async def _fake_send(self, request, stream=False):
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "content": [{"type": "text", "text": "Recovered answer"}],
+                "usage": {"input_tokens": 8, "output_tokens": 3},
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    session = BridgeSession()
+    session.tracker.record_call = MagicMock()
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    async def _collect():
+        chunks = []
+        async for chunk in _buffer_strip_restream(
+            session,
+            FakeClient(),
+            FakeResponse(),
+            tool_compatible=True,
+            request_method="POST",
+            request_url="https://example.com/v1/messages",
+            request_headers={},
+            request_content=json.dumps({"stream": True}).encode(),
+            request_state={"fallback_recorded": False},
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    output = b"".join(asyncio.run(_collect())).decode()
+
+    assert "Recovered answer" in output
+    session.tracker.record_call.assert_called_once()
+    signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
+    assert signals["stream_empty_after_success"] == 1
+    assert signals["stream_recovery_empty_success"] == 1
+    assert "stream_recovery_read_error" not in signals
+    assert "stream_recovery_retry_started" in caplog.text
+    assert "stream_recovery_succeeded_text" in caplog.text
 
 
 def test_streaming_empty_success_records_fallback_without_tool_compatible_signal(
@@ -3285,6 +3462,7 @@ def test_streaming_empty_success_records_fallback_without_tool_compatible_signal
     signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
     assert signals["stream_buffer_read_error"] == 1
     assert signals["stream_empty_after_success"] == 1
+    assert signals["stream_recovery_read_error"] == 1
     assert signals["stream_recovery_started"] == 1
     assert signals["stream_recovery_retry"] == 1
     assert signals["stream_recovery_fallback"] == 1
@@ -4618,20 +4796,62 @@ def test_gateway_fail_open_retry_uses_provider_safe_body_after_tool_history_repa
     assert "toolu_bad_id" in retry_text
 
 
-def test_gateway_blocks_provider_sensitive_large_tool_batch_before_send(
+def test_provider_sensitive_large_file_read_burst_rewrite_preserves_pairing():
+    body = {
+        "model": "claude-sonnet-4",
+        "messages": _provider_sensitive_large_tool_batch_messages(),
+    }
+
+    rewritten, changed, signals = (
+        _rewrite_provider_sensitive_large_tool_use_text_interleaving(body)
+    )
+
+    assert changed is True
+    assert signals["tok_bridge_large_file_read_burst_rewritten"] == 1
+    assert validate_anthropic_outgoing_bridge_body(rewritten) == []
+
+    original_timeline = summarize_bridge_pairing(body["messages"])
+    rewritten_timeline = summarize_bridge_pairing(rewritten["messages"])
+
+    def _flatten(entries: list[dict[str, Any]], key: str) -> list[str]:
+        values: list[str] = []
+        for entry in entries:
+            values.extend([str(item) for item in entry.get(key, [])])
+        return values
+
+    assert _flatten(rewritten_timeline, "tool_use_ids") == _flatten(
+        original_timeline, "tool_use_ids"
+    )
+    assert _flatten(rewritten_timeline, "next_tool_result_ids") == _flatten(
+        original_timeline, "next_tool_result_ids"
+    )
+
+
+def test_gateway_rewrites_provider_sensitive_large_tool_batch_before_send(
     tmp_path, monkeypatch, caplog
 ):
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
 
-    async def _fail_if_sent(self, request, stream=False):
-        del self, request, stream
-        raise AssertionError("upstream send should not be called")
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
 
-    monkeypatch.setattr(httpx.AsyncClient, "send", _fail_if_sent)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
-    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    app = create_app(session)
     client = TestClient(app)
 
     response = client.post(
@@ -4644,17 +4864,61 @@ def test_gateway_blocks_provider_sensitive_large_tool_batch_before_send(
         },
     )
 
-    assert response.status_code == 400
-    assert "provider-sensitive tool concurrency payload" in response.text
-    assert "bridge_preflight_rejected_outgoing_guard_local" in caplog.text
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assert validate_anthropic_outgoing_bridge_body(sent_bodies[0]) == []
+    assert "bridge_preflight_large_file_read_burst_rewritten" in caplog.text
 
 
-def test_gateway_degrades_provider_sensitive_prepared_body_to_safe_original(
+def test_gateway_allows_small_interleaved_tool_batch_before_send(
     tmp_path, monkeypatch, caplog
 ):
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
     sent_bodies: list[dict[str, Any]] = []
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": _interleaved_tool_batch_messages(),
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assert "bridge_preflight_rejected_outgoing_guard_local" not in caplog.text
+
+
+def test_gateway_rewrites_provider_sensitive_prepared_body_to_safe_segments(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+    session = BridgeSession(memory_dir=memory_dir, fail_open=True)
 
     def _fake_prepare_request(request, session, *, result_cache=None):
         del session, result_cache
@@ -4691,7 +4955,7 @@ def test_gateway_degrades_provider_sensitive_prepared_body_to_safe_original(
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
-    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    app = create_app(session)
     client = TestClient(app)
 
     response = client.post(
@@ -4705,22 +4969,15 @@ def test_gateway_degrades_provider_sensitive_prepared_body_to_safe_original(
     )
 
     assert response.status_code == 200
-    assert sent_bodies == [
-        {
-            "model": "claude-sonnet-4",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "hello"}],
-                }
-            ],
-            "stream": False,
-        }
-    ]
-    assert (
-        "bridge_preflight_assistant_tool_use_text_interleaving_degraded_to_provider_safe"
-        in caplog.text
-    )
+    assert len(sent_bodies) == 1
+    summary = summarize_message_structure(sent_bodies[0]["messages"])
+    assert summary["assistant_msgs"] == 3
+    assert summary["user_msgs"] == 4
+    assert summary["tool_use_blocks"] == 19
+    assert summary["tool_result_blocks"] == 19
+    assert summary["provider_sensitivity_risks"] == {}
+    assert validate_anthropic_outgoing_bridge_body(sent_bodies[0]) == []
+    assert "bridge_preflight_large_file_read_burst_rewritten" in caplog.text
 
 
 def test_gateway_logs_pairing_forensics_when_upstream_reports_pairing_disagreement(

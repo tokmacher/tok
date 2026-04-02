@@ -5,7 +5,7 @@ This is the full bridge-first walkthrough for Tok.
 If you are new to Tok, start with the quickstart in [`README.md`](../README.md), then
 use this page when you want the complete operating flow.
 
-Tok's first open-source release is intentionally narrow:
+Tok's first open-source release is intentionally narrow and Claude-first:
 
 - install the Python package
 - add the `claude()` shell wrapper
@@ -182,12 +182,13 @@ non-responsive session.
 
 ## Runtime Defaults
 
-- default compressed path: `legacy_tool_compatible`
-- internal experimental path: `natural_first`
+- default compressed path: `tool-compatible` (`natural_first` request policy)
+- legacy rollback path: `legacy_tool_compatible`
 - default posture: compress aggressively, shape behavior conservatively
 - conservative fallback: `baseline`
 - non-default: `tok-minimal`
 - non-default: `tok-native`
+- OpenRouter/frontier runs are advisory validation, not the source of the public default
 
 To force baseline:
 
@@ -195,10 +196,10 @@ To force baseline:
 TOK_MODE=baseline tok bridge start
 ```
 
-To try the lower-interference request policy internally:
+To force the older compatibility path:
 
 ```bash
-TOK_REQUEST_POLICY=natural_first tok bridge start
+TOK_REQUEST_POLICY=legacy_tool_compatible tok bridge start
 ```
 
 ## Troubleshooting Basics

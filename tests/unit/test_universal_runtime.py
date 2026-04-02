@@ -33,6 +33,7 @@ from tok.runtime.pipeline.tool_processing import (
     build_tool_use_id_to_context,
     collect_behavior_signals,
 )
+from tok.runtime.config import TOK_READ_PLAN_HINT
 
 
 def test_runtime_prepare_request_injects_memory_and_collects_signals():
@@ -68,12 +69,45 @@ def test_runtime_prepare_request_injects_memory_and_collects_signals():
 
     assert prepared.body["system"].startswith("Existing system prompt")
     assert "=== MODE: TOK-NATIVE ===" in prepared.body["system"]
-    assert "@macros" in prepared.body["system"]
     assert ">>>" in prepared.body["system"]
     assert prepared.behavior_signals["repeat_file_read"] == 1
     assert (
         prepared.normalized_tool_events[0].compressibility_class == "file_read"
     )
+
+
+def test_runtime_prepare_request_injects_read_plan_hint_for_file_burst():
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+    messages = [
+        {"role": "user", "content": "Inspect the bridge request path."}
+    ]
+    for idx in range(6):
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": f"file_{idx}",
+                        "name": "read_file",
+                        "input": {"path": f"src/file_{idx}.py"},
+                    }
+                ],
+            }
+        )
+
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        adapter_kind="claude-bridge",
+        tool_compatible=True,
+        messages=messages,
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert TOK_READ_PLAN_HINT in prepared.body["system"]
+    assert prepared.behavior_signals.get("read_plan_hint_injected", 0) == 1
 
 
 def test_runtime_prepare_request_translates_result_blocks():
@@ -252,7 +286,10 @@ def test_runtime_prepare_request_skips_history_for_tool_heavy_payload(
     assert (
         prepared.behavior_signals.get("tok_soft_tool_use_count_high", 0) == 1
     )
-    assert "Native tools only. Plain text." in prepared.body["system"]
+    assert (
+        "Plain text. Tool calls only. Omit all headers."
+        in prepared.body["system"]
+    )
 
 
 def test_runtime_prepare_request_preserves_prompt_cached_system_list(
@@ -292,7 +329,8 @@ def test_runtime_prepare_request_preserves_prompt_cached_system_list(
     assert any(
         isinstance(block, dict)
         and block.get("type") == "text"
-        and "Native tools only. Plain text." in block.get("text", "")
+        and "Plain text. Tool calls only. Omit all headers."
+        in block.get("text", "")
         for block in prepared.body["system"][1:]
     )
     assert prepared.behavior_signals.get("tok_prompt_optimized", 0) == 1
@@ -504,7 +542,10 @@ def test_runtime_prepare_request_compression_in_tool_compatible_mode(tmp_path):
 
     # With 4 tool uses and enough history, compression should run in tool-compatible mode
     assert prepared.behavior_signals.get("tool_compatible_compression", 0) == 1
-    assert "Native tools only. Plain text." in prepared.body["system"]
+    assert (
+        "Plain text. Tool calls only. Omit all headers."
+        in prepared.body["system"]
+    )
     # Compression should have happened
     assert len(prepared.body["messages"]) < len(request.messages)
 
@@ -553,7 +594,7 @@ def test_natural_first_preserves_semantic_dedup_without_tool_compatible_mode():
         prepared.behavior_signals.get("request_policy_natural_first", 0) == 1
     )
     assert prepared.behavior_signals.get("semantic_dedup_hit", 0) == 1
-    assert "Native tools only. Plain text." not in system_text
+    assert "Plain text. Tool calls only. Omit all headers." not in system_text
     assert "@stable_result(hash:...)" in system_text
 
 
@@ -615,7 +656,7 @@ def test_natural_first_keeps_tool_dense_history_on_natural_path(tmp_path):
     assert (
         prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 0
     )
-    assert "Native tools only. Plain text." not in system_text
+    assert "Plain text. Tool calls only. Omit all headers." not in system_text
 
 
 def test_natural_first_sticky_escalation_decays_after_quiet_window(tmp_path):
@@ -685,6 +726,10 @@ def test_natural_first_sticky_escalation_decays_after_quiet_window(tmp_path):
 
     assert sticky_turn.effective_tool_compatible is True
     assert (
+        sticky_turn.behavior_signals.get("request_policy_held_by_recovery", 0)
+        == 1
+    )
+    assert (
         sticky_turn.behavior_signals.get(
             "request_policy_recovery_sticky_continuations", 0
         )
@@ -724,6 +769,12 @@ def test_natural_first_escalates_on_stream_recovery_watch(tmp_path):
         == 1
     )
     assert (
+        prepared.behavior_signals.get(
+            "request_policy_escalation_source_stream_recovery", 0
+        )
+        == 1
+    )
+    assert (
         prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 1
     )
 
@@ -750,6 +801,12 @@ def test_natural_first_escalates_on_invalid_tool_history_recovery(tmp_path):
     assert prepared.request_policy_escalated is True
     assert (
         prepared.behavior_signals.get("request_policy_reason_tool_recovery", 0)
+        == 1
+    )
+    assert (
+        prepared.behavior_signals.get(
+            "request_policy_escalation_source_tool_recovery", 0
+        )
         == 1
     )
 
@@ -804,6 +861,12 @@ def test_natural_first_escalates_on_repeated_tool_loop_signal(tmp_path):
     assert (
         prepared.behavior_signals.get(
             "request_policy_reason_structured_tool_loop", 0
+        )
+        == 1
+    )
+    assert (
+        prepared.behavior_signals.get(
+            "request_policy_escalation_source_structured_tool_loop", 0
         )
         == 1
     )
@@ -876,7 +939,10 @@ def test_runtime_prepare_request_suppresses_unchanged_tool_compatible_state(
     first = runtime.prepare_request(request, session)
     second = runtime.prepare_request(request, session)
 
-    assert "Native tools only. Plain text." in first.body["system"]
+    assert (
+        "Plain text. Tool calls only. Omit all headers."
+        in first.body["system"]
+    )
     assert (
         first.behavior_signals.get("state_resend_full_turn", 0)
         + first.behavior_signals.get("state_resend_delta_turn", 0)

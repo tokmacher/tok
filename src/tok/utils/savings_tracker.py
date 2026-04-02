@@ -375,6 +375,12 @@ class SavingsTracker:
         stream_recovery_fallback_count = int(
             signals.get("stream_recovery_fallback", 0)
         )
+        stream_recovery_empty_success_count = int(
+            signals.get("stream_recovery_empty_success", 0)
+        )
+        stream_recovery_read_error_count = int(
+            signals.get("stream_recovery_read_error", 0)
+        )
         tool_history_repaired_count = int(
             signals.get("tok_bridge_tool_history_repaired", 0)
         )
@@ -399,6 +405,12 @@ class SavingsTracker:
                 0,
             )
         )
+        preflight_block_original_payload_count = int(
+            signals.get("preflight_block_original_payload", 0)
+        )
+        preflight_block_rewritten_payload_count = int(
+            signals.get("preflight_block_rewritten_payload", 0)
+        )
         request_policy_natural_first_count = int(
             signals.get("request_policy_natural_first", 0)
         )
@@ -414,6 +426,18 @@ class SavingsTracker:
         request_policy_interleaving_downgrades_count = int(
             signals.get("request_policy_interleaving_downgrades", 0)
         )
+        request_policy_reason_stream_recovery_count = int(
+            signals.get("request_policy_reason_stream_recovery", 0)
+        )
+        request_policy_reason_tool_recovery_count = int(
+            signals.get("request_policy_reason_tool_recovery", 0)
+        )
+        request_policy_reason_structured_tool_loop_count = int(
+            signals.get("request_policy_reason_structured_tool_loop", 0)
+        )
+        request_policy_held_by_recovery_count = int(
+            signals.get("request_policy_held_by_recovery", 0)
+        ) + int(signals.get("request_policy_recovery_sticky_continuations", 0))
 
         return {
             "calls": calls,
@@ -442,6 +466,8 @@ class SavingsTracker:
             "stream_recovery_success_text_count": stream_recovery_success_text_count,
             "stream_recovery_success_tool_use_count": stream_recovery_success_tool_use_count,
             "stream_recovery_fallback_count": stream_recovery_fallback_count,
+            "stream_recovery_empty_success_count": stream_recovery_empty_success_count,
+            "stream_recovery_read_error_count": stream_recovery_read_error_count,
             "tool_history_repaired_count": tool_history_repaired_count,
             "tool_history_pairing_repaired_count": tool_history_pairing_repaired_count,
             "tool_history_quarantined_count": tool_history_quarantined_count,
@@ -449,11 +475,17 @@ class SavingsTracker:
             "invalid_tool_history_session_reset_count": invalid_tool_history_session_reset_count,
             "provider_pairing_disagreement_count": provider_pairing_disagreement_count,
             "assistant_tool_use_text_interleaving_blocked_count": assistant_tool_use_text_interleaving_blocked_count,
+            "preflight_block_original_payload_count": preflight_block_original_payload_count,
+            "preflight_block_rewritten_payload_count": preflight_block_rewritten_payload_count,
             "request_policy_natural_first_count": request_policy_natural_first_count,
             "request_policy_tool_compatible_count": request_policy_tool_compatible_count,
             "request_policy_escalations_count": request_policy_escalations_count,
             "request_policy_deescalations_count": request_policy_deescalations_count,
             "request_policy_interleaving_downgrades_count": request_policy_interleaving_downgrades_count,
+            "request_policy_reason_stream_recovery_count": request_policy_reason_stream_recovery_count,
+            "request_policy_reason_tool_recovery_count": request_policy_reason_tool_recovery_count,
+            "request_policy_reason_structured_tool_loop_count": request_policy_reason_structured_tool_loop_count,
+            "request_policy_held_by_recovery_count": request_policy_held_by_recovery_count,
             "session_quality": quality,
             "last_degradation_reason": degradation_reason,
         }

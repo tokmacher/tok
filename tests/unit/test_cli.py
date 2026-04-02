@@ -155,6 +155,7 @@ class TestCLI:
                     "bridge": "tok",
                     "port": 9090,
                     "mode": "tool-compatible",
+                    "request_policy": "natural_first",
                     "baseline_only": True,
                     "fallback_count": 2,
                     "session_tokens_saved": 140,
@@ -187,6 +188,8 @@ class TestCLI:
         assert "Tok active" in result.output
         assert "Degraded to baseline" in result.output
         assert "Mode" in result.output
+        assert "Request policy" in result.output
+        assert "natural_first" in result.output
         assert "Fallbacks" in result.output
         assert "Session quality" in result.output
         assert "Degradation reason" in result.output
@@ -213,6 +216,7 @@ class TestCLI:
                     "bridge": "tok",
                     "port": 9090,
                     "mode": "tool-compatible",
+                    "request_policy": "natural_first",
                     "baseline_only": False,
                     "fallback_count": 1,
                     "session_tokens_saved": 140,
@@ -239,6 +243,59 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Tok active, watch session" in result.output
         assert "context reacquisition" in result.output
+
+    def test_bridge_status_surfaces_attribution_signals(self, monkeypatch):
+        monkeypatch.setattr(
+            "tok.cli._bridge.get_running_bridge_pid", lambda port: 321
+        )
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "natural-first",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "session_tokens_saved": 120,
+                    "session_savings_pct": 41.4,
+                    "actual_tokens": 100,
+                    "baseline_tokens": 200,
+                    "actual_cost_usd": 0.01,
+                    "baseline_cost_usd": 0.02,
+                    "cost_saved_usd": 0.01,
+                    "session_quality": "watch",
+                    "last_degradation_reason": "request-shape incompatibility",
+                    "semantic_drift_count": 0,
+                    "fail_open_count": 0,
+                    "non_tok_count": 0,
+                    "answer_anchor_miss_count": 0,
+                    "repeat_search_count": 0,
+                    "repeat_file_read_count": 0,
+                    "preflight_block_original_payload_count": 1,
+                    "preflight_block_rewritten_payload_count": 2,
+                    "stream_recovery_empty_success_count": 3,
+                    "stream_recovery_read_error_count": 4,
+                    "request_policy_held_by_recovery_count": 1,
+                }
+
+        monkeypatch.setattr(
+            "httpx.get", lambda *args, **kwargs: FakeResponse()
+        )
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 0
+        assert "request-shape incompatibility" in result.output
+        assert "shape-orig=1" in result.output
+        assert "shape-rewrite=2" in result.output
+        assert "stream-empty=3" in result.output
+        assert "stream-read=4" in result.output
+        assert "held=1" in result.output
 
     def test_bridge_status_prefers_live_payload_over_stale_local_summary(
         self, monkeypatch, tmp_path
@@ -1333,6 +1390,67 @@ class TestCLI:
             in result.output
         )
 
+    def test_doctor_surfaces_request_shape_and_stream_attribution(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "tok.cli._release.get_running_bridge_pid", lambda port: 321
+        )
+        monkeypatch.setattr(
+            "shutil.which", lambda name: "/usr/local/bin/claude"
+        )
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "natural-first",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "session_tokens_saved": 120,
+                    "session_savings_pct": 41.4,
+                    "actual_tokens": 100,
+                    "baseline_tokens": 200,
+                    "actual_cost_usd": 0.01,
+                    "baseline_cost_usd": 0.02,
+                    "cost_saved_usd": 0.01,
+                    "session_quality": "watch",
+                    "last_degradation_reason": "stream transport instability",
+                    "semantic_drift_count": 0,
+                    "fail_open_count": 0,
+                    "non_tok_count": 0,
+                    "answer_anchor_miss_count": 0,
+                    "repeat_search_count": 0,
+                    "repeat_file_read_count": 0,
+                    "preflight_block_original_payload_count": 1,
+                    "preflight_block_rewritten_payload_count": 0,
+                    "stream_recovery_empty_success_count": 2,
+                    "stream_recovery_read_error_count": 3,
+                    "request_policy_held_by_recovery_count": 1,
+                }
+
+        monkeypatch.setattr(
+            "httpx.get", lambda *args, **kwargs: FakeResponse()
+        )
+        monkeypatch.setattr(
+            "tok.cli._release.memory_root",
+            lambda: Path("/tmp/nonexistent_tok"),
+        )
+
+        result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 1
+        assert "stream transport instability" in result.output
+        assert "shape-orig=1" in result.output
+        assert "stream-empty=2" in result.output
+        assert "stream-read=3" in result.output
+        assert "held=1" in result.output
+
     def test_gate_check_export_includes_behavior_signals_and_fixture_metadata(
         self, tmp_path, monkeypatch
     ):
@@ -1901,6 +2019,45 @@ class TestStabilityGate:
             )
         )
 
+    def _make_frontier_json(
+        self,
+        tmp_path: Path,
+        *,
+        release_profile: str = "balanced",
+        benchmark_verdict: str = "stable",
+        probe_verdict: str | None = None,
+    ) -> Path:
+        data: dict[str, object] = {
+            "checkpoints": [
+                {
+                    "checkpoint": {
+                        "label": "current-head",
+                        "ref": "CURRENT",
+                    },
+                    "benchmark_profiles": [
+                        {
+                            "profile": {"name": release_profile},
+                            "verdict": benchmark_verdict,
+                        }
+                    ],
+                    "openrouter_profiles": [],
+                    "default_release_profile": release_profile,
+                    "experimental_profiles": ["extreme"],
+                }
+            ]
+        }
+        if probe_verdict is not None:
+            checkpoint = data["checkpoints"][0]  # type: ignore[index]
+            checkpoint["openrouter_profiles"] = [  # type: ignore[index]
+                {
+                    "profile": release_profile,
+                    "verdict": probe_verdict,
+                }
+            ]
+        path = tmp_path / "frontier.json"
+        path.write_text(json.dumps(data))
+        return path
+
     def test_stability_gate_pass(self, tmp_path, monkeypatch):
         """Both required benchmarks present and passing → exit 0, PASS output."""
         monkeypatch.chdir(tmp_path)
@@ -2019,3 +2176,82 @@ class TestStabilityGate:
         assert "STABILITY FAIL" in result.output
         assert "research-loop-5" in result.output
         assert "file not found" in result.output
+
+    def test_frontier_gate_pass(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        fixtures_dir = tmp_path / "fixtures"
+        fixtures_dir.mkdir()
+        self._make_passing_fixture(fixtures_dir)
+        frontier_path = self._make_frontier_json(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "gate-check",
+                str(fixtures_dir),
+                "--frontier-report",
+                str(frontier_path),
+                "--continue-on-error",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "FRONTIER PASS" in result.output
+        assert "Compression frontier gate: PASS" in result.output
+
+    def test_frontier_gate_export_includes_frontier_check(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        fixtures_dir = tmp_path / "fixtures"
+        fixtures_dir.mkdir()
+        self._make_passing_fixture(fixtures_dir)
+        frontier_path = self._make_frontier_json(tmp_path)
+        export_path = tmp_path / "results.json"
+
+        result = runner.invoke(
+            app,
+            [
+                "gate-check",
+                str(fixtures_dir),
+                "--frontier-report",
+                str(frontier_path),
+                "--export",
+                str(export_path),
+                "--continue-on-error",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(export_path.read_text())
+        assert data["frontier_check"]["passed"] is True
+        assert (
+            data["release_summary"]["frontier_release_profile"] == "balanced"
+        )
+        assert data["release_summary"]["frontier_status"] == "pass"
+
+    def test_frontier_gate_fails_for_baseline_release_lane(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        fixtures_dir = tmp_path / "fixtures"
+        fixtures_dir.mkdir()
+        self._make_passing_fixture(fixtures_dir)
+        frontier_path = self._make_frontier_json(
+            tmp_path, release_profile="baseline"
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "gate-check",
+                str(fixtures_dir),
+                "--frontier-report",
+                str(frontier_path),
+                "--continue-on-error",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "FRONTIER FAIL" in result.output
+        assert "Compression frontier gate: FAIL" in result.output

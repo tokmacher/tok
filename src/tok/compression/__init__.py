@@ -299,9 +299,7 @@ TOK_OUTPUT_DIRECTIVE = """\
 Turn 2+: Omit header and @msg if mode unchanged. No prose.
 """
 
-TOK_TOOL_COMPAT_DIRECTIVE = (
-    "Native tools only. Plain text. Omit all headers.\n"
-)
+TOK_TOOL_COMPAT_DIRECTIVE = "Plain text. Tool calls only. Omit all headers.\n"
 
 TOK_OUTPUT_DIRECTIVE_MINIMAL = (
     ">>> t:N|usr:X|agt:Y|state:Z\n@msg role:assistant |> Reply\n"
@@ -546,11 +544,19 @@ def truncate_large_result(text: str, limit: int = 1200) -> str:
     return _truncate_large_result(text, limit=limit)
 
 
-def tok_tool_result(content: str, compression_level: str = "balanced") -> str:
+def tok_tool_result(
+    content: str,
+    compression_level: str = "balanced",
+    tool_context: dict[str, Any] | None = None,
+) -> str:
     """Convert large tool result to dense tok representation."""
     from ._pipeline import tok_tool_result_impl
 
-    return tok_tool_result_impl(content, compression_level=compression_level)
+    return tok_tool_result_impl(
+        content,
+        compression_level=compression_level,
+        tool_context=tool_context,
+    )
 
 
 def _apply_result_cache(
@@ -576,7 +582,11 @@ def _apply_result_cache(
     is_file_like = normalized_tool_name in FILE_LIKE_TOOLS
 
     if bypass_cache or normalized_tool_name in COMMAND_LIKE_TOOLS:
-        compressed = tok_tool_result(raw, compression_level=compression_level)
+        compressed = tok_tool_result(
+            raw,
+            compression_level=compression_level,
+            tool_context=context,
+        )
         return compressed, len(raw) - len(compressed)
 
     cache_key = _build_cache_key(tool_name, context)
@@ -590,6 +600,7 @@ def _apply_result_cache(
             raw_text,
             raw,
             is_file_like,
+            context,
             tool_name,
             compression_level,
             prefer_normalized_error=True,
@@ -606,6 +617,7 @@ def _apply_result_cache(
             raw_text,
             raw,
             is_file_like,
+            context,
             tool_name,
             compression_level,
             prefer_normalized_error=False,
@@ -643,6 +655,7 @@ def _store_cache_entry(
     raw_text: str,
     raw: str,
     is_file_like: bool,
+    context: dict[str, Any],
     tool_name: Any,
     compression_level: str,
     prefer_normalized_error: bool,
@@ -655,7 +668,11 @@ def _store_cache_entry(
         return raw, 0
     if prefer_normalized_error and normalized_error:
         return normalized_error, len(raw_text) - len(normalized_error)
-    compressed = tok_tool_result(raw_text, compression_level=compression_level)
+    compressed = tok_tool_result(
+        raw_text,
+        compression_level=compression_level,
+        tool_context=context,
+    )
     return compressed, len(raw_text) - len(compressed)
 
 
@@ -769,7 +786,9 @@ def _process_cache_hit(
                 return normalized_error + "\n", 0
             return stub, saved
         compressed = tok_tool_result(
-            raw_text, compression_level=compression_level
+            raw_text,
+            compression_level=compression_level,
+            tool_context=context,
         )
         header = f">>> tool:{tool_name}|delta|changed\n"
         return header + compressed, len(raw_text) - (

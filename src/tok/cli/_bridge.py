@@ -255,6 +255,22 @@ def bridge_status() -> None:
                 "last_degradation_reason": str(
                     payload.get("last_degradation_reason", "")
                 ),
+                "request_policy": str(payload.get("request_policy", "")),
+                "preflight_block_original_payload_count": int(
+                    payload.get("preflight_block_original_payload_count", 0)
+                ),
+                "preflight_block_rewritten_payload_count": int(
+                    payload.get("preflight_block_rewritten_payload_count", 0)
+                ),
+                "stream_recovery_empty_success_count": int(
+                    payload.get("stream_recovery_empty_success_count", 0)
+                ),
+                "stream_recovery_read_error_count": int(
+                    payload.get("stream_recovery_read_error_count", 0)
+                ),
+                "request_policy_held_by_recovery_count": int(
+                    payload.get("request_policy_held_by_recovery_count", 0)
+                ),
             }
             baseline_only = bool(payload.get("baseline_only"))
             fallback_count = int(payload.get("fallback_count", 0))
@@ -293,6 +309,8 @@ def bridge_status() -> None:
                         tok_active=True,
                         baseline_only=baseline_only,
                         mode=mode,
+                        request_policy=str(payload.get("request_policy", ""))
+                        or None,
                         fallback_count=fallback_count,
                         session_quality=str(
                             payload.get("session_quality", "clean")

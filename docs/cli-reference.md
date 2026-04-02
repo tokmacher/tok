@@ -74,6 +74,7 @@ tok gate-check tests/fixtures/replay \
   --fixtures fixtures.json \
   --config gate-config.json \
   --stability-dir tests/fixtures/stability \
+  --frontier-report tmp/compression_frontier/compression_frontier_report.json \
   --required-benchmarks coding-loop-5,research-loop-5 \
   --export results.json
 ```

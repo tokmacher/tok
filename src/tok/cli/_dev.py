@@ -3,6 +3,7 @@ from __future__ import annotations
 """Fixture generation and benchmarking commands for the Tok CLI."""
 
 import json
+import os
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -341,6 +342,169 @@ def live_benchmark(
     console.print(
         f"[cyan]Artifact:[/cyan] {output / f'{benchmark}_{mode}.json'}"
     )
+
+
+@dev_app.command("compression-frontier")
+def compression_frontier(
+    model: Annotated[
+        str, typer.Option("--model", help="Model identifier to use")
+    ] = "deepseek/deepseek-v3.2",
+    benchmarks: Annotated[
+        str,
+        typer.Option(
+            "--benchmarks",
+            help="Comma-separated benchmark names to include",
+        ),
+    ] = "coding-loop-5,research-loop-5,research-loop-8",
+    repeats: Annotated[
+        int,
+        typer.Option(
+            "--repeats", help="How many repeated runs to execute per rung"
+        ),
+    ] = 1,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Output directory for artifacts"),
+    ] = None,
+    temperature: Annotated[
+        float, typer.Option("--temperature", help="Sampling temperature")
+    ] = 0.0,
+    max_tokens: Annotated[
+        int, typer.Option("--max-tokens", help="Completion token cap")
+    ] = 300,
+    timeout: Annotated[
+        float, typer.Option("--timeout", help="Request timeout in seconds")
+    ] = 120.0,
+    pricing_prompt: Annotated[
+        float | None,
+        typer.Option(
+            "--pricing-prompt", help="Prompt token price per 1M tokens (USD)"
+        ),
+    ] = None,
+    pricing_completion: Annotated[
+        float | None,
+        typer.Option(
+            "--pricing-completion",
+            help="Completion token price per 1M tokens (USD)",
+        ),
+    ] = None,
+    provider_options: Annotated[
+        str | None,
+        typer.Option(
+            "--provider-options",
+            help="JSON object passed as extra_body to the provider",
+        ),
+    ] = None,
+    openrouter_prompt: Annotated[
+        str,
+        typer.Option(
+            "--openrouter-prompt",
+            help="Prompt used for the cheap OpenRouter probe loop",
+        ),
+    ] = "Give me a one-line repo summary.",
+    openrouter_turns: Annotated[
+        str,
+        typer.Option(
+            "--openrouter-turns",
+            help="Comma-separated turn counts for the cheap OpenRouter probe",
+        ),
+    ] = "5,12",
+    openrouter_delay: Annotated[
+        float,
+        typer.Option(
+            "--openrouter-delay",
+            help="Delay between OpenRouter probe turns in seconds",
+        ),
+    ] = 0.2,
+    baseline_ref: Annotated[
+        str,
+        typer.Option(
+            "--baseline-ref",
+            help="Checkpoint to treat as the calmer pre-natural-first baseline",
+        ),
+    ] = "5aebb5d",
+    current_only: Annotated[
+        bool,
+        typer.Option(
+            "--current-only",
+            help="Only run the current checkout and skip exported checkpoint comparisons",
+        ),
+    ] = False,
+) -> None:
+    """Find the highest compression rung that still stays calm."""
+    from ..testing.frontier import (
+        DEFAULT_FRONTIER_PROFILES,
+        FrontierCheckpoint,
+        render_frontier_markdown,
+        run_frontier_report,
+        select_frontier_checkpoints,
+    )
+
+    parsed_provider_options: dict[str, Any] | None = None
+    if provider_options:
+        try:
+            parsed_provider_options = json.loads(provider_options)
+        except Exception as exc:
+            raise typer.BadParameter(
+                f"--provider-options must be valid JSON: {exc}"
+            ) from exc
+
+    pricing: dict[str, float] | None = None
+    if pricing_prompt is not None or pricing_completion is not None:
+        pricing = {
+            "prompt": pricing_prompt or 0.0,
+            "completion": pricing_completion or 0.0,
+        }
+
+    repo_root = Path.cwd()
+    selected_checkpoints = (
+        [FrontierCheckpoint(label="current-head", ref="CURRENT")]
+        if current_only
+        else select_frontier_checkpoints(repo_root, baseline_ref=baseline_ref)
+    )
+    benchmark_list = [
+        value.strip() for value in benchmarks.split(",") if value.strip()
+    ]
+    openrouter_turn_list = [
+        int(value.strip())
+        for value in openrouter_turns.split(",")
+        if value.strip()
+    ]
+
+    if output is None:
+        output = repo_root / "tmp" / "compression_frontier"
+    output.mkdir(parents=True, exist_ok=True)
+
+    report = run_frontier_report(
+        repo_root=repo_root,
+        checkpoints=selected_checkpoints,
+        profiles=list(DEFAULT_FRONTIER_PROFILES),
+        benchmarks=benchmark_list,
+        model=model,
+        repeats=repeats,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        provider_options=parsed_provider_options,
+        pricing=pricing,
+        openrouter_prompt=openrouter_prompt,
+        openrouter_turn_sets=openrouter_turn_list,
+        openrouter_delay_seconds=openrouter_delay,
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+        openrouter_api_base=os.getenv(
+            "OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"
+        ),
+    )
+
+    json_path = output / "compression_frontier_report.json"
+    md_path = output / "compression_frontier_report.md"
+    json_path.write_text(json.dumps(report.to_dict(), indent=2))
+    md_path.write_text(render_frontier_markdown(report))
+
+    console.print(
+        f"[green]✅ Compression frontier complete:[/green] {json_path}"
+    )
+    console.print(f"[cyan]Markdown:[/cyan] {md_path}")
 
 
 @dev_app.command("stress-language")

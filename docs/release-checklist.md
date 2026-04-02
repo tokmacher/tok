@@ -15,6 +15,7 @@ Steps for cutting a Tok release.
 - [ ] Run the clean-room install verification from the README
 - [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.0`
 - [ ] Run live Claude bridge validation on the supported path: `tok install`, `tok bridge start`, `claude`, `tok bridge status`, `tok doctor`, `tok stats`, `tok bridge stop`
+- [ ] Treat any frontier/OpenRouter report as advisory validation only; do not let it redefine the Claude bridge default
 - [ ] Confirm only supported examples remain in `examples/`
 - [ ] Update `CHANGELOG.md` with release date
 - [ ] Update `__version__` in `src/tok/__init__.py`

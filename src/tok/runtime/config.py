@@ -133,6 +133,11 @@ TOK_LARGE_FILE_HINT = (
     "For files >500 lines, use session.explore_file(path) or session.get_file_overview(path) "
     "to get a Tok-formatted overview before reading specific sections with Read(offset=X, limit=Y)."
 )
+TOK_READ_PLAN_HINT = (
+    "If a turn needs many file reads, do not fan out raw reads. Emit a compact ReadPlan first: "
+    "targets, chunk order, and one-sentence synthesis goal. Keep parallel file opens small and "
+    "summarize before the next batch."
+)
 TOK_STABLE_RESULT_INFO_HINT = "@stable_result(hash:...) means a previously seen tool result is unchanged."
 TOK_REPEAT_COMMAND_SUPPRESSION_HINT = (
     "You just ran an identical command and got the same successful result. "
@@ -209,6 +214,7 @@ __all__ = [
     "TOK_NOVELTY_REQUIRED_HINT",
     "TOK_NEIGHBORHOOD_THRASH_HINT",
     "TOK_LARGE_FILE_HINT",
+    "TOK_READ_PLAN_HINT",
     "TOK_STABLE_RESULT_INFO_HINT",
     "TOK_REPEAT_COMMAND_SUPPRESSION_HINT",
     "TOK_NEIGHBORHOOD_TRIGGER_ANCHORS",

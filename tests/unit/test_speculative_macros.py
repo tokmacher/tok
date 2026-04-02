@@ -434,6 +434,12 @@ class TestStableResultGuidance:
         assert "@tok_bypass_next_read" in MINIMAL_PULSE_PROMPT
         assert "tok_bypass_cache=true" not in TOK_EXPLORE_PROMPT
         assert "tok_bypass_cache=true" not in MINIMAL_PULSE_PROMPT
+        assert "Do not fan out parallel reads on the first pass." in (
+            TOK_EXPLORE_PROMPT
+        )
+        assert "Do not open multiple files in parallel on the first pass." in (
+            MINIMAL_PULSE_PROMPT
+        )
 
 
 class TestBypassMarkerContext:

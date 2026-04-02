@@ -109,6 +109,8 @@ class TestSavingsTracker:
                 "stream_recovery_success_text": 1,
                 "stream_recovery_success_tool_use": 1,
                 "stream_recovery_fallback": 1,
+                "stream_recovery_empty_success": 1,
+                "stream_recovery_read_error": 1,
                 "tok_bridge_tool_history_repaired": 1,
                 "tok_bridge_tool_history_pairing_repaired": 1,
                 "tok_bridge_invalid_tool_history_quarantined": 1,
@@ -124,6 +126,8 @@ class TestSavingsTracker:
         assert summary["stream_recovery_success_text_count"] == 1
         assert summary["stream_recovery_success_tool_use_count"] == 1
         assert summary["stream_recovery_fallback_count"] == 1
+        assert summary["stream_recovery_empty_success_count"] == 1
+        assert summary["stream_recovery_read_error_count"] == 1
         assert summary["tool_history_repaired_count"] == 1
         assert summary["tool_history_pairing_repaired_count"] == 1
         assert summary["tool_history_quarantined_count"] == 1
@@ -152,7 +156,10 @@ class TestSavingsTracker:
         assert summary is not None
         assert summary["provider_pairing_disagreement_count"] == 2
         assert summary["session_quality"] == "watch"
-        assert summary["last_degradation_reason"] == "heavy tool-mode recovery"
+        assert (
+            summary["last_degradation_reason"]
+            == "request-shape incompatibility"
+        )
 
     def test_session_summary_surfaces_request_policy_counters(self, tracker):
         tracker.record_call(
@@ -192,6 +199,8 @@ class TestSavingsTracker:
             output_saved=10,
             behavior_signals={
                 "tok_bridge_assistant_tool_use_text_interleaving_blocked": 2,
+                "preflight_block_original_payload": 1,
+                "preflight_block_rewritten_payload": 1,
                 "request_policy_interleaving_downgrades": 2,
             },
         )
@@ -202,9 +211,42 @@ class TestSavingsTracker:
         assert (
             summary["assistant_tool_use_text_interleaving_blocked_count"] == 2
         )
+        assert summary["preflight_block_original_payload_count"] == 1
+        assert summary["preflight_block_rewritten_payload_count"] == 1
         assert summary["request_policy_interleaving_downgrades_count"] == 2
         assert summary["session_quality"] == "watch"
-        assert summary["last_degradation_reason"] == "heavy tool-mode recovery"
+        assert (
+            summary["last_degradation_reason"]
+            == "request-shape incompatibility"
+        )
+
+    def test_session_summary_surfaces_request_policy_recovery_attribution(
+        self, tracker
+    ):
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=20,
+            output_saved=10,
+            behavior_signals={
+                "request_policy_reason_stream_recovery": 2,
+                "request_policy_reason_tool_recovery": 1,
+                "request_policy_reason_structured_tool_loop": 1,
+                "request_policy_held_by_recovery": 3,
+            },
+        )
+
+        summary = tracker.session_summary()
+
+        assert summary is not None
+        assert summary["request_policy_reason_stream_recovery_count"] == 2
+        assert summary["request_policy_reason_tool_recovery_count"] == 1
+        assert summary["request_policy_reason_structured_tool_loop_count"] == 1
+        assert summary["request_policy_held_by_recovery_count"] == 3
+        assert summary["last_degradation_reason"] == "recovery holdover"
 
     def test_last_session_summary_defaults_missing_degradation_fields(
         self, tracker

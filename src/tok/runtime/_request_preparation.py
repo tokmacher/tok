@@ -18,7 +18,9 @@ from ..compression import (
 )
 from ..neuro.ir import Instruction
 from .config import (
+    FILE_READ_DENSITY_THRESHOLD,
     TOK_LARGE_FILE_HINT,
+    TOK_READ_PLAN_HINT,
     TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
     TOK_HOT_COMMAND_MAX_CHARS,
     TOK_HOT_COMMAND_MAX_LINES,
@@ -34,6 +36,7 @@ from .config import (
     TOK_REACQUIRE_WINDOW_TURNS,
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOK_STABLE_RESULT_INFO_HINT,
+    TOOL_USE_DENSITY_THRESHOLD,
 )
 from .core import UniversalTokRuntime, logger
 from .memory.bridge_memory import clean_system_context
@@ -652,6 +655,15 @@ def prepare_request_impl(
             if not previous_effective_tool_compatible:
                 request_policy_escalated = True
                 behavior_signals["request_policy_escalations"] = 1
+                for reason in request_policy_reasons:
+                    if reason in {
+                        "stream_recovery",
+                        "tool_recovery",
+                        "structured_tool_loop",
+                    }:
+                        behavior_signals[
+                            f"request_policy_escalation_source_{reason}"
+                        ] = 1
             if fresh_tool_mode_trigger:
                 session._request_policy_tool_mode_sticky_turns = max(
                     session._request_policy_tool_mode_sticky_turns,
@@ -680,6 +692,7 @@ def prepare_request_impl(
             and effective_tool_compatible
         ):
             if recovery_sticky_continuation:
+                behavior_signals["request_policy_held_by_recovery"] = 1
                 behavior_signals[
                     "request_policy_recovery_sticky_continuations"
                 ] = 1
@@ -716,6 +729,17 @@ def prepare_request_impl(
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
             runtime_hints.append(TOK_REPEAT_COMMAND_SUPPRESSION_HINT)
             behavior_signals["repeat_command_suppression_hint_injected"] = 1
+        file_read_count = sum(
+            1
+            for event in normalized_tool_events
+            if getattr(event, "compressibility_class", "") == "file_read"
+        )
+        if effective_tool_compatible and (
+            file_read_count >= FILE_READ_DENSITY_THRESHOLD
+            or len(normalized_tool_events) >= TOOL_USE_DENSITY_THRESHOLD
+        ):
+            runtime_hints.append(TOK_READ_PLAN_HINT)
+            behavior_signals["read_plan_hint_injected"] = 1
         if effective_tool_compatible:
             runtime_hints.append(TOK_LARGE_FILE_HINT)
         answer_ready = False

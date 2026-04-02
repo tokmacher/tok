@@ -71,7 +71,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
     @app.api_route("/health", methods=["GET", "HEAD"])
     async def health() -> dict[str, Any]:
         session_summary = session.tracker.session_summary() or {}
-        signals = session.tracker.behavior_signals()
+        signals = dict(session.tracker.behavior_signals())
+        for (
+            key,
+            value,
+        ) in session.runtime_session.pending_behavior_signals.items():
+            signals[key] = signals.get(key, 0) + int(value)
         return {
             "status": "ok",
             "bridge": "tok",
@@ -185,6 +190,18 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "stream_recovery_fallback_count": int(
                 session_summary.get("stream_recovery_fallback_count", 0)
             ),
+            "stream_recovery_empty_success_count": int(
+                session_summary.get(
+                    "stream_recovery_empty_success_count",
+                    signals.get("stream_recovery_empty_success", 0),
+                )
+            ),
+            "stream_recovery_read_error_count": int(
+                session_summary.get(
+                    "stream_recovery_read_error_count",
+                    signals.get("stream_recovery_read_error", 0),
+                )
+            ),
             "tool_history_repaired_count": int(
                 session_summary.get("tool_history_repaired_count", 0)
             ),
@@ -207,7 +224,23 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             ),
             "assistant_tool_use_text_interleaving_blocked_count": int(
                 session_summary.get(
-                    "assistant_tool_use_text_interleaving_blocked_count", 0
+                    "assistant_tool_use_text_interleaving_blocked_count",
+                    signals.get(
+                        "tok_bridge_assistant_tool_use_text_interleaving_blocked",
+                        0,
+                    ),
+                )
+            ),
+            "preflight_block_original_payload_count": int(
+                session_summary.get(
+                    "preflight_block_original_payload_count",
+                    signals.get("preflight_block_original_payload", 0),
+                )
+            ),
+            "preflight_block_rewritten_payload_count": int(
+                session_summary.get(
+                    "preflight_block_rewritten_payload_count",
+                    signals.get("preflight_block_rewritten_payload", 0),
                 )
             ),
             "request_policy_natural_first_count": int(
@@ -225,6 +258,35 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "request_policy_interleaving_downgrades_count": int(
                 session_summary.get(
                     "request_policy_interleaving_downgrades_count", 0
+                )
+            ),
+            "request_policy_reason_stream_recovery_count": int(
+                session_summary.get(
+                    "request_policy_reason_stream_recovery_count",
+                    signals.get("request_policy_reason_stream_recovery", 0),
+                )
+            ),
+            "request_policy_reason_tool_recovery_count": int(
+                session_summary.get(
+                    "request_policy_reason_tool_recovery_count",
+                    signals.get("request_policy_reason_tool_recovery", 0),
+                )
+            ),
+            "request_policy_reason_structured_tool_loop_count": int(
+                session_summary.get(
+                    "request_policy_reason_structured_tool_loop_count",
+                    signals.get(
+                        "request_policy_reason_structured_tool_loop", 0
+                    ),
+                )
+            ),
+            "request_policy_held_by_recovery_count": int(
+                session_summary.get(
+                    "request_policy_held_by_recovery_count",
+                    signals.get("request_policy_held_by_recovery", 0)
+                    + signals.get(
+                        "request_policy_recovery_sticky_continuations", 0
+                    ),
                 )
             ),
             "session_quality": str(
