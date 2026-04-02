@@ -95,6 +95,17 @@ tok bridge start --help
 
 If this sequence fails, fix install and shell integration before debugging the runtime.
 
+## Repo Checkout Smoke
+
+When validating a release candidate from a repo checkout, run:
+
+```bash
+python scripts/run_release_smoke.py
+```
+
+This bounded sweep checks the public CLI help surfaces, public import shims,
+one focused bridge/runtime/compression path, and a packaging build smoke.
+
 ## When To Use Baseline
 
 To compare behavior with compression disabled:

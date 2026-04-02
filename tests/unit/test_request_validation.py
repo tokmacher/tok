@@ -524,7 +524,8 @@ def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
 
     assert validate_anthropic_bridge_body(body) == []
     assert validate_anthropic_outgoing_bridge_body(body) == [
-        "provider_sensitive_large_tool_use_text_interleaving"
+        "provider_sensitive_assistant_tool_use_text_interleaving",
+        "provider_sensitive_large_tool_use_text_interleaving",
     ]
     summary = summarize_message_structure(body["messages"])
     assert summary["provider_sensitivity_risks"] == {
@@ -533,6 +534,69 @@ def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
         "assistant_large_tool_use_text_interleaving": 1,
         "provider_sensitive_large_tool_use_text_interleaving": 1,
     }
+
+
+def test_outgoing_bridge_validation_flags_small_interleaved_tool_use_batch():
+    body = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Inspect concurrency path."}
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Read",
+                        "input": {"path": "a.py"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_2",
+                        "name": "Read",
+                        "input": {"path": "b.py"},
+                    },
+                    {"type": "text", "text": "Collecting evidence."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_3",
+                        "name": "Read",
+                        "input": {"path": "c.py"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": "a",
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_2",
+                        "content": "b",
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_3",
+                        "content": "c",
+                    },
+                ],
+            },
+        ],
+    }
+
+    assert validate_anthropic_bridge_body(body) == []
+    assert validate_anthropic_outgoing_bridge_body(body) == [
+        "provider_sensitive_assistant_tool_use_text_interleaving"
+    ]
 
 
 def test_strict_bridge_validation_rejects_alternating_multi_turn_reordered_first_exchange():

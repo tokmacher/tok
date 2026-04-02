@@ -152,9 +152,59 @@ class TestSavingsTracker:
         assert summary is not None
         assert summary["provider_pairing_disagreement_count"] == 2
         assert summary["session_quality"] == "watch"
-        assert summary["last_degradation_reason"] == (
-            "provider pairing disagreement"
+        assert summary["last_degradation_reason"] == "heavy tool-mode recovery"
+
+    def test_session_summary_surfaces_request_policy_counters(self, tracker):
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=20,
+            output_saved=10,
+            behavior_signals={
+                "request_policy_natural_first": 2,
+                "request_policy_tool_compatible": 3,
+                "request_policy_escalations": 1,
+                "request_policy_deescalations": 1,
+            },
         )
+
+        summary = tracker.session_summary()
+
+        assert summary is not None
+        assert summary["request_policy_natural_first_count"] == 2
+        assert summary["request_policy_tool_compatible_count"] == 3
+        assert summary["request_policy_escalations_count"] == 1
+        assert summary["request_policy_deescalations_count"] == 1
+
+    def test_session_summary_surfaces_interleaving_downgrade_counters(
+        self, tracker
+    ):
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=20,
+            output_saved=10,
+            behavior_signals={
+                "tok_bridge_assistant_tool_use_text_interleaving_blocked": 2,
+                "request_policy_interleaving_downgrades": 2,
+            },
+        )
+
+        summary = tracker.session_summary()
+
+        assert summary is not None
+        assert (
+            summary["assistant_tool_use_text_interleaving_blocked_count"] == 2
+        )
+        assert summary["request_policy_interleaving_downgrades_count"] == 2
+        assert summary["session_quality"] == "watch"
+        assert summary["last_degradation_reason"] == "heavy tool-mode recovery"
 
     def test_last_session_summary_defaults_missing_degradation_fields(
         self, tracker

@@ -9,6 +9,7 @@ Steps for cutting a Tok release.
 - [ ] Run full test suite locally: `pytest tests/unit tests/integration -v`
 - [ ] Run lint and hygiene: `pre-commit run --all-files && ruff check src/tok tests`
 - [ ] Run type check: `mypy src/tok/`
+- [ ] Run maintainer release smoke: `python scripts/run_release_smoke.py`
 - [ ] Build package: `python -m build`
 - [ ] Verify wheel installs cleanly in a fresh venv
 - [ ] Run the clean-room install verification from the README
@@ -24,6 +25,7 @@ Steps for cutting a Tok release.
 Recommended local gate sequence for the exact release candidate:
 
 ```bash
+python scripts/run_release_smoke.py
 pre-commit run --all-files
 ruff check src/tok tests
 mypy src/tok
@@ -34,6 +36,8 @@ python -m build
 If the release check is running in an offline or sandboxed environment that
 already has build requirements installed, `python -m build --no-isolation` is an
 acceptable local fallback. The canonical release command remains `python -m build`.
+The release smoke harness already uses a self-contained `uv run --with build --with hatchling`
+build step so maintainers can verify packaging before running the canonical command.
 
 ## Release
 

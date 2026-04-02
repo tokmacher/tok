@@ -75,6 +75,8 @@ from .config import (
     TOK_REACQUIRE_STUCK_WINDOW_TURNS,
     TOK_REACQUIRE_TRIGGER_COUNT,
     TOK_REACQUIRE_WINDOW_TURNS,
+    TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS,
+    TOK_REQUEST_POLICY_STICKY_TURNS,
 )
 from .types import (
     EpisodeEntry,
@@ -266,6 +268,18 @@ class RuntimeSession:
     _stream_recovery_tool_use_only_repeat_count: int = field(
         default=0, init=False, repr=False
     )
+    _request_policy_tool_mode_sticky_turns: int = field(
+        default=0, init=False, repr=False
+    )
+    _request_policy_stream_recovery_watch_turns: int = field(
+        default=0, init=False, repr=False
+    )
+    _request_policy_tool_recovery_watch_turns: int = field(
+        default=0, init=False, repr=False
+    )
+    _request_policy_last_effective_tool_compatible: bool = field(
+        default=False, init=False, repr=False
+    )
     _invalid_tool_history_recovery_count: int = field(
         default=0, init=False, repr=False
     )
@@ -325,6 +339,7 @@ class RuntimeSession:
     ) -> dict[str, int]:
         """Track recovery from broken tool history and clear hot state if it repeats."""
         self._invalid_tool_history_recovery_count += 1
+        self.note_request_policy_tool_mode_recovery()
         signals: dict[str, int] = {
             "tok_bridge_invalid_tool_history_recovery": 1
         }
@@ -337,6 +352,10 @@ class RuntimeSession:
             self._stream_recovery_history_floor_budget = 0
             self._stream_recovery_tool_use_only_signature = ""
             self._stream_recovery_tool_use_only_repeat_count = 0
+            self._request_policy_tool_mode_sticky_turns = 0
+            self._request_policy_stream_recovery_watch_turns = 0
+            self._request_policy_tool_recovery_watch_turns = 0
+            self._request_policy_last_effective_tool_compatible = False
             for key in ("turns", "next", "cmds", "errs", "blockers"):
                 self.bridge_memory.hot.pop(key, None)
             self.bridge_memory.rolling_cmds = []
@@ -351,6 +370,28 @@ class RuntimeSession:
     def reset_invalid_tool_history_recovery(self) -> None:
         """Clear the repeated invalid-tool-history counter after a clean request."""
         self._invalid_tool_history_recovery_count = 0
+
+    def note_request_policy_stream_recovery(
+        self, turns: int = TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS
+    ) -> None:
+        """Keep natural-first in tool-compatible mode briefly after stream recovery."""
+        self._request_policy_stream_recovery_watch_turns = max(
+            self._request_policy_stream_recovery_watch_turns, turns
+        )
+        self._request_policy_tool_mode_sticky_turns = max(
+            self._request_policy_tool_mode_sticky_turns, turns
+        )
+
+    def note_request_policy_tool_mode_recovery(
+        self, turns: int = TOK_REQUEST_POLICY_STICKY_TURNS
+    ) -> None:
+        """Keep natural-first in tool-compatible mode briefly after tool-history recovery."""
+        self._request_policy_tool_recovery_watch_turns = max(
+            self._request_policy_tool_recovery_watch_turns, turns
+        )
+        self._request_policy_tool_mode_sticky_turns = max(
+            self._request_policy_tool_mode_sticky_turns, turns
+        )
 
     def adaptive_keep_turns(self) -> int:
         """Dynamically reduce history depth as the session grows."""

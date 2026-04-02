@@ -37,6 +37,23 @@ class TestCLI:
         assert "stop" in result.output
         assert "status" in result.output
 
+    def test_doctor_help(self):
+        result = runner.invoke(app, ["doctor", "--help"])
+        assert result.exit_code == 0
+        assert "Check bridge health and runtime contract conformance" in (
+            result.output
+        )
+        assert "--report" in result.output
+        assert "--verbose" in result.output
+
+    def test_stats_help(self):
+        result = runner.invoke(app, ["stats", "--help"])
+        assert result.exit_code == 0
+        assert "Show token savings and fallback state" in result.output
+        assert "--last-session" in result.output
+        assert "--recent" in result.output
+        assert "--since" in result.output
+
     def test_metrics_help(self):
         result = runner.invoke(app, ["metrics", "--help"])
         assert result.exit_code == 0

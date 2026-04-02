@@ -18,6 +18,7 @@ from ..compression import (
 )
 from ..neuro.ir import Instruction
 from .config import (
+    TOK_LARGE_FILE_HINT,
     TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
     TOK_HOT_COMMAND_MAX_CHARS,
     TOK_HOT_COMMAND_MAX_LINES,
@@ -31,6 +32,8 @@ from .config import (
     TOK_REACQUIRE_STUCK_WINDOW_TURNS,
     TOK_REACQUIRE_TRIGGER_COUNT,
     TOK_REACQUIRE_WINDOW_TURNS,
+    TOK_REQUEST_POLICY_STICKY_TURNS,
+    TOK_STABLE_RESULT_INFO_HINT,
 )
 from .core import UniversalTokRuntime, logger
 from .memory.bridge_memory import clean_system_context
@@ -361,6 +364,77 @@ def _stream_recovery_winnowing_floor_messages(
     return [messages[idx] for idx in keep_indexes]
 
 
+def _messages_contain_tool_material(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        if message.get("role") == "tool_result":
+            return True
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") in {"tool_use", "tool_result"}:
+                return True
+    return False
+
+
+def _resolve_effective_tool_compatible(
+    request: RuntimeRequest,
+    session: _core.RuntimeSession,
+    translated_messages: list[dict[str, Any]],
+    normalized_tool_events: list[Any],
+    behavior_signals: dict[str, int],
+) -> tuple[bool, list[str]]:
+    if (
+        request.request_policy == "forced_baseline"
+        or not request.tool_compatible
+    ):
+        return False, []
+    if request.request_policy == "legacy_tool_compatible":
+        return True, ["legacy_default"]
+
+    structured_tool_loop = any(
+        behavior_signals.get(key, 0) > 0
+        for key in (
+            "repeat_file_read",
+            "repeat_search",
+            "repeat_command",
+            "repeated_tool_call",
+            "stream_recovery_reacquisition_suppressed",
+        )
+    )
+    reasons: list[str] = []
+    if session._request_policy_tool_mode_sticky_turns > 0:
+        reasons.append("sticky")
+    if (
+        session._stream_recovery_reacquisition_budget > 0
+        or session._stream_recovery_history_floor_budget > 0
+        or session._request_policy_stream_recovery_watch_turns > 0
+    ):
+        reasons.append("stream_recovery")
+    if (
+        session._request_policy_tool_recovery_watch_turns > 0
+        or session._invalid_tool_history_recovery_count > 0
+    ):
+        reasons.append("tool_recovery")
+    if any(
+        session.pending_behavior_signals.get(key, 0) > 0
+        for key in (
+            "tok_bridge_provider_sensitive_degraded_to_provider_safe",
+            "tok_bridge_provider_sensitive_blocked_local",
+            "tok_bridge_provider_pairing_risk_detected",
+            "tok_bridge_assistant_tool_use_text_interleaving_blocked",
+            "fail_open_retry_upstream_pairing_disagreement",
+            "tok_history_pairing_safety_degraded",
+        )
+    ):
+        reasons.append("tool_recovery")
+    if structured_tool_loop:
+        reasons.append("structured_tool_loop")
+    return bool(reasons), reasons
+
+
 def prepare_request_impl(
     runtime_self: UniversalTokRuntime,
     request: RuntimeRequest,
@@ -518,34 +592,147 @@ def prepare_request_impl(
         "repeat_tool_collapse_applied": 0,
     }
     current_pressure = calculate_invisible_pressure(behavior_signals)
+    request_policy = request.request_policy
+    previous_effective_tool_compatible = (
+        session._request_policy_last_effective_tool_compatible
+    )
+    effective_tool_compatible = (
+        request.tool_compatible and request_policy == "legacy_tool_compatible"
+    )
+    request_policy_reasons: list[str] = (
+        ["legacy_default"] if effective_tool_compatible else []
+    )
+    request_policy_escalated = False
 
     if translated_messages:
         session.bridge_memory.turn += 1
+        if request_policy == "natural_first":
+            (
+                effective_tool_compatible,
+                request_policy_reasons,
+            ) = _resolve_effective_tool_compatible(
+                request,
+                session,
+                translated_messages,
+                normalized_tool_events,
+                behavior_signals,
+            )
+        elif request_policy == "forced_baseline":
+            effective_tool_compatible = False
+            request_policy_reasons = []
+
+        fresh_tool_mode_trigger = any(
+            reason
+            in {"stream_recovery", "tool_recovery", "structured_tool_loop"}
+            for reason in request_policy_reasons
+        )
+        fresh_tool_mode_trigger = fresh_tool_mode_trigger and (
+            session._stream_recovery_reacquisition_budget > 0
+            or session._stream_recovery_history_floor_budget > 0
+            or session._invalid_tool_history_recovery_count > 0
+            or any(
+                session.pending_behavior_signals.get(key, 0) > 0
+                for key in (
+                    "tok_bridge_provider_sensitive_degraded_to_provider_safe",
+                    "tok_bridge_provider_sensitive_blocked_local",
+                    "tok_bridge_provider_pairing_risk_detected",
+                    "tok_bridge_assistant_tool_use_text_interleaving_blocked",
+                    "fail_open_retry_upstream_pairing_disagreement",
+                )
+            )
+            or "structured_tool_loop" in request_policy_reasons
+        )
+        recovery_sticky_continuation = (
+            request_policy == "natural_first"
+            and previous_effective_tool_compatible
+            and effective_tool_compatible
+            and not fresh_tool_mode_trigger
+        )
+        if request_policy == "natural_first" and effective_tool_compatible:
+            if not previous_effective_tool_compatible:
+                request_policy_escalated = True
+                behavior_signals["request_policy_escalations"] = 1
+            if fresh_tool_mode_trigger:
+                session._request_policy_tool_mode_sticky_turns = max(
+                    session._request_policy_tool_mode_sticky_turns,
+                    TOK_REQUEST_POLICY_STICKY_TURNS,
+                )
+        elif (
+            request_policy == "natural_first"
+            and previous_effective_tool_compatible
+            and not effective_tool_compatible
+        ):
+            behavior_signals["request_policy_deescalations"] = 1
+
+        if request_policy == "forced_baseline":
+            behavior_signals["request_policy_forced_baseline"] = 1
+        elif effective_tool_compatible:
+            behavior_signals["request_policy_tool_compatible"] = 1
+        else:
+            behavior_signals["request_policy_natural_first"] = 1
+
+        for reason in request_policy_reasons:
+            behavior_signals[f"request_policy_reason_{reason}"] = 1
+
+        if (
+            request_policy == "natural_first"
+            and session._request_policy_tool_mode_sticky_turns > 0
+            and effective_tool_compatible
+        ):
+            if recovery_sticky_continuation:
+                behavior_signals[
+                    "request_policy_recovery_sticky_continuations"
+                ] = 1
+                session._request_policy_tool_mode_sticky_turns = 0
+                session._request_policy_stream_recovery_watch_turns = 0
+                session._request_policy_tool_recovery_watch_turns = 0
+            else:
+                session._request_policy_tool_mode_sticky_turns = max(
+                    0, session._request_policy_tool_mode_sticky_turns - 1
+                )
+        if (
+            request_policy == "natural_first"
+            and session._request_policy_stream_recovery_watch_turns > 0
+            and "stream_recovery" in request_policy_reasons
+        ):
+            session._request_policy_stream_recovery_watch_turns = max(
+                0, session._request_policy_stream_recovery_watch_turns - 1
+            )
+        if (
+            request_policy == "natural_first"
+            and session._request_policy_tool_recovery_watch_turns > 0
+            and "tool_recovery" in request_policy_reasons
+        ):
+            session._request_policy_tool_recovery_watch_turns = max(
+                0, session._request_policy_tool_recovery_watch_turns - 1
+            )
+        session._request_policy_last_effective_tool_compatible = (
+            effective_tool_compatible
+        )
+
         runtime_hints = (
             [_speculative_macro_hint] if _speculative_macro_hint else []
         )
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
             runtime_hints.append(TOK_REPEAT_COMMAND_SUPPRESSION_HINT)
             behavior_signals["repeat_command_suppression_hint_injected"] = 1
-        # Add hint for exploring large files efficiently
-        from ..runtime.config import TOK_LARGE_FILE_HINT
-
-        runtime_hints.append(TOK_LARGE_FILE_HINT)
+        if effective_tool_compatible:
+            runtime_hints.append(TOK_LARGE_FILE_HINT)
         answer_ready = False
         resend_signals = {}
         has_answer_anchor = False
         read_only_audit_turn = (
-            request.tool_compatible
+            effective_tool_compatible
             and _is_read_only_audit_turn(translated_messages)
         )
         late_answer_followthrough_active = (
-            request.tool_compatible
+            effective_tool_compatible
             and session._late_answer_followthrough_pending
             and not session._baseline_only
             and not read_only_audit_turn
         )
         late_answer_assembly_repair_active = (
-            request.tool_compatible
+            effective_tool_compatible
             and session._late_answer_assembly_repair_pending
             and not session._baseline_only
             and not late_answer_followthrough_active
@@ -557,7 +744,7 @@ def prepare_request_impl(
             else ""
         )
         answer_ready_repair_active = (
-            request.tool_compatible
+            effective_tool_compatible
             and session._answer_ready_repair_pending
             and not session._baseline_only
             and not late_answer_followthrough_active
@@ -615,9 +802,12 @@ def prepare_request_impl(
                 behavior_signals["semantic_dedup_hit"] = (
                     behavior_signals.get("semantic_dedup_hit", 0) + 1
                 )
-                from ..compression import _STABLE_RESULT_EXPLANATION
+                if effective_tool_compatible:
+                    from ..compression import _STABLE_RESULT_EXPLANATION
 
-                runtime_hints.append(_STABLE_RESULT_EXPLANATION)
+                    runtime_hints.append(_STABLE_RESULT_EXPLANATION)
+                else:
+                    runtime_hints.append(TOK_STABLE_RESULT_INFO_HINT)
             if type_breakdown.get("stable_payload_validation_failed", 0) > 0:
                 behavior_signals["stable_payload_validation_failed"] = (
                     behavior_signals.get("stable_payload_validation_failed", 0)
@@ -641,7 +831,7 @@ def prepare_request_impl(
             should_skip_history, skip_reason = _should_skip_history_rewrite(
                 request.messages,
                 normalized_tool_events,
-                tool_compatible=request.tool_compatible,
+                tool_compatible=effective_tool_compatible,
             )
 
         if should_skip_history:
@@ -684,7 +874,7 @@ def prepare_request_impl(
             recent, recent_breakdown = compress_recent_window(
                 recent,
                 tool_use_id_to_context=id_to_context,
-                tool_compatible=request.tool_compatible,
+                tool_compatible=effective_tool_compatible,
             )
             if (
                 request.adapter_kind == "claude-bridge"
@@ -700,12 +890,12 @@ def prepare_request_impl(
                 recent, recent_breakdown = compress_recent_window(
                     recent,
                     tool_use_id_to_context=id_to_context,
-                    tool_compatible=request.tool_compatible,
+                    tool_compatible=effective_tool_compatible,
                 )
                 behavior_signals["bridge_minimum_tail_preserved"] = 1
             if (
                 request.adapter_kind == "claude-bridge"
-                and request.tool_compatible
+                and _messages_contain_tool_material(recent)
             ):
                 candidate_body = {
                     "model": request.model,
@@ -765,7 +955,7 @@ def prepare_request_impl(
                 )
                 body["messages"] = recent
                 compressed = True
-                if request.tool_compatible:
+                if effective_tool_compatible:
                     behavior_signals["tool_compatible_compression"] = (
                         behavior_signals.get("tool_compatible_compression", 0)
                         + 1
@@ -801,7 +991,7 @@ def prepare_request_impl(
                 "", model=request.model
             )
 
-        if request.tool_compatible:
+        if effective_tool_compatible:
             (
                 injected_state_payload,
                 runtime_hints,
@@ -862,6 +1052,9 @@ def prepare_request_impl(
                 type_breakdown={},
                 behavior_signals=behavior_signals,
                 mode=mode,
+                request_policy=request_policy,
+                effective_tool_compatible=effective_tool_compatible,
+                request_policy_escalated=request_policy_escalated,
                 normalized_tool_events=normalized_tool_events,
             )
 
@@ -897,7 +1090,7 @@ def prepare_request_impl(
             session._late_answer_followthrough_pending = False
             session._late_answer_assembly_repair_pending = False
         elif (
-            request.tool_compatible
+            effective_tool_compatible
             and not session._baseline_only
             and not read_only_audit_turn
         ):
@@ -907,6 +1100,9 @@ def prepare_request_impl(
                 session._late_answer_followthrough_pending = True
         session._save_bridge_memory()
     else:
+        session._request_policy_last_effective_tool_compatible = (
+            effective_tool_compatible
+        )
         prepared_prompt_tokens = session.prepared_prompt_tokens(body)
         baseline_prompt_tokens = prepared_prompt_tokens
         saved_prompt_tokens = 0
@@ -928,6 +1124,9 @@ def prepare_request_impl(
         type_breakdown=type_breakdown,
         behavior_signals=behavior_signals,
         mode=mode,
+        request_policy=request_policy,
+        effective_tool_compatible=effective_tool_compatible,
+        request_policy_escalated=request_policy_escalated,
         normalized_tool_events=normalized_tool_events,
         baseline_prompt_tokens=baseline_prompt_tokens,
         prepared_prompt_tokens=prepared_prompt_tokens,

@@ -18,18 +18,22 @@ PROMPT_METRIC_KEYS = (
 def degradation_reason(signals: dict[str, int], *, baseline_only: bool) -> str:
     if baseline_only or signals.get(BASELINE_ONLY_SIGNAL, 0):
         return "baseline fallback"
-    if signals.get(
-        "fail_open_retry_upstream_pairing_disagreement", 0
-    ) or signals.get("tok_bridge_provider_pairing_risk_detected", 0):
-        return "provider pairing disagreement"
     if signals.get("stream_recovery_retry", 0) or signals.get(
         "stream_recovery_fallback", 0
     ):
         return "stream recovery"
-    if signals.get(
-        "tok_bridge_invalid_tool_history_quarantined", 0
-    ) or signals.get("tok_bridge_invalid_tool_history_blocked", 0):
-        return "invalid tool history recovery"
+    if (
+        signals.get("fail_open_retry_upstream_pairing_disagreement", 0)
+        or signals.get("tok_bridge_provider_pairing_risk_detected", 0)
+        or signals.get(
+            "tok_bridge_assistant_tool_use_text_interleaving_blocked", 0
+        )
+        or signals.get("tok_bridge_tool_history_repaired", 0)
+        or signals.get("tok_bridge_tool_history_pairing_repaired", 0)
+        or signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
+        or signals.get("tok_bridge_invalid_tool_history_blocked", 0)
+    ):
+        return "heavy tool-mode recovery"
     if signals.get("fail_open_compat_response", 0) or signals.get(
         "processing_error", 0
     ):
@@ -65,6 +69,11 @@ def session_quality(
         or signals.get("fail_open_compat_response", 0)
         or signals.get("fail_open_retry_upstream_pairing_disagreement", 0)
         or signals.get("tok_bridge_provider_pairing_risk_detected", 0)
+        or signals.get(
+            "tok_bridge_assistant_tool_use_text_interleaving_blocked", 0
+        )
+        or signals.get("tok_bridge_tool_history_repaired", 0)
+        or signals.get("tok_bridge_tool_history_pairing_repaired", 0)
         or signals.get("stream_recovery_retry", 0)
         or signals.get("stream_recovery_fallback", 0)
         or signals.get("tok_bridge_invalid_tool_history_quarantined", 0)

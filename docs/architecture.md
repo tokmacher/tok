@@ -91,7 +91,7 @@ derived-contract drift rather than a competing second IDL.
 1. Keep the last `keep_turns` human turns verbatim; everything older compresses into the state line via `BridgeMemoryState`.
 2. Tool-use/tool-result pairs must remain intact (never split across compression boundaries).
 3. Tool density determines whether history rewrite is skipped to preserve fidelity on heavy tool sessions.
-4. The runtime injects the Tok directive, projected memory, and tool-compatible instructions (when tools are present) before forwarding upstream.
+4. The runtime keeps semantic deduplication, tool-result compression, and history winnowing active by default, then escalates into tool-compatible shaping only when the session is already tool-dense or recovery-sensitive.
 
 ### Response Classification
 

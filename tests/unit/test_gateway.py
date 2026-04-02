@@ -95,6 +95,7 @@ def test_health_endpoint():
         "bridge": "tok",
         "port": 9191,
         "mode": "tool-compatible",
+        "request_policy": "legacy_tool_compatible",
         "baseline_only": False,
         "fallback_count": 0,
         "actual_tokens": 0,
@@ -133,6 +134,12 @@ def test_health_endpoint():
         "tool_history_blocked_count": 0,
         "invalid_tool_history_session_reset_count": 0,
         "provider_pairing_disagreement_count": 0,
+        "assistant_tool_use_text_interleaving_blocked_count": 0,
+        "request_policy_natural_first_count": 0,
+        "request_policy_tool_compatible_count": 0,
+        "request_policy_escalations_count": 0,
+        "request_policy_deescalations_count": 0,
+        "request_policy_interleaving_downgrades_count": 0,
         "session_quality": "clean",
         "last_degradation_reason": "",
     }
@@ -206,6 +213,8 @@ def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
             "tok_bridge_invalid_tool_history_blocked": 1,
             "tok_bridge_invalid_tool_history_session_reset": 1,
             "fail_open_retry_upstream_pairing_disagreement": 1,
+            "tok_bridge_assistant_tool_use_text_interleaving_blocked": 1,
+            "request_policy_interleaving_downgrades": 1,
         },
     )
     app = create_app(session)
@@ -225,6 +234,8 @@ def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
     assert payload["tool_history_blocked_count"] == 1
     assert payload["invalid_tool_history_session_reset_count"] == 1
     assert payload["provider_pairing_disagreement_count"] == 1
+    assert payload["assistant_tool_use_text_interleaving_blocked_count"] == 1
+    assert payload["request_policy_interleaving_downgrades_count"] == 1
 
 
 def test_clean_system_context_uses_top_level_prompt_compressor(monkeypatch):
@@ -503,6 +514,350 @@ def test_bridge_can_opt_out_of_tool_compatible_via_header(
     assert "x-tok-tool-compatible" not in {
         key.lower(): value for key, value in captured["headers"].items()
     }
+
+
+def test_gateway_natural_first_uses_prepared_effective_tool_mode(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    captured: dict[str, Any] = {}
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        captured["request_policy"] = request.request_policy
+        captured["request_has_tools"] = request.request_has_tools
+        captured["tool_compatible_allowed"] = request.tool_compatible
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "system": "tok injected system",
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=12,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            request_policy=request.request_policy,
+            effective_tool_compatible=False,
+            request_policy_escalated=False,
+            normalized_tool_events=[],
+        )
+
+    def _fake_process_response(
+        text, *, model, session, behavior_signals=None, tool_compatible=False
+    ):
+        del model, session, behavior_signals
+        captured["response_text"] = text
+        captured["process_tool_compatible"] = tool_compatible
+        return MagicMock(
+            content_blocks=[{"type": "text", "text": text}],
+            output_saved_tokens=0,
+            behavior_signals={},
+            mode="natural-first",
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(
+        gateway._RUNTIME, "process_response", _fake_process_response
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            request_policy_default="natural_first",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{"name": "Read"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["request_policy"] == "natural_first"
+    assert captured["request_has_tools"] is True
+    assert captured["tool_compatible_allowed"] is True
+    assert captured["process_tool_compatible"] is False
+
+
+def test_gateway_natural_first_uses_recovery_effective_tool_mode(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    captured: dict[str, Any] = {}
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "system": "tok injected system",
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=12,
+            behavior_signals={"request_policy_reason_stream_recovery": 1},
+            type_breakdown={},
+            mode="balanced",
+            request_policy=request.request_policy,
+            effective_tool_compatible=True,
+            request_policy_escalated=True,
+            normalized_tool_events=[],
+        )
+
+    def _fake_process_response(
+        text, *, model, session, behavior_signals=None, tool_compatible=False
+    ):
+        del model, session, behavior_signals
+        captured["process_tool_compatible"] = tool_compatible
+        return MagicMock(
+            content_blocks=[{"type": "text", "text": text}],
+            output_saved_tokens=0,
+            behavior_signals={},
+            mode="tool-compatible",
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(
+        gateway._RUNTIME, "process_response", _fake_process_response
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            request_policy_default="natural_first",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{"name": "Read"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["process_tool_compatible"] is True
+
+
+def test_gateway_degrades_interleaved_assistant_tool_use_batch_to_provider_safe(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Inspect concurrency path.",
+                            }
+                        ],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_1",
+                                "name": "Read",
+                                "input": {"path": "a.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_2",
+                                "name": "Read",
+                                "input": {"path": "b.py"},
+                            },
+                            {
+                                "type": "text",
+                                "text": "Collecting evidence.",
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_3",
+                                "name": "Read",
+                                "input": {"path": "c.py"},
+                            },
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_1",
+                                "content": "a",
+                            },
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_2",
+                                "content": "b",
+                            },
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_3",
+                                "content": "c",
+                            },
+                        ],
+                    },
+                ],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            request_policy="natural_first",
+            effective_tool_compatible=False,
+            request_policy_escalated=False,
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        sent_bodies.append(json.loads(request.read().decode()))
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            request_policy_default="natural_first",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Inspect concurrency path.",
+                }
+            ],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assert sent_bodies[0] == {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Inspect concurrency path.",
+                    }
+                ],
+            }
+        ],
+        "stream": False,
+    }
+
+
+def test_gateway_interleaving_downgrade_updates_health_counters(tmp_path):
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.reset_session_stats()
+    session = BridgeSession(
+        port=9191, memory_dir=tmp_path / ".tok", tracker=tracker
+    )
+    session.tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=120,
+        actual_output=30,
+        cache_read=0,
+        cache_write=0,
+        input_saved=80,
+        output_saved=20,
+        behavior_signals={
+            "tok_bridge_assistant_tool_use_text_interleaving_blocked": 2,
+            "request_policy_interleaving_downgrades": 2,
+        },
+    )
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["assistant_tool_use_text_interleaving_blocked_count"] == 2
+    assert payload["request_policy_interleaving_downgrades_count"] == 2
 
 
 def test_gateway_retries_with_original_payload_after_tok_prepared_400(
@@ -4362,7 +4717,10 @@ def test_gateway_degrades_provider_sensitive_prepared_body_to_safe_original(
             "stream": False,
         }
     ]
-    assert "bridge_preflight_outgoing_degraded_to_provider_safe" in caplog.text
+    assert (
+        "bridge_preflight_assistant_tool_use_text_interleaving_degraded_to_provider_safe"
+        in caplog.text
+    )
 
 
 def test_gateway_logs_pairing_forensics_when_upstream_reports_pairing_disagreement(

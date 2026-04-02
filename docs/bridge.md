@@ -182,7 +182,9 @@ non-responsive session.
 
 ## Runtime Defaults
 
-- default compressed path: `tok-tool-compatible`
+- default compressed path: `legacy_tool_compatible`
+- internal experimental path: `natural_first`
+- default posture: compress aggressively, shape behavior conservatively
 - conservative fallback: `baseline`
 - non-default: `tok-minimal`
 - non-default: `tok-native`
@@ -191,6 +193,12 @@ To force baseline:
 
 ```bash
 TOK_MODE=baseline tok bridge start
+```
+
+To try the lower-interference request policy internally:
+
+```bash
+TOK_REQUEST_POLICY=natural_first tok bridge start
 ```
 
 ## Troubleshooting Basics

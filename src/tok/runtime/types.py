@@ -136,6 +136,10 @@ class RuntimeRequest(BaseModel, frozen=True):
     system: str | list[dict[str, Any]] | None = None
     adapter_kind: str = "unknown"
     tool_compatible: bool = False
+    request_policy: Literal[
+        "legacy_tool_compatible", "natural_first", "forced_baseline"
+    ] = "legacy_tool_compatible"
+    request_has_tools: bool = False
     grammar: str | None = None
     todo: str | None = None
     deltas: str | None = None
@@ -151,6 +155,11 @@ class PreparedRuntimeRequest(BaseModel, frozen=True):
     behavior_signals: dict[str, int]
     type_breakdown: dict[str, int]
     mode: str
+    request_policy: Literal[
+        "legacy_tool_compatible", "natural_first", "forced_baseline"
+    ] = "legacy_tool_compatible"
+    effective_tool_compatible: bool = False
+    request_policy_escalated: bool = False
     normalized_tool_events: list[NormalizedToolEvent] = Field(
         default_factory=list
     )

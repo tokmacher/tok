@@ -229,6 +229,7 @@ async def buffer_strip_restream_impl(
             stream_behavior_signals["stream_empty_after_success"] = 1
             session.runtime_session._stream_recovery_reacquisition_budget = 1
             session.runtime_session._stream_recovery_history_floor_budget = 1
+            session.runtime_session.note_request_policy_stream_recovery()
             recovered = False
             recovery_model = ""
             recovery_usage: dict[str, Any] = {}

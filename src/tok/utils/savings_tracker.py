@@ -393,6 +393,27 @@ class SavingsTracker:
         provider_pairing_disagreement_count = int(
             signals.get("fail_open_retry_upstream_pairing_disagreement", 0)
         ) + int(signals.get("tok_bridge_provider_pairing_risk_detected", 0))
+        assistant_tool_use_text_interleaving_blocked_count = int(
+            signals.get(
+                "tok_bridge_assistant_tool_use_text_interleaving_blocked",
+                0,
+            )
+        )
+        request_policy_natural_first_count = int(
+            signals.get("request_policy_natural_first", 0)
+        )
+        request_policy_tool_compatible_count = int(
+            signals.get("request_policy_tool_compatible", 0)
+        )
+        request_policy_escalations_count = int(
+            signals.get("request_policy_escalations", 0)
+        )
+        request_policy_deescalations_count = int(
+            signals.get("request_policy_deescalations", 0)
+        )
+        request_policy_interleaving_downgrades_count = int(
+            signals.get("request_policy_interleaving_downgrades", 0)
+        )
 
         return {
             "calls": calls,
@@ -427,6 +448,12 @@ class SavingsTracker:
             "tool_history_blocked_count": tool_history_blocked_count,
             "invalid_tool_history_session_reset_count": invalid_tool_history_session_reset_count,
             "provider_pairing_disagreement_count": provider_pairing_disagreement_count,
+            "assistant_tool_use_text_interleaving_blocked_count": assistant_tool_use_text_interleaving_blocked_count,
+            "request_policy_natural_first_count": request_policy_natural_first_count,
+            "request_policy_tool_compatible_count": request_policy_tool_compatible_count,
+            "request_policy_escalations_count": request_policy_escalations_count,
+            "request_policy_deescalations_count": request_policy_deescalations_count,
+            "request_policy_interleaving_downgrades_count": request_policy_interleaving_downgrades_count,
             "session_quality": quality,
             "last_degradation_reason": degradation_reason,
         }

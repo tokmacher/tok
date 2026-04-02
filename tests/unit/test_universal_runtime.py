@@ -509,6 +509,306 @@ def test_runtime_prepare_request_compression_in_tool_compatible_mode(tmp_path):
     assert len(prepared.body["messages"]) < len(request.messages)
 
 
+def test_natural_first_preserves_semantic_dedup_without_tool_compatible_mode():
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+    large_output = "file content line\n" * 50
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/runtime/core.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": large_output,
+                    }
+                ],
+            },
+        ],
+    )
+
+    runtime.prepare_request(request, session)
+    prepared = runtime.prepare_request(request, session)
+    system_text = str(prepared.body.get("system", ""))
+
+    assert prepared.request_policy == "natural_first"
+    assert prepared.effective_tool_compatible is False
+    assert prepared.request_policy_escalated is False
+    assert (
+        prepared.behavior_signals.get("request_policy_natural_first", 0) == 1
+    )
+    assert prepared.behavior_signals.get("semantic_dedup_hit", 0) == 1
+    assert "Native tools only. Plain text." not in system_text
+    assert "@stable_result(hash:...)" in system_text
+
+
+def test_natural_first_keeps_tool_dense_history_on_natural_path(tmp_path):
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        request_has_tools=True,
+        tool_compatible=True,
+        messages=[
+            {"role": "user", "content": "Inspect the runtime path."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/runtime/core.py"},
+                    }
+                ],
+            },
+            {
+                "role": "tool_result",
+                "tool_use_id": "t1",
+                "content": "runtime core" * 80,
+            },
+            {"role": "user", "content": "Inspect the gateway path too."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t2",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/gateway/_app_factory.py"},
+                    }
+                ],
+            },
+            {
+                "role": "tool_result",
+                "tool_use_id": "t2",
+                "content": "gateway app factory" * 80,
+            },
+            {"role": "user", "content": "Summarize the current evidence."},
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+    system_text = str(prepared.body.get("system", ""))
+
+    assert prepared.effective_tool_compatible is False
+    assert prepared.request_policy_escalated is False
+    assert (
+        prepared.behavior_signals.get("request_policy_natural_first", 0) == 1
+    )
+    assert (
+        prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 0
+    )
+    assert "Native tools only. Plain text." not in system_text
+
+
+def test_natural_first_sticky_escalation_decays_after_quiet_window(tmp_path):
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    dense_request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        request_has_tools=True,
+        tool_compatible=True,
+        messages=[
+            {"role": "user", "content": "Inspect the runtime path."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/runtime/core.py"},
+                    }
+                ],
+            },
+            {
+                "role": "tool_result",
+                "tool_use_id": "t1",
+                "content": "runtime core" * 80,
+            },
+            {"role": "user", "content": "Inspect the gateway path too."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t2",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/gateway/_app_factory.py"},
+                    }
+                ],
+            },
+            {
+                "role": "tool_result",
+                "tool_use_id": "t2",
+                "content": "gateway app factory" * 80,
+            },
+            {"role": "user", "content": "Summarize the current evidence."},
+        ],
+    )
+    quiet_request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": "Summarize what you already know without more tool calls.",
+            }
+        ],
+    )
+
+    session.note_request_policy_tool_mode_recovery()
+    first = runtime.prepare_request(dense_request, session)
+    assert first.effective_tool_compatible is True
+
+    sticky_turn = runtime.prepare_request(quiet_request, session)
+    deescalated = runtime.prepare_request(quiet_request, session)
+
+    assert sticky_turn.effective_tool_compatible is True
+    assert (
+        sticky_turn.behavior_signals.get(
+            "request_policy_recovery_sticky_continuations", 0
+        )
+        == 1
+    )
+    assert deescalated.effective_tool_compatible is False
+    assert (
+        deescalated.behavior_signals.get("request_policy_deescalations", 0)
+        == 1
+    )
+
+
+def test_natural_first_escalates_on_stream_recovery_watch(tmp_path):
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.note_request_policy_stream_recovery()
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": "Retry safely after the earlier stream recovery.",
+            }
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.effective_tool_compatible is True
+    assert prepared.request_policy_escalated is True
+    assert (
+        prepared.behavior_signals.get(
+            "request_policy_reason_stream_recovery", 0
+        )
+        == 1
+    )
+    assert (
+        prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 1
+    )
+
+
+def test_natural_first_escalates_on_invalid_tool_history_recovery(tmp_path):
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.note_request_policy_tool_mode_recovery()
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": "Recover from the earlier tool-history issue.",
+            }
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.effective_tool_compatible is True
+    assert prepared.request_policy_escalated is True
+    assert (
+        prepared.behavior_signals.get("request_policy_reason_tool_recovery", 0)
+        == 1
+    )
+
+
+def test_natural_first_escalates_on_repeated_tool_loop_signal(tmp_path):
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/runtime/core.py"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "t2",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/runtime/core.py"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": "runtime core",
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t2",
+                        "content": "runtime core",
+                    },
+                ],
+            },
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.effective_tool_compatible is True
+    assert prepared.request_policy_escalated is True
+    assert (
+        prepared.behavior_signals.get(
+            "request_policy_reason_structured_tool_loop", 0
+        )
+        == 1
+    )
+
+
 def test_runtime_prepare_request_suppresses_unchanged_tool_compatible_state(
     tmp_path,
 ):

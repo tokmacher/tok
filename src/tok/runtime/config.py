@@ -80,6 +80,15 @@ TOK_HOT_COMMAND_MAX_CHARS: int = int(
 TOK_PREDICTIVE_CACHE_TOP_K: int = int(
     os.getenv("TOK_PREDICTIVE_CACHE_TOP_K", "3")
 )
+TOK_REQUEST_POLICY_STICKY_TURNS: int = int(
+    os.getenv("TOK_REQUEST_POLICY_STICKY_TURNS", "3")
+)
+TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS: int = int(
+    os.getenv("TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS", "2")
+)
+TOK_REQUEST_POLICY_TOOL_DENSE_ASSISTANT_TURNS: int = int(
+    os.getenv("TOK_REQUEST_POLICY_TOOL_DENSE_ASSISTANT_TURNS", "2")
+)
 
 # Runtime repair and followthrough hints
 ANSWER_READY_RUNTIME_HINT = (
@@ -124,6 +133,7 @@ TOK_LARGE_FILE_HINT = (
     "For files >500 lines, use session.explore_file(path) or session.get_file_overview(path) "
     "to get a Tok-formatted overview before reading specific sections with Read(offset=X, limit=Y)."
 )
+TOK_STABLE_RESULT_INFO_HINT = "@stable_result(hash:...) means a previously seen tool result is unchanged."
 TOK_REPEAT_COMMAND_SUPPRESSION_HINT = (
     "You just ran an identical command and got the same successful result. "
     "Do not rerun it unless files or constraints changed; proceed to synthesis or next distinct step."
@@ -188,6 +198,9 @@ __all__ = [
     "TOK_HOT_COMMAND_MAX_LINES",
     "TOK_HOT_COMMAND_MAX_CHARS",
     "TOK_PREDICTIVE_CACHE_TOP_K",
+    "TOK_REQUEST_POLICY_STICKY_TURNS",
+    "TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS",
+    "TOK_REQUEST_POLICY_TOOL_DENSE_ASSISTANT_TURNS",
     "ANSWER_READY_RUNTIME_HINT",
     "ANSWER_READY_REPAIR_HINT",
     "LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT",
@@ -196,6 +209,7 @@ __all__ = [
     "TOK_NOVELTY_REQUIRED_HINT",
     "TOK_NEIGHBORHOOD_THRASH_HINT",
     "TOK_LARGE_FILE_HINT",
+    "TOK_STABLE_RESULT_INFO_HINT",
     "TOK_REPEAT_COMMAND_SUPPRESSION_HINT",
     "TOK_NEIGHBORHOOD_TRIGGER_ANCHORS",
     "TOK_NEIGHBORHOOD_WINDOW_TURNS",

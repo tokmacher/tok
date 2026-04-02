@@ -11,7 +11,8 @@ Runtime defaults and release posture for Tok.
 
 | Setting | Default | Notes |
 |---------|---------|-------|
-| Compression path | `tok-tool-compatible` | Validated on coding and research loops |
+| Compression path | `legacy_tool_compatible` | Current default; validated on coding and research loops |
+| Experimental request policy | `natural_first` | Internal env-gated rollout for lower-interference shaping |
 | Fallback mode | `baseline` | Requests pass through without compression |
 | Fail-open | enabled | Bridge errors never block upstream requests |
 | Port | 9090 | Configurable via `--port` |

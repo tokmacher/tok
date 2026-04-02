@@ -171,6 +171,14 @@ def _capture_outgoing_guard_forensics(
     )
 
 
+def _is_assistant_tool_use_text_interleaving_failure(
+    failures: list[str],
+) -> bool:
+    return (
+        "provider_sensitive_assistant_tool_use_text_interleaving" in failures
+    )
+
+
 def _attempt_quarantine_invalid_tool_history(
     body: dict[str, Any],
 ) -> tuple[dict[str, Any], bool, dict[str, int], list[str]]:
@@ -541,8 +549,17 @@ def _run_bridge_preflight(
                 original_body
             )
             if not degraded_failures:
+                interleaving_failure = (
+                    _is_assistant_tool_use_text_interleaving_failure(
+                        outgoing_failures
+                    )
+                )
                 event_name = _preflight_event_name(
-                    "bridge_preflight_outgoing_degraded_to_provider_safe",
+                    (
+                        "bridge_preflight_assistant_tool_use_text_interleaving_degraded_to_provider_safe"
+                        if interleaving_failure
+                        else "bridge_preflight_outgoing_degraded_to_provider_safe"
+                    ),
                     path,
                 )
                 if has_provider_sensitive_failures(outgoing_failures):
@@ -556,9 +573,21 @@ def _run_bridge_preflight(
                 behavior_signals[
                     "tok_bridge_prepared_pairing_rejected_local"
                 ] = 1
+                if interleaving_failure:
+                    behavior_signals[
+                        "tok_bridge_assistant_tool_use_text_interleaving_blocked"
+                    ] = 1
+                    behavior_signals[
+                        "request_policy_interleaving_downgrades"
+                    ] = 1
                 logger.warning(
-                    "%s: prepared request failed final outgoing validation; sending provider-safe body",
+                    "%s: prepared request failed final outgoing validation%s; sending provider-safe body",
                     event_name,
+                    (
+                        " due to assistant text interleaved within tool_use batch"
+                        if interleaving_failure
+                        else ""
+                    ),
                 )
                 session.capture_event(
                     {
@@ -612,6 +641,11 @@ def _run_bridge_preflight(
         behavior_signals["tok_bridge_provider_sensitive_blocked_local"] = 1
         if has_provider_sensitive_failures(outgoing_failures):
             behavior_signals["tok_bridge_provider_pairing_risk_detected"] = 1
+        if _is_assistant_tool_use_text_interleaving_failure(outgoing_failures):
+            behavior_signals[
+                "tok_bridge_assistant_tool_use_text_interleaving_blocked"
+            ] = 1
+            behavior_signals["request_policy_interleaving_downgrades"] = 1
         session._bump_signals(behavior_signals)
         _capture_outgoing_guard_forensics(
             session,

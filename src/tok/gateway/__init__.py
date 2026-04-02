@@ -76,6 +76,46 @@ _DROP_RESPONSE_HEADERS = {
     "connection",
 }
 
+_REQUEST_POLICY_ALIASES = {
+    "legacy": "legacy_tool_compatible",
+    "legacy_tool_compatible": "legacy_tool_compatible",
+    "tool_compatible": "legacy_tool_compatible",
+    "tool-compatible": "legacy_tool_compatible",
+    "natural": "natural_first",
+    "natural_first": "natural_first",
+    "natural-first": "natural_first",
+    "baseline": "forced_baseline",
+    "forced_baseline": "forced_baseline",
+    "forced-baseline": "forced_baseline",
+}
+
+
+def _normalize_request_policy(value: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized:
+        return ""
+    return _REQUEST_POLICY_ALIASES.get(normalized, "")
+
+
+def _default_request_policy() -> str:
+    tok_mode = os.getenv("TOK_MODE", "tool-compatible").strip().lower()
+    if tok_mode == "baseline":
+        return "forced_baseline"
+    explicit_policy = _normalize_request_policy(
+        os.getenv("TOK_REQUEST_POLICY", "")
+    )
+    if explicit_policy:
+        return explicit_policy
+    return "legacy_tool_compatible"
+
+
+def _request_policy_mode_label(policy: str) -> str:
+    if policy == "natural_first":
+        return "natural-first"
+    if policy == "forced_baseline":
+        return "baseline"
+    return "tool-compatible"
+
 
 def _log_bridge_body_structure(
     event: str,
@@ -253,13 +293,14 @@ class BridgeSession:
         os.getenv("TOK_RATE_LIMIT_THROTTLE_COOLDOWN_SEC", "20")
     )
     capture: bool = os.getenv("TOK_CAPTURE", "0") == "1"
-    # TOK_MODE controls the default compression path for every request.
-    # "tool-compatible" (default): use tok-tool-compatible compressed path.
-    # "baseline": skip compression entirely (conservative fallback).
-    # The x-tok-tool-compatible: false request header always overrides this.
-    tool_compatible_default: bool = (
-        os.getenv("TOK_MODE", "tool-compatible") != "baseline"
+    # TOK_MODE=baseline still forces the conservative baseline path.
+    # Otherwise, TOK_REQUEST_POLICY controls how aggressively Tok shapes
+    # Claude's request personality while compression stays available.
+    request_policy_default: str = field(
+        default_factory=_default_request_policy
     )
+    # Kept for compatibility with existing gateway/reporting code.
+    tool_compatible_default: bool = True
     memory_dir: Path | None = None
     tracker: SavingsTracker = field(default_factory=SavingsTracker)
     # Canonical runtime state: delegates to this
@@ -268,6 +309,13 @@ class BridgeSession:
     _rate_limit_throttle_until: float = 0.0
 
     def __post_init__(self) -> None:
+        self.request_policy_default = (
+            _normalize_request_policy(self.request_policy_default)
+            or _default_request_policy()
+        )
+        self.tool_compatible_default = (
+            self.request_policy_default != "forced_baseline"
+        )
         explicit_memory_dir = self.memory_dir is not None
         if self.memory_dir is None:
             project_dir = os.getenv("TOK_PROJECT_DIR", "")
@@ -544,9 +592,10 @@ def run_bridge(
     logger.info("Keeping last %d human turns verbatim", keep_turns)
     logger.info("Fail-open: %s", "enabled" if fail_open else "disabled")
     logger.info(
-        "Default mode: %s (TOK_MODE=%s)",
-        "tool-compatible" if session.tool_compatible_default else "baseline",
+        "Default mode: %s (TOK_MODE=%s, TOK_REQUEST_POLICY=%s)",
+        _request_policy_mode_label(session.request_policy_default),
         os.getenv("TOK_MODE", "tool-compatible"),
+        os.getenv("TOK_REQUEST_POLICY", "<unset>"),
     )
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level=log_level)
