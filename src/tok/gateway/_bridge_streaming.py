@@ -172,6 +172,10 @@ async def buffer_strip_restream_impl(
         if read_error:
             stream_behavior_signals["stream_buffer_read_error"] = 1
 
+        processed: Any | None = (
+            None  # Will hold ProcessedRuntimeResponse when available
+        )
+
         tool_blocks = _materialize_stream_tool_blocks(
             stream_blocks, stream_order
         )
@@ -292,6 +296,10 @@ async def buffer_strip_restream_impl(
                                 and block.get("type") == "text"
                             )
                             retry_output_saved = 0
+                            # Initialize retry_response_signals to accumulate across branches
+                            retry_response_signals: dict[str, int] = dict(
+                                stream_behavior_signals
+                            )
                             if retry_text:
                                 retry_processed = _RUNTIME.process_response(
                                     retry_text,
@@ -301,8 +309,9 @@ async def buffer_strip_restream_impl(
                                     or None,
                                     tool_compatible=tool_compatible,
                                 )
-                                response_signals = (
-                                    retry_processed.behavior_signals
+                                _merge_signal_counts(
+                                    retry_response_signals,
+                                    retry_processed.behavior_signals,
                                 )
                                 translated_blocks = (
                                     retry_processed.content_blocks
@@ -320,14 +329,13 @@ async def buffer_strip_restream_impl(
                                     or None,
                                     tool_compatible=tool_compatible,
                                 )
-                                response_signals = (
-                                    retry_processed.behavior_signals
+                                _merge_signal_counts(
+                                    retry_response_signals,
+                                    retry_processed.behavior_signals,
                                 )
                                 translated_blocks = passthrough_blocks
                             else:
-                                response_signals = dict(
-                                    stream_behavior_signals
-                                )
+                                # Keep response_signals as initialized from stream_behavior_signals
                                 translated_blocks = []
                             recovered = any(
                                 block.get("type") == "tool_use"
@@ -401,7 +409,6 @@ async def buffer_strip_restream_impl(
                                     logger.info(
                                         "stream_recovery_succeeded_tool_use: recovered empty streamed success via non-stream retry"
                                     )
-                                response_signals = dict(response_signals or {})
                                 _merge_signal_counts(
                                     response_signals,
                                     recovery_success_signals,
@@ -532,8 +539,14 @@ async def buffer_strip_restream_impl(
                 output_saved = 0
                 response_signals = processed.behavior_signals
             else:
-                output_saved = processed.output_saved_tokens
-                response_signals = processed.behavior_signals
+                # processed was assigned in the outer full_text block at lines 203-209
+                # Ensure we have a valid processed object before accessing attributes
+                if processed is not None:
+                    output_saved = processed.output_saved_tokens
+                    response_signals = processed.behavior_signals
+                else:
+                    output_saved = 0
+                    response_signals = stream_behavior_signals or {}
 
             session.tracker.record_call(
                 model=sse_model,

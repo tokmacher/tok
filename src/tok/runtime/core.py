@@ -24,6 +24,7 @@ __all__ = [
 import copy
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -200,7 +201,22 @@ from ._session_persistence import (
 
 @dataclass
 class RuntimeSession:
+    """Session state for a Tok runtime.
+
+    Thread Safety:
+        This class provides a `lock` field for optional external synchronization.
+        If concurrent access is required, callers must acquire this lock before
+        accessing or modifying mutable fields (result_cache, semantic_hash_cache,
+        bridge_memory, etc.). Example:
+
+            with session.lock:
+                session.result_cache[key] = value
+
+        The lock is NOT acquired internally by any methods.
+    """
+
     keep_turns: int = 2
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     result_cache: dict[str, Any] = field(default_factory=dict)
     # Maps (tool_name, args_hash) -> content_hash for dedup; see compress_tool_results.
     semantic_hash_cache: dict[str, str] = field(default_factory=dict)
@@ -298,8 +314,8 @@ class RuntimeSession:
     _hot_summary_records: dict[str, HotSummaryRecord] = field(
         default_factory=dict, init=False, repr=False
     )
-    _observed_tool_result_ids: set[str] = field(
-        default_factory=set, init=False, repr=False
+    _observed_tool_result_ids: dict[str, None] = field(
+        default_factory=dict, init=False, repr=False
     )
     _prepared_prompt_token_cache: dict[str, int] = field(
         default_factory=dict, init=False, repr=False
@@ -341,7 +357,8 @@ class RuntimeSession:
         self._invalid_tool_history_recovery_count += 1
         self.note_request_policy_tool_mode_recovery()
         signals: dict[str, int] = {
-            "tok_bridge_invalid_tool_history_recovery": 1
+            "tok_bridge_invalid_tool_history_recovery": 1,
+            "tok_bridge_invalid_tool_history_blocked": 1 if blocked else 0,
         }
 
         if self._invalid_tool_history_recovery_count >= 2:
@@ -599,9 +616,9 @@ class RuntimeSession:
             )[:64]
             self._hot_summary_records = dict(ranked)
         if len(self._observed_tool_result_ids) > 64:
-            self._observed_tool_result_ids = set(
-                list(self._observed_tool_result_ids)[-64:]
-            )
+            # Preserve recency by keeping the last 64 keys
+            keys_to_keep = list(self._observed_tool_result_ids.keys())[-64:]
+            self._observed_tool_result_ids = {k: None for k in keys_to_keep}
 
     def observe_repeat_target_result(
         self,

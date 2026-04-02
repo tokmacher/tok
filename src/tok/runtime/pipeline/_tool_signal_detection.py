@@ -114,7 +114,10 @@ def _track_assistant_tool_usage(
     repeat_search_ids: list[str],
     repeat_command_ids: list[str],
     repeated_tool_targets: set[tuple[str, str]],
-    result_cache: dict[str, tuple[str, str, float]] | None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None,
     bump: Callable[[str, int], None],
 ) -> None:
     for msg in messages:

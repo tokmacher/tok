@@ -410,7 +410,9 @@ def replay_command(
     history_before = 0
     history_after = 0
     history_turns = 0
-    file_cache: dict[str, tuple[str, str, float]] = {}
+    file_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ] = {}
     behavior_totals: dict[str, int] = {}
 
     lines_read = 0
@@ -614,7 +616,9 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
                     savings_pct=float(payload.get("session_savings_pct", 0.0)),
                     tokens_saved=int(payload.get("session_tokens_saved", 0)),
                 )
-                session_view_summary = dict(session_summary or {})
+                session_view_summary: dict[str, int | float | str] = dict(
+                    session_summary or {}
+                )
                 session_view_summary.update(
                     {
                         "actual_tokens": int(payload.get("actual_tokens", 0)),

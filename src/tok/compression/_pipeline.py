@@ -84,7 +84,10 @@ def tok_tool_result_impl(
 
 def compress_tool_results_impl(
     messages: list[dict[str, Any]],
-    result_cache: dict[str, tuple[str, str, float]] | None = None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,

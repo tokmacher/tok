@@ -46,7 +46,10 @@ except ImportError:
 def collect_behavior_signals(
     messages: list[dict[str, Any]],
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
-    result_cache: dict[str, tuple[str, str, float]] | None = None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None = None,
     suppress_reacquisition_once: bool = False,
 ) -> dict[str, int]:
     """Track patterns that indicate Tok is helping or being routed around."""

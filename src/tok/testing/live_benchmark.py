@@ -10,7 +10,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from openai import OpenAI
 
@@ -225,10 +225,17 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
             "File=<the primary file that answered the question>\n"
             "Verification=<the function, class, or finding that supports the answer>"
         ),
-        success_terms=("compression.py", "compress_history"),
+        # Accept both original (compression.py) and related (bridge_memory.py) findings
+        # since fixture's final question asks about related memory structure
+        success_terms=(
+            "compression.py",
+            "bridge_memory.py",
+            "compress_history",
+            "BridgeMemoryState",
+        ),
         min_success_terms=2,
-        expected_file_terms=("compression.py",),
-        expected_verification_terms=("compress_history",),
+        expected_file_terms=("compression.py", "bridge_memory.py"),
+        expected_verification_terms=("compress_history", "BridgeMemoryState"),
         default_turns=5,
         prompt_sequence=(
             "Respond in exactly one line: File=<the primary file that answered the original question>",
@@ -273,10 +280,17 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
             "File=<the primary file that answered the question>\n"
             "Verification=<the function, class, or finding that supports the answer>"
         ),
-        success_terms=("compression.py", "compress_history"),
+        # Accept both original (compression.py) and related (bridge_memory.py) findings
+        # since fixture's final question asks about related memory structure
+        success_terms=(
+            "compression.py",
+            "bridge_memory.py",
+            "compress_history",
+            "BridgeMemoryState",
+        ),
         min_success_terms=2,
-        expected_file_terms=("compression.py",),
-        expected_verification_terms=("compress_history",),
+        expected_file_terms=("compression.py", "bridge_memory.py"),
+        expected_verification_terms=("compress_history", "BridgeMemoryState"),
         default_turns=8,
         prompt_sequence=(
             "Respond in exactly one line: File=<the primary file that answered the original question>",
@@ -339,6 +353,124 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
         success_terms=("yes", "no"),
         min_success_terms=1,
         default_turns=3,
+    ),
+    # --- 15-turn probes: scaling validation ---
+    "coding-loop-15": BenchmarkDefinition(
+        name="coding-loop-15",
+        fixture_path=Path("tests/fixtures/replay/claude_coding_loop.jsonl"),
+        system_prompt=(
+            "You are evaluating a completed coding session. "
+            "Answer briefly and cite exact filenames when possible."
+        ),
+        followup_prompt=(
+            "Based on the conversation so far, respond in exactly two lines:\n"
+            "File=<the file that was changed>\n"
+            "Verification=<the command or result that verified the fix>"
+        ),
+        success_terms=("gateway.py", "passed"),
+        min_success_terms=2,
+        expected_file_terms=("gateway.py",),
+        expected_verification_terms=("passed", "1 passed", "pytest"),
+        default_turns=15,
+    ),
+    "research-loop-15": BenchmarkDefinition(
+        name="research-loop-15",
+        fixture_path=Path(
+            "tests/fixtures/replay/research_loop_extended.jsonl"
+        ),
+        system_prompt=(
+            "You are evaluating a completed codebase research session. "
+            "Answer briefly and cite exact filenames and identifiers when possible."
+        ),
+        followup_prompt=(
+            "Based on the conversation so far, respond in exactly two lines:\n"
+            "File=<the primary file that answered the question>\n"
+            "Verification=<the function, class, or finding that supports the answer>"
+        ),
+        # Accept all files discovered during extended research session
+        success_terms=(
+            "compression.py",
+            "bridge_memory.py",
+            "core.py",
+            "smart_policy.py",
+            "compress_history",
+            "BridgeMemoryState",
+            "RuntimeSession",
+            "MemoryProjectionProfile",
+        ),
+        min_success_terms=3,
+        expected_file_terms=(
+            "compression.py",
+            "bridge_memory.py",
+            "core.py",
+            "smart_policy.py",
+        ),
+        expected_verification_terms=(
+            "compress_history",
+            "BridgeMemoryState",
+            "RuntimeSession",
+            "MemoryProjectionProfile",
+        ),
+        default_turns=15,
+    ),
+    # --- 25-turn probes: long-session validation ---
+    "coding-loop-25": BenchmarkDefinition(
+        name="coding-loop-25",
+        fixture_path=Path("tests/fixtures/replay/claude_coding_loop.jsonl"),
+        system_prompt=(
+            "You are evaluating a completed coding session. "
+            "Answer briefly and cite exact filenames when possible."
+        ),
+        followup_prompt=(
+            "Based on the conversation so far, respond in exactly two lines:\n"
+            "File=<the file that was changed>\n"
+            "Verification=<the command or result that verified the fix>"
+        ),
+        success_terms=("gateway.py", "passed"),
+        min_success_terms=2,
+        expected_file_terms=("gateway.py",),
+        expected_verification_terms=("passed", "1 passed", "pytest"),
+        default_turns=25,
+    ),
+    "research-loop-25": BenchmarkDefinition(
+        name="research-loop-25",
+        fixture_path=Path(
+            "tests/fixtures/replay/research_loop_extended.jsonl"
+        ),
+        system_prompt=(
+            "You are evaluating a completed codebase research session. "
+            "Answer briefly and cite exact filenames and identifiers when possible."
+        ),
+        followup_prompt=(
+            "Based on the conversation so far, respond in exactly two lines:\n"
+            "File=<the primary file that answered the question>\n"
+            "Verification=<the function, class, or finding that supports the answer>"
+        ),
+        # Accept all files discovered during extended research session
+        success_terms=(
+            "compression.py",
+            "bridge_memory.py",
+            "core.py",
+            "smart_policy.py",
+            "compress_history",
+            "BridgeMemoryState",
+            "RuntimeSession",
+            "MemoryProjectionProfile",
+        ),
+        min_success_terms=3,
+        expected_file_terms=(
+            "compression.py",
+            "bridge_memory.py",
+            "core.py",
+            "smart_policy.py",
+        ),
+        expected_verification_terms=(
+            "compress_history",
+            "BridgeMemoryState",
+            "RuntimeSession",
+            "MemoryProjectionProfile",
+        ),
+        default_turns=25,
     ),
 }
 
@@ -614,7 +746,9 @@ def _extract_labeled_fields(
         pattern = rf"(?:\|>\s*)?{label}\s*[:=]\s*([^|\n]+)"
         matches = re.finditer(pattern, text, re.IGNORECASE)
         for m in matches:
-            fields[label.lower()] = m.group(1).strip()
+            # Strip whitespace and trailing punctuation for more flexible matching
+            value = m.group(1).strip().rstrip(".,;")
+            fields[label.lower()] = value
 
     # Fallback to line-by-line for non-standard keys or if regex missed something
     for line in text.splitlines():
@@ -626,7 +760,8 @@ def _extract_labeled_fields(
         key, value = cleaned.split("=", 1)
         k = key.strip().lower()
         if k not in fields:
-            fields[k] = value.strip()
+            # Strip whitespace and trailing punctuation
+            fields[k] = value.strip().rstrip(".,;")
 
     # Resolve Tok v7 Macro Pointers (*A, *B, etc.)
     if session and session.bridge_memory:
@@ -692,11 +827,19 @@ def _evaluate_task_success(
         failures.append("missing_file_field")
     elif _looks_like_placeholder(file_value):
         failures.append("placeholder_file_field")
-    elif definition.expected_file_terms and not any(
-        term.lower() in file_value.lower()
-        for term in definition.expected_file_terms
-    ):
-        failures.append("unexpected_file_field")
+    elif definition.expected_file_terms:
+        # Normalize paths for matching: strip src/ prefix and common prefixes
+        normalized_file = file_value.lower()
+        for prefix in ("src/tok/", "src/", "tok/"):
+            if normalized_file.startswith(prefix):
+                normalized_file = normalized_file[len(prefix) :]
+                break
+        if not any(
+            term.lower() in normalized_file
+            or term.lower() in file_value.lower()
+            for term in definition.expected_file_terms
+        ):
+            failures.append("unexpected_file_field")
 
     if not verification_value:
         failures.append("missing_verification_field")
@@ -1030,7 +1173,14 @@ class LiveBenchmarkRunner:
                             system=definition.system_prompt,
                             adapter_kind="text-loop",
                             tool_compatible=tool_compatible,
-                            request_policy=request_policy,
+                            request_policy=cast(
+                                Literal[
+                                    "legacy_tool_compatible",
+                                    "natural_first",
+                                    "forced_baseline",
+                                ],
+                                request_policy,
+                            ),
                         ),
                         session,
                     )

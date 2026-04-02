@@ -10,7 +10,8 @@ import os
 import re
 import time as time_module
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, cast, TypeAlias
+from collections.abc import Mapping
 
 from pydantic import (
     BaseModel,
@@ -86,6 +87,17 @@ class StableResultPayload(BaseModel):
             )
         return payload
 
+
+# Type alias for result cache entries (supports legacy formats)
+# Format: (content_hash, raw_content, timestamp) or legacy 2-tuple/1-tuple
+ResultCacheEntry: TypeAlias = (
+    tuple[str, str, float] | tuple[str, str] | tuple[str]
+)
+
+# Maximum number of entries in the result cache
+RESULT_CACHE_MAX_SIZE = 256
+
+# ---------------------------------------------------------------------------
 
 _CUT_REJECTION_REASONS = frozenset(
     {"non_user", "top_level_tool_result", "user_contains_tool_result_block"}
@@ -562,7 +574,7 @@ def tok_tool_result(
 def _apply_result_cache(
     raw: str,
     context: dict[str, Any],
-    result_cache: dict[str, tuple[str, str, float]],
+    result_cache: Mapping[str, ResultCacheEntry],
     compression_level: str = "balanced",
     bypass_cache: bool = False,
     ttl_seconds: int = 1800,
@@ -594,8 +606,9 @@ def _apply_result_cache(
     cached_entry = result_cache.get(cache_key)
 
     if cached_entry is None:
+        logger.debug("result_cache_miss: key=%s tool=%s", cache_key, tool_name)
         return _store_cache_entry(
-            result_cache,
+            dict(result_cache),
             cache_key,
             raw_text,
             raw,
@@ -610,9 +623,10 @@ def _apply_result_cache(
         cached_entry
     )
 
-    if entry_length == 3 and _is_cache_entry_stale(timestamp, ttl_seconds):
+    # Check staleness for entries with timestamps (3-tuple) or legacy entries (1/2-tuple)
+    if _is_cache_entry_stale(timestamp, ttl_seconds):
         return _store_cache_entry(
-            result_cache,
+            dict(result_cache),
             cache_key,
             raw_text,
             raw,
@@ -624,6 +638,7 @@ def _apply_result_cache(
         )
 
     cached_raw_text = str(cached_raw or "")
+    logger.debug("result_cache_hit: key=%s tool=%s", cache_key, tool_name)
     return _process_cache_hit(
         raw,
         raw_text,
@@ -632,7 +647,7 @@ def _apply_result_cache(
         normalized_tool_name,
         is_precision_read,
         is_file_like,
-        result_cache,
+        dict(result_cache),
         cache_key,
         entry_length,
         cached_hash,
@@ -650,7 +665,7 @@ def _build_cache_key(tool_name: Any, context: dict[str, Any]) -> str:
 
 
 def _store_cache_entry(
-    result_cache: dict[str, tuple[str, str, float]],
+    result_cache: dict[str, ResultCacheEntry],
     cache_key: str,
     raw_text: str,
     raw: str,
@@ -677,11 +692,22 @@ def _store_cache_entry(
 
 
 def _evict_cache_entry(
-    result_cache: dict[str, tuple[str, str, float]],
+    result_cache: dict[str, ResultCacheEntry],
 ) -> None:
-    if len(result_cache) > 256:
-        oldest = next(iter(result_cache))
-        del result_cache[oldest]
+    """Evict oldest cache entry when cache exceeds size limit.
+
+    Note: This operation is not atomic. If thread-safety is required,
+    callers must ensure external synchronization of result_cache.
+    """
+    while len(result_cache) > RESULT_CACHE_MAX_SIZE:
+        try:
+            oldest = next(iter(result_cache))
+            logger.debug(
+                "result_cache_evict: key=%s size=%d", oldest, len(result_cache)
+            )
+            del result_cache[oldest]
+        except StopIteration:
+            break
 
 
 def _unpack_cache_entry(
@@ -704,8 +730,21 @@ def _unpack_cache_entry(
 
 def _is_cache_entry_stale(timestamp: float | None, ttl_seconds: int) -> bool:
     if timestamp is None:
-        return False
+        # Legacy entries without timestamp are considered stale
+        # so they get refreshed with proper timestamps
+        return True
     return time_module.time() - timestamp > ttl_seconds
+
+
+def _is_content_hash_match(text_a: str, text_b: str) -> bool:
+    """Check if two texts have identical content hashes."""
+    if not text_a and not text_b:
+        return True
+    if not text_a or not text_b:
+        return False
+    hash_a = hashlib.sha256(text_a.encode()).hexdigest()[:8]
+    hash_b = hashlib.sha256(text_b.encode()).hexdigest()[:8]
+    return hash_a == hash_b
 
 
 def _process_cache_hit(
@@ -716,7 +755,7 @@ def _process_cache_hit(
     normalized_tool_name: str,
     is_precision_read: bool,
     is_file_like: bool,
-    result_cache: dict[str, tuple[str, str, float]],
+    result_cache: dict[str, ResultCacheEntry],
     cache_key: str,
     entry_length: int,
     cached_hash: str,
@@ -727,22 +766,16 @@ def _process_cache_hit(
     stub_text = raw_text.strip()
     host_stub_replayed = False
     if _should_replay_host_stub(
-        is_file_like, cached_raw_text, stub_text, raw_text
+        is_file_like,
+        cached_raw_text,
+        stub_text,
+        raw_text,
     ):
-        raw_text = cached_raw_text
-        raw = cached_raw
         host_stub_replayed = True
+        raw = cached_raw
+        raw_text = cached_raw_text
 
-    normalized_error = _normalize_error_content(raw_text)
-    content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
-
-    if normalized_error:
-        cached_normalized = _normalize_error_content(cached_raw_text)
-        if cached_normalized and cached_normalized == normalized_error:
-            stub = f">>> tool:{tool_name}|err:{normalized_error[5:-1]}|cached"
-            return stub, len(raw_text) - len(stub)
-
-    if content_hash == cached_hash:
+    if _is_content_hash_match(raw_text, cached_raw_text):
         return _serve_cached_content_hash_match(
             raw,
             raw_text,
@@ -759,6 +792,15 @@ def _process_cache_hit(
             host_stub_replayed,
             compression_level,
         )
+
+    normalized_error = _normalize_error_content(raw_text)
+    content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
+
+    if normalized_error:
+        cached_normalized = _normalize_error_content(cached_raw_text)
+        if cached_normalized and cached_normalized == normalized_error:
+            stub = f">>> tool:{tool_name}|err:{normalized_error[5:-1]}|cached"
+            return stub, len(raw_text) - len(stub)
 
     old_lines = cached_raw_text.splitlines(keepends=True)
     new_lines = raw_text.splitlines(keepends=True)
@@ -779,6 +821,16 @@ def _process_cache_hit(
         )
 
     if not diff_lines or len(diff_text) >= 0.7 * len(raw_text):
+        # Verify content is actually identical when diff is empty
+        # (empty diff can occur for files differing only in trailing newlines)
+        if not diff_lines and content_hash != cached_hash:
+            # Content differs but diff is empty (edge case with trailing newlines)
+            # Treat as changed content
+            pass
+        elif not diff_lines:
+            # Content is truly identical - return unchanged stub
+            stub = f">>> tool:{tool_name}|unchanged|cached"
+            return stub, len(raw_text) - len(stub)
         if normalized_error:
             stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
             saved = len(raw_text) - len(stub)
@@ -813,11 +865,7 @@ def _process_cache_hit(
         "edit_file",
         "write_file",
     ):
-        stripped_diff = [
-            l
-            for l in diff_lines
-            if not l.startswith(" ") or l.startswith(("---", "+++"))
-        ]
+        stripped_diff = [l for l in diff_lines if not l.startswith(" ")]
         diff_text = "".join(stripped_diff)
 
     result = header + "\n" + diff_text
@@ -849,7 +897,7 @@ def _serve_cached_content_hash_match(
     normalized_tool_name: str,
     is_precision_read: bool,
     is_file_like: bool,
-    result_cache: dict[str, tuple[str, str, float]],
+    result_cache: dict[str, ResultCacheEntry],
     cache_key: str,
     entry_length: int,
     cached_hash: str,
@@ -859,29 +907,23 @@ def _serve_cached_content_hash_match(
 ) -> tuple[str, int]:
     current_time = time_module.time()
     if is_precision_read:
-        if host_stub_replayed and entry_length == 3:
-            result_cache[cache_key] = (
-                cached_hash,
-                cached_raw,
-                current_time,
-            )
-        else:
-            result_cache[cache_key] = (
-                cached_hash,
-                raw,
-                current_time,
-            )
-        return raw, 0
+        # For precision reads, return the content we want to use
+        # If host_stub_replayed, use cached_raw (actual content), not raw (stub)
+        content_to_return = cached_raw if host_stub_replayed else raw
+        result_cache[cache_key] = (
+            cached_hash,
+            content_to_return,
+            current_time,
+        )
+        return content_to_return, 0
 
     if normalized_tool_name in FILE_LIKE_TOOLS:
         payload = _build_stable_result_payload(
             raw_text,
             tool_name,
             host_stub_replayed,
-            precision_read=is_precision_read,
         )
-        if payload is not None:
-            return payload, len(raw_text) - len(payload)
+        return payload, len(raw_text) - len(payload)
 
     stub = f">>> tool:{tool_name}|unchanged|cached"
     if context.get("path"):
@@ -893,9 +935,7 @@ def _build_stable_result_payload(
     raw_text: str,
     tool_name: Any,
     host_stub_replayed: bool,
-    *,
-    precision_read: bool,
-) -> str | None:
+) -> str:
     try:
         from ..runtime.repeat_targets import (
             build_file_skeleton,
@@ -915,15 +955,17 @@ def _build_stable_result_payload(
                 "summary": summary,
                 "skeleton": skeleton,
                 "replayed_cached_bytes": host_stub_replayed,
-                "precision_read": precision_read,
             }
         ).render()
         return payload
     except ValidationError:
-        stub = f">>> tool:{tool_name}|stable_payload_validation_failed"
-        return stub
-    except Exception:
-        return None
+        logger.debug("stable_payload_validation_failed for tool %s", tool_name)
+        return f">>> tool:{tool_name}|stable_payload_validation_failed"
+    except Exception as e:
+        logger.debug(
+            "stable_payload_build_failed for tool %s: %s", tool_name, e
+        )
+        return f">>> tool:{tool_name}|stable_payload_build_failed"
 
 
 def _apply_file_cache(
@@ -944,6 +986,9 @@ def _make_semantic_cache_key(
         return None
     tool_name = context.get("name", "")
     raw_args = context.get("args") or context.get("path") or ""
+    # Return None if context has no meaningful content
+    if not tool_name and not raw_args:
+        return None
     args_for_hash: dict[str, Any]
     if isinstance(raw_args, dict):
         args_for_hash = {
@@ -1012,7 +1057,10 @@ def _make_semantic_cache_key(
 
 def compress_tool_results(
     messages: list[dict[str, Any]],
-    result_cache: dict[str, tuple[str, str, float]] | None = None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,

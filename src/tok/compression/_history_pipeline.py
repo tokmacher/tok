@@ -30,7 +30,7 @@ from . import (
     logger,
     text_of,
 )
-from ._registry import build_default_registry
+from ._registry import build_default_registry, Compressor
 from ._tool_result_codecs import (
     _compress_config_json,
     _compress_env_ps,
@@ -522,7 +522,10 @@ def tok_tool_result_impl(
 
 def compress_tool_results_impl(
     messages: list[dict[str, Any]],
-    result_cache: dict[str, tuple[str, str, float]] | None = None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
@@ -913,7 +916,7 @@ def compress_recent_window_impl(
         return any(k in args for k in ("offset", "limit", "start", "end"))
 
     breakdown: dict[str, int] = {}
-    compressors = {
+    compressors: dict[str, Compressor] = {
         "file": _compress_file_read,
         "grep": _compress_grep,
         "grep_context": _compress_grep_context,
@@ -950,7 +953,7 @@ def compress_recent_window_impl(
             compressor = compressors.get(kind)
             if compressor is None:
                 continue
-            compressed = compressor(content)
+            compressed: str = compressor(content)
             saved = len(content) - len(compressed)
             if saved <= 0:
                 continue
@@ -990,11 +993,11 @@ def compress_recent_window_impl(
             compressor = compressors.get(kind)
             if compressor is None:
                 continue
-            compressed = compressor(raw)
-            saved = len(raw) - len(compressed)
+            compressed_block: str = compressor(raw)
+            saved = len(raw) - len(compressed_block)
             if saved <= 0:
                 continue
             breakdown[kind] = breakdown.get(kind, 0) + saved
-            block["content"] = compressed
+            block["content"] = compressed_block
 
     return messages, breakdown

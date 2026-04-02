@@ -757,7 +757,9 @@ def _analyze_events(
     workspace_root: Path,
     source_classification: _SourceClassification,
 ) -> list[DedupOpportunity]:
-    result_cache: dict[str, tuple[str, str, float]] = {}
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ] = {}
     semantic_hash_cache: dict[str, str] = {}
     last_by_identity: dict[str, dict[str, Any]] = {}
     last_by_logical_target: dict[str, dict[str, Any]] = {}

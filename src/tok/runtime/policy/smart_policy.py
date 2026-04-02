@@ -184,6 +184,19 @@ def _make_policy(
             fact_limit=1,
             field_order=CANONICAL_WIRE_FIELD_ORDER,
         ),
+        # tok-minimal mode: preserve more context than aggressive to improve task success
+        "minimal": MemoryProjectionProfile(
+            field_limits={
+                "files": 3,
+                "cmds": 2,
+                "tests": 2,
+                "errs": 2,
+                "constraints": 2,
+            },
+            question_limit=2,
+            fact_limit=3,
+            field_order=CANONICAL_WIRE_FIELD_ORDER,
+        ),
         "balanced": MemoryProjectionProfile(
             field_limits={
                 "files": 3,
@@ -225,6 +238,28 @@ def _make_policy(
                 "constraints",
                 "tests",
                 "cmds",
+                "files",
+                "goal",
+                "next",
+            ],
+        },
+        # tok-minimal mode: preserve more context, especially goal and files
+        "minimal": {
+            "files": 3,
+            "cmds": 2,
+            "tests": 2,
+            "errs": 2,
+            "constraints": 2,
+            "questions": 2,
+            "facts": 3,
+            "_max_chars": 600,
+            "_drop_priority": [
+                "questions",
+                "constraints",
+                "tests",
+                "cmds",
+                "facts",
+                "errs",
                 "files",
                 "goal",
                 "next",
@@ -275,6 +310,7 @@ def _make_policy(
         "aggressive": "aggressive",
         "balanced": "balanced",
         "recovery": "recovery",
+        "minimal": "aggressive",  # Use aggressive tool compression but keep more memory
     }
     return SmartZonePolicy(
         family=family,

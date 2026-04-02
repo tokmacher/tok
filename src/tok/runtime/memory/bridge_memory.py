@@ -91,6 +91,10 @@ DURABLE_LIMITS = {
     "facts": 32,
 }
 
+# Hard caps on total entries across all fields in each bucket
+HOT_TOTAL_CAP = 60
+DURABLE_TOTAL_CAP = 200
+
 
 _SECTION_HEADERS: dict[str, str] = {
     "@h": "h",
@@ -589,9 +593,7 @@ class BridgeMemoryState:
         for fact in file_facts:
             if fact.value.startswith("file[") and ":" in fact.value:
                 # Parse: file[path]:LINE_COUNT|digest|~TOKENS
-                bracket_end = (
-                    fact.value.index("]", 5) if "]" in fact.value[5:] else -1
-                )
+                bracket_end = fact.value.find("]", 5)
                 if bracket_end < 0:
                     continue
                 path = fact.value[5:bracket_end]
@@ -599,12 +601,18 @@ class BridgeMemoryState:
                 if colon_idx < 0:
                     continue
                 rest = fact.value[colon_idx + 1 :]
-                # Extract LINE_COUNT|~TOKENS (skip digest)
+                # Extract LINE_COUNT|~TOKENS (skip digest which may contain |)
+                # Format: LINE_COUNT|digest|~TOKENS where digest may contain |
                 if "|" in rest:
                     parts = rest.split("|")
                     if len(parts) >= 3:
                         line_count = parts[0]
-                        tokens = parts[2]  # ~TOKENS
+                        # tokens is the last part (starts with ~)
+                        tokens = (
+                            parts[-1]
+                            if parts[-1].startswith("~")
+                            else parts[2]
+                        )
                         freshness_lookup[path] = f"{line_count}|{tokens}"
 
         file_values = []
@@ -631,10 +639,15 @@ class BridgeMemoryState:
     ) -> None:
         """Emit facts directly into state_parts."""
         for fact in file_facts:
-            if not any(
-                fact.value.startswith(f"file[{p}]") for p in listed_files
-            ):
-                state_parts.append(fact.value)
+            # Extract path from fact value: file[path]:...
+            val = fact.value
+            if val.startswith("file[") and "]" in val:
+                bracket_end = val.index("]")
+                path = val[5:bracket_end]
+                if path not in listed_files:
+                    state_parts.append(val)
+            else:
+                state_parts.append(val)
         for fact in other_facts:
             state_parts.append(fact.value)
 
@@ -647,10 +660,15 @@ class BridgeMemoryState:
     ) -> None:
         """Emit facts with pointer compression (fallback path)."""
         for fact in file_facts:
-            if not any(
-                fact.value.startswith(f"file[{p}]") for p in listed_files
-            ):
-                state_parts.append(fact.value)
+            # Extract path from fact value: file[path]:...
+            val = fact.value
+            if val.startswith("file[") and "]" in val:
+                bracket_end = val.index("]")
+                path = val[5:bracket_end]
+                if path not in listed_files:
+                    state_parts.append(val)
+            else:
+                state_parts.append(val)
         for fact in other_facts:
             val = fact.value
             if ":" in val:
@@ -820,6 +838,10 @@ class BridgeMemoryState:
         """Extract a semantically dense ≤160-char digest from file content."""
         lines = text.splitlines()
 
+        # Handle empty file edge case
+        if not lines or not any(l.strip() for l in lines):
+            return "(empty file)"
+
         if was_edited:
             sigs = [
                 l.strip()
@@ -953,27 +975,39 @@ class BridgeMemoryState:
         """
         result: dict[str, str] = {}
         for entry in self.hot.get("facts", []):
-            if entry.value.startswith("file["):
-                bracket_end = (
-                    entry.value.index("]", 5) if "]" in entry.value[5:] else -1
-                )
-                if bracket_end < 0:
-                    continue
-                path = entry.value[5:bracket_end]
-                colon_idx = entry.value.find(":", bracket_end)
-                if colon_idx < 0:
-                    continue
+            # Defensive validation: ensure entry starts with expected prefix
+            if not entry.value.startswith("file["):
+                continue
+            bracket_end = entry.value.find("]", 5)
+            if bracket_end < 0:
+                continue
+            path = entry.value[5:bracket_end]
+            colon_idx = entry.value.find(":", bracket_end)
+            if colon_idx < 0:
+                continue
 
-                rest = entry.value[colon_idx + 1 :]
-                # Handle new format: LINE_COUNT|digest|~tokens
-                if "|" in rest:
-                    parts = rest.split("|")
-                    if len(parts) >= 2:
-                        digest = parts[1]  # digest is the second part
+            rest = entry.value[colon_idx + 1 :]
+            # Handle new format: LINE_COUNT|digest|~tokens
+            # Digest may contain |, so we take parts[1] through parts[-2] as digest
+            # or just parts[1] if only 3 parts exist
+            if "|" in rest:
+                parts = rest.split("|")
+                if len(parts) >= 2:
+                    # digest is between LINE_COUNT and ~tokens
+                    # If last part starts with ~, digest is parts[1] (or parts[1:-1] joined)
+                    if len(parts) >= 3 and parts[-1].startswith("~"):
+                        digest = (
+                            "|".join(parts[1:-1])
+                            if len(parts) > 3
+                            else parts[1]
+                        )
+                    else:
+                        digest = parts[1]
+                    if digest:  # Only store non-empty digests
                         result[path] = digest
-                else:
-                    # Legacy format: just digest
-                    result[path] = rest
+            else:
+                # Legacy format: just digest
+                result[path] = rest
         return result
 
     def record_hypothesis(self, text: str) -> bool:
@@ -1175,9 +1209,6 @@ class BridgeMemoryState:
                 trimmed_durable += max(0, before - len(self.durable[field]))
 
         # Then apply hard caps on total entries
-        HOT_TOTAL_CAP = 60
-        DURABLE_TOTAL_CAP = 200
-
         self.hot, hot_trimmed = self._trim_bucket_to_cap(
             self.hot, HOT_TOTAL_CAP
         )

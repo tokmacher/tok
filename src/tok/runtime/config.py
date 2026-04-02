@@ -11,6 +11,11 @@ RESULT_CACHE_TTL_SECONDS: int = int(os.getenv("TOK_RESULT_CACHE_TTL", "1800"))
 # Consecutive fail-open events in a session that trigger automatic baseline degradation.
 _FALLBACK_THRESHOLD: int = int(os.getenv("TOK_FALLBACK_THRESHOLD", "3"))
 
+# Short session threshold: sessions with fewer turns use baseline mode to avoid overhead.
+_SHORT_SESSION_THRESHOLD: int = int(
+    os.getenv("TOK_SHORT_SESSION_THRESHOLD", "8")
+)
+
 # Known project-type marker filenames used for Local Mesh Discovery.
 _PROJECT_MARKER_FILES: frozenset[str] = frozenset(
     {
@@ -184,6 +189,7 @@ __all__ = [
     "TTL_SECONDS",
     "RESULT_CACHE_TTL_SECONDS",
     "_FALLBACK_THRESHOLD",
+    "_SHORT_SESSION_THRESHOLD",
     "_PROJECT_MARKER_FILES",
     "TOOL_DENSITY_THRESHOLD",
     "TOOL_VOLUME_HEAVY_BYTES",

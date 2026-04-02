@@ -5,45 +5,88 @@
 [![Python](https://img.shields.io/pypi/pyversions/tok-protocol.svg)](https://pypi.org/project/tok-protocol/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Tok is a high-density, BPE-aligned wire protocol that cuts LLM token costs by ~50% without altering your workflow.**
+**Tok cuts LLM token costs by ~50%+ without altering your workflow.**
 
-This repository contains the Tok protocol and its first official implementation: an invisible, bridge-first CLI for **Claude Code**. It intercepts standard LLM traffic, translates verbose JSON/Markdown into highly compressed Tok sigils over the wire, and perfectly re-hydrates it for the user.
+Savings come primarily from **input token compression** (prompt/context optimization) with additional savings from response compression. Since most providers charge different rates for input vs output tokens, your actual cost reduction depends on your provider's pricing structure.
 
-The result is an O(1) rolling state that expands your effective context window, preserves useful working memory, and makes token savings visible immediately.
+Tok is an invisible bridge that sits between Claude Code and the model API. It compresses conversations on the way out and re-hydrates them on the way back. You use Claude exactly as before — Tok runs underneath, saving tokens automatically.
 
-Tok also learns from your (Claude's) usage patterns to optimize compression strategies over time.
+## Who Is Tok For?
 
-Tok is an invisible bridge that lets you do more without getting in the way.
+- **Individual developers** using Claude Code who want to reduce token costs
+- **Teams** with shared API budgets looking to stretch their token allowances
+- **Power users** who work on long-running sessions where context accumulates
 
-The first open-source release is intentionally narrow:
+If you already use Claude Code, Tok works out of the box. No workflow changes required.
 
-- install a Python package
-- add the `claude()` shell wrapper
-- start the bridge
-- use Claude normally
-- check `tok bridge status`, `tok doctor`, and `tok stats`
-- stop the bridge cleanly
+## What Tok Does
 
-The default CLI help is intentionally narrow too. For `0.1.0`, the main public
-commands are `tok install`, `tok bridge ...`, `tok doctor`, `tok stats`, and the
-compatibility alias `tok savings`.
+Tok intercepts LLM traffic and applies deterministic compression:
+
+- **Semantic deduplication**: Repeated file reads, search results, and tool outputs are cached and stubbed
+- **Delta compression**: Changed content shows only the diff, not the full payload
+- **Rolling state**: Conversation history compresses to O(1) size regardless of length
+- **Lossless round-trip**: Everything re-hydrates perfectly on the way back
+
+The result: ~50% fewer tokens sent to the model, with no visible change to your workflow.
+
+## Supported Workflow
+
+The first open-source release supports exactly this path:
+
+```bash
+pip install tok-protocol
+ tok install              # adds claude() shell wrapper
+tok bridge start         # starts the bridge on port 9090
+claude                   # use Claude exactly as before
+tok bridge status        # check bridge health
+tok doctor               # session diagnostics
+tok bridge stop          # stop cleanly
+tok stats                # view savings
+```
+
+After `tok install`, you run `claude` exactly as before. Tok intercepts traffic invisibly.
+
+The main CLI commands for `0.1.0` are: `tok install`, `tok bridge start|status|logs|stop`, `tok doctor`, and `tok stats`.
+
+## Using OpenRouter and Other Providers
+
+Tok works with any OpenAI-compatible API. To use OpenRouter:
+
+```bash
+# Set your OpenRouter API key
+export OPENROUTER_API_KEY=your_key_here
+
+# Configure Claude Code to use OpenRouter (in ~/.claude/config or environment)
+# Then start the bridge normally
+tok bridge start
+claude
+```
+
+Tok automatically detects the provider and applies compression. The same workflow works for:
+
+- **OpenRouter** — access to 100+ models through a single API
+- **DeepSeek** — set `DEEPSEEK_API_KEY` and configure your endpoint
+- **Qwen** — set `QWEN_API_KEY` and configure your endpoint
+- **Local models** — point Claude Code at your local inference server
+
+No configuration changes required in Tok itself. Just set up Claude Code with your provider as usual, then start the bridge.
 
 ## What Tok Is / Is Not
 
 **Tok is:**
 
-- A deterministic syntactic compression layer (it does not use lossy LLM summarization).
-- A bridge-first CLI optimized currently for Claude Code.
-- A safety-first workflow with visible fallback and degradation signals (Fail-Open).
+- A deterministic compression layer (no lossy LLM summarization)
+- A bridge-first CLI optimized for Claude Code
+- A safety-first workflow with visible fallback and degradation signals
 
 **Tok is not (yet):**
 
-- A broad multi-agent framework.
-- A fully polished SDK-first product for general Python usage.
-- A replacement for your existing tools (it runs invisibly underneath them).
+- A broad multi-agent framework
+- A general-purpose SDK for arbitrary Python applications
+- A replacement for your existing tools (it runs invisibly underneath them)
 
-The bridge is the supported public workflow today. The Python wrapper/SDK path exists,
-but it is still experimental and secondary.
+The bridge is the supported public workflow. A Python SDK path exists but is experimental.
 
 ## Demonstrated Savings
 
@@ -63,11 +106,13 @@ This output clearly illustrates the financial benefits and token efficiency of u
 Tok achieves its compression through several deterministic techniques:
 
 ### Semantic Deduplication
+
 - **Content hashing**: Identical tool results are detected via SHA-256 hashes and replaced with `>>> tool:name|unchanged|cached` stubs
 - **Delta compression**: Changed results show only the diff: `>>> tool:name|delta|changed_lines:5`
 - **Error normalization**: Similar errors collapse to canonical forms like `|err:enoent|`
 
 ### Macro System
+
 - **Pattern recognition**: Repeated command sequences are automatically learned as macros
 - **Cross-session persistence**: High-value macros survive bridge restarts and system reboots
 - **Cross-workflow reuse**: Macros learned in one project automatically apply to new projects
@@ -75,28 +120,33 @@ Tok achieves its compression through several deterministic techniques:
 - **Durable promotion**: High-value macros graduate from hot memory to durable storage
 
 ### Wire Protocol
+
 - **BPE-aligned sigils**: Single-character fields (`t:`, `g:`, `f:`) minimize token cost
 - **Structured state**: `>>> t:2|g:refactor|f:src/main.py|cmds:pytest` encodes context efficiently
 - **Lossless round-trip**: Tok state perfectly re-hydrates to original JSON/Markdown
 
 ### Memory Architecture
+
 - **Hot/durable buckets**: Recent context vs. long-term knowledge with different decay rates
 - **O(1) rolling state**: Constant-time updates regardless of conversation length
 - **Fail-open safety**: Automatic fallback to baseline if compression risks fidelity
 
 ### Pointer System
+
 - **Cross-reference tracking**: Automatically detects when files, functions, or concepts are referenced across the conversation
 - **Implicit graph building**: Maintains relationships between entities without explicit user annotation
 - **Context preservation**: Pointers ensure that when a file is mentioned later, its full context remains accessible
 - **Memory efficiency**: References are stored as lightweight pointers rather than duplicating content
 
 ### Semantic Validation System
+
 - **Invisible Pressure**: Quantifies protocol drift and cognitive overhead from repeated operations
 - **Memory Lift**: Measures knowledge accumulation through structured memory promotions
 - **Semantic Regression**: Detects when the model falls back to verbose, non-optimized responses
 - **Real-time monitoring**: Continuous validation ensures Tok maintains its compression benefits
 
 ### Code Analysis (Sifter)
+
 - **AST-based extraction**: Parses Python code to extract function signatures, type annotations, and structure
 - **Verbatim hashing**: Generates compact fingerprints for identical code blocks
 - **Structural analysis**: Identifies code patterns and relationships for intelligent compression
@@ -105,12 +155,15 @@ Tok achieves its compression through several deterministic techniques:
 ## Tok Syntax Examples
 
 ### Wire Protocol State
+
 ```tok
 >>> t:3|g:refactor|f:src/main.py|cmds:pytest|e:import_error
 ```
+
 - Turn 3, goal is refactor, working on src/main.py, ran pytest, encountered import error
 
 ### Semantic Deduplication
+
 ```tok
 # Original verbose result:
 >>> tool:view_file|path:src/utils.py|unchanged|cached
@@ -126,6 +179,7 @@ Tok achieves its compression through several deterministic techniques:
 ```
 
 ### Macro Usage
+
 ```tok
 # Learned macro for testing workflow:
 @run_tests(src="src/", coverage=True)
@@ -133,6 +187,7 @@ Tok achieves its compression through several deterministic techniques:
 ```
 
 ### Pointer System
+
 ```tok
 @pointers
   |> *A=src/main.py
@@ -144,6 +199,7 @@ f:*A|cmds:pytest|b:*C
 ```
 
 ### Memory State
+
 ```tok
 >>> t:5|g:implement_auth|f:*A,*B|cmds:npm_test|facts:*C handles JWT|next:add_middleware
 ```
@@ -153,10 +209,23 @@ f:*A|cmds:pytest|b:*C
 - Python `3.10+`
 - macOS or Linux
 - Claude Code installed and available as `claude`
-- a provider/API configuration that Claude Code can already use
+- An API key or provider configuration that Claude Code can already use
+
+## Model Provider Support
+
+Tok is validated and tested with:
+
+- **Anthropic Claude** (primary target)
+- **OpenAI GPT models**
+- **DeepSeek**
+- **Qwen**
+
+Other OpenAI-compatible providers may work but are untested. If you use a different provider, Tok will attempt compression but behavior is not guaranteed.
 
 `tok install` adds a `claude()` shell wrapper to `~/.zshrc` or `~/.bashrc`. It does
-not replace the real `tok` CLI.
+not replace the `tok` CLI itself.
+
+**Note**: Due to recent issues around usage limits within Claude Code, it has been occasionally difficult to verify consistent Tok behavior across tasks (particularly short-running ones).
 
 ## Install
 
@@ -278,22 +347,78 @@ tok stats
 
 Baseline prices are calculated using current Openrouter USD rates.
 
-## Experimental Python Recipe
+## Mode Selection Guidelines
 
-The SDK-facing path is available, but it is not the primary public workflow yet.
+Tok operates in several modes, each optimized for different scenarios:
 
-The minimal recipe is:
+### Available Modes
 
-1. create one `RuntimeSession`
-2. call `tok.wrap(...)`
-3. prepend `prepared.body["system"]` when present and append `prepared.body["messages"]`
-4. send the request through an OpenAI-compatible client
-5. call `tok.process(...)`
-6. reuse the same session on the next turn
+- **baseline**: No compression. Use for debugging or measuring Tok's impact.
+- **tok-minimal**: Lightweight compression with enhanced context preservation. Best for short sessions (5-10 turns).
+- **tok-native**: Standard Tok compression with structured memory. Good balance of savings and fidelity.
+- **tok-tool-compatible**: Maximum compression with tool-result caching. Best for long sessions (15+ turns) with repeated operations.
+- **tok-neuro**: Experimental mode with advanced macro learning. For power users with recurring workflows.
+
+### Automatic Mode Selection
+
+Tok automatically selects the optimal mode based on session characteristics:
+
+- **Short sessions (< 8 turns)**: Tok defaults to baseline to avoid compression overhead. The savings from compression don't outweigh the cost of maintaining structured state for very short conversations.
+- **Medium sessions (8-15 turns)**: Tok-minimal or tok-native modes provide good savings while preserving context.
+- **Long sessions (15+ turns)**: Tok-tool-compatible mode maximizes savings through aggressive caching and delta compression.
+
+### Manual Mode Override
+
+To manually select a mode:
+
+```bash
+TOK_MODE=tok-minimal tok bridge start
+claude
+```
+
+### Recommendations by Use Case
+
+| Use Case | Recommended Mode | Reason |
+|----------|-----------------|--------|
+| Quick questions (< 5 turns) | baseline | Overhead exceeds savings |
+| Bug investigation (5-15 turns) | tok-minimal | Preserves context while saving tokens |
+| Feature implementation (15-30 turns) | tok-native | Balanced savings and fidelity |
+| Large refactoring (30+ turns) | tok-tool-compatible | Maximum savings from repeated reads |
+| Recurring workflows (daily work) | tok-neuro | Learns and reuses macros |
+
+### When to Stay on Baseline
+
+Keep Tok in baseline mode if:
+- You're debugging Tok itself
+- You need exact token counts for pricing estimates
+- The session is very short (< 5 turns)
+- You're testing a new model provider
+
+### Switching Modes Mid-Session
+
+You can restart the bridge with a different mode at any time:
+
+```bash
+tok bridge stop
+TOK_MODE=tok-tool-compatible tok bridge start
+```
+
+The new mode applies to subsequent requests. Existing session state is preserved.
+
+## Experimental: Python SDK Path
+
+> **Note**: This path is experimental and not the primary workflow. The bridge-first CLI above is the supported release surface.
+
+For programmatic use outside Claude Code, Tok exposes a minimal SDK:
+
+1. Create one `RuntimeSession`
+2. Call `tok.wrap(...)` to prepare a request
+3. Send through your OpenAI-compatible client
+4. Call `tok.process(...)` on the response
+5. Reuse the same session for subsequent turns
 
 See [`examples/tok_wrap_example.py`](examples/tok_wrap_example.py) and
-[`examples/README.md`](examples/README.md). That is the only shipped example path for
-the first public release.
+[`examples/README.md`](examples/README.md).
 
 ## Docs Map
 
@@ -331,8 +456,7 @@ uv run mypy src/tok/
 
 ## Privacy
 
-Tok runs locally. No data leaves your machine except the model/API calls you would
-already make.
+Tok runs locally. No data leaves your machine except the model/API calls you would already make.
 
 ## License
 

@@ -811,6 +811,57 @@ def test_natural_first_escalates_on_invalid_tool_history_recovery(tmp_path):
     )
 
 
+def test_record_invalid_tool_history_recovery_tracks_blocked_flag():
+    """Test that blocked parameter is reflected in emitted signals."""
+    session = RuntimeSession()
+
+    # Successful recovery (not blocked)
+    signals = session.record_invalid_tool_history_recovery(blocked=False)
+    assert signals["tok_bridge_invalid_tool_history_recovery"] == 1
+    assert signals["tok_bridge_invalid_tool_history_blocked"] == 0
+
+    # Failed recovery (blocked)
+    signals = session.record_invalid_tool_history_recovery(blocked=True)
+    assert signals["tok_bridge_invalid_tool_history_recovery"] == 1
+    assert signals["tok_bridge_invalid_tool_history_blocked"] == 1
+
+
+def test_record_invalid_tool_history_recovery_clears_hot_state_on_repeat():
+    """Test that repeated recoveries clear specific hot state keys to prevent loops."""
+    session = RuntimeSession()
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot, "turns", "2", score_delta=3
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot, "cmds", "some_cmd", score_delta=1
+    )
+    session._last_tool_compatible_state = "previous_state"
+
+    # First recovery - no reset
+    signals = session.record_invalid_tool_history_recovery(blocked=False)
+    assert "tok_bridge_invalid_tool_history_session_reset" not in signals
+    assert session._invalid_tool_history_recovery_count == 1
+
+    # Second recovery - triggers reset of specific keys
+    signals = session.record_invalid_tool_history_recovery(blocked=True)
+    assert signals["tok_bridge_invalid_tool_history_session_reset"] == 1
+    assert session._last_tool_compatible_state == ""
+    # Only specific keys are cleared: turns, next, cmds, errs, blockers
+    assert session.bridge_memory.hot.get("turns", []) == []
+    assert session.bridge_memory.hot.get("cmds", []) == []
+
+
+def test_reset_invalid_tool_history_recovery_clears_counter():
+    """Test that reset clears the recovery counter."""
+    session = RuntimeSession()
+    session.record_invalid_tool_history_recovery(blocked=False)
+    session.record_invalid_tool_history_recovery(blocked=False)
+    assert session._invalid_tool_history_recovery_count == 2
+
+    session.reset_invalid_tool_history_recovery()
+    assert session._invalid_tool_history_recovery_count == 0
+
+
 def test_natural_first_escalates_on_repeated_tool_loop_signal(tmp_path):
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")

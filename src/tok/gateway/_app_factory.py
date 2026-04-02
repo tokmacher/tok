@@ -6,7 +6,7 @@ import asyncio  # noqa: F401
 import copy
 import json
 import random  # noqa: F401
-from typing import Any
+from typing import Any, Literal, cast
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -448,7 +448,14 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             ),
                             adapter_kind="claude-bridge",
                             tool_compatible=request_tool_compatible,
-                            request_policy=request_policy,
+                            request_policy=cast(
+                                Literal[
+                                    "legacy_tool_compatible",
+                                    "natural_first",
+                                    "forced_baseline",
+                                ],
+                                request_policy,
+                            ),
                             request_has_tools=bool(
                                 provider_safe_original_body.get("tools")
                             ),

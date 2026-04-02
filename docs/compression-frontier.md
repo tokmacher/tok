@@ -13,6 +13,15 @@ tok dev compression-frontier \
   --output tmp/compression_frontier
 ```
 
+## Supported Models
+
+The frontier harness works with any OpenRouter model. Tested models:
+
+| Model | coding-loop-5 | research-loop-8 | Notes |
+| --- | --- | --- | --- |
+| `deepseek/deepseek-v3.2` | stable | stable | Default model, reliable compression |
+| `z-ai/glm-5` | stable | degraded | 34% savings but research-loop-8 task failed |
+
 Artifacts:
 
 - `tmp/compression_frontier/compression_frontier_report.json`

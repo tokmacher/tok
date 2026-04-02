@@ -61,7 +61,13 @@ Recommended next steps:
 
 ### Savings are not obvious yet
 
-Very short sessions may not show clear savings immediately.
+Very short sessions (under 10-15 turns) may not show clear savings. Tok's compression benefits accumulate over longer conversations where repeated file reads, tool outputs, and context build up.
+
+For verification, sessions of 50+ turns typically show the validated 45-55% savings range. Shorter sessions may show lower or inconsistent savings due to:
+
+- Less opportunity for semantic deduplication
+- Fewer repeated tool calls to cache
+- Overhead from initial memory setup
 
 Check:
 

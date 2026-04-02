@@ -208,6 +208,7 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
             continue
 
         next_content = next_message.get("content")
+        assert isinstance(next_content, list), "next_content should be a list"
         user_tool_result_blocks = [
             copy.deepcopy(block)
             for block in next_content

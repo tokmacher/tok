@@ -150,7 +150,10 @@ def _track_file_read_repeats(
     file_reads_seen_raw: dict[str, int],
     file_reads_seen_logical: dict[str, int],
     repeat_file_read_ids: list[str],
-    result_cache: dict[str, tuple[str, str, float]] | None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None,
     bump: SignalBump,
 ) -> None:
     if family != "file_read" or logical_target == "path-missing":
@@ -271,7 +274,10 @@ def _is_cached_hit(
     tool_name: str,
     context: dict[str, Any],
     raw_content: str,
-    result_cache: dict[str, tuple[str, str, float]] | None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None,
 ) -> bool:
     if result_cache is None:
         return False
@@ -293,7 +299,10 @@ def _process_repeat_file_results(
     result_text: str,
     is_repeat_file: bool,
     file_reads_seen_logical: dict[str, int],
-    result_cache: dict[str, tuple[str, str, float]] | None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None,
     bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:
@@ -324,7 +333,10 @@ def _process_repeat_search_results(
     query: str,
     is_repeat_search: bool,
     searches_seen_logical: dict[str, int],
-    result_cache: dict[str, tuple[str, str, float]] | None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None,
     bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:
@@ -388,7 +400,10 @@ def _process_cached_tool_results(
     file_reads_seen_logical: dict[str, int],
     searches_seen_logical: dict[str, int],
     commands_seen_logical: dict[str, int],
-    result_cache: dict[str, tuple[str, str, float]] | None,
+    result_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None,
     bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:

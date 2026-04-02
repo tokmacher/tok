@@ -320,8 +320,15 @@ def test_load_benchmark_definition_supports_research_variant():
 
     assert definition.default_turns == 5
     assert definition.fixture_path.name == "research_loop.jsonl"
-    assert definition.expected_file_terms == ("compression.py",)
-    assert definition.expected_verification_terms == ("compress_history",)
+    # Accept both original (compression.py) and related (bridge_memory.py) findings
+    assert definition.expected_file_terms == (
+        "compression.py",
+        "bridge_memory.py",
+    )
+    assert definition.expected_verification_terms == (
+        "compress_history",
+        "BridgeMemoryState",
+    )
     prompts = _turn_prompts(definition, 5)
     assert "primary file that answered the original question" in prompts[0]
     assert (

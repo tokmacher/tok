@@ -1564,6 +1564,9 @@ def validate_anthropic_outgoing_bridge_body(body: dict[str, Any]) -> list[str]:
         return failures
 
     messages = body.get("messages")
+    if not isinstance(messages, list):
+        failures.append("messages_not_list")
+        return failures
     provider_risks = _collect_bridge_provider_sensitivity_risks(messages)
     if provider_risks.get(
         "provider_sensitive_large_tool_use_text_interleaving", 0

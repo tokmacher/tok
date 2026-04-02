@@ -37,6 +37,7 @@ from .config import (
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOK_STABLE_RESULT_INFO_HINT,
     TOOL_USE_DENSITY_THRESHOLD,
+    _SHORT_SESSION_THRESHOLD,
 )
 from .core import UniversalTokRuntime, logger
 from .memory.bridge_memory import clean_system_context
@@ -108,7 +109,7 @@ def observe_repeat_target_result_impl(
     if not text:
         return {}
     if tool_id:
-        session_self._observed_tool_result_ids.add(tool_id)
+        session_self._observed_tool_result_ids[tool_id] = None
 
     evidence_intent = resolve_evidence_intent(
         tool_name, path=path, query=query, command=command
@@ -397,6 +398,12 @@ def _resolve_effective_tool_compatible(
     if request.request_policy == "legacy_tool_compatible":
         return True, ["legacy_default"]
 
+    # Short session detection: avoid tok overhead for sessions < threshold turns
+    current_turn = session.bridge_memory.turn
+    if current_turn < _SHORT_SESSION_THRESHOLD:
+        behavior_signals["short_session_baseline_mode"] = 1
+        return False, ["short_session"]
+
     structured_tool_loop = any(
         behavior_signals.get(key, 0) > 0
         for key in (
@@ -502,7 +509,10 @@ def prepare_request_impl(
         jit_macro = session.bridge_memory.macro_registry.match_recent_sequence(
             recent_instructions
         )
-        threshold = int(os.getenv("TOK_JIT_HIT_THRESHOLD", "3"))
+        try:
+            threshold = int(os.getenv("TOK_JIT_HIT_THRESHOLD", "3"))
+        except ValueError:
+            threshold = 3  # Default fallback for invalid env var value
         if (
             jit_macro
             and jit_macro.hit_count >= threshold
@@ -517,7 +527,12 @@ def prepare_request_impl(
 
     _speculative_macro_hint: str | None = None
     if session.bridge_memory.load_global_macros:
-        _spec_threshold = int(os.getenv("TOK_SPECULATIVE_HIT_THRESHOLD", "2"))
+        try:
+            _spec_threshold = int(
+                os.getenv("TOK_SPECULATIVE_HIT_THRESHOLD", "2")
+            )
+        except ValueError:
+            _spec_threshold = 2  # Default fallback for invalid env var value
         _spec_names = [
             f"@{m.name}"
             for m in session.bridge_memory.macro_registry.macros.values()
@@ -576,7 +591,6 @@ def prepare_request_impl(
 
     normalized_tool_events = normalize_tool_events(translated_messages)
     runtime_hints: list[str] = []
-    resend_signals: dict[str, int] = {}
     injected_state_payload = ""
     history_skip_reason = ""
     should_skip_history = False
@@ -851,6 +865,12 @@ def prepare_request_impl(
             skip_reason = "stream_recovery_history_floor"
             history_skip_reason = skip_reason
             behavior_signals["stream_recovery_history_floor_applied"] = 1
+        elif session.bridge_memory.turn < _SHORT_SESSION_THRESHOLD:
+            # Short session: skip ALL compression to avoid overhead
+            should_skip_history = True
+            skip_reason = "short_session"
+            history_skip_reason = skip_reason
+            behavior_signals["short_session_history_skipped"] = 1
         else:
             should_skip_history, skip_reason = _should_skip_history_rewrite(
                 request.messages,
@@ -967,6 +987,34 @@ def prepare_request_impl(
                     recent = body["messages"]
                     tok_state = ""
                     recent_breakdown = {}
+                    # Immediate escalation: if natural_first and pairing safety degraded,
+                    # escalate to tool-compatible mode now rather than waiting for next turn
+                    if (
+                        request_policy == "natural_first"
+                        and not effective_tool_compatible
+                    ):
+                        effective_tool_compatible = True
+                        if not request_policy_escalated:
+                            request_policy_escalated = True
+                            behavior_signals["request_policy_escalations"] = 1
+                            behavior_signals[
+                                "request_policy_escalation_source_tool_recovery"
+                            ] = 1
+                        behavior_signals[
+                            "request_policy_reason_tool_recovery"
+                        ] = 1
+                        behavior_signals["request_policy_tool_compatible"] = (
+                            behavior_signals.get(
+                                "request_policy_natural_first", 0
+                            )
+                            + 1
+                        )
+                        behavior_signals["request_policy_natural_first"] = 0
+                        # Set recovery watch for sticky continuation
+                        session._request_policy_tool_recovery_watch_turns = max(
+                            session._request_policy_tool_recovery_watch_turns,
+                            TOK_REQUEST_POLICY_STICKY_TURNS,
+                        )
             for k, v in recent_breakdown.items():
                 type_breakdown[f"recent_{k}"] = (
                     type_breakdown.get(f"recent_{k}", 0) + v
@@ -974,7 +1022,7 @@ def prepare_request_impl(
 
         if not should_skip_history:
             if tok_state:
-                logger.error(
+                logger.info(
                     f"HISTORY WINNOWING SUCCESS: msgs {len(body['messages'])} -> {len(recent)}"
                 )
                 body["messages"] = recent
@@ -1016,41 +1064,48 @@ def prepare_request_impl(
             )
 
         if effective_tool_compatible:
-            (
-                injected_state_payload,
-                runtime_hints,
-                behavior_signals,
-                hot_hint_metrics,
-                processed_body,
-                resend_signals,
-                answer_ready,
-            ) = runtime_self._build_tool_compatible_resend(
-                request,
-                session,
-                session_memory,
-                history_skip_reason or skip_reason or None,
-                behavior_signals,
-                runtime_hints,
-                current_pressure=current_pressure,
-                hot_hint_metrics=hot_hint_metrics,
-                translated_messages=translated_messages,
-                should_skip_history=should_skip_history,
-                _recent_messages=recent,
-            )
-            body = _inject_system(
-                body,
-                injected_state_payload,
-                runtime_hints,
-                tool_compatible=True,
-                grammar=bool(request.grammar),
-                todo=request.todo or "",
-                deltas=bool(request.deltas),
-                pressure=current_pressure,
-                behavior_signals=behavior_signals,
-            )
+            if skip_reason == "short_session":
+                # Short session: skip ALL Tok additions to avoid overhead
+                behavior_signals["short_session_system_additions_skipped"] = 1
+            else:
+                (
+                    injected_state_payload,
+                    runtime_hints,
+                    behavior_signals,
+                    hot_hint_metrics,
+                    processed_body,
+                    resend_signals,
+                    answer_ready,
+                ) = runtime_self._build_tool_compatible_resend(
+                    request,
+                    session,
+                    session_memory,
+                    history_skip_reason or skip_reason or None,
+                    behavior_signals,
+                    runtime_hints,
+                    current_pressure=current_pressure,
+                    hot_hint_metrics=hot_hint_metrics,
+                    translated_messages=translated_messages,
+                    should_skip_history=should_skip_history,
+                    _recent_messages=recent,
+                )
+                body = _inject_system(
+                    body,
+                    injected_state_payload,
+                    runtime_hints,
+                    tool_compatible=True,
+                    grammar=bool(request.grammar),
+                    todo=request.todo or "",
+                    deltas=bool(request.deltas),
+                    pressure=current_pressure,
+                    behavior_signals=behavior_signals,
+                )
             has_answer_anchor = bool(
                 behavior_signals.get("answer_anchor_present", 0)
             )
+        elif skip_reason == "short_session":
+            # Short session: skip ALL Tok additions to avoid overhead
+            behavior_signals["short_session_system_additions_skipped"] = 1
         else:
             system_body = inject_system_additions(
                 body,

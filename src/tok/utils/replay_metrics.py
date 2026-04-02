@@ -72,11 +72,14 @@ def _process_replay_turn(
     token_counter: Callable[[str], int],
     replay_policy: Any,
     replay_state: Any,
-    file_cache: dict[str, tuple[str, str, float]],
     tool_compatible: bool,
     cumulative_user_turns: int,
     behavior_totals: dict[str, int],
     type_savings_tokens: dict[str, int],
+    file_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ]
+    | None = None,
 ) -> tuple[int, int, int, dict[str, int], dict[str, int], int, Any]:
     messages = _record_messages(record)
     if not messages:
@@ -213,7 +216,9 @@ def analyze_replay_fixture(session_file: str | Path) -> ReplayFixtureMetrics:
     token_counter = _token_counter()
     behavior_totals: dict[str, int] = defaultdict(int)
     type_savings_tokens: dict[str, int] = defaultdict(int)
-    file_cache: dict[str, tuple[str, str, float]] = {}
+    file_cache: dict[
+        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+    ] = {}
 
     total_before_tokens = 0
     total_after_tokens = 0
@@ -241,11 +246,11 @@ def analyze_replay_fixture(session_file: str | Path) -> ReplayFixtureMetrics:
                 token_counter,
                 replay_policy,
                 replay_state,
-                file_cache,
                 tool_compatible,
                 cumulative_user_turns,
                 behavior_totals,
                 type_savings_tokens,
+                file_cache,
             )
 
             total_before_tokens += before_tokens
