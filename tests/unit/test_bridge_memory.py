@@ -1,9 +1,9 @@
-from tok.bridge_memory import (
+from tok.runtime.memory.bridge_memory import (
     BridgeMemoryState,
     HOT_LIMITS,
     PROMOTION_THRESHOLDS,
 )
-from tok.smart_policy import MemoryProjectionProfile
+from tok.runtime.policy.smart_policy import MemoryProjectionProfile
 
 
 def test_bridge_memory_roundtrip():
@@ -290,7 +290,7 @@ def test_wire_state_unchanged_after_no_new_ingestion():
 
 def test_edited_field_has_lower_promotion_threshold_than_files():
     """edited threshold must be lower than files threshold so edited files promote faster."""
-    from tok.bridge_memory import PROMOTION_THRESHOLDS
+    from tok.runtime.memory.bridge_memory import PROMOTION_THRESHOLDS
 
     assert "edited" in PROMOTION_THRESHOLDS
     assert PROMOTION_THRESHOLDS["edited"] < PROMOTION_THRESHOLDS["files"]
@@ -437,7 +437,7 @@ def test_cache_stability_with_fragmented_updates():
 
 def test_question_decay_drops_low_score_untouched_questions():
     """Questions with score 1 and untouched must be dropped after decay."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
     mem = BridgeMemoryState()
     mem.record_hypothesis("is the bug in planner.py?")
@@ -452,7 +452,7 @@ def test_question_decay_drops_low_score_untouched_questions():
 
 def test_wire_state_is_stable_across_identical_turns():
     """Same memory state must produce identical wire_state() on repeat calls."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
     mem = BridgeMemoryState()
     mem.ingest_wire_state(
@@ -474,7 +474,7 @@ def test_wire_state_is_stable_across_identical_turns():
 
 def test_to_tok_is_stable_across_calls():
     """to_tok() must produce identical bytes on consecutive calls (no non-determinism)."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
     mem = BridgeMemoryState()
     mem.ingest_wire_state(">>> goal:audit|files:a.py,b.py|cmds:ruff,pytest")
@@ -494,7 +494,7 @@ def test_record_hypothesis_rejects_empty_text():
 
 def test_wire_state_field_ordering_is_deterministic():
     """Fields in wire_state must always appear in the same canonical order."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
     # Ingest in "random" order
     mem = BridgeMemoryState()
@@ -519,7 +519,7 @@ def test_wire_state_field_ordering_is_deterministic():
 
 def test_wire_state_respects_profile_limits():
     """Profile limits must override default HOT_LIMITS."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
     from tok.runtime.policy.smart_policy import MemoryProjectionProfile
 
     mem = BridgeMemoryState()
@@ -582,7 +582,7 @@ def test_edited_file_triggers_was_edited_digest_branch():
 
 def test_durable_facts_scale_to_new_limit():
     """Verify that we can hold 32 facts in durable memory and answer facts still win."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
     from tok.runtime.policy.smart_policy import MemoryProjectionProfile
 
     state = BridgeMemoryState()

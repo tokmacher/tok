@@ -17,7 +17,7 @@ def install(
     ] = False,
 ) -> None:
     """Install or remove the Tok shell wrapper that adds `claude()`."""
-    from .. import shell_integration
+    from ..utils import shell_integration
 
     try:
         if uninstall:

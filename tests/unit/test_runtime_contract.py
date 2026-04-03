@@ -1,4 +1,4 @@
-from tok.bridge_memory import BridgeMemoryState
+from tok.runtime.memory.bridge_memory import BridgeMemoryState
 from tok.universal_runtime import (
     RuntimeSession,
     normalize_tool_events,

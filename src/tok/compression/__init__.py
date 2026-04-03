@@ -303,29 +303,24 @@ QUESTION_PREFIXES = (
 )
 
 TOK_PROTOCOL_LAW = (
-    "[Tok law] No JSON, no prose. Use @Tool name= |> body. SNAP: |> SNAP\n"
+    "[Tok law] No JSON, no prose. Use @Tool name=: body. SNAP: SNAP\n"
 )
 
 TOK_OUTPUT_DIRECTIVE = """\
-[Tok Mode] >>> t:N|usr:X|agt:Y|state:Z
-@msg role:assistant |> Reply
-@Tool name=... |> args...
-Turn 2+: Omit header and @msg if mode unchanged. No prose.
+[Tok Mode] Natural responses allowed. No special formatting required.
+Reply normally using plain text. Use tools naturally when needed.
 """
 
 TOK_TOOL_COMPAT_DIRECTIVE = "Plain text. Tool calls only. Omit all headers.\n"
 
 TOK_OUTPUT_DIRECTIVE_MINIMAL = (
-    ">>> t:N|usr:X|agt:Y|state:Z\n@msg role:assistant |> Reply\n"
+    "[Tok Mode] Natural responses allowed. No special formatting required.\n"
 )
 
 TOK_OUTPUT_DIRECTIVE_REINFORCED = """\
 [Tok — PROTOCOL REINFORCEMENT]
-Recent responses show protocol drift. Strict compliance required:
-1. Start every response with the >>> line.
-2. Use @msg role:assistant |> for text.
-3. Use @Tool name=... |> for tool args.
-4. No raw markdown headers. No raw JSON tool blocks.
+Recent responses show protocol drift. Natural responses are required.
+Reply normally using plain text. No special formatting markers.
 """
 
 # Appended to the system prompt when @stable_result tokens appear in history.

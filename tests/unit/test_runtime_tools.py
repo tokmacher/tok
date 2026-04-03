@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 import tok.runtime.tools as runtime_tools
-from tok.runtime_tools import RuntimeToolExecutor, execute_normalized_tool
+from tok.runtime.tools import RuntimeToolExecutor, execute_normalized_tool
 from tok.universal_runtime import NormalizedToolEvent
 
 

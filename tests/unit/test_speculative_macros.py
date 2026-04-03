@@ -14,6 +14,7 @@ from tok.compression import (
     _STABLE_RESULT_EXPLANATION,
     _SEMANTIC_HASH_MIN_CHARS,
     compress_tool_results,
+    ResultCacheEntry,
 )
 from tok.analysis.prompt import MINIMAL_PULSE_PROMPT, TOK_EXPLORE_PROMPT
 from tok.runtime.config import (
@@ -21,7 +22,7 @@ from tok.runtime.config import (
     LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
 )
 from tok.runtime.pipeline.tool_processing import build_tool_use_id_to_context
-from tok.bridge_memory import BridgeMemoryState
+from tok.runtime.memory.bridge_memory import BridgeMemoryState
 from tok.neuro.ir import Instruction, Macro
 from tok.universal_runtime import (
     RuntimeRequest,
@@ -557,7 +558,7 @@ class TestResultCacheStablePayload:
             "    return 1\n" + ("# filler\n" * 400)
         )
         id_to_ctx = _make_id_to_context(tool_id, "Read", path)
-        result_cache: dict[str, tuple[str, str, float]] = {}
+        result_cache: dict[str, ResultCacheEntry] = {}
 
         # First pass seeds result_cache (file-like tool returns raw first time).
         compress_tool_results(
@@ -589,7 +590,7 @@ class TestResultCacheStablePayload:
                 "args": {"file_path": path, "offset": 10, "limit": 20},
             }
         }
-        result_cache: dict[str, tuple[str, str, float]] = {}
+        result_cache: dict[str, ResultCacheEntry] = {}
 
         compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
@@ -618,7 +619,7 @@ class TestResultCacheStablePayload:
                 "args": {"file_path": path, "offset": 10, "limit": 20},
             }
         }
-        result_cache: dict[str, tuple[str, str, float]] = {}
+        result_cache: dict[str, ResultCacheEntry] = {}
 
         # Seed with real content.
         compress_tool_results(
@@ -651,7 +652,7 @@ class TestResultCacheStablePayload:
             "    return 1\n" + ("# filler\n" * 400)
         )
         id_to_ctx = _make_id_to_context(tool_id, "Read", path)
-        result_cache: dict[str, tuple[str, str, float]] = {}
+        result_cache: dict[str, ResultCacheEntry] = {}
 
         compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
@@ -682,7 +683,7 @@ class TestResultCacheStablePayload:
         path = "src/tok/foo.py"
         content = "class A:\n    pass\n" + ("# filler\n" * 400)
         id_to_ctx = _make_id_to_context(tool_id, "Read", path)
-        result_cache: dict[str, tuple[str, str, float]] = {}
+        result_cache: dict[str, ResultCacheEntry] = {}
 
         compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
@@ -745,7 +746,7 @@ class TestPrecisionReadVerbatim:
                 "args": {"file_path": path, "offset": 10, "limit": 40},
             }
         }
-        result_cache: dict[str, tuple[str, str, float]] = {}
+        result_cache: dict[str, ResultCacheEntry] = {}
 
         result, _breakdown = compress_tool_results(
             messages,

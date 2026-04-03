@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
-from .. import shell_integration
+from ..utils import shell_integration
 
 console = Console()
 

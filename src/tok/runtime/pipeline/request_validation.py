@@ -44,6 +44,9 @@ _STRICT_FAILURE_SIGNAL_MAP = {
     "provider_sensitive_large_tool_use_text_interleaving": (
         "tok_bridge_strict_provider_sensitive_large_tool_use_text_interleaving"
     ),
+    "first_message_not_user": "tok_bridge_strict_first_message_not_user",
+    "missing_max_tokens": "tok_bridge_strict_missing_max_tokens",
+    "invalid_max_tokens": "tok_bridge_strict_invalid_max_tokens",
 }
 _INVALID_TOOL_HISTORY_FAILURES = frozenset(
     {
@@ -63,6 +66,18 @@ _RECOVERABLE_IMMEDIATE_PAIRING_FAILURES = frozenset(
         "assistant_tool_use_incomplete_next_tool_result_coverage",
         "tool_result_not_immediately_after_assistant_tool_use",
         "user_tool_result_after_text",
+        "tool_results_fragmented_across_user_messages",
+        "empty_message_content",
+        "empty_content_blocks",
+        "missing_max_tokens",
+        "invalid_max_tokens",
+    }
+)
+_NON_BLOCKING_OUTGOING_FAILURES = frozenset(
+    {
+        "missing_max_tokens",
+        "invalid_max_tokens",
+        "first_message_not_user",
     }
 )
 _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD = 16
@@ -950,6 +965,43 @@ def _process_bridged_message(
     return msg, changed
 
 
+def _normalize_assistant_block_order(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Reorder assistant message blocks: non-tool_use first, tool_use contiguous at end.
+
+    Enforces Anthropic's actual constraint: in every assistant message all
+    non-tool_use blocks (text, thinking, redacted_thinking, etc.) must come
+    before all tool_use blocks, and tool_use blocks must be contiguous.
+    """
+    changed = False
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role", "")).strip() != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+
+        non_tool_use: list[dict[str, Any]] = []
+        tool_use: list[dict[str, Any]] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use":
+                tool_use.append(block)
+            else:
+                non_tool_use.append(block)
+
+        reordered = non_tool_use + tool_use
+        if reordered != content:
+            message["content"] = reordered
+            changed = True
+
+    return messages, changed
+
+
 def canonicalize_anthropic_bridge_messages(
     messages: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
@@ -983,6 +1035,15 @@ def canonicalize_anthropic_bridge_messages(
             changed = True
         if msg is not None:
             canonical_path.append(msg)
+
+    canonical_path, order_changed = _normalize_assistant_block_order(
+        canonical_path
+    )
+    if order_changed:
+        changed = True
+        signals["tok_bridge_assistant_block_order_normalized"] = (
+            signals.get("tok_bridge_assistant_block_order_normalized", 0) + 1
+        )
 
     (
         canonical_path,
@@ -1154,6 +1215,91 @@ def _process_user_tool_results(
     return tool_result_count, ordered_match_count
 
 
+def _flush_pending_tool_uses(
+    risks: dict[str, int],
+    pending_tool_use_ids: list[str],
+) -> None:
+    """Add missing-tool-result risk for any unresolved pending tool uses."""
+    if pending_tool_use_ids:
+        risks["assistant_tool_use_missing_next_tool_result"] = risks.get(
+            "assistant_tool_use_missing_next_tool_result", 0
+        ) + len(pending_tool_use_ids)
+
+
+def _has_tool_result_blocks(content: list[dict[str, Any]]) -> bool:
+    """Return True if any content block is a tool_result."""
+    return any(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content
+    )
+
+
+def _check_fragmentation_risk(
+    content: list[dict[str, Any]],
+    pending_tool_use_ids: list[str],
+    awaiting_tool_results_for_message: bool,
+    user_already_responded: bool,
+    risks: dict[str, int],
+) -> None:
+    """Detect tool_results split across multiple user messages."""
+    if not (
+        awaiting_tool_results_for_message
+        and pending_tool_use_ids
+        and user_already_responded
+    ):
+        return
+    if _has_tool_result_blocks(content):
+        risks["tool_results_fragmented_across_user_messages"] = risks.get(
+            "tool_results_fragmented_across_user_messages", 0
+        ) + len(pending_tool_use_ids)
+
+
+def _evaluate_pending_coverage(
+    risks: dict[str, int],
+    pending_tool_use_ids: list[str],
+    tool_result_count: int,
+    matched_count: int,
+) -> None:
+    """Check whether pending tool_uses were fully covered by tool_results."""
+    if not pending_tool_use_ids:
+        return
+    if tool_result_count == 0 or matched_count == 0:
+        risks["assistant_tool_use_missing_next_tool_result"] = risks.get(
+            "assistant_tool_use_missing_next_tool_result", 0
+        ) + len(pending_tool_use_ids)
+    elif matched_count != len(pending_tool_use_ids):
+        risks["assistant_tool_use_incomplete_next_tool_result_coverage"] = (
+            risks.get(
+                "assistant_tool_use_incomplete_next_tool_result_coverage", 0
+            )
+            + len(pending_tool_use_ids)
+            - matched_count
+        )
+
+
+def _detect_thinking_between_tool_use(
+    content: list[dict[str, Any]],
+    risks: dict[str, int],
+) -> None:
+    """Detect thinking/redacted_thinking blocks interleaved between tool_use blocks.
+
+    This is a detection-only signal for telemetry: it catches cases where
+    normalization did not run (e.g., raw original body in fail-open path).
+    After normalization, this should never fire.
+    """
+    in_tool_run = False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "tool_use":
+            in_tool_run = True
+        elif block_type in {"thinking", "redacted_thinking"} and in_tool_run:
+            risks["thinking_between_tool_use"] = (
+                risks.get("thinking_between_tool_use", 0) + 1
+            )
+
+
 def _collect_bridge_tool_result_shape_risks(
     messages: list[dict[str, Any]],
 ) -> dict[str, int]:
@@ -1164,48 +1310,52 @@ def _collect_bridge_tool_result_shape_risks(
     risks: dict[str, int] = {}
     seen_tool_use_ids: set[str] = set()
     pending_tool_use_ids: list[str] = []
+    awaiting_tool_results_for_message: bool = False
+    user_already_responded_to_current_assistant: bool = False
 
-    for message in messages:
+    for _i, message in enumerate(messages):
         if not isinstance(message, dict):
-            if pending_tool_use_ids:
-                risks["assistant_tool_use_missing_next_tool_result"] = (
-                    risks.get("assistant_tool_use_missing_next_tool_result", 0)
-                    + len(pending_tool_use_ids)
-                )
+            _flush_pending_tool_uses(risks, pending_tool_use_ids)
             pending_tool_use_ids = []
+            awaiting_tool_results_for_message = False
             continue
 
         role = str(message.get("role", "")).strip()
         content = message.get("content")
 
         if role == "assistant":
-            if pending_tool_use_ids:
-                risks["assistant_tool_use_missing_next_tool_result"] = (
-                    risks.get("assistant_tool_use_missing_next_tool_result", 0)
-                    + len(pending_tool_use_ids)
-                )
+            _flush_pending_tool_uses(risks, pending_tool_use_ids)
+            if isinstance(content, list):
+                _detect_thinking_between_tool_use(content, risks)
             pending_tool_use_ids = _process_assistant_tool_ids(
                 content, seen_tool_use_ids
             )
+            awaiting_tool_results_for_message = bool(pending_tool_use_ids)
+            user_already_responded_to_current_assistant = False
             continue
 
         if role != "user":
-            if pending_tool_use_ids:
-                risks["assistant_tool_use_missing_next_tool_result"] = (
-                    risks.get("assistant_tool_use_missing_next_tool_result", 0)
-                    + len(pending_tool_use_ids)
-                )
+            _flush_pending_tool_uses(risks, pending_tool_use_ids)
             pending_tool_use_ids = []
+            awaiting_tool_results_for_message = False
             continue
 
         if isinstance(content, str) or not isinstance(content, list):
-            if pending_tool_use_ids:
-                risks["assistant_tool_use_missing_next_tool_result"] = (
-                    risks.get("assistant_tool_use_missing_next_tool_result", 0)
-                    + len(pending_tool_use_ids)
-                )
+            _flush_pending_tool_uses(risks, pending_tool_use_ids)
             pending_tool_use_ids = []
+            awaiting_tool_results_for_message = False
             continue
+
+        _check_fragmentation_risk(
+            content,
+            pending_tool_use_ids,
+            awaiting_tool_results_for_message,
+            user_already_responded_to_current_assistant,
+            risks,
+        )
+
+        if _has_tool_result_blocks(content):
+            user_already_responded_to_current_assistant = True
 
         (
             tool_result_count,
@@ -1213,33 +1363,16 @@ def _collect_bridge_tool_result_shape_risks(
         ) = _process_user_tool_results(
             content, seen_tool_use_ids, pending_tool_use_ids, risks
         )
-        if pending_tool_use_ids and tool_result_count == 0:
-            risks["assistant_tool_use_missing_next_tool_result"] = risks.get(
-                "assistant_tool_use_missing_next_tool_result", 0
-            ) + len(pending_tool_use_ids)
-        elif pending_tool_use_ids and matched_pending_tool_use_count == 0:
-            risks["assistant_tool_use_missing_next_tool_result"] = risks.get(
-                "assistant_tool_use_missing_next_tool_result", 0
-            ) + len(pending_tool_use_ids)
-        elif pending_tool_use_ids and (
-            matched_pending_tool_use_count != len(pending_tool_use_ids)
-        ):
-            risks[
-                "assistant_tool_use_incomplete_next_tool_result_coverage"
-            ] = (
-                risks.get(
-                    "assistant_tool_use_incomplete_next_tool_result_coverage",
-                    0,
-                )
-                + len(pending_tool_use_ids)
-                - matched_pending_tool_use_count
-            )
+        _evaluate_pending_coverage(
+            risks,
+            pending_tool_use_ids,
+            tool_result_count,
+            matched_pending_tool_use_count,
+        )
         pending_tool_use_ids = []
+        awaiting_tool_results_for_message = False
 
-    if pending_tool_use_ids:
-        risks["assistant_tool_use_missing_next_tool_result"] = risks.get(
-            "assistant_tool_use_missing_next_tool_result", 0
-        ) + len(pending_tool_use_ids)
+    _flush_pending_tool_uses(risks, pending_tool_use_ids)
 
     return risks
 
@@ -1560,6 +1693,14 @@ def validate_anthropic_bridge_body(body: dict[str, Any]) -> list[str]:
     if not messages:
         return ["empty_messages"]
 
+    first_role = (
+        str(messages[0].get("role", "")).strip()
+        if isinstance(messages[0], dict)
+        else ""
+    )
+    if first_role != "user":
+        failures.append("first_message_not_user")
+
     for msg_index, message in enumerate(messages):
         _validate_message(message, msg_index, failures)
 
@@ -1578,6 +1719,8 @@ def validate_anthropic_bridge_body(body: dict[str, Any]) -> list[str]:
         failures.append("tool_result_unknown_tool_use_id")
     if shape_risks.get("tool_result_not_immediately_after_assistant_tool_use"):
         failures.append("tool_result_not_immediately_after_assistant_tool_use")
+    if shape_risks.get("tool_results_fragmented_across_user_messages"):
+        failures.append("tool_results_fragmented_across_user_messages")
 
     system = body.get("system")
     if system is not None and not isinstance(system, str | list):
@@ -1606,6 +1749,17 @@ def validate_anthropic_outgoing_bridge_body(body: dict[str, Any]) -> list[str]:
         failures.append(
             "provider_sensitive_assistant_tool_use_text_interleaving"
         )
+
+    max_tokens = body.get("max_tokens")
+    if max_tokens is None:
+        failures.append("missing_max_tokens")
+    elif (
+        not isinstance(max_tokens, int)
+        or isinstance(max_tokens, bool)
+        or max_tokens < 1
+    ):
+        failures.append("invalid_max_tokens")
+
     return failures
 
 
@@ -1619,6 +1773,12 @@ def has_recoverable_immediate_pairing_failures(
     return any(
         failure in _RECOVERABLE_IMMEDIATE_PAIRING_FAILURES
         for failure in failures
+    )
+
+
+def has_blocking_outgoing_failures(failures: list[str]) -> bool:
+    return any(
+        failure not in _NON_BLOCKING_OUTGOING_FAILURES for failure in failures
     )
 
 

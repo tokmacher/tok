@@ -310,17 +310,3 @@ def _process_answer_memory(
             ),
         )
     )
-
-
-def _is_answer_like_visible_text(text: str) -> bool:
-    if not text.strip():
-        return False
-    lowered = text.lower()
-    if "file=" in lowered or "verification=" in lowered:
-        return True
-    fields = extract_structured_answer_memory(text)
-    return bool(fields.get("files")) or any(
-        fact.startswith("answer_file:")
-        or fact.startswith("answer_verification:")
-        for fact in fields.get("facts", [])
-    )

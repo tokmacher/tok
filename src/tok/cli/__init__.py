@@ -17,8 +17,15 @@ from ._release_commands import register as register_release_commands
 from ._dev import dev_app
 from ._metrics import metrics_app
 
+from rich.logging import RichHandler
+
 load_dotenv()
-logging.basicConfig(level=os.getenv("TOK_LOG_LEVEL", "INFO").upper())
+logging.basicConfig(
+    level=os.getenv("TOK_LOG_LEVEL", "INFO").upper(),
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, markup=True)],
+)
 
 app = typer.Typer(
     help="Tok — bridge-first CLI for Claude Code", add_completion=False

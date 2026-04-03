@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(
     reason="requires OPENROUTER_API_KEY or OPENAI_API_KEY",
 )
 
-from tok.tok_orchestrator import TokOrchestrator
+from tok.adapters.orchestrator import TokOrchestrator
 
 
 def test_extract_compression():

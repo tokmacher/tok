@@ -7,6 +7,7 @@ from tok.adapters import (
 
 def test_openai_chat_adapter_builds_system_and_user_messages():
     adapter = OpenAIChatAdapter()
+    adapter.session.bridge_memory.turn = 10
 
     messages, prepared = adapter.build_chat_messages(
         model="claude-sonnet-4",

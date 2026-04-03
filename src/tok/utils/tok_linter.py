@@ -2,10 +2,9 @@ import argparse
 import sys
 from typing import Any
 
-import tiktoken
-
 from ..protocol.models import TokNode, Trust
 from ..protocol.parser import TokParser
+from ..utils.token_utils import count_tokens
 
 
 class SemanticAuditor:
@@ -20,16 +19,9 @@ class SemanticAuditor:
     """
 
     def __init__(self, model: str = "gpt-4", threshold: float = 1.0) -> None:
-        try:
-            self.encoding = tiktoken.encoding_for_model(model)
-        except Exception:
-            self.encoding = tiktoken.get_encoding("cl100k_base")
         self.threshold = threshold
 
-    def count_tokens(self, text: str) -> int:
-        if not text:
-            return 0
-        return len(self.encoding.encode(text))
+    count_tokens = staticmethod(count_tokens)
 
     def audit_v7(self, text: str) -> bool:
         # Check for strict typing (key: value without indent)

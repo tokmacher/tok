@@ -1,6 +1,6 @@
 import json
 
-from tok.replay_metrics import analyze_replay_fixture
+from tok.utils.replay_metrics import analyze_replay_fixture
 from tok.universal_runtime import calculate_invisible_pressure
 
 

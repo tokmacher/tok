@@ -26,21 +26,7 @@ from ._tool_signal_detection import (
     _track_assistant_tool_usage,
 )
 from ._tool_repeat_detection import _iter_tool_results
-
-try:
-    import tiktoken
-
-    _ENC = tiktoken.get_encoding("cl100k_base")
-
-    def count_tokens(text: str) -> int:
-        if not text:
-            return 0
-        return len(_ENC.encode(text, disallowed_special=()))
-
-except ImportError:
-
-    def count_tokens(text: str) -> int:
-        return len(text) // 4
+from ...utils.token_utils import count_tokens
 
 
 def collect_behavior_signals(

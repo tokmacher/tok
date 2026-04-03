@@ -25,7 +25,7 @@ def pressure(
     ] = "",
 ) -> None:
     """Show invisible pressure trends and current status."""
-    from ..metrics import pressure_trends
+    from ..utils.metrics import pressure_trends
 
     pressure_trends(window, export)
 
@@ -42,7 +42,7 @@ def memory(
     ] = 10,
 ) -> None:
     """Show memory lift trends and current status."""
-    from ..metrics import memory_trends
+    from ..utils.metrics import memory_trends
 
     memory_trends(window)
 
@@ -59,7 +59,7 @@ def savings_trend(
     ] = 10,
 ) -> None:
     """Show savings percentage trends and current status."""
-    from ..metrics import savings_trends
+    from ..utils.metrics import savings_trends
 
     savings_trends(window)
 
@@ -76,7 +76,7 @@ def fallback(
     ] = 10,
 ) -> None:
     """Show cold-start fallback trends and current status."""
-    from ..metrics import fallback_trends
+    from ..utils.metrics import fallback_trends
 
     fallback_trends(window)
 
@@ -96,6 +96,6 @@ def health(
     ] = "",
 ) -> None:
     """Show aggregated health metrics summary."""
-    from ..metrics import health_summary
+    from ..utils.metrics import health_summary
 
     health_summary(window, export)

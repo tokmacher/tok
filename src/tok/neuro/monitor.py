@@ -1,3 +1,4 @@
+import logging
 import re
 import time
 import shlex
@@ -7,6 +8,8 @@ from .ir import TokIR, Instruction
 from .miner import IRPatternMiner
 from .planner import save_tok
 from .memory import EpisodeMemory, TokMemory
+
+logger = logging.getLogger(__name__)
 
 BLOCK_RE = re.compile(
     r"\[(.*?)\] COMMAND: (.*?)\nEXIT CODE: (\d+)\nSTDOUT:\n(.*?)\n\nSTDERR:",
@@ -55,7 +58,9 @@ class LiveNeuroMonitor:
                 )
 
         if new_episodes:
-            print(f"Distilled {len(new_episodes)} new actions into TokIR")
+            logger.debug(
+                "Distilled %d new actions into TokIR", len(new_episodes)
+            )
             self.history.extend(new_episodes)
 
             # Mine and Sync
@@ -78,10 +83,12 @@ class LiveNeuroMonitor:
                     cast("list[TokMemory]", self.history),
                     reg,
                 )
-                print(f"Synced {len(macros)} macros to {self.target_tok}")
+                logger.info(
+                    "Synced %d macros to %s", len(macros), self.target_tok
+                )
 
     def run(self) -> None:
-        print(f"Neuro-Monitor started on {self.log_path}")
+        logger.info("Neuro-Monitor started on %s", self.log_path)
         while True:
             self.step()
             time.sleep(5)

@@ -16,10 +16,10 @@ sys.path.insert(
 )
 
 import pytest
-from tok.encoder import TokEncoder
-from tok.models import TokNode
+from tok.protocol.encoder import TokEncoder
+from tok.protocol.models import TokNode
 from tok.protocol.parser import TokParser
-from tok.transformer import DocumentTransformer
+from tok.utils.transformer import DocumentTransformer
 
 
 class TestDocumentTransformerMarkdownToTok:

@@ -385,7 +385,7 @@ class RuntimeToolExecutor:
                     content = f.read()
                     result = f"Read {path}:\n{content}"
 
-            print(f"[!] Tool Executed: Read {path}")
+            logger.info("Tool Executed: Read %s", path)
             return {"status": "SUCCESS", "message": result}
         except Exception as e:
             return {
@@ -435,7 +435,7 @@ class RuntimeToolExecutor:
                     if deltas:
                         self._pending_deltas.extend(deltas)
 
-            print(f"[!] Tool Executed: Wrote to {path}")
+            logger.info("Tool Executed: Wrote to %s", path)
             return {"status": "SUCCESS", "message": f"Wrote to {path}"}
         except Exception as e:
             return {
@@ -491,7 +491,7 @@ class RuntimeToolExecutor:
                     if deltas:
                         self._pending_deltas.extend(deltas)
 
-            print(f"[!] Tool Executed: Edited {path}")
+            logger.info("Tool Executed: Edited %s", path)
             return {"status": "SUCCESS", "message": f"Edited {path}"}
         except Exception as e:
             return {
@@ -524,10 +524,11 @@ class RuntimeToolExecutor:
             if output:
                 lines = output.strip().split("\n")
                 snippet = "\n".join(lines[:5])
-                print(f"[*] Output Snippet:\n{snippet}")
+                logger.debug("Output Snippet:\n%s", snippet)
                 if len(lines) > 5:
-                    print(
-                        f"[...] ({len(lines) - 5} more lines in execution.log)"
+                    logger.debug(
+                        "... (%d more lines in execution.log)",
+                        len(lines) - 5,
                     )
 
             res_msg = f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"

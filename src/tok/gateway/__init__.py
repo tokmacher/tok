@@ -22,7 +22,7 @@ from typing import Any, cast
 from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
-from ..bridge_memory import BridgeMemoryState
+from ..runtime.memory.bridge_memory import BridgeMemoryState
 from ..stats import SavingsTracker
 from ..universal_runtime import (
     RuntimeSession,
@@ -68,13 +68,6 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
-
-_DROP_RESPONSE_HEADERS = {
-    "content-encoding",
-    "content-length",
-    "transfer-encoding",
-    "connection",
-}
 
 _REQUEST_POLICY_ALIASES = {
     "legacy": "legacy_tool_compatible",
@@ -533,25 +526,49 @@ def run_bridge(
         else os.getenv("TOK_FAIL_OPEN", "1") == "1"
     )
 
-    # Write PID file for foreground mode
-    TOK_DIR.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text(str(os.getpid()))
+    try:
+        TOK_DIR.mkdir(parents=True, exist_ok=True)
+        PID_FILE.write_text(str(os.getpid()))
+    except OSError as exc:
+        logger.error(
+            "Failed to write PID file %s: %s. "
+            "Check permissions on %s or set TOK_DIR to a writable location.",
+            PID_FILE,
+            exc,
+            TOK_DIR,
+        )
+        raise
+
+    from rich.logging import RichHandler
 
     log_level = "debug" if debug else "warning"
+
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
-        format="[tok-bridge] %(message)s",
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(rich_tracebacks=True, markup=False)],
     )
 
-    session = BridgeSession(
-        port=port,
-        keep_turns=keep_turns,
-        debug=debug,
-        fail_open=fail_open,
-    )
+    try:
+        session = BridgeSession(
+            port=port,
+            keep_turns=keep_turns,
+            debug=debug,
+            fail_open=fail_open,
+        )
+    except Exception as exc:
+        logger.error("Failed to create bridge session: %s", exc)
+        raise
+
     atexit.register(session.tracker.merge_session_to_ledger)
     atexit.register(lambda: PID_FILE.unlink(missing_ok=True))
-    app = create_app(session)
+
+    try:
+        app = create_app(session)
+    except Exception as exc:
+        logger.error("Failed to create bridge application: %s", exc)
+        raise
 
     host_display = os.getenv("TOK_BRIDGE_HOST", "localhost")
     logger.info("Listening on http://%s:%d", host_display, port)
@@ -565,7 +582,13 @@ def run_bridge(
         os.getenv("TOK_REQUEST_POLICY", "<unset>"),
     )
 
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level=log_level)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level=log_level)
+    except Exception as exc:
+        logger.error(
+            "Bridge server exited unexpectedly on port %d: %s", port, exc
+        )
+        raise
 
 
 if __name__ == "__main__":

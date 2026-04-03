@@ -7,7 +7,7 @@ import pytest
 
 from tok.neuro.ir import Instruction, Macro, MacroRegistry, TokIR
 from tok.neuro.miner import IRPatternMiner
-from tok.bridge_memory import BridgeMemoryState, MemoryEntry
+from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 from tok.universal_runtime import RuntimeSession, _jit_context_matches
 
 

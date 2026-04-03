@@ -12,19 +12,19 @@ class TestBridgeCriticalImports:
     """Verify all bridge-critical modules import cleanly."""
 
     def test_bridge_memory_imports(self):
-        from tok.bridge_memory import BridgeMemoryState
+        from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
         assert BridgeMemoryState is not None
 
     def test_savings_tracker_imports(self):
-        from tok.savings_tracker import SavingsTracker
+        from tok.utils.savings_tracker import SavingsTracker
 
         assert SavingsTracker is not None
 
     def test_telemetry_imports(self):
-        import tok.telemetry
+        import tok.utils.telemetry
 
-        assert tok.telemetry is not None
+        assert tok.utils.telemetry is not None
 
     def test_universal_runtime_imports(self):
         from tok.universal_runtime import (  # noqa: F401
@@ -41,7 +41,7 @@ class TestBridgeCriticalImports:
         assert create_app is not None
 
     def test_prompt_shim_imports(self):
-        from tok.prompt import TOK_SYSTEM_PROMPT
+        from tok.analysis.prompt import TOK_SYSTEM_PROMPT
 
         assert isinstance(TOK_SYSTEM_PROMPT, str)
         assert len(TOK_SYSTEM_PROMPT) > 0
@@ -89,7 +89,9 @@ class TestBridgeShimConsistency:
     """Verify that compatibility shims re-export the right canonical symbols."""
 
     def test_bridge_memory_shim_matches_canonical(self):
-        from tok.bridge_memory import BridgeMemoryState as ShimBMState
+        from tok.runtime.memory.bridge_memory import (
+            BridgeMemoryState as ShimBMState,
+        )
         from tok.runtime.memory.bridge_memory import (
             BridgeMemoryState as CanonicalBMState,
         )
@@ -97,13 +99,13 @@ class TestBridgeShimConsistency:
         assert ShimBMState is CanonicalBMState
 
     def test_savings_tracker_shim_matches_canonical(self):
-        from tok.savings_tracker import SavingsTracker as ShimST
+        from tok.utils.savings_tracker import SavingsTracker as ShimST
         from tok.utils.savings_tracker import SavingsTracker as CanonicalST
 
         assert ShimST is CanonicalST
 
     def test_prompt_shim_matches_canonical(self):
         from tok.analysis.prompt import TOK_SYSTEM_PROMPT as CANONICAL_PROMPT
-        from tok.prompt import TOK_SYSTEM_PROMPT as SHIM_PROMPT
+        from tok.analysis.prompt import TOK_SYSTEM_PROMPT as SHIM_PROMPT
 
         assert SHIM_PROMPT is CANONICAL_PROMPT

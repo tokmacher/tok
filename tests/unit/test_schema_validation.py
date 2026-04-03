@@ -13,8 +13,8 @@ sys.path.insert(
 )
 
 import pytest
-from tok.models import TokNode
-from tok.schema import DEFAULT_SCHEMA, BlockSchema, TokSchema
+from tok.protocol.models import TokNode
+from tok.protocol.schema import DEFAULT_SCHEMA, BlockSchema, TokSchema
 
 
 class TestDefaultSchemaValidation:

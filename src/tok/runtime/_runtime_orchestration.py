@@ -31,7 +31,7 @@ from .pipeline.response_processing import (
 from .policy.answer_repair import _mark_late_answer_assembly_mode_signal
 from .policy.macro_handling import _attribute_macro_savings, execute_jit_macro
 from .policy.semantic_validation import (
-    pressure_score as _semantic_pressure_score,
+    semantic_pressure_score as _semantic_pressure_score,
 )
 from .metrics import report_protocol_drift
 from .pipeline.tool_processing import count_tokens

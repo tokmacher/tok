@@ -12,6 +12,7 @@ from tok.compression import (
     CANONICAL_MEMORY_FIELDS,
     FILE_LIKE_TOOLS,
     TOOL_COMPRESS_THRESHOLD,
+    ResultCacheEntry,
     _apply_file_cache,
     _compress_git_diff,
     _compress_git_log,
@@ -374,7 +375,7 @@ class TestInjectSystemAdditions:
         result = inject_system_additions(body, None, pressure=2)
         assert "=== MODE: TOK-NATIVE ===" in result["system"]
         assert "[Tok law]" in result["system"]
-        assert ">>> t:N|usr:X|agt:Y|state:Z" in result["system"]
+        assert "Natural responses" in result["system"]
         assert "You are helpful." in result["system"]
         assert result["system"].startswith("You are helpful.")
 
@@ -383,7 +384,7 @@ class TestInjectSystemAdditions:
         result = inject_system_additions(body, None, pressure=2)
         assert "=== MODE: TOK-NATIVE ===" in result["system"]
         assert "[Tok law]" in result["system"]
-        assert ">>> t:N|usr:X|agt:Y|state:Z" in result["system"]
+        assert "Natural responses" in result["system"]
 
     def test_list_system_prompt(self):
         body = {
@@ -405,9 +406,7 @@ class TestInjectSystemAdditions:
         )
         assert "=== MODE: TOK-NATIVE ===" in result["system"][-1]["text"]
         assert "[Tok law]" in result["system"][-1]["text"]
-        assert ">>> t:N|usr:X|agt:Y|state:Z" in result["system"][-1]["text"]
-        # The addition should NOT have cache_control to avoid TTL conflicts with
-        # client messages
+        assert "Natural responses" in result["system"][-1]["text"]
         assert "cache_control" not in result["system"][-1]
 
     def test_with_tok_state(self):
@@ -553,7 +552,7 @@ class TestTokToolResult:
     def test_grep_few_matches_verbatim(self):
         content = "src/a.py:1:foo\nsrc/b.py:2:bar\n"
         # 2 lines — below threshold, passthrough; pad to force threshold check
-        content + "\n" * 10  # still short
+        content += "\n" * 10  # still short
         # Actually need >2000 chars to trigger
         big = content * 200
         out = tok_tool_result(big)
@@ -936,7 +935,7 @@ class TestFileCache:
         return "\n".join(lines)
 
     def test_first_read_preserves_raw_file_content(self):
-        cache: dict[str, tuple[str, str, float]] = {}
+        cache: dict[str, ResultCacheEntry] = {}
         raw = self._big_file(20)
         result, saved = _apply_file_cache(raw, "src/foo.py", cache)
         # It's now keyed by hashed tool:args
@@ -946,7 +945,7 @@ class TestFileCache:
         assert result == raw
 
     def test_second_read_unchanged_is_stubbed(self):
-        cache: dict[str, tuple[str, str, float]] = {}
+        cache: dict[str, ResultCacheEntry] = {}
         raw = self._big_file(20)
         _apply_file_cache(raw, "src/foo.py", cache)
         result, saved = _apply_file_cache(raw, "src/foo.py", cache)
@@ -959,7 +958,7 @@ class TestFileCache:
         )
 
     def test_second_read_changed_uses_diff(self):
-        cache: dict[str, tuple[str, str, float]] = {}
+        cache: dict[str, ResultCacheEntry] = {}
         raw1 = self._big_file()
         _apply_file_cache(raw1, "src/foo.py", cache)
         # Change a line
@@ -977,7 +976,7 @@ class TestFileCache:
         )
 
     def test_compress_tool_results_deduplicates_repeated_file_reads(self):
-        cache: dict[str, tuple[str, str, float]] = {}
+        cache: dict[str, ResultCacheEntry] = {}
         raw = self._big_file(20)
         id_to_context = {
             "t1": {
@@ -1007,7 +1006,7 @@ class TestFileCache:
         )
 
     def test_file_tools_are_preserved_verbatim(self):
-        cache: dict[str, tuple[str, str, float]] = {}
+        cache: dict[str, ResultCacheEntry] = {}
         raw = self._big_file(20)
         id_to_context = {
             "t1": {
@@ -1318,7 +1317,7 @@ def _inject(
 
 
 def _token_count(text: str) -> int:
-    from tok.prompt_analyzer import count_tokens
+    from tok.analysis.prompt_analyzer import count_tokens
 
     return count_tokens(text)
 

@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tok.format_bridge import Bridge
+from tok.protocol.format_bridge import Bridge
 
 
 class TestBridgeJsonRoundtrip:
@@ -393,17 +393,19 @@ class TestBridgeConsistency:
         json_str = json.dumps(data)
 
         # Encode
-        tok_text = Bridge.encode(json_str)
+        tok_text = Bridge.json(json_str)
         assert isinstance(tok_text, str)
 
         # Decode
-        recovered = Bridge.decode(tok_text)
+        recovered_json = Bridge.to_json(tok_text)
+        recovered = json.loads(recovered_json) if recovered_json else {}
         assert isinstance(recovered, dict)
 
     def test_encode_dict_input(self):
         """encode() should handle dict input."""
         data = {"key": "value"}
-        tok_text = Bridge.encode(data)
+        json_str = json.dumps(data)
+        tok_text = Bridge.json(json_str)
         assert isinstance(tok_text, str)
         assert "@data" in tok_text or tok_text
 

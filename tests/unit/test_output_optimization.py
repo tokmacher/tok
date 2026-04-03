@@ -1,10 +1,10 @@
-from tok.parser import TokParser
+from tok.protocol.parser import TokParser
 from tok.universal_runtime import (
     parse_tok_response,
     RuntimeSession,
     translate_response_tools,
 )
-from tok.translator import tok_to_readable
+from tok.runtime.policy.translator import tok_to_readable
 
 
 def test_parser_inlined_content():

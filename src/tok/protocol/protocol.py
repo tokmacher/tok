@@ -27,7 +27,7 @@ class SerializationProtocol(ABC):
         Returns:
             Serialized text representation
         """
-        ...
+        raise NotImplementedError
 
     @abstractmethod
     def decode(self, text: str) -> Any:
@@ -39,4 +39,4 @@ class SerializationProtocol(ABC):
         Returns:
             Deserialized data
         """
-        ...
+        raise NotImplementedError

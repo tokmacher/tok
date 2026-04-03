@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from tok import shell_integration
+from tok.utils import shell_integration
 
 
 def test_install_adds_marked_block_to_zshrc(tmp_path):

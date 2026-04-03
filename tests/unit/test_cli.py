@@ -76,7 +76,7 @@ class TestCLI:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.pressure_trends",
+            "tok.utils.metrics.pressure_trends",
             lambda window, export: calls.update(
                 {"window": window, "export": export}
             ),
@@ -106,7 +106,7 @@ class TestCLI:
                 calls["save"] = (name, fixture, metadata, output)
 
         monkeypatch.setattr(
-            "tok.fixture_generator.FixtureGenerator", FakeGenerator
+            "tok.testing.fixture_generator.FixtureGenerator", FakeGenerator
         )
 
         result = runner.invoke(
@@ -125,7 +125,7 @@ class TestCLI:
         self, monkeypatch, tmp_path
     ):
         monkeypatch.setattr(
-            "tok.shell_integration.install", lambda: tmp_path / ".zshrc"
+            "tok.utils.shell_integration.install", lambda: tmp_path / ".zshrc"
         )
 
         result = runner.invoke(app, ["install"])
@@ -801,7 +801,7 @@ class TestCLI:
                 calls["save"] = (name, fixture, metadata, output)
 
         monkeypatch.setattr(
-            "tok.fixture_generator.FixtureGenerator", FakeGenerator
+            "tok.testing.fixture_generator.FixtureGenerator", FakeGenerator
         )
 
         result = runner.invoke(
@@ -843,7 +843,7 @@ class TestCLI:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.pressure_trends",
+            "tok.utils.metrics.pressure_trends",
             lambda window, export: calls.update(
                 {"window": window, "export": export}
             ),
@@ -869,7 +869,7 @@ class TestCLI:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.memory_trends",
+            "tok.utils.metrics.memory_trends",
             lambda window: calls.update({"window": window}),
         )
 
@@ -882,7 +882,7 @@ class TestCLI:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.savings_trends",
+            "tok.utils.metrics.savings_trends",
             lambda window: calls.update({"window": window}),
         )
 
@@ -897,7 +897,7 @@ class TestCLI:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.fallback_trends",
+            "tok.utils.metrics.fallback_trends",
             lambda window: calls.update({"window": window}),
         )
 
@@ -912,7 +912,7 @@ class TestCLI:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.health_summary",
+            "tok.utils.metrics.health_summary",
             lambda window, export: calls.update(
                 {"window": window, "export": export}
             ),
@@ -1683,9 +1683,9 @@ class TestCLI:
                     baseline_only=True,
                 )
 
-        monkeypatch.setattr("tok.stress_harness.StressHarness", FakeHarness)
+        monkeypatch.setattr("tok.testing.stress.StressHarness", FakeHarness)
         monkeypatch.setattr(
-            "tok.stress_harness.write_stress_artifacts",
+            "tok.testing.stress.write_stress_artifacts",
             lambda output_dir, result: {
                 "stress_run": output_dir / "run.json",
                 "breakpoints": output_dir / "breakpoints.json",
@@ -1694,7 +1694,7 @@ class TestCLI:
             },
         )
         monkeypatch.setattr(
-            "tok.stress_harness.summarize_implicated_files",
+            "tok.testing.stress.summarize_implicated_files",
             lambda breakpoints: [{"path": "src/tok/cli.py", "count": 2}],
         )
 
@@ -1832,22 +1832,22 @@ class TestCLI:
                 }
 
         monkeypatch.setattr(
-            "tok.live_benchmark.LiveBenchmarkRunner", FakeRunner
+            "tok.testing.live_benchmark.LiveBenchmarkRunner", FakeRunner
         )
         monkeypatch.setattr(
-            "tok.live_benchmark.load_benchmark_definition",
+            "tok.testing.live_benchmark.load_benchmark_definition",
             lambda name: SimpleNamespace(name=name, default_turns=5),
         )
         monkeypatch.setattr(
-            "tok.live_benchmark.compare_results",
+            "tok.testing.live_benchmark.compare_results",
             lambda baseline, tok: FakeComparison(tok.mode),
         )
         monkeypatch.setattr(
-            "tok.live_benchmark.render_comparison_markdown",
+            "tok.testing.live_benchmark.render_comparison_markdown",
             lambda baseline, comparisons: "# compare\n",
         )
         monkeypatch.setattr(
-            "tok.live_benchmark.select_preferred_mode",
+            "tok.testing.live_benchmark.select_preferred_mode",
             lambda baseline, comparisons: "tok-minimal",
         )
 

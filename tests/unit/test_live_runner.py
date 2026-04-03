@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from tok.live_runner import LiveAgent
+from tok.testing.live_runner import LiveAgent
 
 
 def test_live_agent_passes_prepared_behavior_signals_to_finalize(monkeypatch):
@@ -29,9 +29,9 @@ def test_live_agent_passes_prepared_behavior_signals_to_finalize(monkeypatch):
         chat = _Chat()
 
     monkeypatch.setattr(
-        "tok.live_runner.OpenAI", lambda **_kwargs: FakeClient()
+        "tok.testing.live_runner.OpenAI", lambda **_kwargs: FakeClient()
     )
-    monkeypatch.setattr("tok.live_runner.config.API_KEY", "test-key")
+    monkeypatch.setattr("tok.testing.live_runner.config.API_KEY", "test-key")
 
     agent = LiveAgent(model="openai/gpt-4.1-mini")
     finalize_calls = {}

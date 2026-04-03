@@ -1,13 +1,14 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from tok.stress_harness import (
+from tok.testing.stress import (
     DEFAULT_REQUIRED_CLASSES,
     ReadOnlyToolExecutor,
     StressHarness,
     StressHarnessConfig,
     StressObservation,
     StressTask,
+    StressTurnRecord,
     _late_tool_contract_grace_kind,
     _preprocess_runtime_contract_signals,
     _runtime_retry_context_signals,
@@ -538,8 +539,8 @@ def test_renderers_include_evidence_and_targets():
         breakpoints=[breakpoint],
     )
 
-    report = render_stress_report(result)
-    plan = render_language_refactor_plan(result)
+    report = render_stress_report(result)  # type: ignore[arg-type]
+    plan = render_language_refactor_plan(result)  # type: ignore[arg-type]
 
     assert "protocol_drift" in report
     assert "response contract pressure" in report
@@ -1854,11 +1855,11 @@ def test_tool_only_retry_stage_satisfaction_requires_one_clean_read_only_tool(
     )
 
     assert (
-        harness._turn_satisfies_tool_only_retry_stage(satisfied_turn) is True
+        harness._turn_satisfies_tool_only_retry_stage(satisfied_turn) is True  # type: ignore[arg-type]
     )
-    assert harness._turn_satisfies_tool_only_retry_stage(mixed_turn) is False
+    assert harness._turn_satisfies_tool_only_retry_stage(mixed_turn) is False  # type: ignore[arg-type]
     assert (
-        harness._turn_satisfies_tool_only_retry_stage(toolless_turn) is False
+        harness._turn_satisfies_tool_only_retry_stage(toolless_turn) is False  # type: ignore[arg-type]
     )
 
 
@@ -1886,10 +1887,10 @@ def test_answer_only_retry_stage_requires_two_line_answer_without_tools(
     )
 
     assert (
-        harness._turn_satisfies_answer_only_retry_stage(satisfied_turn) is True
+        harness._turn_satisfies_answer_only_retry_stage(satisfied_turn) is True  # type: ignore[arg-type]
     )
     assert (
-        harness._turn_satisfies_answer_only_retry_stage(tool_violation_turn)
+        harness._turn_satisfies_answer_only_retry_stage(tool_violation_turn)  # type: ignore[arg-type]
         is False
     )
 
@@ -1904,14 +1905,28 @@ def test_first_irreversible_miss_kind_classifies_failure_shapes(tmp_path):
 
     def turn(**kwargs):
         base = dict(
-            tool_uses=[],
-            validated_target_exact_reacquired=False,
-            output_behavior_signals={},
+            task_id="test_task",
+            phase_name="test_phase",
+            turn_index=0,
+            phase="test",
+            prompt="test prompt",
+            raw_response="test response",
             visible_response="",
-            task_completed_validated=False,
+            tool_uses=[],
+            tool_results=[],
+            evidence_chars=0,
+            retry_index=0,
+            validated=False,
+            input_behavior_signals={},
+            output_behavior_signals={},
+            input_saved_tokens=0,
+            output_saved_tokens=0,
+            tool_contract_failure=False,
+            state_payload_chars=0,
+            resend_mode="none",
         )
         base.update(kwargs)
-        return SimpleNamespace(**base)
+        return StressTurnRecord(**base)
 
     assert (
         harness._first_irreversible_miss_kind(
@@ -2010,7 +2025,7 @@ def test_failed_task_summaries_and_locus_capture_retry_families(tmp_path):
         ),
     ]
 
-    failed = harness._failed_task_summaries(turns)
+    failed = harness._failed_task_summaries(turns)  # type: ignore[arg-type]
 
     assert failed[0]["retry_family"] == "none"
     assert (

@@ -13,7 +13,7 @@ from tok.universal_runtime import (
     RuntimeSession,
     UniversalTokRuntime,
 )
-from tok.bridge_memory import BridgeMemoryState
+from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +141,7 @@ class TestMacroHealing:
 
         # 3. Verify the macro was updated
         updated = session.bridge_memory.macro_registry.get("repaired_op")
+        assert updated is not None
         ops = [ins.op for ins in updated.instructions]
         assert ops == ["op1", "op2"]
         assert session._pending_macro_heal == ""
@@ -159,6 +160,7 @@ class TestMacroHealing:
         session.write_memory(">>> cmds:op1,op3|facts:done")
 
         updated = session.bridge_memory.macro_registry.get("steady_op")
+        assert updated is not None, "Macro should exist"
         assert len(updated.instructions) == 1
         assert updated.instructions[0].op == "op1"
 

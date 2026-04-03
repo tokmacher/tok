@@ -2,6 +2,7 @@
 
 import functools
 import json
+import logging
 import random
 import string
 import xml.etree.ElementTree as ET
@@ -12,6 +13,8 @@ from .protocol import SerializationProtocol
 
 from .encoder import TokEncoder
 from .models import TokNode
+
+logger = logging.getLogger(__name__)
 
 MINIMAL_TOK_MANUAL = """
 Tok: @Type (indent body). @UPPER: Tool. @lower: Msg.
@@ -117,10 +120,12 @@ class Bridge(SerializationProtocol):
         json_payload = json.dumps(payload)
         if Bridge.should_upgrade(json_payload):
             tok_input = MINIMAL_TOK_MANUAL + "\n" + Bridge.json(json_payload)
-            print(f"[Bridge] Upgrade: Tok + Manual ({len(tok_input)} chars)")
+            logger.debug(
+                "Bridge upgrade: Tok + Manual (%d chars)", len(tok_input)
+            )
         else:
             tok_input = json_payload
-            print(f"[Bridge] Standard: JSON ({len(tok_input)} chars)")
+            logger.debug("Bridge standard: JSON (%d chars)", len(tok_input))
 
         response_tok = llm_callable(tok_input)
 
@@ -180,7 +185,7 @@ class Bridge(SerializationProtocol):
         is_external: bool = True,
     ) -> dict[str, Any]:
         """Hand off task to agent with tiered grammar bootstrapping."""
-        from ..prompt import get_grammar_snippet
+        from ..analysis.prompt import get_grammar_snippet
 
         if agent_id in Bridge.verified_agents:
             active_level = None
@@ -427,8 +432,7 @@ class Bridge(SerializationProtocol):
             lines.append("| " + " | ".join(map(str, row)) + " |")
         return "\n".join(lines)
 
-    @staticmethod
-    def encode(data: Any) -> str:
+    def encode(self, data: Any) -> str:
         """Encode data to Tok text. Satisfies SerializationProtocol.
 
         Args:
@@ -439,8 +443,7 @@ class Bridge(SerializationProtocol):
         """
         return Bridge().detect_and_convert(data)
 
-    @staticmethod
-    def decode(text: str) -> Any:
+    def decode(self, text: str) -> Any:
         """Decode Tok text to data. Satisfies SerializationProtocol.
 
         Args:

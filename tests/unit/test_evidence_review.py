@@ -1,6 +1,6 @@
 import json
 
-from tok.evidence_review import (
+from tok.analysis.evidence_review import (
     build_coverage_report,
     load_stress_evidence,
     rank_candidates,

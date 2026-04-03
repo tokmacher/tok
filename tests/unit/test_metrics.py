@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tok.metrics import (
+from tok.utils.metrics import (
     fallback_trends,
     format_trend_display,
     health_summary,

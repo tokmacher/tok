@@ -182,18 +182,18 @@ def main() -> None:
         if src_path not in sys.path:
             sys.path.insert(0, src_path)
 
-        from tok.tok_orchestrator import TokOrchestrator  # type: ignore
+        from tok.adapters.orchestrator import TokOrchestrator  # type: ignore
 
         orch = TokOrchestrator(model="dummy")
         for i, msg in enumerate(messages):
             orch.turn_count = i + 1
             content = msg["content"]
-            orch._update_entropy(content)
+            orch._update_entropy(content)  # type: ignore[attr-defined]
             # Feed a truncated snapshot into hot_state
-            orch.memory.hot_state = content[:300]
-            orch._sift_memory()
+            orch.memory.hot_state = content[:300]  # type: ignore[attr-defined]
+            orch._sift_memory()  # type: ignore[attr-defined]
 
-        tok_state = orch.memory.to_tok()
+        tok_state = orch.memory.to_tok()  # type: ignore[attr-defined]
 
     except Exception as exc:
         print(f"[tok-hook] orchestrator error: {exc}", file=sys.stderr)

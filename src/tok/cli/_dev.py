@@ -52,7 +52,7 @@ def generate_fixture(
     ] = "tests/fixtures/replay",
 ) -> None:
     """Generate replay fixtures for testing."""
-    from ..fixture_generator import FixtureGenerator
+    from ..testing.fixture_generator import FixtureGenerator
 
     generator = FixtureGenerator()
 
@@ -137,7 +137,7 @@ def live_benchmark(
     ] = None,
 ) -> None:
     """Run a controlled live benchmark in baseline, Tok, or compare mode."""
-    from ..live_benchmark import (
+    from ..testing.live_benchmark import (
         LiveBenchmarkRunner,
         compare_results,
         load_benchmark_definition,
@@ -574,7 +574,7 @@ def stress_language(
     ] = None,
 ) -> None:
     """Run a long-lived Tok language stress harness against the OpenRouter path."""
-    from ..stress_harness import (
+    from ..testing.stress import (
         StressHarness,
         StressHarnessConfig,
         default_output_dir,

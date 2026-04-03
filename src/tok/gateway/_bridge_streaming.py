@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Streaming response helpers for the Tok gateway."""
 
-import hashlib
 import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -21,12 +20,38 @@ from . import (
     _response_contract_for_mode,
     logger,
 )
+from ._signal_utils import _merge_signal_counts
 
 __all__ = ["buffer_strip_restream_impl", "passthrough_stream_impl"]
 
 _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = int(
     os.getenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", "2")
 )
+
+
+def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
+    """Create a signature from tool_use blocks for loop detection.
+
+    Returns a hashable string signature based on tool names and input keys
+    to detect repeated identical tool_use-only recovery patterns.
+    """
+    tool_uses = [
+        block
+        for block in blocks
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    ]
+    if not tool_uses:
+        return ""
+    parts: list[str] = []
+    for tool in tool_uses:
+        name = str(tool.get("name", ""))
+        input_dict = tool.get("input", {})
+        if isinstance(input_dict, dict):
+            keys = ",".join(sorted(input_dict.keys()))
+        else:
+            keys = ""
+        parts.append(f"{name}:{keys}")
+    return "|".join(parts)
 
 
 def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
@@ -132,32 +157,6 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
         )
 
     return events
-
-
-def _merge_signal_counts(
-    target: dict[str, int], extra: dict[str, int] | None
-) -> None:
-    if not extra:
-        return
-    for key, value in extra.items():
-        target[key] = target.get(key, 0) + value
-
-
-def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
-    normalized: list[dict[str, Any]] = []
-    for block in blocks:
-        if not isinstance(block, dict) or block.get("type") != "tool_use":
-            continue
-        normalized.append(
-            {
-                "name": str(block.get("name", "")),
-                "input": block.get("input", {}),
-            }
-        )
-    if not normalized:
-        return ""
-    payload = json.dumps(normalized, sort_keys=True)
-    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 async def passthrough_stream_impl(

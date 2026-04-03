@@ -20,7 +20,7 @@ sys.path.insert(
 )
 
 import pytest
-from tok.sifter import DirectoryWalker, Sifter
+from tok.utils.sifter import DirectoryWalker, Sifter
 
 
 class TestSifterFunctionExtraction:

@@ -3,7 +3,7 @@
 import time
 
 import pytest
-from tok.translator import postprocess_response
+from tok.runtime.policy.translator import postprocess_response
 
 _TOK_RESPONSE = """\
 >>> t:15|usr:explain_code|agt:analyzed|state:report_ready

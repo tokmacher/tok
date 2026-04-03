@@ -14,11 +14,11 @@ sys.path.insert(
 
 import pytest
 from pydantic import ValidationError
-from tok.format_bridge import Bridge
-from tok.models import TokNode, build_tok_traceback
-from tok.parser import TokParser
-from tok.schema import DEFAULT_SCHEMA
-from tok.transformer import DocumentTransformer
+from tok.protocol.format_bridge import Bridge
+from tok.protocol.models import TokNode, build_tok_traceback
+from tok.protocol.parser import TokParser
+from tok.protocol.schema import DEFAULT_SCHEMA
+from tok.utils.transformer import DocumentTransformer
 
 
 class TestParserErrorHandling:
@@ -157,7 +157,7 @@ class TestErrorBuilding:
         """build_tok_traceback should convert ValidationError to @error block."""
         try:
             # Intentionally trigger a validation error
-            from tok.models import TokToolCall
+            from tok.protocol.models import TokToolCall
 
             TokToolCall.model_validate({"tool": "INVALID_TOOL", "path": "x"})
         except ValidationError as e:

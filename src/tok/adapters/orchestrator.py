@@ -8,7 +8,6 @@ import subprocess
 from typing import Any, cast, TYPE_CHECKING
 from pathlib import Path
 
-import tiktoken
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -16,9 +15,10 @@ logger = logging.getLogger(__name__)
 
 from .adapters import OrchestratorAdapter
 from ..monitoring.profiler import TokProfiler
-from ..prompt import MINIMAL_PULSE_PROMPT
+from ..analysis.prompt import MINIMAL_PULSE_PROMPT
 from ..protocol import Bridge, TokParser  # noqa: F401
 from ..stats import SavingsTracker
+from ..utils.token_utils import count_tokens
 
 if TYPE_CHECKING:
     from ..utils.delta import (
@@ -117,7 +117,6 @@ class TokOrchestrator:
         self.max_retries = max_retries
         self.strict_mode = strict_mode
         self.app_name = app_name
-        self.enc = tiktoken.get_encoding("cl100k_base")
         self.todo_path = "todo.tok"
 
         # Delta tracking moved to runtime_tools.py
@@ -310,12 +309,11 @@ class TokOrchestrator:
                 return f.read().strip()
         return ""
 
-    def count_tokens(self, text: str) -> int:
-        """Calculate the number of tokens in a given text."""
-        return len(self.enc.encode(text))
+    count_tokens = staticmethod(count_tokens)
 
     def _regenerate_territory(self) -> None:
         """Regenerate the territory.tok map to stay in sync with filesystem."""
+        shadowed = False
         try:
             # Shadowing fix: ensure we don't use root tok.py if it exists
             env = os.environ.copy()
@@ -323,12 +321,11 @@ class TokOrchestrator:
                 f"{os.getcwd()}/src:{env.get('PYTHONPATH', '')}"
             )
 
-            # Temporary rename if tok.py exists to avoid shadowing
             shadowed = os.path.exists("tok.py")
             if shadowed:
                 os.rename("tok.py", "tok.py.tmp")
 
-            cmd = "uv run python -c \"from tok.sifter import Sifter; s = Sifter.from_dir('src/tok', naked=False, minify=True); open('territory.tok', 'w').write(s)\""
+            cmd = "uv run python -c \"from tok.utils.sifter import Sifter; s = Sifter.from_dir('src/tok', naked=False, minify=True); open('territory.tok', 'w').write(s)\""
             proc = subprocess.run(
                 cmd, shell=True, env=env, capture_output=True, text=True
             )
@@ -717,7 +714,7 @@ class TokOrchestrator:
             prompt_tokens_actual = stream.usage.prompt_tokens
             completion_tokens = stream.usage.completion_tokens
         else:
-            completion_tokens = len(self.enc.encode(agent_reply))
+            completion_tokens = self.count_tokens(agent_reply)
             prompt_tokens_actual = prompt_tokens
 
         turn_cost = self._calc_cost(prompt_tokens_actual, completion_tokens)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from ..savings_tracker import (  # noqa: F401 — re-export for backward compat
+from ..utils.savings_tracker import (  # noqa: F401 — re-export for backward compat
     BASELINE_ONLY_SIGNAL,
     FALLBACK_SIGNAL,
     GLOBAL_LEDGER_FILENAME,

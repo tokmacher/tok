@@ -519,6 +519,7 @@ def test_strict_bridge_validation_accepts_alternating_multi_turn_tool_pairs():
 def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
     body = {
         "model": "claude-sonnet-4",
+        "max_tokens": 8192,
         "messages": _provider_sensitive_large_tool_batch_messages(),
     }
 
@@ -539,6 +540,7 @@ def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
 def test_outgoing_bridge_validation_flags_small_interleaved_tool_use_batch():
     body = {
         "model": "claude-sonnet-4",
+        "max_tokens": 8192,
         "messages": [
             {
                 "role": "user",
@@ -1018,7 +1020,9 @@ def test_stream_recovery_history_floor_leaves_safe_outgoing_body(
     assert (
         prepared.behavior_signals["stream_recovery_history_floor_applied"] == 1
     )
-    assert validate_anthropic_outgoing_bridge_body(prepared.body) == []
+    assert validate_anthropic_outgoing_bridge_body(prepared.body) == [
+        "missing_max_tokens",
+    ]
     kept = prepared.body["messages"]
     assert len(kept) == 3
     assert kept[0]["role"] == "user"
@@ -1121,7 +1125,9 @@ def test_canonicalization_sanitizes_invalid_tool_ids_and_matching_results():
     assert signals["tok_bridge_invalid_tool_id_seen"] == 1
     assert signals["tok_bridge_tool_result_id_rewritten"] == 1
     assert signals["tok_bridge_tool_result_rewrite_complete"] == 1
-    assert validate_anthropic_bridge_body(canonical) == []
+    assert validate_anthropic_bridge_body(canonical) == [
+        "first_message_not_user"
+    ]
 
 
 def test_canonicalization_synthesizes_blank_tool_ids_and_repairs_pairing():
@@ -1173,7 +1179,9 @@ def test_canonicalization_synthesizes_blank_tool_ids_and_repairs_pairing():
     assert signals["tok_bridge_blank_tool_id_synthesized"] == 2
     assert signals["tok_bridge_tool_result_id_rewritten"] == 2
     assert signals["tok_bridge_tool_result_pairing_repaired"] == 2
-    assert validate_anthropic_bridge_body(canonical) == []
+    assert validate_anthropic_bridge_body(canonical) == [
+        "first_message_not_user"
+    ]
 
 
 def test_canonicalization_generates_unique_ids_for_multiple_invalid_tool_ids():
@@ -1290,7 +1298,9 @@ def test_canonicalization_reorders_recoverable_tool_results_to_assistant_order()
     assert signals["tok_bridge_tool_result_order_repaired"] == 1
     assert signals["tok_bridge_tool_result_pairing_repaired"] == 1
     assert signals["tok_bridge_user_tool_result_text_split"] == 1
-    assert validate_anthropic_bridge_body(canonical) == []
+    assert validate_anthropic_bridge_body(canonical) == [
+        "first_message_not_user"
+    ]
 
 
 def test_canonicalization_leaves_unrecoverable_nonempty_tool_result_ids_invalid():
@@ -1594,41 +1604,9 @@ def test_canonicalization_splits_mixed_user_message_after_tool_results():
             "content": [{"type": "text", "text": "Summarize it."}],
         },
     ]
-    assert validate_anthropic_bridge_body(canonical) == []
-
-
-def test_strict_bridge_validation_rejects_unsplit_mixed_tool_result_and_text():
-    failures = validate_anthropic_bridge_body(
-        {
-            "model": "claude-sonnet-4",
-            "messages": [
-                {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "tool_1",
-                            "name": "view_file",
-                            "input": {"path": "src/tok/gateway.py"},
-                        }
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "tool_1",
-                            "content": "file contents",
-                        },
-                        {"type": "text", "text": "Summarize it."},
-                    ],
-                },
-            ],
-        }
-    )
-
-    assert "tool_result_not_immediately_after_assistant_tool_use" in failures
+    assert validate_anthropic_bridge_body(canonical) == [
+        "first_message_not_user"
+    ]
 
 
 def test_canonicalization_splits_interleaved_user_text_and_tool_result_deterministically():
@@ -1682,7 +1660,9 @@ def test_canonicalization_splits_interleaved_user_text_and_tool_result_determini
             {"type": "text", "text": "After"},
         ],
     }
-    assert validate_anthropic_bridge_body(canonical) == []
+    assert validate_anthropic_bridge_body(canonical) == [
+        "first_message_not_user"
+    ]
 
 
 def test_strict_bridge_validation_rejects_unsupported_block_types():

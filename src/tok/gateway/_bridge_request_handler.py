@@ -8,7 +8,9 @@ from typing import Any
 import httpx
 
 from ..runtime.pipeline.request_validation import (
+    has_blocking_outgoing_failures,
     has_provider_sensitive_failures,
+    has_recoverable_immediate_pairing_failures,
     summarize_bridge_pairing,
     summarize_message_structure,
     validate_anthropic_bridge_body,
@@ -32,6 +34,15 @@ def _decode_bridge_body(raw_content: bytes | None) -> dict[str, Any] | None:
     except Exception:
         return None
     return decoded if isinstance(decoded, dict) else None
+
+
+def _validate_outgoing_bridge_body_from_bytes(
+    raw_content: bytes | None,
+) -> list[str]:
+    body = _decode_bridge_body(raw_content)
+    if not isinstance(body, dict):
+        return ["body_not_dict"]
+    return validate_anthropic_outgoing_bridge_body(body)
 
 
 async def send_with_tok_fail_open_retry(
@@ -154,6 +165,11 @@ async def send_with_tok_fail_open_retry(
             provider_safe_mixed_user_tool_result_messages,
             provider_safe_split_boundaries,
         )
+        retry_candidate_content = fallback_content
+        retry_candidate_kind = (
+            "provider-safe" if retry_content is not None else "original"
+        )
+        retry_candidate_valid = True
         if (
             "`tool_use` ids were found without `tool_result` blocks immediately after"
             in error_text
@@ -205,42 +221,137 @@ async def send_with_tok_fail_open_retry(
                 if isinstance(fallback_body, dict)
                 else ["body_not_dict"]
             )
-            if provider_safe_failures or provider_safe_outgoing_failures:
-                logger.warning(
-                    "fail_open_retry_provider_safe_invalid: refusing retry because provider-safe payload failed final local validation: strict=%s outgoing=%s",
-                    provider_safe_failures,
-                    provider_safe_outgoing_failures,
-                )
+            if has_blocking_outgoing_failures(
+                provider_safe_failures + provider_safe_outgoing_failures
+            ):
                 retry_signals["fail_open_retry_provider_safe_invalid"] = 1
-                if has_provider_sensitive_failures(
-                    provider_safe_outgoing_failures
+                retry_candidate_valid = False
+                if (
+                    allow_original_retry
+                    and original_content is not None
+                    and _payloads_materially_differ(
+                        fallback_content, original_content
+                    )
                 ):
-                    retry_signals[
-                        "fail_open_retry_provider_safe_blocked_local"
-                    ] = 1
-                    retry_signals[
-                        "tok_bridge_provider_pairing_risk_detected"
-                    ] = 1
-                session.capture_event(
-                    {
-                        "event": "fail_open_retry_provider_safe_invalid",
-                        "strict_failures": provider_safe_failures,
-                        "outgoing_failures": provider_safe_outgoing_failures,
-                        "prepared_summary": prepared_summary,
-                        "prepared_pairing": prepared_pairing,
-                        "provider_safe_summary": provider_safe_summary,
-                        "provider_safe_pairing": provider_safe_pairing,
-                        "behavior_signals": retry_signals,
-                    }
+                    original_outgoing_failures = (
+                        _validate_outgoing_bridge_body_from_bytes(
+                            original_content
+                        )
+                    )
+                    original_body = _decode_bridge_body(original_content)
+                    original_bridge_failures = (
+                        validate_anthropic_bridge_body(original_body)
+                        if isinstance(original_body, dict)
+                        else ["body_not_dict"]
+                    )
+                    original_has_hard_failures = (
+                        original_bridge_failures
+                        and not has_recoverable_immediate_pairing_failures(
+                            original_bridge_failures
+                        )
+                    )
+                    if (
+                        not original_outgoing_failures
+                        and not original_has_hard_failures
+                    ):
+                        retry_candidate_content = original_content
+                        retry_candidate_kind = "original"
+                        retry_candidate_valid = True
+                        retry_signals[
+                            "fail_open_retry_original_after_provider_safe_invalid"
+                        ] = 1
+                        logger.warning(
+                            "fail_open_retry_original_after_provider_safe_invalid: provider-safe payload failed final local validation; retrying with raw original payload"
+                        )
+                        session.capture_event(
+                            {
+                                "event": "fail_open_retry_original_after_provider_safe_invalid",
+                                "strict_failures": provider_safe_failures,
+                                "outgoing_failures": provider_safe_outgoing_failures,
+                                "original_outgoing_failures": original_outgoing_failures,
+                                "original_bridge_failures": original_bridge_failures,
+                                "prepared_summary": prepared_summary,
+                                "prepared_pairing": prepared_pairing,
+                                "provider_safe_summary": provider_safe_summary,
+                                "provider_safe_pairing": provider_safe_pairing,
+                                "behavior_signals": retry_signals,
+                            }
+                        )
+                    else:
+                        logger.warning(
+                            "fail_open_retry_provider_safe_invalid: refusing retry because provider-safe payload failed final local validation and raw original payload also failed validation: strict=%s outgoing=%s original_outgoing=%s original_bridge=%s",
+                            provider_safe_failures,
+                            provider_safe_outgoing_failures,
+                            original_outgoing_failures,
+                            original_bridge_failures,
+                        )
+                        if has_provider_sensitive_failures(
+                            provider_safe_outgoing_failures
+                        ) or has_provider_sensitive_failures(
+                            original_outgoing_failures
+                        ):
+                            retry_signals[
+                                "fail_open_retry_provider_safe_blocked_local"
+                            ] = 1
+                            retry_signals[
+                                "tok_bridge_provider_pairing_risk_detected"
+                            ] = 1
+                        session.capture_event(
+                            {
+                                "event": "fail_open_retry_provider_safe_invalid",
+                                "strict_failures": provider_safe_failures,
+                                "outgoing_failures": provider_safe_outgoing_failures,
+                                "original_outgoing_failures": original_outgoing_failures,
+                                "original_bridge_failures": original_bridge_failures,
+                                "prepared_summary": prepared_summary,
+                                "prepared_pairing": prepared_pairing,
+                                "provider_safe_summary": provider_safe_summary,
+                                "provider_safe_pairing": provider_safe_pairing,
+                                "behavior_signals": retry_signals,
+                            }
+                        )
+                        return response, retried_without_tok, retry_signals
+                else:
+                    logger.warning(
+                        "fail_open_retry_provider_safe_invalid: refusing retry because provider-safe payload failed final local validation: strict=%s outgoing=%s",
+                        provider_safe_failures,
+                        provider_safe_outgoing_failures,
+                    )
+                    if has_provider_sensitive_failures(
+                        provider_safe_outgoing_failures
+                    ):
+                        retry_signals[
+                            "fail_open_retry_provider_safe_blocked_local"
+                        ] = 1
+                        retry_signals[
+                            "tok_bridge_provider_pairing_risk_detected"
+                        ] = 1
+                    session.capture_event(
+                        {
+                            "event": "fail_open_retry_provider_safe_invalid",
+                            "strict_failures": provider_safe_failures,
+                            "outgoing_failures": provider_safe_outgoing_failures,
+                            "prepared_summary": prepared_summary,
+                            "prepared_pairing": prepared_pairing,
+                            "provider_safe_summary": provider_safe_summary,
+                            "provider_safe_pairing": provider_safe_pairing,
+                            "behavior_signals": retry_signals,
+                        }
+                    )
+                    return response, retried_without_tok, retry_signals
+            if (
+                retry_candidate_valid
+                and retry_candidate_kind == "provider-safe"
+            ):
+                retry_signals["fail_open_retry_provider_safe_validated"] = 1
+                logger.info(
+                    "fail_open_retry_provider_safe_validated: %s fallback passed local strict validation",
+                    retry_candidate_kind,
                 )
-                return response, retried_without_tok, retry_signals
-            retry_signals["fail_open_retry_provider_safe_validated"] = 1
-            logger.info(
-                "fail_open_retry_provider_safe_validated: provider-safe fallback passed local strict validation"
-            )
-            retry_kind = (
-                "provider-safe" if retry_content is not None else "original"
-            )
+        if retry_candidate_content is not None and _payloads_materially_differ(
+            content, retry_candidate_content
+        ):
+            retry_kind = retry_candidate_kind
             logger.warning(
                 "Upstream 400 after Tok request preparation: %s; retrying with %s payload",
                 error_text[:500],
@@ -248,12 +359,18 @@ async def send_with_tok_fail_open_retry(
             )
             await response.aclose()
             request_obj = client.build_request(
-                method, url, headers=headers, content=fallback_content
+                method, url, headers=headers, content=retry_candidate_content
             )
             response = await client.send(request_obj, stream=stream)
             retried_without_tok = True
-            if retry_content is not None:
+            if retry_kind == "provider-safe":
                 retry_signals["fail_open_retry_provider_safe"] = 1
+            else:
+                retry_signals[
+                    "fail_open_retry_original_after_provider_safe_invalid"
+                ] = retry_signals.get(
+                    "fail_open_retry_original_after_provider_safe_invalid", 0
+                )
             if not allow_original_retry:
                 retry_signals["fail_open_raw_retry_blocked"] = 1
         elif not allow_original_retry and original_content is not None:

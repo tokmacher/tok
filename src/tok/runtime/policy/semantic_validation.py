@@ -51,7 +51,7 @@ def calculate_semantic_regression_score(signals: dict[str, int]) -> int:
     return sum(signals.get(name, 0) for name in SEMANTIC_REGRESSION_SIGNALS)
 
 
-def pressure_score(signals: dict[str, int]) -> int:
+def semantic_pressure_score(signals: dict[str, int]) -> int:
     """Compute an aggregate protocol-pressure score for optimization gates."""
     return calculate_invisible_pressure(signals)
 

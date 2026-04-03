@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pytest
 
-from tok.bridge_memory import BridgeMemoryState, MemoryEntry
+from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 from tok.neuro.integration import distill_bridge_history
 from tok.neuro.ir import MacroRegistry
 

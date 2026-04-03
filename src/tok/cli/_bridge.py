@@ -9,6 +9,7 @@ import sys
 import time
 from typing import Annotated, Any
 
+import httpx
 import typer
 
 from ..stats import SavingsTracker
@@ -117,6 +118,16 @@ def bridge_start(
                 stderr=log_file,
                 start_new_session=True,
             )
+        except FileNotFoundError:
+            console.print(
+                "[red]Failed to start bridge: Python interpreter not found.[/red]"
+            )
+            raise typer.Exit(1) from None
+        except PermissionError:
+            console.print(
+                f"[red]Failed to start bridge: permission denied writing to {LOG_FILE}.[/red]"
+            )
+            raise typer.Exit(1) from None
         finally:
             log_file.close()
         PID_FILE.write_text(str(proc.pid))
@@ -124,8 +135,6 @@ def bridge_start(
         for _ in range(15):
             time.sleep(0.2)
             try:
-                import httpx
-
                 r = httpx.get(bridge_url(port, "/health"), timeout=1.0)
                 if r.status_code == 200:
                     console.print(
@@ -140,11 +149,23 @@ def bridge_start(
                             f"Capture directory: {memory_root() / 'sessions'}"
                         )
                     return
+            except httpx.ConnectError:
+                pass
             except Exception:
                 pass
 
+        if proc.poll() is not None:
+            console.print(
+                f"[red]Bridge process exited unexpectedly (exit code {proc.returncode}).[/red]"
+            )
+            console.print(f"Check logs: {LOG_FILE}")
+            console.print(
+                "[dim]Try `tok bridge start --foreground` to see the error directly.[/dim]"
+            )
+            raise typer.Exit(1)
+
         console.print(
-            f"[yellow]Bridge started (PID {proc.pid}) but health check pending[/yellow]"
+            f"[yellow]Bridge started (PID {proc.pid}) but health check pending.[/yellow]"
         )
         console.print(f"Logs: {LOG_FILE}")
         console.print(
@@ -366,4 +387,7 @@ def bridge_logs(
 
     content = LOG_FILE.read_text().splitlines()
     for line in content[-lines:]:
-        console.print(line)
+        # Strip legacy prefix if present to avoid confusing Rich markup
+        if line.startswith("[tok-bridge] "):
+            line = line[len("[tok-bridge] ") :]
+        console.print(line, markup=True)

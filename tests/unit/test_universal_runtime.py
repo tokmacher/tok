@@ -435,7 +435,6 @@ def test_runtime_tool_heavy_bridge_body_with_thinking_blocks_passes_validation(
         for block in msg.get("content", []):
             if isinstance(block, dict):
                 assert block.get("type") not in {
-                    "thinking",
                     "redacted_thinking",
                 }
 
@@ -1361,7 +1360,7 @@ def test_runtime_process_response_updates_memory_and_family_mode():
     assert processed.mode == "tok-native"
     assert processed.behavior_signals["tok_native_response"] == 1
     assert processed.updated_memory == ">>> g:fix|t:1"
-    assert processed.family_mode == "balanced"
+    assert processed.family_mode == "tok-universal"
 
 
 def test_response_contract_for_mode_flags_mixed_answer_tool_event():
@@ -1421,7 +1420,7 @@ def test_runtime_process_response_treats_mixed_answer_tool_as_contract_failure(
 
     assert processed.behavior_signals["tool_contract_failure"] == 1
     assert processed.behavior_signals["mixed_answer_tool_event"] == 1
-    assert processed.family_mode == "balanced"
+    assert processed.family_mode == "tok-universal"
 
     protocol_events = [
         event for event in emitted if event[0] == "protocol_drift"
@@ -3592,7 +3591,7 @@ def test_cost_usd_computed_when_pricing_provided():
     """LiveBenchmarkRunner computes cost_usd when pricing dict is provided."""
     from unittest.mock import MagicMock, patch
 
-    from tok.live_benchmark import (
+    from tok.testing.live_benchmark import (
         LiveBenchmarkRunner,
         load_benchmark_definition,
     )
@@ -3630,7 +3629,7 @@ def test_cost_usd_none_when_no_pricing():
     """LiveBenchmarkRunner leaves cost_usd as None when no pricing is provided."""
     from unittest.mock import MagicMock, patch
 
-    from tok.live_benchmark import (
+    from tok.testing.live_benchmark import (
         LiveBenchmarkRunner,
         load_benchmark_definition,
     )

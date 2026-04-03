@@ -1,4 +1,4 @@
-from tok.smart_policy import (
+from tok.runtime.policy.smart_policy import (
     advance_state,
     detect_task_type,
     identify_model_family,

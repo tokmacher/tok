@@ -89,15 +89,11 @@ def test_orchestrator_finalize_does_not_double_consume_signals():
     """
     import pathlib
 
-    source = pathlib.Path("src/tok/tok_orchestrator.py").read_text()
+    source = pathlib.Path("src/tok/adapters/orchestrator.py").read_text()
 
-    # Find all calls to consume_behavior_signals after finalize() in chat()
-    # Simplified check: ensure tok_orchestrator.py has at most 0 occurrences of
-    # consume_behavior_signals (the legitimate one was removed; gateway's tool-only
-    # path is in gateway.py, not here)
     consume_count = source.count("consume_behavior_signals")
     assert consume_count == 0, (
-        f"tok_orchestrator.py should not call consume_behavior_signals() "
+        f"adapters/orchestrator.py should not call consume_behavior_signals() "
         f"(process_response already merges session signals). Found {consume_count} occurrence(s)."
     )
 

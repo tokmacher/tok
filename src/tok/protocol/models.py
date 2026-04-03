@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -14,6 +15,8 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Trust(Enum):
@@ -72,8 +75,9 @@ class EntropyTracker(BaseModel):
             k for k in self.primacy_locked if k in valid_keys
         ]
         if len(self.primacy_locked) > 0:
-            print(
-                f"[*] Primacy lock cleanup: {len(self.primacy_locked)} keys protected"
+            logger.debug(
+                "Primacy lock cleanup: %d keys protected",
+                len(self.primacy_locked),
             )
 
 
@@ -245,8 +249,12 @@ class TokMemory(BaseModel):
                     # Safe to demote (not identity-locked)
                     # STAGE INHERITANCE: Preserve trust level from old value
                     old_heat = self.entropy.heatmap.get(key, 0)
-                    print(f"[*] UPDATE: {key}:{perm_facts[key]} → {new_val}")
-                    print(f"[*] HEAT INHERITED: {old_heat} (State Continuity)")
+                    logger.debug(
+                        "UPDATE: %s:%s → %s", key, perm_facts[key], new_val
+                    )
+                    logger.debug(
+                        "HEAT INHERITED: %s (State Continuity)", old_heat
+                    )
                     del perm_facts[key]
                     # Transfer the heat from old value to new value
                     # This prevents the "Amnesia Trap" for software agents
@@ -257,9 +265,9 @@ class TokMemory(BaseModel):
                         else self.entropy.stages.get(key, 0)
                     )
                 else:
-                    # Primacy-locked facts cannot be demoted
-                    print(
-                        f"[!] BLOCKED: {key} is primacy-locked (identity protected)"
+                    logger.debug(
+                        "BLOCKED: %s is primacy-locked (identity protected)",
+                        key,
                     )
 
         # Rebuild permanent_state without demoted facts
@@ -311,7 +319,7 @@ class TokMemory(BaseModel):
             age = turn_count - last
 
             # 1. Update Stages & Scheduling
-            old_stage = stage
+            _old_stage = stage
             # If it's already in the permanent_state string OR locked OR high heat
             # (Checks source_states specifically for permanent)
             is_currently_perm = k in self._parse_facts(self.permanent_state)
@@ -323,10 +331,9 @@ class TokMemory(BaseModel):
             ):
                 stage = 3
                 self.entropy.next_refresh[k] = 0
-                if old_stage < 3:
-                    print(
-                        f"[*] Memory Promotion: {k} reached Stage 3 (Permanent)"
-                    )
+                logger.debug(
+                    "Memory Promotion: %s reached Stage 3 (Permanent)", k
+                )
             elif stage == 0 and age >= self.entropy.threshold_archive:
                 # First Decay: Move Stage 0 -> 1
                 stage = 1

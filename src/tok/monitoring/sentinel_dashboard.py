@@ -5,7 +5,7 @@ import streamlit as st
 
 try:
     from tok.utils.tok_registry import TokRegistry as _TokRegistry
-    from tok.sifter import Sifter
+    from tok.utils.sifter import Sifter
 
     TokRegistry = _TokRegistry
     REGISTRY_AVAILABLE = True
@@ -113,7 +113,8 @@ def main() -> None:
             territory[:2000] + "..." if len(territory) > 2000 else territory
         )
         if st.button("🔄 Refresh Territory"):
-            Sifter.from_dir("src/tok", naked=False, minify=True)
+            if Sifter is not None:
+                Sifter.from_dir("src/tok", naked=False, minify=True)
             st.rerun()
 
     with tab4:

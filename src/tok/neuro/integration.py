@@ -9,7 +9,7 @@ from tok.neuro.ir import TokIR, Instruction, Macro
 from tok.neuro.miner import IRPatternMiner
 
 if TYPE_CHECKING:
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
 logger = logging.getLogger("tok.neuro.integration")
 

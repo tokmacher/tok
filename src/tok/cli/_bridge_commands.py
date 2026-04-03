@@ -79,7 +79,10 @@ def bridge_logs(
 
     content = LOG_FILE.read_text().splitlines()
     for line in content[-lines:]:
-        console.print(line)
+        # Strip legacy prefix if present to avoid confusing Rich markup
+        if line.startswith("[tok-bridge] "):
+            line = line[len("[tok-bridge] ") :]
+        console.print(line, markup=True)
 
 
 def register(bridge_app: typer.Typer) -> None:

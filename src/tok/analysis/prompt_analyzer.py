@@ -6,21 +6,9 @@ directive escalation levels, memory profiles, and history compression.
 
 from __future__ import annotations
 
-import sys
-import os
 from typing import Any
 
-# Ensure local src is on path when run directly
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-
-import tiktoken
-
-_ENC = tiktoken.get_encoding("cl100k_base")
-
-
-def count_tokens(text: str) -> int:
-    """Count tokens using cl100k_base encoding."""
-    return len(_ENC.encode(text))
+from ..utils.token_utils import count_tokens
 
 
 def count_chars(text: str) -> int:
@@ -42,7 +30,7 @@ def measure(text: str, label: str) -> dict[str, str | int]:
 
 def measure_base_prompts() -> dict[str, dict[str, str | int]]:
     """Measure token counts of TOK_SYSTEM_PROMPT and all variants."""
-    from tok.prompt import (
+    from tok.analysis.prompt import (
         TOK_SYSTEM_PROMPT,
         NAKED_TOK_SYSTEM_PROMPT,
         TOK_EXPLORE_PROMPT,
@@ -92,7 +80,7 @@ def measure_directive_sizes() -> dict[str, dict[str, str | int]]:
 
 def measure_grammar_snippets() -> dict[str, dict[str, str | int]]:
     """Measure grammar snippet sizes at each bootstrap level."""
-    from tok.prompt import get_grammar_snippet
+    from tok.analysis.prompt import get_grammar_snippet
 
     levels = ["essentials", "restricted", "full", "pulse", "explore"]
     return {
@@ -171,7 +159,7 @@ def measure_pressure_impact() -> dict[str, dict[str, str | int]]:
 def measure_dynamic_injections() -> dict[str, dict[str, str | int]]:
     """Measure the total injected system additions with grammar at each level."""
     from tok.compression import inject_system_additions
-    from tok.prompt import get_grammar_snippet
+    from tok.analysis.prompt import get_grammar_snippet
 
     results = {}
     # grammar only (no tok_state)
@@ -307,7 +295,7 @@ def simulate_memory_growth(
     turns: list[int] | None = None,
 ) -> dict[str, Any]:
     """Simulate bridge memory accumulation over N turns and measure wire_state size."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
     if turns is None:
         turns = [1, 5, 10, 20, 50]
@@ -339,8 +327,8 @@ def simulate_memory_growth(
 
 def measure_memory_profiles() -> dict[str, dict[str, str | int]]:
     """Measure wire_state size under each memory projection profile."""
-    from tok.bridge_memory import BridgeMemoryState
-    from tok.smart_policy import policy_for_model
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
+    from tok.runtime.policy.smart_policy import policy_for_model
 
     # Prime a state with realistic data
     state = BridgeMemoryState()
@@ -369,66 +357,6 @@ def measure_memory_profiles() -> dict[str, dict[str, str | int]]:
             key = f"{model_key}:{mode}"
             results[key] = measure(projected, key)
 
-    return results
-
-
-def test_memory_compression() -> dict[str, Any]:
-    """Test compress_user_prompt on prompts of increasing size/complexity."""
-    from tok.compression import compress_user_prompt
-
-    samples = {
-        "tiny": "Implement a login feature.",
-        "small": (
-            "Task: Add user authentication.\n"
-            "Requirements:\n"
-            "- Use JWT tokens\n"
-            "- Avoid plaintext password storage\n"
-            "Files: src/auth.py, tests/test_auth.py"
-        ),
-        "medium": (
-            "Requirement: Implement an end-to-end authentication system.\n"
-            "Goal: Support OAuth2 and API key auth.\n"
-            "- Do not break existing sessions\n"
-            "- Must support refresh tokens\n"
-            "- Never log PII in plaintext\n"
-            "- Implement rate limiting (avoid abuse)\n"
-            "Files: src/auth.py, src/middleware.py, src/tokens.py\n"
-            "Avoid circular imports in src/auth.py.\n"
-            "Tests must pass: tests/test_auth.py, tests/test_tokens.py"
-        ),
-        "large": (
-            "You are tasked with implementing a complete identity management service.\n"
-            "Goal: Replace the legacy auth module with a modern OAuth2 + OIDC system.\n"
-            "Requirements:\n"
-            "1. Implement: OAuth2 authorization code flow\n"
-            "2. Add: PKCE support for mobile clients\n"
-            "3. Implement: Refresh token rotation\n"
-            "4. Add: Multi-factor authentication support\n"
-            "5. Implement: Session management with Redis\n"
-            "6. Add: Rate limiting to avoid brute force attacks\n"
-            "7. Implement: Audit logging (do not log PII)\n"
-            "8. Add: Token introspection endpoint\n"
-            "Constraints:\n"
-            "- Never break existing API contracts\n"
-            "- Do not use deprecated crypto algorithms\n"
-            "- Avoid storing plaintext secrets\n"
-            "- Only use approved libraries from requirements.txt\n"
-            "Files: src/auth.py, src/tokens.py, src/sessions.py, src/middleware.py, "
-            "src/oauth2.py, tests/test_auth.py, tests/test_tokens.py\n"
-            "Additional: Need to add migration scripts for existing users."
-        ),
-    }
-
-    results = {}
-    for name, prompt in samples.items():
-        compressed = compress_user_prompt(prompt)
-        results[name] = {
-            "original": measure(prompt, f"original:{name}"),
-            "compressed": measure(compressed, f"compressed:{name}"),
-            "ratio": round(
-                count_tokens(compressed) / max(1, count_tokens(prompt)), 3
-            ),
-        }
     return results
 
 
@@ -680,7 +608,7 @@ def measure_high_pressure() -> dict[str, str | int]:
 
 def measure_memory_heavy() -> dict[str, Any]:
     """Memory-heavy scenario: simulate a state loaded with many entries."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
     from tok.compression import inject_system_additions
 
     state = BridgeMemoryState()

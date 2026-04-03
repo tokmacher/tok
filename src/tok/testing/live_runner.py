@@ -9,12 +9,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, cast
 
-import tiktoken
 from dotenv import load_dotenv
 from openai import OpenAI
 
 from ..utils import config
 from ..adapters import OpenAIChatAdapter
+from ..utils.token_utils import count_tokens
 
 load_dotenv()
 
@@ -25,8 +25,6 @@ PRICING = {
     "prompt": 0.26,
     "completion": 0.38,
 }
-
-enc = tiktoken.get_encoding("cl100k_base")
 
 
 @dataclass
@@ -146,9 +144,7 @@ class LiveAgent:
             self.last_response = f"ERROR: {str(e)}"
             return self.last_response, self.last_usage
 
-    def count_tokens(self, text: str) -> int:
-        """Count tokens in text using cl100k_base."""
-        return len(enc.encode(text))
+    count_tokens = staticmethod(count_tokens)
 
     def get_stats(self) -> dict[str, Any]:
         """Get cumulative statistics."""

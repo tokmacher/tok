@@ -11,15 +11,16 @@ from ..runtime.pipeline.request_validation import (
     canonicalize_anthropic_bridge_body,
 )
 
+_DROP_RESPONSE_HEADERS = {
+    "content-encoding",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+}
+
 
 def _safe_headers(headers: httpx.Headers) -> dict[str, str]:
     """Remove headers that shouldn't be forwarded in responses."""
-    _DROP_RESPONSE_HEADERS = {
-        "content-encoding",
-        "content-length",
-        "transfer-encoding",
-        "connection",
-    }
     return {
         k: v
         for k, v in headers.items()

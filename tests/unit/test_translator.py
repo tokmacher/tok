@@ -1,6 +1,6 @@
 """Tests for tok.translator — output-side Tok -> readable English."""
 
-from tok.translator import (
+from tok.runtime.policy.translator import (
     postprocess_response,
     strip_markdown_fallback,
     tok_to_readable,

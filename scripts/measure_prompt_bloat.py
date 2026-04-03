@@ -12,7 +12,7 @@ import sys
 # Ensure src is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from tok.prompt_analyzer import (
+from tok.analysis.prompt_analyzer import (
     measure_base_prompts,
     measure_directive_sizes,
     measure_grammar_snippets,
@@ -21,7 +21,6 @@ from tok.prompt_analyzer import (
     measure_per_turn_actual,
     simulate_memory_growth,
     measure_memory_profiles,
-    test_memory_compression,
     analyze_history_compression,
     measure_tool_compression_impact,
     analyze_directive_overlap,
@@ -74,7 +73,7 @@ def _collect_results() -> dict:
         (
             "[8/10] Memory compression...",
             "memory_compression",
-            test_memory_compression,
+            analyze_history_compression,
         ),
         (
             "[9/10] History compression...",

@@ -11,8 +11,9 @@ from fastapi import Response
 from ..runtime.pipeline.request_validation import (
     bridge_strict_failure_signals,
     canonicalize_anthropic_bridge_body,
-    has_recoverable_immediate_pairing_failures,
+    has_blocking_outgoing_failures,
     has_provider_sensitive_failures,
+    has_recoverable_immediate_pairing_failures,
     quarantine_invalid_tool_history_messages,
     summarize_bridge_pairing,
     summarize_message_structure,
@@ -103,7 +104,7 @@ def _assistant_tool_use_text_segments(
                 flush_segment()
             tool_uses.append(copy.deepcopy(block))
             continue
-        if block_type == "text":
+        if block_type in {"text", "thinking", "redacted_thinking"}:
             if tool_uses:
                 suffix_text.append(copy.deepcopy(block))
             else:
@@ -648,6 +649,11 @@ def _run_bridge_preflight(
             )
 
         if strict_failures:
+            _merge_signal_counts(
+                behavior_signals,
+                bridge_strict_failure_signals(strict_failures),
+            )
+        if strict_failures and has_blocking_outgoing_failures(strict_failures):
             _log_bridge_body_structure(
                 _preflight_event_name(
                     "bridge_preflight_rejected_reverted_to_original", path
@@ -677,6 +683,11 @@ def _run_bridge_preflight(
 
     outgoing_failures = validate_anthropic_outgoing_bridge_body(canonical_body)
     if outgoing_failures:
+        _merge_signal_counts(
+            behavior_signals,
+            bridge_strict_failure_signals(outgoing_failures),
+        )
+    if outgoing_failures and has_blocking_outgoing_failures(outgoing_failures):
         outgoing_payload_source = _provider_sensitive_payload_source(
             canonical_body=canonical_body,
             original_body=original_body,
@@ -757,7 +768,7 @@ def _run_bridge_preflight(
             degraded_failures = validate_anthropic_outgoing_bridge_body(
                 original_body
             )
-            if not degraded_failures:
+            if not has_blocking_outgoing_failures(degraded_failures):
                 interleaving_failure = (
                     _is_assistant_tool_use_text_interleaving_failure(
                         outgoing_failures

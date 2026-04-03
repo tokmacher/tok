@@ -1,7 +1,10 @@
 import pytest
 from tok.compression import compress_user_prompt
 from tok.universal_runtime import detect_prompt_bloat
-from tok.bridge_memory import BridgeMemoryState, clean_system_context
+from tok.runtime.memory.bridge_memory import (
+    BridgeMemoryState,
+    clean_system_context,
+)
 
 
 @pytest.fixture

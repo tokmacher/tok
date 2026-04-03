@@ -1,6 +1,6 @@
 """Tests for tok.pricing — model price lookups."""
 
-from tok.pricing import PRICING_DEFAULT, get_pricing
+from tok.utils.pricing import PRICING_DEFAULT, get_pricing
 
 
 class TestGetPricing:

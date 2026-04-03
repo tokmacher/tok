@@ -212,7 +212,7 @@ def test_deep_chain_with_variable_input() -> None:
 
 def test_serialization_round_trip() -> None:
     """Test that multi-level macros survive BridgeMemoryState serialization."""
-    from tok.bridge_memory import BridgeMemoryState
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
     state = BridgeMemoryState()
     registry = build_layered_registry()

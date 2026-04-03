@@ -20,15 +20,15 @@ import time
 from typing import Any, cast
 from collections.abc import Callable
 
-import tiktoken
 from dotenv import load_dotenv
 from openai import OpenAI
 
 from .adapters import TextLoopAdapter
 from ..protocol.models import TokNode
 from ..protocol.parser import TokParser, serialize
-from ..prompt import TOK_SYSTEM_PROMPT
+from ..analysis.prompt import TOK_SYSTEM_PROMPT
 from ..protocol.schema import DEFAULT_SCHEMA
+from ..utils.token_utils import count_tokens
 
 
 class Agent:
@@ -52,13 +52,9 @@ client = OpenAI(
     max_retries=0,
 )
 
-MODEL = "arcee-ai/trinity-large-preview:free"
-ENCODER = tiktoken.get_encoding("cl100k_base")
+MODEL = "openai/gpt-4.1-mini"
+
 TEXT_LOOP_ADAPTER = TextLoopAdapter()
-
-
-def count_tokens(text: str) -> int:
-    return len(ENCODER.encode(text))
 
 
 # ── Mock tools ────────────────────────────────────────────────────────────────
