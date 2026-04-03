@@ -5,9 +5,9 @@
 [![Python](https://img.shields.io/pypi/pyversions/tok-protocol.svg)](https://pypi.org/project/tok-protocol/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Tok cuts LLM token costs by ~50%+ without altering your workflow.**
+**Tok cuts LLM token costs by 15–46% on sessions of 8+ turns, without altering your workflow.**
 
-Savings come primarily from **input token compression** (prompt/context optimization) with additional savings from response compression. Since most providers charge different rates for input vs output tokens, your actual cost reduction depends on your provider's pricing structure.
+Savings come primarily from **input token compression** (prompt/context optimization) with additional savings from response compression. Short sessions (< 8 turns) default to baseline mode since compression overhead exceeds savings. Since most providers charge different rates for input vs output tokens, your actual cost reduction depends on your provider's pricing structure and session length.
 
 Tok is an invisible bridge that sits between Claude Code and the model API. It compresses conversations on the way out and re-hydrates them on the way back. You use Claude exactly as before — Tok runs underneath, saving tokens automatically.
 
@@ -90,16 +90,15 @@ The bridge is the supported public workflow. A Python SDK path exists but is exp
 
 ## Demonstrated Savings
 
-Here's an example of the `tok stats` output, showcasing the significant cost and token savings achieved in a real session:
+Here's an example of the `tok stats` output from a long session with heavy tool-result repetition (207 API calls):
 
 ![Tok Savings Output showing 82 percent saved](docs/images/tok_stats.png)
 
-This output clearly illustrates the financial benefits and token efficiency of using Tok:
+This output from a high-repetition session shows the upper bound of savings. Typical results from benchmark testing across Claude Sonnet, GPT-4, and DeepSeek:
 
-- **$48.22 saved (82.1% reduction)** from 207 API calls
-- **20.9M tokens avoided** through compression
-- **6.5M vs 27.5M tokens** comparing Tok vs baseline
-- **Preserved workflow** via Claude Code CLI
+- **15–46% token savings** on sessions of 8+ turns (varies by model, mode, and workload)
+- **Automatic baseline fallback** for short sessions where compression adds overhead
+- **Fail-open safety** — if compression risks fidelity, Tok falls back to uncompressed
 
 ## Technical Overview
 

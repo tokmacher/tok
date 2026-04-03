@@ -1,6 +1,6 @@
 # Architecture
 
-For visual flow diagrams, see [architecture-diagrams.md](./architecture-diagrams.md). For the active roadmap and tranche sequencing, see [roadmap.md](../roadmap.md), which is the source of truth for runtime contract ownership.
+For visual flow diagrams, see [architecture-diagrams.md](./architecture-diagrams.md). For the active roadmap and tranche sequencing, see `roadmap.md` in the repository root.
 
 Current architecture posture:
 
@@ -110,7 +110,7 @@ derived-contract drift rather than a competing second IDL.
 ### Telemetry & Conformance Signals
 
 - Behavior signals cover `tok_native_response`, `non_tok_response`, `fail_open_compat_response`, `malformed_tok_*`, cold-start metrics, invisible pressure, and mutation detection.
-- `tok doctor` and CI gates consume these signals; any regression of the contract is treated as a release blocker per [roadmap.md](../roadmap.md).
+- `tok doctor` and CI gates consume these signals; any regression of the contract is treated as a release blocker per the roadmap.
 
 ## Module Layout
 

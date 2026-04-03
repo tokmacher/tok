@@ -938,10 +938,11 @@ def test_gateway_degrades_interleaved_assistant_tool_use_batch_to_provider_safe(
             "text": "Inspect concurrency path.",
         }
     ]
-    assert sent_bodies[0]["messages"][1]["content"][2] == {
-        "type": "text",
-        "text": "Collecting evidence.",
-    }
+    first_assistant = sent_bodies[0]["messages"][1]
+    assert first_assistant["role"] == "assistant"
+    first_types = [b.get("type") for b in first_assistant["content"]]
+    assert first_types == ["text", "tool_use", "tool_use"]
+    assert first_assistant["content"][0]["text"] == "Collecting evidence."
     assert sent_bodies[0]["stream"] is False
     assert sent_bodies[0]["system"] == ""
 
@@ -4870,7 +4871,7 @@ def test_gateway_rewrites_provider_sensitive_large_tool_batch_before_send(
     assert "bridge_preflight_large_file_read_burst_rewritten" in caplog.text
 
 
-def test_gateway_allows_small_interleaved_tool_batch_before_send(
+def test_gateway_rewrites_small_interleaved_tool_batch_before_send(
     tmp_path, monkeypatch, caplog
 ):
     memory_dir = tmp_path / ".tok"
@@ -4909,7 +4910,23 @@ def test_gateway_allows_small_interleaved_tool_batch_before_send(
 
     assert response.status_code == 200
     assert len(sent_bodies) == 1
-    assert "bridge_preflight_rejected_outgoing_guard_local" not in caplog.text
+    sent_messages = sent_bodies[0]["messages"]
+    for msg in sent_messages:
+        if msg["role"] == "assistant":
+            types = [b.get("type") for b in msg["content"]]
+            has_tool = "tool_use" in types
+            has_text = "text" in types
+            if has_tool and has_text:
+                tool_indices = [
+                    i for i, t in enumerate(types) if t == "tool_use"
+                ]
+                text_indices = [i for i, t in enumerate(types) if t == "text"]
+                assert not any(
+                    ti < tool_indices[-1] and ti > tool_indices[0]
+                    for ti in text_indices
+                ), (
+                    f"assistant message has text interleaved between tool_use blocks: {types}"
+                )
 
 
 def test_gateway_rewrites_provider_sensitive_prepared_body_to_safe_segments(

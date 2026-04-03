@@ -164,4 +164,4 @@ flowchart TB
 
 ---
 
-See [roadmap.md](../roadmap.md) for latest planning and phase status.
+See the repository root `roadmap.md` for latest planning and phase status.

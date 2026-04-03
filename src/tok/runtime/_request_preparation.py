@@ -909,9 +909,14 @@ def prepare_request_impl(
 
             h_profile: dict[str, Any] = dict(policy.history_profiles[mode])
             h_profile["_no_pointers"] = True
+            bridge_keep_turns = (
+                max(keep_turns, 2)
+                if request.adapter_kind == "claude-bridge"
+                else keep_turns
+            )
             recent, tok_state = compress_history(
                 body["messages"],
-                keep_turns=keep_turns,
+                keep_turns=bridge_keep_turns,
                 profile=h_profile,
                 prune_tool_results=True,
             )
@@ -927,7 +932,7 @@ def prepare_request_impl(
             ):
                 recent, tok_state = compress_history(
                     body["messages"],
-                    keep_turns=1,
+                    keep_turns=max(bridge_keep_turns, 2),
                     profile=h_profile,
                     prune_tool_results=True,
                 )

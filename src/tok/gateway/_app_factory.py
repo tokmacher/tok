@@ -29,6 +29,7 @@ from ._bridge_preflight import (
 )
 from ._bridge_request_handler import send_with_tok_fail_open_retry
 from ._bridge_streaming import buffer_strip_restream_impl
+from ._anthropic_optimizations import apply_anthropic_optimizations
 
 __all__ = ["buffer_strip_restream_impl", "create_app_impl"]
 
@@ -544,6 +545,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             "hot_hint_tokens_added": 0,
                             "reacquisition_tokens_avoided_estimate": 0,
                         }
+                    body = apply_anthropic_optimizations(body)
                     body_bytes = json.dumps(body).encode()
 
                     if tool_breakdown:

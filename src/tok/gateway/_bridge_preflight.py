@@ -117,7 +117,13 @@ def _should_block_invalid_tool_history_locally(
 
 
 def _should_return_read_burst_hint(failures: list[str]) -> bool:
-    return "provider_sensitive_large_tool_use_text_interleaving" in failures
+    return bool(
+        {
+            "provider_sensitive_large_tool_use_text_interleaving",
+            "provider_sensitive_assistant_tool_use_text_interleaving",
+        }
+        & set(failures)
+    )
 
 
 def _assistant_tool_use_text_segments(
@@ -190,6 +196,20 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
             continue
 
         segments = _assistant_tool_use_text_segments(content)
+        if len(segments) == 1 and segments[0].get("suffix_text"):
+            reordered = copy.deepcopy(message)
+            reordered["content"] = (
+                segments[0]["prefix_text"]
+                + segments[0]["suffix_text"]
+                + segments[0]["tool_uses"]
+            )
+            rewritten_messages.append(reordered)
+            changed = True
+            signals["tok_bridge_tool_use_suffix_text_reordered"] = (
+                signals.get("tok_bridge_tool_use_suffix_text_reordered", 0) + 1
+            )
+            index += 1
+            continue
         if len(segments) <= 1:
             rewritten_messages.append(copy.deepcopy(message))
             index += 1
@@ -234,8 +254,8 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
             assistant_message = copy.deepcopy(message)
             assistant_message["content"] = (
                 segment["prefix_text"]
-                + segment["tool_uses"]
                 + segment["suffix_text"]
+                + segment["tool_uses"]
             )
             rewritten_messages.append(assistant_message)
             segment_tool_use_count = len(segment["tool_uses"])

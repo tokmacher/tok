@@ -1,6 +1,6 @@
 # Examples
 
-Tok ships one supported example for the v0.1.0 public release.
+Tok ships two supported examples for the v0.1.0 public release.
 
 ## Supported Examples
 

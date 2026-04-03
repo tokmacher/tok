@@ -92,7 +92,7 @@ Comprehensive benchmark testing across multiple models (Claude Sonnet 4.6, GPT-4
 
 **✅ Implemented and Verified:**
 1. **Short session detection** - Auto-switch to baseline for < 8 turns
-2. **tok-native as default** - Best overall task success rate
+2. **tool-compatible (natural_first) as default** - Best overall balance of safety and savings
 3. **Flexible response parsing** - Handles format variations
 4. **Mode selection guidelines** - Documented in README
 
@@ -103,12 +103,15 @@ Comprehensive benchmark testing across multiple models (Claude Sonnet 4.6, GPT-4
 
 ### Recommended Defaults for 0.1.0
 
-| Model Family | Default Mode | Rationale |
-|--------------|--------------|-----------|
-| Claude (Sonnet 4.6) | tok-native | Best task success, good savings (8-17%) |
-| OpenAI (GPT-4.x) | tok-native | Reliable task success, moderate savings |
-| DeepSeek | tok-tool-compatible | Optimal for this model's architecture |
-| Unknown/Other | tok-native | Safe default with proven track record |
+The shipping default is `tool-compatible` (which uses the `natural_first` request policy).
+The table below shows the optimal mode per model family for users who want to override.
+
+| Model Family | Optimal Mode | Default (shipped) | Rationale |
+|--------------|--------------|-------------------|-----------|
+| Claude (Sonnet 4.6) | tok-minimal (15+ turns) | tool-compatible | Best savings for long sessions; tool-compatible is safer for mixed lengths |
+| OpenAI (GPT-4.x) | tok-native | tool-compatible | Reliable task success, moderate savings |
+| DeepSeek | tok-tool-compatible | tool-compatible | Optimal for this model's architecture |
+| Unknown/Other | tok-native | tool-compatible | Safe default with proven track record |
 
 ### Release Criteria Met
 
@@ -155,7 +158,7 @@ Comprehensive benchmark testing across multiple models (Claude Sonnet 4.6, GPT-4
 ### A/B Testing Framework
 
 **Phase 1 (0.1.0):**
-- Default: tok-native for all models
+- Default: tool-compatible (natural_first) for all models
 - Control: baseline mode
 - Measure: Token savings, task success proxy
 

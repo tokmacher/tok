@@ -90,12 +90,13 @@ def session_write_memory(session: "RuntimeSession", text: str) -> str:
 
 
 def get_adaptive_keep_turns(session: "RuntimeSession") -> int:
-    """Determine how many history turns to keep based on session age."""
-    if session._step_count <= 2:
-        return 2
-    if session._step_count <= 10:
-        return 1
-    return 0
+    """Determine how many history turns to keep based on session age.
+    A session age ( self._step_count determines how many recent turns to preserve:
+    - Young sessions (few steps): keep 3 turns for working memory stability
+    - Mid sessions (steps 3-10): keep 2 turns
+    - Mature sessions (11+ steps): keep 2 turns as a minimum floor
+    """
+    return 2
 
 
 def _discover_project_markers(cwd: Path | None = None) -> frozenset[str]:

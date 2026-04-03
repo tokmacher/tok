@@ -22,11 +22,116 @@ from . import (
     logger,
 )
 
-__all__ = ["buffer_strip_restream_impl"]
+__all__ = ["buffer_strip_restream_impl", "passthrough_stream_impl"]
 
 _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = int(
     os.getenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", "2")
 )
+
+
+def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
+    """Emit SSE events for a single content block (text, tool_use, or thinking)."""
+    events: list[bytes] = []
+    block_type = block.get("type", "text")
+
+    if block_type == "thinking":
+        thinking_text = block.get("thinking", "")
+        signature = block.get("signature", "")
+        start = {
+            "type": "content_block_start",
+            "index": i,
+            "content_block": {
+                "type": "thinking",
+                "thinking": "",
+            },
+        }
+        events.append(
+            f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
+        )
+        if thinking_text:
+            delta = {
+                "type": "content_block_delta",
+                "index": i,
+                "delta": {
+                    "type": "thinking_delta",
+                    "thinking": thinking_text,
+                },
+            }
+            events.append(
+                f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
+            )
+        if signature:
+            sig_delta = {
+                "type": "content_block_delta",
+                "index": i,
+                "delta": {
+                    "type": "signature_delta",
+                    "signature": signature,
+                },
+            }
+            events.append(
+                f"event: content_block_delta\ndata: {json.dumps(sig_delta)}\n\n".encode()
+            )
+        stop = {"type": "content_block_stop", "index": i}
+        events.append(
+            f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
+        )
+
+    elif block_type == "text":
+        start = {
+            "type": "content_block_start",
+            "index": i,
+            "content_block": {"type": "text", "text": ""},
+        }
+        events.append(
+            f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
+        )
+        delta = {
+            "type": "content_block_delta",
+            "index": i,
+            "delta": {"type": "text_delta", "text": block.get("text", "")},
+        }
+        events.append(
+            f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
+        )
+        stop = {"type": "content_block_stop", "index": i}
+        events.append(
+            f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
+        )
+
+    else:
+        tool_input = block.get("input", {})
+        start = {
+            "type": "content_block_start",
+            "index": i,
+            "content_block": {
+                "type": "tool_use",
+                "id": block.get("id", ""),
+                "name": block.get("name", "unknown"),
+                "input": {},
+            },
+        }
+        events.append(
+            f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
+        )
+        if isinstance(tool_input, dict):
+            delta = {
+                "type": "content_block_delta",
+                "index": i,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": json.dumps(tool_input),
+                },
+            }
+            events.append(
+                f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
+            )
+        stop = {"type": "content_block_stop", "index": i}
+        events.append(
+            f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
+        )
+
+    return events
 
 
 def _merge_signal_counts(
@@ -53,6 +158,62 @@ def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
         return ""
     payload = json.dumps(normalized, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+async def passthrough_stream_impl(
+    session: BridgeSession,
+    client: httpx.AsyncClient,
+    response: httpx.Response,
+    input_saved_tokens: int = 0,
+    behavior_signals: dict[str, int] | None = None,
+    prompt_metrics: dict[str, int] | None = None,
+) -> AsyncIterator[bytes]:
+    """Stream-through mode: yield raw SSE chunks without buffering.
+
+    Used when tool_compatible=False (baseline mode) to preserve real-time
+    streaming UX for clients like Claude Code that feed bytes incrementally
+    to their SSE parsers.
+    """
+    sse_model: str = "unknown"
+    sse_usage: dict[str, Any] = {}
+    try:
+        async for chunk in response.aiter_bytes():
+            yield chunk
+            chunk_text = chunk.decode("utf-8", errors="replace")
+            for line in chunk_text.split("\n"):
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    d = json.loads(line[6:])
+                    etype = d.get("type", "")
+                    if etype == "message_start":
+                        msg = d.get("message", {})
+                        sse_model = msg.get("model", sse_model)
+                        sse_usage = msg.get("usage", sse_usage)
+                    elif etype == "message_delta":
+                        sse_usage.update(d.get("usage", {}))
+                except (json.JSONDecodeError, KeyError):
+                    pass
+    finally:
+        response_aclose = getattr(response, "aclose", None)
+        if callable(response_aclose):
+            await response_aclose()
+        client_aclose = getattr(client, "aclose", None)
+        if callable(client_aclose):
+            await client_aclose()
+        if sse_model != "unknown" and sse_usage:
+            session.tracker.record_call(
+                model=sse_model,
+                actual_input=sse_usage.get("input_tokens", 0),
+                actual_output=sse_usage.get("output_tokens", 0),
+                cache_read=sse_usage.get("cache_read_input_tokens", 0),
+                cache_write=sse_usage.get("cache_creation_input_tokens", 0),
+                input_saved=input_saved_tokens,
+                output_saved=0,
+                type_breakdown=None,
+                behavior_signals=behavior_signals or None,
+                prompt_metrics=prompt_metrics or None,
+            )
 
 
 async def buffer_strip_restream_impl(
@@ -91,6 +252,7 @@ async def buffer_strip_restream_impl(
         sse_usage: dict[str, Any] = {}
         stream_blocks: dict[int, dict[str, Any]] = {}
         stream_order: list[int] = []
+        response_signals: dict[str, int] = {}
 
         for event_str in sse_events:
             for line in event_str.split("\n"):
@@ -123,6 +285,12 @@ async def buffer_strip_restream_impl(
                                 else {},
                                 "partial_json": [],
                             }
+                        elif block_type == "thinking":
+                            stream_blocks[index] = {
+                                "type": "thinking",
+                                "thinking": str(block.get("thinking", "")),
+                                "signature": "",
+                            }
                         else:
                             stream_blocks[index] = {
                                 "type": "text",
@@ -151,6 +319,16 @@ async def buffer_strip_restream_impl(
                             partials = block.setdefault("partial_json", [])
                             if isinstance(partials, list):
                                 partials.append(delta.get("partial_json", ""))
+                        elif delta_type == "thinking_delta":
+                            block["type"] = "thinking"
+                            block["thinking"] = str(
+                                block.get("thinking", "")
+                            ) + delta.get("thinking", "")
+                        elif delta_type == "signature_delta":
+                            block["type"] = "thinking"
+                            block["signature"] = str(
+                                block.get("signature", "")
+                            ) + delta.get("signature", "")
                         logger.debug(
                             "Delta type: %s, partial: %s",
                             delta_type,
@@ -179,10 +357,17 @@ async def buffer_strip_restream_impl(
         tool_blocks = _materialize_stream_tool_blocks(
             stream_blocks, stream_order
         )
+        thinking_blocks = [
+            stream_blocks[idx]
+            for idx in stream_order
+            if idx in stream_blocks
+            and isinstance(stream_blocks[idx], dict)
+            and stream_blocks[idx].get("type") == "thinking"
+        ]
         content_blocks = _response_contract_for_mode(
             full_text, tool_compatible=tool_compatible
         ).content_blocks
-        translated_blocks = content_blocks + tool_blocks
+        translated_blocks = thinking_blocks + content_blocks + tool_blocks
         has_visible_blocks = any(
             block.get("type") == "tool_use"
             or (
@@ -413,6 +598,18 @@ async def buffer_strip_restream_impl(
                                     response_signals,
                                     recovery_success_signals,
                                 )
+                                # Merge stream_behavior_signals (including stream_buffer_read_error)
+                                # into response_signals so they are recorded in the tracker
+                                _merge_signal_counts(
+                                    response_signals,
+                                    stream_behavior_signals,
+                                )
+                                # Merge retry_response_signals (which includes signals from
+                                # the recovery response processing like tool_compatible_response)
+                                _merge_signal_counts(
+                                    response_signals,
+                                    retry_response_signals,
+                                )
                                 retry_usage = retry_json.get("usage", {})
                                 retry_model = str(retry_json.get("model", ""))
                                 if retry_model and retry_usage:
@@ -446,53 +643,10 @@ async def buffer_strip_restream_impl(
                                 }
                                 yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n".encode()
                                 for i, block in enumerate(translated_blocks):
-                                    if block.get("type") == "text":
-                                        start = {
-                                            "type": "content_block_start",
-                                            "index": i,
-                                            "content_block": {
-                                                "type": "text",
-                                                "text": "",
-                                            },
-                                        }
-                                        delta = {
-                                            "type": "content_block_delta",
-                                            "index": i,
-                                            "delta": {
-                                                "type": "text_delta",
-                                                "text": block.get("text", ""),
-                                            },
-                                        }
-                                    else:
-                                        start = {
-                                            "type": "content_block_start",
-                                            "index": i,
-                                            "content_block": {
-                                                "type": "tool_use",
-                                                "id": block.get("id", ""),
-                                                "name": block.get(
-                                                    "name", "unknown"
-                                                ),
-                                                "input": {},
-                                            },
-                                        }
-                                        delta = {
-                                            "type": "content_block_delta",
-                                            "index": i,
-                                            "delta": {
-                                                "type": "input_json_delta",
-                                                "partial_json": json.dumps(
-                                                    block.get("input", {})
-                                                ),
-                                            },
-                                        }
-                                    stop = {
-                                        "type": "content_block_stop",
-                                        "index": i,
-                                    }
-                                    yield f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
-                                    yield f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
-                                    yield f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
+                                    for event_bytes in _emit_sse_block(
+                                        i, block
+                                    ):
+                                        yield event_bytes
                                 yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
                                 return
             if not recovered:
@@ -588,63 +742,8 @@ async def buffer_strip_restream_impl(
                 ):
                     if content_blocks:
                         for i, block in enumerate(content_blocks):
-                            block_type = block.get("type")
-                            if block_type == "text":
-                                start = {
-                                    "type": "content_block_start",
-                                    "index": i,
-                                    "content_block": {
-                                        "type": "text",
-                                        "text": "",
-                                    },
-                                }
-                                yield f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
-
-                                delta = {
-                                    "type": "content_block_delta",
-                                    "index": i,
-                                    "delta": {
-                                        "type": "text_delta",
-                                        "text": block["text"],
-                                    },
-                                }
-                                yield f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
-
-                                stop = {
-                                    "type": "content_block_stop",
-                                    "index": i,
-                                }
-                                yield f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
-                            else:
-                                tool_input = block.get("input", {})
-                                start = {
-                                    "type": "content_block_start",
-                                    "index": i,
-                                    "content_block": {
-                                        "type": "tool_use",
-                                        "id": block.get("id", ""),
-                                        "name": block.get("name", "unknown"),
-                                        "input": {},
-                                    },
-                                }
-                                yield f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
-                                if isinstance(tool_input, dict):
-                                    delta = {
-                                        "type": "content_block_delta",
-                                        "index": i,
-                                        "delta": {
-                                            "type": "input_json_delta",
-                                            "partial_json": json.dumps(
-                                                tool_input
-                                            ),
-                                        },
-                                    }
-                                    yield f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
-                                stop = {
-                                    "type": "content_block_stop",
-                                    "index": i,
-                                }
-                                yield f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
+                            for event_bytes in _emit_sse_block(i, block):
+                                yield event_bytes
                         content_emitted = True
 
                 yield (event_str + "\n\n").encode()

@@ -67,6 +67,7 @@ _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD = 16
 _PROVIDER_SENSITIVE_FAILURES = frozenset(
     {
         "provider_sensitive_large_tool_use_text_interleaving",
+        "provider_sensitive_assistant_tool_use_text_interleaving",
     }
 )
 
@@ -1243,25 +1244,24 @@ def _collect_bridge_provider_sensitivity_risks(
         if not tool_positions:
             continue
         first_tool = tool_positions[0]
-        last_tool = tool_positions[-1]
         tool_use_count = len(tool_positions)
-        has_text_between_tool_uses = any(
+        has_text_between_or_after_tool_uses = any(
             isinstance(block, dict)
             and block.get("type") == "text"
-            and first_tool < block_index < last_tool
+            and block_index > first_tool
             for block_index, block in enumerate(content)
         )
         if tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD:
             risks["assistant_large_tool_use_batch"] = (
                 risks.get("assistant_large_tool_use_batch", 0) + 1
             )
-        if has_text_between_tool_uses:
+        if has_text_between_or_after_tool_uses:
             risks["assistant_tool_use_text_interleaving"] = (
                 risks.get("assistant_tool_use_text_interleaving", 0) + 1
             )
         if (
             tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD
-            and has_text_between_tool_uses
+            and has_text_between_or_after_tool_uses
         ):
             next_message = (
                 messages[index + 1] if index + 1 < len(messages) else None
@@ -1572,6 +1572,10 @@ def validate_anthropic_outgoing_bridge_body(body: dict[str, Any]) -> list[str]:
         "provider_sensitive_large_tool_use_text_interleaving", 0
     ):
         failures.append("provider_sensitive_large_tool_use_text_interleaving")
+    if provider_risks.get("assistant_tool_use_text_interleaving", 0):
+        failures.append(
+            "provider_sensitive_assistant_tool_use_text_interleaving"
+        )
     return failures
 
 

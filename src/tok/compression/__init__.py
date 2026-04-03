@@ -608,7 +608,7 @@ def _apply_result_cache(
     if cached_entry is None:
         logger.debug("result_cache_miss: key=%s tool=%s", cache_key, tool_name)
         return _store_cache_entry(
-            dict(result_cache),
+            result_cache,
             cache_key,
             raw_text,
             raw,
@@ -626,7 +626,7 @@ def _apply_result_cache(
     # Check staleness for entries with timestamps (3-tuple) or legacy entries (1/2-tuple)
     if _is_cache_entry_stale(timestamp, ttl_seconds):
         return _store_cache_entry(
-            dict(result_cache),
+            result_cache,
             cache_key,
             raw_text,
             raw,
@@ -647,7 +647,7 @@ def _apply_result_cache(
         normalized_tool_name,
         is_precision_read,
         is_file_like,
-        dict(result_cache),
+        result_cache,
         cache_key,
         entry_length,
         cached_hash,
