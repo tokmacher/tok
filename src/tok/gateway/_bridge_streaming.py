@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import httpcore
@@ -195,10 +195,14 @@ async def passthrough_stream_impl(
                 except (json.JSONDecodeError, KeyError):
                     pass
     finally:
-        response_aclose = getattr(response, "aclose", None)
+        response_aclose: Callable[[], Awaitable[None]] | None = getattr(
+            response, "aclose", None
+        )
         if callable(response_aclose):
             await response_aclose()
-        client_aclose = getattr(client, "aclose", None)
+        client_aclose: Callable[[], Awaitable[None]] | None = getattr(
+            client, "aclose", None
+        )
         if callable(client_aclose):
             await client_aclose()
         if sse_model != "unknown" and sse_usage:
@@ -374,6 +378,7 @@ async def buffer_strip_restream_impl(
                 block.get("type") == "text"
                 and str(block.get("text", "")).strip()
             )
+            or block.get("type") == "thinking"
             for block in translated_blocks
         )
         logger.info(
@@ -396,19 +401,22 @@ async def buffer_strip_restream_impl(
                 behavior_signals=stream_behavior_signals or None,
                 tool_compatible=tool_compatible,
             )
-            content_blocks = processed.content_blocks + tool_blocks
+            content_blocks = (
+                thinking_blocks + processed.content_blocks + tool_blocks
+            )
             response_signals = processed.behavior_signals
 
             logger.info("Response mode: %s", processed.mode)
             logger.info("Response signals: %s", response_signals)
             logger.info("Content blocks count: %d", len(content_blocks))
             translated_blocks = content_blocks
-            has_visible_blocks = any(
+            recovered = any(
                 block.get("type") == "tool_use"
                 or (
                     block.get("type") == "text"
                     and str(block.get("text", "")).strip()
                 )
+                or block.get("type") == "thinking"
                 for block in translated_blocks
             )
         recovery_required = not has_visible_blocks and (
@@ -459,11 +467,23 @@ async def buffer_strip_restream_impl(
                         if isinstance(retry_json, dict):
                             recovery_model = str(retry_json.get("model", ""))
                             recovery_usage = retry_json.get("usage", {})
+                            retry_thinking_blocks = [
+                                block
+                                for block in retry_json.get("content", [])
+                                if isinstance(block, dict)
+                                and block.get("type")
+                                in {"thinking", "redacted_thinking"}
+                            ]
                             passthrough_blocks = [
                                 block
                                 for block in retry_json.get("content", [])
                                 if isinstance(block, dict)
-                                and block.get("type") != "text"
+                                and block.get("type")
+                                not in {
+                                    "text",
+                                    "thinking",
+                                    "redacted_thinking",
+                                }
                             ]
                             passthrough_blocks, passthrough_signals = (
                                 normalize_tool_use_blocks(
@@ -499,7 +519,8 @@ async def buffer_strip_restream_impl(
                                     retry_processed.behavior_signals,
                                 )
                                 translated_blocks = (
-                                    retry_processed.content_blocks
+                                    retry_thinking_blocks
+                                    + retry_processed.content_blocks
                                     + passthrough_blocks
                                 )
                                 retry_output_saved = (
@@ -518,7 +539,9 @@ async def buffer_strip_restream_impl(
                                     retry_response_signals,
                                     retry_processed.behavior_signals,
                                 )
-                                translated_blocks = passthrough_blocks
+                                translated_blocks = (
+                                    retry_thinking_blocks + passthrough_blocks
+                                )
                             else:
                                 # Keep response_signals as initialized from stream_behavior_signals
                                 translated_blocks = []
@@ -530,6 +553,8 @@ async def buffer_strip_restream_impl(
                                 )
                                 for block in translated_blocks
                             )
+                            recovered_text = False
+                            recovered_tool_use = False
                             if recovered:
                                 recovered_text = any(
                                     block.get("type") == "text"
@@ -690,6 +715,9 @@ async def buffer_strip_restream_impl(
                     behavior_signals=stream_behavior_signals or None,
                     tool_compatible=tool_compatible,
                 )
+                content_blocks = (
+                    thinking_blocks + processed.content_blocks + tool_blocks
+                )
                 output_saved = 0
                 response_signals = processed.behavior_signals
             else:
@@ -751,9 +779,13 @@ async def buffer_strip_restream_impl(
             except (json.JSONDecodeError, KeyError):
                 yield (event_str + "\n\n").encode()
     finally:
-        response_aclose = getattr(response, "aclose", None)
+        response_aclose: Callable[[], Awaitable[None]] | None = getattr(
+            response, "aclose", None
+        )
         if callable(response_aclose):
             await response_aclose()
-        client_aclose = getattr(client, "aclose", None)
+        client_aclose: Callable[[], Awaitable[None]] | None = getattr(
+            client, "aclose", None
+        )
         if callable(client_aclose):
             await client_aclose()

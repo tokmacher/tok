@@ -40,7 +40,11 @@ def update_session_family_mode(
     current = session.family_states.setdefault(
         policy.family.key, initial_state(policy)
     )
-    next_state = advance_state(policy, current, signals)
+    # Pass tool names for task type detection
+    tool_names = (
+        list(session._tool_names_seen) if session._tool_names_seen else None
+    )
+    next_state = advance_state(policy, current, signals, tool_names=tool_names)
     session.family_states[policy.family.key] = next_state
     return next_state.mode
 

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 """Fail-open request helpers for the Tok gateway."""
 
-import asyncio
 import json
-import time
 from typing import Any
 
 import httpx
@@ -19,10 +17,8 @@ from ..runtime.pipeline.request_validation import (
 from . import BridgeSession, _log_bridge_body_structure, logger
 from ._bridge_comparison import _payloads_materially_differ
 from ._bridge_preflight import (
-    _compute_rate_limit_backoff_seconds,
     _count_user_messages_with_mixed_tool_result_content,
     _count_user_tool_result_split_boundaries,
-    _parse_retry_after_seconds,
 )
 
 __all__ = ["send_with_tok_fail_open_retry"]
@@ -68,48 +64,13 @@ async def send_with_tok_fail_open_retry(
     )
 
     if response.status_code == 429:
-        retry_signals["rate_limit_retry_started"] = 1
-        max_attempts = max(0, session.rate_limit_retry_max_attempts)
-        for attempt in range(1, max_attempts + 1):
-            session.record_rate_limit_event(time.time())
-            retry_after_seconds = _parse_retry_after_seconds(
-                response.headers.get("retry-after")
-            )
-            computed_backoff_seconds = _compute_rate_limit_backoff_seconds(
-                attempt=attempt,
-                base_ms=session.rate_limit_backoff_base_ms,
-                cap_ms=session.rate_limit_backoff_cap_ms,
-            )
-            sleep_seconds = max(retry_after_seconds, computed_backoff_seconds)
-            retry_signals["rate_limit_retry_attempt"] = (
-                retry_signals.get("rate_limit_retry_attempt", 0) + 1
-            )
-            logger.warning(
-                "rate_limit_retry_attempt: upstream 429 attempt=%d/%d sleep=%.3fs retry_after=%.3fs",
-                attempt,
-                max_attempts,
-                sleep_seconds,
-                retry_after_seconds,
-            )
-            if stream:
-                await response.aread()
-            await response.aclose()
-            await asyncio.sleep(sleep_seconds)
-            retry_request = client.build_request(
-                method, url, headers=headers, content=content
-            )
-            response = await client.send(retry_request, stream=stream)
-            if response.status_code != 429:
-                retry_signals["rate_limit_retry_succeeded"] = 1
-                break
-
-        if response.status_code == 429:
-            session.record_rate_limit_event(time.time())
-            retry_signals["rate_limit_retry_exhausted"] = 1
-            logger.warning(
-                "rate_limit_retry_exhausted: upstream remained at 429 after %d retry attempts",
-                max_attempts,
-            )
+        # Pass through to client - let Claude Code handle quota exhaustion
+        retry_after = response.headers.get("retry-after", "unknown")
+        logger.warning(
+            "rate_limit_429: upstream returned 429, passing through to client (retry_after=%s)",
+            retry_after,
+        )
+        retry_signals["rate_limit_429_passed_through"] = 1
 
     if (
         response.status_code == 400

@@ -3,6 +3,7 @@
 ## 0.1.0 (2026-03-31)
 
 ### Added
+
 - First-class CLI: `tok bridge start/stop/status/logs`, `tok savings`, `tok install`, `tok doctor`
 - Bridge decomposed into focused modules: `gateway.py`, `compression.py`, `translator.py`, `pricing.py`, `stats.py`
 - `BridgeSession` class encapsulating all mutable state (no global mutable state)
@@ -22,6 +23,7 @@
 - Committed `uv.lock` for deterministic dependency resolution
 
 ### Changed
+
 - Renamed `bridge.py` (format converter) to `format_bridge.py` to free `bridge` name for gateway
 - Rebranded "MITM proxy" to "bridge" throughout codebase
 - Version synced to 0.1.0 in both `pyproject.toml` and `__init__.py`
@@ -32,6 +34,7 @@
 - Release posture documented more explicitly: live Claude validation is the final pre-release gate, CLI decomposition beyond the current split is deferred, and dependency upper bounds remain a post-`0.1.0` policy follow-up
 
 ### Removed
+
 - `[MEMORY-DEBUG]` print statements replaced with proper `logging` module
 - Hardcoded memory path replaced with `TOK_PROJECT_DIR` env var
 - Global mutable state (`_stats_lock`, module-level config) replaced with `BridgeSession`

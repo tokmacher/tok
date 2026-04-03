@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import json
-import random
 from typing import Any
 
 from fastapi import Response
@@ -32,11 +31,8 @@ from ._bridge_comparison import (
 )
 
 __all__ = [
-    "_compute_rate_limit_backoff_seconds",
     "_count_user_messages_with_mixed_tool_result_content",
     "_count_user_tool_result_split_boundaries",
-    "_local_rate_limit_response",
-    "_parse_retry_after_seconds",
     "_run_bridge_preflight",
 ]
 
@@ -52,59 +48,6 @@ _LOCAL_INVALID_TOOL_HISTORY_FAILURES = frozenset(
         "bridge_wire_model_invalid",
     }
 )
-
-
-def _parse_retry_after_seconds(raw_value: Any) -> float:
-    if raw_value is None:
-        return 0.0
-    try:
-        parsed = float(str(raw_value).strip())
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, parsed)
-
-
-def _random_jitter_multiplier() -> float:
-    value = random.uniform(0.5, 1.5)
-    if isinstance(value, int | float):
-        return float(value)
-    return 1.0
-
-
-def _compute_rate_limit_backoff_seconds(
-    *,
-    attempt: int,
-    base_ms: int,
-    cap_ms: int,
-) -> float:
-    bounded_attempt = max(1, attempt)
-    bounded_base = max(1, base_ms)
-    bounded_cap = max(bounded_base, cap_ms)
-    exponential_ms = float(
-        min(bounded_cap, bounded_base * (2 ** (bounded_attempt - 1)))
-    )
-    jitter_multiplier = _random_jitter_multiplier()
-    jittered_ms = float(
-        min(float(bounded_cap), exponential_ms * jitter_multiplier)
-    )
-    return max(0.0, jittered_ms / 1000.0)
-
-
-def _local_rate_limit_response(retry_after_seconds: int) -> Response:
-    return Response(
-        content=json.dumps(
-            {
-                "type": "error",
-                "error": {
-                    "type": "rate_limit_error",
-                    "message": "Tok bridge local throttling active after repeated upstream 429 responses. Retry later.",
-                },
-            }
-        ),
-        status_code=429,
-        media_type="application/json",
-        headers={"Retry-After": str(max(1, retry_after_seconds))},
-    )
 
 
 def _should_block_invalid_tool_history_locally(

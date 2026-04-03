@@ -28,11 +28,11 @@ or fallback behavior.
 Prefer this supported flow:
 
 1. Run `tok install`.
-2. Start Tok with `tok bridge start`.
-3. Use Claude Code normally.
-4. Check health with `tok bridge status` and `tok doctor`.
-5. Check savings with `tok stats` or the compatibility alias `tok savings`.
-6. Stop the bridge with `tok bridge stop`.
+1. Start Tok with `tok bridge start`.
+1. Use Claude Code normally.
+1. Check health with `tok bridge status` and `tok doctor`.
+1. Check savings with `tok stats` or the compatibility alias `tok savings`.
+1. Stop the bridge with `tok bridge stop`.
 
 When helping a user debug or verify Tok, prefer those commands before proposing
 new workflows or custom prompt conventions.

@@ -9,14 +9,14 @@ Runtime defaults and release posture for Tok.
 
 ## Runtime Defaults
 
-| Setting | Default | Notes |
-|---------|---------|-------|
-| Compression path | `tool-compatible` (`natural_first` request policy) | Claude-first default; validated on coding and research loops |
-| Legacy request policy | `legacy_tool_compatible` | Explicit rollback path; opt in only when you need the older behavior |
-| Frontier validation | OpenRouter probes | Advisory only; do not select the public default |
-| Fallback mode | `baseline` | Requests pass through without compression |
-| Fail-open | enabled | Bridge errors never block upstream requests |
-| Port | 9090 | Configurable via `--port` |
+| Setting               | Default                                            | Notes                                                                |
+| --------------------- | -------------------------------------------------- | -------------------------------------------------------------------- |
+| Compression path      | `tool-compatible` (`natural_first` request policy) | Claude-first default; validated on coding and research loops         |
+| Legacy request policy | `legacy_tool_compatible`                           | Explicit rollback path; opt in only when you need the older behavior |
+| Frontier validation   | OpenRouter probes                                  | Advisory only; do not select the public default                      |
+| Fallback mode         | `baseline`                                         | Requests pass through without compression                            |
+| Fail-open             | enabled                                            | Bridge errors never block upstream requests                          |
+| Port                  | 9090                                               | Configurable via `--port`                                            |
 
 ## Release Posture
 
@@ -37,8 +37,8 @@ Runtime defaults and release posture for Tok.
 ## Safety Guarantees
 
 1. **Fail-open**: if the bridge encounters an error, requests are forwarded without compression
-2. **Observable degradation**: `tok doctor` and `tok bridge status` always report session health
-3. **No data leaves your machine**: Tok runs locally; only your normal API calls leave
+1. **Observable degradation**: `tok doctor` and `tok bridge status` always report session health
+1. **No data leaves your machine**: Tok runs locally; only your normal API calls leave
 
 ## Monitoring
 

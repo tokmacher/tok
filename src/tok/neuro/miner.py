@@ -1,6 +1,7 @@
 from __future__ import annotations
 import collections
 from .ir import Instruction, TokIR, Macro, MacroProvenance, MacroRegistry
+from ..utils.event_logging import log_macro_created
 
 
 class IRPatternMiner:
@@ -190,5 +191,8 @@ class IRPatternMiner:
                 continue
 
             macros.append(new_macro)
+            log_macro_created(
+                new_macro.name, tuple(ins.op for ins in new_macro.instructions)
+            )
 
         return macros

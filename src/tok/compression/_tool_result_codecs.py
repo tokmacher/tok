@@ -322,11 +322,6 @@ def _compress_file_read(text: str) -> str:
     signature_re = re.compile(
         r"^(import |from |class |def |async def |[A-Z_][A-Z0-9_]+ =|\s*def |\s*async def |\s*class )"
     )
-    indent_re = re.compile(r"^(\s+)")
-
-    def _indent(line: str) -> int:
-        match = indent_re.match(line)
-        return len(match.group(1)) if match else 0
 
     while i < len(lines):
         line = lines[i]
@@ -336,8 +331,6 @@ def _compress_file_read(text: str) -> str:
             result.append("")
             i += 1
             continue
-
-        _indent(line)
 
         if signature_re.match(line):
             if in_body and body_line_count > 0:
@@ -652,10 +645,14 @@ def _compress_stack_traces(text: str) -> str:
     paths = re.findall(r'File "([^"]+)"', text)
     common_prefix = ""
     if len(paths) >= 2:
-        common_prefix = (
-            os.path.commonpath(paths) if hasattr(os, "commonpath") else ""
-        )
-        if common_prefix and len(common_prefix) < 10:
+        try:
+            common_prefix = (
+                os.path.commonpath(paths) if hasattr(os, "commonpath") else ""
+            )
+            if common_prefix and len(common_prefix) < 10:
+                common_prefix = ""
+        except ValueError:
+            # Paths have no common prefix or are on different drives
             common_prefix = ""
 
     hidden_count = 0

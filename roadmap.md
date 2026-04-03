@@ -1,5 +1,7 @@
 # Tok Roadmap (Current)
 
+<!-- markdownlint-disable MD036 -->
+
 _Last updated: 2026-03-24_
 
 This is a maintainer roadmap, not a first-run user guide.
@@ -54,7 +56,7 @@ Long-term ambition:
   - `tok doctor`
   - `tok bridge stop`
   - `tok stats`
-  now make the runtime legible in normal usage
+    now make the runtime legible in normal usage
 
 ### What Is Ready
 
@@ -103,7 +105,7 @@ Long-term ambition:
 - [x] `tok gate-check ... --stability-dir tests/fixtures/stability` is sufficient for the internal-RC release check
 - [x] CI blocks required replay or stability regressions on the same contract
 
----
+______________________________________________________________________
 
 ### Plan 3 – Telemetry Gates, Replay, Billing Discipline
 
@@ -118,7 +120,7 @@ Long-term ambition:
 - [x] Trend dashboards & billing deltas
 - [x] High-fidelity simulation infrastructure
 
----
+______________________________________________________________________
 
 ### Plan 2 – Orchestrator Migration & Adapter Discipline
 
@@ -132,7 +134,7 @@ Long-term ambition:
 - [x] Delegate response finalization + telemetry to universal_runtime
 - [x] Normalize adapters & add parity fixtures
 
----
+______________________________________________________________________
 
 ### Plan 7 – Pattern Reactor & Protocol Consolidation
 
@@ -175,7 +177,7 @@ real work.
 - [ ] repeated real-session degradations become explainable without raw log reading
 - [ ] the next replay-promotion decision is evidence-backed and documented
 
----
+______________________________________________________________________
 
 ### Phase 2 – Broader Production Proof
 
@@ -204,7 +206,7 @@ release gate noisy.
 - [ ] repeated uncovered evidence classes shrink over time
 - [ ] the strongest open pre-release risks are known and ranked
 
----
+______________________________________________________________________
 
 ### Phase 3 – Internal Productization
 
@@ -264,7 +266,7 @@ publicly as a bridge-first product.
 - universal communication contract or standardization branding
 - broad document/artifact ingestion as a platform feature beyond what directly strengthens the current wedge
 
----
+______________________________________________________________________
 
 ## Future Roadmap
 
@@ -291,9 +293,9 @@ publicly as a bridge-first product.
 ## Immediate Recommendation
 
 1. finish `Phase 1 – Production-Trusted Wedge`
-2. continue into `Phase 2 – Broader Production Proof`
-3. use `Phase 3 – Internal Productization` to prepare the actual public-release shape
-4. make the public release decision only after `Phase 4 – Public Release Decision And Packaging`
+1. continue into `Phase 2 – Broader Production Proof`
+1. use `Phase 3 – Internal Productization` to prepare the actual public-release shape
+1. make the public release decision only after `Phase 4 – Public Release Decision And Packaging`
 
 That is now the shortest path from “bridge works well internally” to “we have a narrow, trustworthy first public release.”
 

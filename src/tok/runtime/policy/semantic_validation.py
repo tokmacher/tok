@@ -3,6 +3,8 @@
 import re
 from typing import Any
 
+from ...utils.event_logging import log_drift_detected
+
 MEMORY_LIFT_SIGNALS = (
     "cold_start_structured_memory",
     "durable_promotions",
@@ -77,12 +79,18 @@ class SemanticValidator:
         ):
             if len(text.split()) > 10:
                 drift_signals["semantic_drift_detected"] = 1
+                log_drift_detected(
+                    "prose_leakage", f"{len(text.split())} words"
+                )
 
         # Case B: Long non-Tok responses (absence of protocol markers)
         # If the response is over 40 words and contains no >>> marker, it is a prose leak.
         # This triggers for "Victorian Poet" or overly creative / non-mechanical filler.
         if ">>>" not in text and len(text.split()) > 40:
             drift_signals["semantic_drift_detected"] = 1
+            log_drift_detected(
+                "long_prose", f"{len(text.split())} words no markers"
+            )
 
         # Case C: Bullet-list prose without Tok markers — gradual drift indicator.
         # A response with multiple "- " bullet lines but no @msg or >>> is leaking
@@ -92,6 +100,7 @@ class SemanticValidator:
         ]
         if len(bullet_lines) >= 2 and "@msg" not in text and ">>>" not in text:
             drift_signals["semantic_drift_detected"] = 1
+            log_drift_detected("bullet_prose", f"{len(bullet_lines)} bullets")
 
         # Case D: @msg block with plain paragraph body instead of |> prefix.
         # Detects drift where the model starts using @msg but abandons the |> convention.

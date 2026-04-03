@@ -24,7 +24,6 @@ from . import (
 )
 from ._bridge_comparison import _safe_headers
 from ._bridge_preflight import (
-    _local_rate_limit_response,
     _run_bridge_preflight,
 )
 from ._bridge_request_handler import send_with_tok_fail_open_retry
@@ -627,17 +626,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         if request.url.query:
             target_url += f"?{request.url.query}"
 
-        if session.is_rate_limited_locally():
-            retry_after_seconds = (
-                session.local_rate_limit_retry_after_seconds()
-            )
-            behavior_signals["rate_limit_local_throttle_active"] = 1
-            logger.warning(
-                "rate_limit_local_throttle_active: blocking upstream request during local cooldown retry_after=%ss",
-                retry_after_seconds,
-            )
-            return _local_rate_limit_response(retry_after_seconds)
-
         is_streaming = False
         try:
             body_dict = json.loads(body_bytes)
@@ -672,10 +660,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             behavior_signals.get(key, 0) + value
                         )
                     _note_request_policy_recovery_watch(session, retry_signals)
-                    if session.is_rate_limited_locally():
-                        behavior_signals[
-                            "rate_limit_local_throttle_opened"
-                        ] = 1
                     if retried_without_tok:
                         compressed = False
                         saved_toks = 0
@@ -836,8 +820,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             for key, value in retry_signals.items():
                 behavior_signals[key] = behavior_signals.get(key, 0) + value
             _note_request_policy_recovery_watch(session, retry_signals)
-            if session.is_rate_limited_locally():
-                behavior_signals["rate_limit_local_throttle_opened"] = 1
             if retried_without_tok:
                 compressed = False
                 saved_toks = 0
@@ -870,6 +852,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 )
 
             content = response.content
+            resp_json: dict[str, Any] = {}
             if path == "v1/messages" and response.status_code == 200:
                 try:
                     resp_json = json.loads(content)

@@ -280,13 +280,13 @@ If `claude` is still not found after `tok install`, reload your shell with
 
 ## First 10 Minutes Troubleshooting
 
-| If you see this                                     | Check this first                                              | Likely fix                                                                                                                    |
-| --------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `tok: command not found`                          | Was the package installed into the active Python environment? | Re-activate the environment and run `pip install tok-protocol` again.                                                       |
-| `claude: command not found` after `tok install` | Was your shell reloaded?                                      | Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.                                                         |
-| `Bridge not running`                              | Did `tok bridge start` succeed?                             | Restart with `tok bridge start --foreground` and inspect `tok bridge logs`.                                               |
-| No savings visible yet                              | Is the session still very short?                              | Keep working for a few turns, then run `tok doctor` and `tok stats --last-session`, or `tok stats` for a lifetime view. |
-| `Degraded to baseline: yes`                       | Did the session fall back for safety?                         | Run `tok doctor` first, then follow the steps in [`docs/troubleshooting.md`](docs/troubleshooting.md).                       |
+| If you see this                                 | Check this first                                              | Likely fix                                                                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `tok: command not found`                        | Was the package installed into the active Python environment? | Re-activate the environment and run `pip install tok-protocol` again.                                                   |
+| `claude: command not found` after `tok install` | Was your shell reloaded?                                      | Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.                                                       |
+| `Bridge not running`                            | Did `tok bridge start` succeed?                               | Restart with `tok bridge start --foreground` and inspect `tok bridge logs`.                                             |
+| No savings visible yet                          | Is the session still very short?                              | Keep working for a few turns, then run `tok doctor` and `tok stats --last-session`, or `tok stats` for a lifetime view. |
+| `Degraded to baseline: yes`                     | Did the session fall back for safety?                         | Run `tok doctor` first, then follow the steps in [`docs/troubleshooting.md`](docs/troubleshooting.md).                  |
 
 ## Clean-Room Install Verification
 
@@ -377,17 +377,18 @@ claude
 
 ### Recommendations by Use Case
 
-| Use Case | Recommended Mode | Reason |
-|----------|-----------------|--------|
-| Quick questions (< 5 turns) | baseline | Overhead exceeds savings |
-| Bug investigation (5-15 turns) | tok-minimal | Preserves context while saving tokens |
-| Feature implementation (15-30 turns) | tok-native | Balanced savings and fidelity |
-| Large refactoring (30+ turns) | tok-tool-compatible | Maximum savings from repeated reads |
-| Recurring workflows (daily work) | tok-neuro | Learns and reuses macros |
+| Use Case                             | Recommended Mode    | Reason                                |
+| ------------------------------------ | ------------------- | ------------------------------------- |
+| Quick questions (< 5 turns)          | baseline            | Overhead exceeds savings              |
+| Bug investigation (5-15 turns)       | tok-minimal         | Preserves context while saving tokens |
+| Feature implementation (15-30 turns) | tok-native          | Balanced savings and fidelity         |
+| Large refactoring (30+ turns)        | tok-tool-compatible | Maximum savings from repeated reads   |
+| Recurring workflows (daily work)     | tok-neuro           | Learns and reuses macros              |
 
 ### When to Stay on Baseline
 
 Keep Tok in baseline mode if:
+
 - You're debugging Tok itself
 - You need exact token counts for pricing estimates
 - The session is very short (< 5 turns)
@@ -411,10 +412,10 @@ The new mode applies to subsequent requests. Existing session state is preserved
 For programmatic use outside Claude Code, Tok exposes a minimal SDK:
 
 1. Create one `RuntimeSession`
-2. Call `tok.wrap(...)` to prepare a request
-3. Send through your OpenAI-compatible client
-4. Call `tok.process(...)` on the response
-5. Reuse the same session for subsequent turns
+1. Call `tok.wrap(...)` to prepare a request
+1. Send through your OpenAI-compatible client
+1. Call `tok.process(...)` on the response
+1. Reuse the same session for subsequent turns
 
 See [`examples/tok_wrap_example.py`](examples/tok_wrap_example.py) and
 [`examples/README.md`](examples/README.md).

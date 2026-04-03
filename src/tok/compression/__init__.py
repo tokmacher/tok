@@ -11,7 +11,7 @@ import re
 import time as time_module
 from dataclasses import dataclass
 from typing import Any, cast, TypeAlias
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 
 from pydantic import (
     BaseModel,
@@ -20,6 +20,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from ..utils.event_logging import log_delta_compress
 
 __all__ = [
     "TOOL_COMPRESS_THRESHOLD",
@@ -574,7 +576,7 @@ def tok_tool_result(
 def _apply_result_cache(
     raw: str,
     context: dict[str, Any],
-    result_cache: Mapping[str, ResultCacheEntry],
+    result_cache: MutableMapping[str, ResultCacheEntry],
     compression_level: str = "balanced",
     bypass_cache: bool = False,
     ttl_seconds: int = 1800,
@@ -665,7 +667,7 @@ def _build_cache_key(tool_name: Any, context: dict[str, Any]) -> str:
 
 
 def _store_cache_entry(
-    result_cache: dict[str, ResultCacheEntry],
+    result_cache: MutableMapping[str, ResultCacheEntry],
     cache_key: str,
     raw_text: str,
     raw: str,
@@ -692,7 +694,7 @@ def _store_cache_entry(
 
 
 def _evict_cache_entry(
-    result_cache: dict[str, ResultCacheEntry],
+    result_cache: MutableMapping[str, ResultCacheEntry],
 ) -> None:
     """Evict oldest cache entry when cache exceeds size limit.
 
@@ -755,7 +757,7 @@ def _process_cache_hit(
     normalized_tool_name: str,
     is_precision_read: bool,
     is_file_like: bool,
-    result_cache: dict[str, ResultCacheEntry],
+    result_cache: MutableMapping[str, ResultCacheEntry],
     cache_key: str,
     entry_length: int,
     cached_hash: str,
@@ -830,6 +832,7 @@ def _process_cache_hit(
         elif not diff_lines:
             # Content is truly identical - return unchanged stub
             stub = f">>> tool:{tool_name}|unchanged|cached"
+            log_delta_compress(str(tool_name), len(raw_text), len(stub))
             return stub, len(raw_text) - len(stub)
         if normalized_error:
             stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
@@ -869,7 +872,10 @@ def _process_cache_hit(
         diff_text = "".join(stripped_diff)
 
     result = header + "\n" + diff_text
-    return result, len(raw_text) - len(result)
+    saved = len(raw_text) - len(result)
+    if saved > 0:
+        log_delta_compress(str(tool_name), len(raw_text), len(result))
+    return result, saved
 
 
 def _should_replay_host_stub(
@@ -897,7 +903,7 @@ def _serve_cached_content_hash_match(
     normalized_tool_name: str,
     is_precision_read: bool,
     is_file_like: bool,
-    result_cache: dict[str, ResultCacheEntry],
+    result_cache: MutableMapping[str, ResultCacheEntry],
     cache_key: str,
     entry_length: int,
     cached_hash: str,
@@ -971,7 +977,7 @@ def _build_stable_result_payload(
 def _apply_file_cache(
     raw: str,
     path: str,
-    file_cache: dict[str, tuple[str, str, float]],
+    file_cache: MutableMapping[str, ResultCacheEntry],
 ) -> tuple[str, int]:
     """Compatibility wrapper for old file cache tests."""
     context = {"name": "view_file", "path": path, "args": {"path": path}}

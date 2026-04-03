@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from collections.abc import Iterable
 
+from ..utils.event_logging import log_macro_registered
+
 
 @dataclass(frozen=True)
 class Instruction:
@@ -175,6 +177,7 @@ class MacroRegistry:
             return op_seq_duplicate
 
         self.macros[macro.name] = macro
+        log_macro_registered(macro.name, source="mined")
         return macro.name
 
     def get(self, name: str) -> Macro | None:

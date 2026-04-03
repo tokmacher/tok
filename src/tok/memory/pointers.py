@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..utils.event_logging import log_pointer_created
+
 
 class PointerRegistry:
     """Registry for relational memory pointers (*A, *B, etc.)."""
@@ -23,6 +25,7 @@ class PointerRegistry:
         self._next_idx += 1
         self.map[ptr] = value
         self.reverse_map[value] = ptr
+        log_pointer_created(ptr, value)
         return ptr
 
     def resolve(self, ptr: str) -> str | None:

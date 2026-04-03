@@ -21,6 +21,7 @@ from ..policy.smart_policy import (
     MemoryProjectionProfile,
 )
 from ...neuro.ir import MacroRegistry, Macro, Instruction
+from ...utils.event_logging import log_rolling_state, log_memory_promotion
 
 # Field-specific decay rates. 0 = immortal (never decay).
 # Hot bucket uses these rates; durable uses half-rates (floored at 1 for non-zero).
@@ -421,26 +422,26 @@ class BridgeMemoryState:
         }
         new_hot: dict[str, list[MemoryEntry]] = {}
         touched = set()
-        for field, values in fields.items():
-            if field == "turns":
-                new_hot[field] = [
+        for fld_name, values in fields.items():
+            if fld_name == "turns":
+                new_hot[fld_name] = [
                     MemoryEntry(
                         value=values[0], score=1, last_seen_turn=self.turn
                     )
                 ]
-                touched.add(field)
+                touched.add(fld_name)
                 continue
             entries = [
                 MemoryEntry(value=value, score=3, last_seen_turn=self.turn)
-                for value in values[: HOT_LIMITS.get(field, 2)]
+                for value in values[: HOT_LIMITS.get(fld_name, 2)]
                 if value
             ]
             if entries:
-                new_hot[field] = entries
-                touched.add(field)
+                new_hot[fld_name] = entries
+                touched.add(fld_name)
                 # 3B: Evict contradictions from durable
                 for entry in entries:
-                    self._drop_conflicts(self.durable, field, entry.value)
+                    self._drop_conflicts(self.durable, fld_name, entry.value)
         self.hot = new_hot
         self._trim_bucket(self.hot, HOT_LIMITS)
         metrics = self._decay_bucket(
@@ -474,12 +475,12 @@ class BridgeMemoryState:
         turns = fields.get("turns", ["0"])
         self.turn = max(self.turn + 1, _safe_int(turns[0] if turns else "0"))
         touched = set()
-        for field, values in fields.items():
+        for fld_name, values in fields.items():
             for value in values:
                 if not value:
                     continue
-                self._upsert(self.hot, field, value, score_delta=2)
-                if field in {
+                self._upsert(self.hot, fld_name, value, score_delta=2)
+                if fld_name in {
                     "constraints",
                     "facts",
                     "blockers",
@@ -487,8 +488,8 @@ class BridgeMemoryState:
                     "tests",
                     "errs",
                 }:
-                    self._upsert(self.durable, field, value, score_delta=1)
-                touched.add(field)
+                    self._upsert(self.durable, fld_name, value, score_delta=1)
+                touched.add(fld_name)
         metrics = self._decay_bucket(self.hot, touched=touched, prefix="hot")
         metrics = _merge_metrics(
             metrics,
@@ -506,6 +507,7 @@ class BridgeMemoryState:
         metrics["durable_entries"] = sum(
             len(entries) for entries in self.durable.values()
         )
+        log_rolling_state(self.turn, trim_metrics.get("trimmed", 0))
         return metrics
 
     def _get_merged_entries(
@@ -794,12 +796,12 @@ class BridgeMemoryState:
         file_facts, other_facts = self._resolve_wire_facts(profile)
 
         facts_emitted = False
-        for field in field_order:
-            if field == "files":
+        for fld_name in field_order:
+            if fld_name == "files":
                 self._emit_files_field(
                     files, file_facts, state_parts, omit_unchanged
                 )
-            elif field == "facts":
+            elif fld_name == "facts":
                 self._emit_facts_section(
                     file_facts,
                     other_facts,
@@ -809,7 +811,7 @@ class BridgeMemoryState:
                 facts_emitted = True
             else:
                 self._emit_generic_field(
-                    field,
+                    fld_name,
                     profile,
                     state_parts,
                     omit_unchanged,
@@ -1126,6 +1128,7 @@ class BridgeMemoryState:
                     after = len(self.durable.get(f, []))
                     if after > before:
                         promoted += 1
+                        log_memory_promotion(f, entry.value, bucket="durable")
         return {"durable_promotions": promoted} if promoted else {}
 
     def _promote_facts_for_questions(self) -> dict[str, int]:
@@ -1170,18 +1173,18 @@ class BridgeMemoryState:
             return bucket, 0
 
         all_entries: list[tuple[str, MemoryEntry]] = []
-        for field, entries in bucket.items():
+        for fld_name, entries in bucket.items():
             for entry in entries:
-                all_entries.append((field, entry))
+                all_entries.append((fld_name, entry))
 
         all_entries.sort(key=lambda x: (-x[1].score, -x[1].last_seen_turn))
         kept = all_entries[:cap]
 
         new_bucket: dict[str, list[MemoryEntry]] = {}
-        for field, entry in kept:
-            if field not in new_bucket:
-                new_bucket[field] = []
-            new_bucket[field].append(entry)
+        for fld_name, entry in kept:
+            if fld_name not in new_bucket:
+                new_bucket[fld_name] = []
+            new_bucket[fld_name].append(entry)
 
         return new_bucket, total - cap
 
@@ -1190,23 +1193,23 @@ class BridgeMemoryState:
         trimmed_durable = 0
 
         # First apply per-field limits
-        for field, limit in HOT_LIMITS.items():
-            if field in self.hot:
-                before = len(self.hot[field])
-                self.hot[field] = sorted(
-                    self.hot[field],
+        for fld_name, limit in HOT_LIMITS.items():
+            if fld_name in self.hot:
+                before = len(self.hot[fld_name])
+                self.hot[fld_name] = sorted(
+                    self.hot[fld_name],
                     key=lambda e: (-e.score, -e.last_seen_turn, e.value),
                 )[:limit]
-                trimmed_hot += max(0, before - len(self.hot[field]))
+                trimmed_hot += max(0, before - len(self.hot[fld_name]))
 
-        for field, limit in DURABLE_LIMITS.items():
-            if field in self.durable:
-                before = len(self.durable[field])
-                self.durable[field] = sorted(
-                    self.durable[field],
+        for fld_name, limit in DURABLE_LIMITS.items():
+            if fld_name in self.durable:
+                before = len(self.durable[fld_name])
+                self.durable[fld_name] = sorted(
+                    self.durable[fld_name],
                     key=lambda e: (-e.score, -e.last_seen_turn, e.value),
                 )[:limit]
-                trimmed_durable += max(0, before - len(self.durable[field]))
+                trimmed_durable += max(0, before - len(self.durable[fld_name]))
 
         # Then apply hard caps on total entries
         self.hot, hot_trimmed = self._trim_bucket_to_cap(
@@ -1229,10 +1232,10 @@ class BridgeMemoryState:
     def _trim_bucket(
         self, bucket: dict[str, list[MemoryEntry]], limits: dict[str, int]
     ) -> None:
-        for field, limit in limits.items():
-            if field in bucket:
-                bucket[field] = sorted(
-                    bucket[field],
+        for fld_name, limit in limits.items():
+            if fld_name in bucket:
+                bucket[fld_name] = sorted(
+                    bucket[fld_name],
                     key=lambda e: (-e.score, -e.last_seen_turn, e.value),
                 )[:limit]
 

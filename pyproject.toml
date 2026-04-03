@@ -101,6 +101,9 @@ max-complexity = 15
 "src/tok/neuro/**" = ["C901"]
 "src/tok/protocol/**" = ["C901"]
 
+[tool.pyright]
+reportMissingImports = false
+
 [tool.mypy]
 python_version = "3.10"
 strict = true
@@ -212,3 +215,10 @@ skip_covered = false
 dev = [
     "hypothesis>=6.151.9",
 ]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "semver"
+version_provider = "pep621"
+update_map_description = true

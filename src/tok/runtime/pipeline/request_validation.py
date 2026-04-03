@@ -16,7 +16,9 @@ from pydantic import (
 )
 
 
-_ALLOWED_BLOCK_TYPES = frozenset({"text", "tool_use", "tool_result"})
+_ALLOWED_BLOCK_TYPES = frozenset(
+    {"text", "tool_use", "tool_result", "thinking", "redacted_thinking"}
+)
 _PROVIDER_SAFE_TOOL_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _STRICT_FAILURE_SIGNAL_MAP = {
     "invalid_tool_use_block": "tok_bridge_strict_invalid_tool_use_block",
@@ -121,6 +123,21 @@ class _CanonicalToolResultBlock(BaseModel):
         return self
 
 
+class _CanonicalThinkingBlock(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["thinking"]
+    thinking: str
+    signature: str | None = None
+
+
+class _CanonicalRedactedThinkingBlock(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal["redacted_thinking"]
+    data: Any = None
+
+
 def _is_provider_safe_tool_id(value: str) -> bool:
     return bool(_PROVIDER_SAFE_TOOL_ID_RE.fullmatch(value.strip()))
 
@@ -209,7 +226,13 @@ def normalize_tool_use_blocks(
 
 
 _CanonicalContentBlock = Annotated[
-    _CanonicalTextBlock | _CanonicalToolUseBlock | _CanonicalToolResultBlock,
+    (
+        _CanonicalTextBlock
+        | _CanonicalToolUseBlock
+        | _CanonicalToolResultBlock
+        | _CanonicalThinkingBlock
+        | _CanonicalRedactedThinkingBlock
+    ),
     Field(discriminator="type"),
 ]
 _CANONICAL_CONTENT_ADAPTER = TypeAdapter(list[_CanonicalContentBlock])
@@ -372,6 +395,14 @@ def _canonicalize_bridge_message(
     blocks, drops = _normalize_message_content_to_blocks(
         message.get("content")
     )
+    if canonical_role == "user":
+        filtered_blocks: list[dict[str, Any]] = []
+        for block in blocks:
+            if block.get("type") in {"thinking", "redacted_thinking"}:
+                drops[block["type"]] = drops.get(block["type"], 0) + 1
+                continue
+            filtered_blocks.append(block)
+        blocks = filtered_blocks
     return {"role": canonical_role, "content": blocks}, drops
 
 
@@ -927,15 +958,14 @@ def canonicalize_anthropic_bridge_messages(
     Returns (canonical_messages, changed, signals).
 
     Drops unsupported block types (anything outside {text, tool_use,
-    tool_result}) and emits ``tok_bridge_unsupported_block_dropped`` and
-    ``tok_bridge_thinking_block_dropped`` signals when blocks are removed.
+    tool_result, thinking, redacted_thinking}) and emits
+    ``tok_bridge_unsupported_block_dropped`` when blocks are removed.
 
     This function removes unsupported block types (e.g., top-level tool_result),
     rewrites top-level tool_results (emitting ``tok_bridge_top_level_tool_result_rewritten``),
     merges adjacent messages of same role (``tok_bridge_adjacent_messages_merged``),
-    drops thinking blocks (since the bridge currently strips them internally vs
-    tool_result) and emits ``tok_bridge_unsupported_block_dropped`` and
-    ``tok_bridge_thinking_block_dropped`` signals when blocks are removed.
+    and preserves assistant thinking blocks so Claude-native reasoning remains
+    visible to the upstream provider and to the client stream.
     """
     if not isinstance(messages, list):
         return messages, False, {}
@@ -985,11 +1015,6 @@ def canonicalize_anthropic_bridge_messages(
     if total_drops:
         total_drop_count = sum(total_drops.values())
         signals["tok_bridge_unsupported_block_dropped"] = total_drop_count
-        thinking_count = total_drops.get("thinking", 0) + total_drops.get(
-            "redacted_thinking", 0
-        )
-        if thinking_count:
-            signals["tok_bridge_thinking_block_dropped"] = thinking_count
 
     if changed:
         signals["tok_bridge_canonicalized"] = 1
@@ -1480,6 +1505,11 @@ def _validate_block(
 
     if block_type == "tool_result":
         _validate_tool_result_block(block, role, failures)
+        return
+
+    if block_type in {"thinking", "redacted_thinking"}:
+        if role != "assistant":
+            failures.append("unsupported_block_type")
         return
 
     failures.append("unsupported_block_type")

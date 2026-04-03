@@ -12,6 +12,8 @@ _SYMBOLS = {
     "initial_state": (".smart_policy", "initial_state"),
     "policy_for_model": (".smart_policy", "policy_for_model"),
     "pressure_score": (".smart_policy", "pressure_score"),
+    "detect_task_type": (".smart_policy", "detect_task_type"),
+    "select_optimal_mode": (".smart_policy", "select_optimal_mode"),
     "CANONICAL_WIRE_FIELD_ORDER": (
         ".smart_policy",
         "CANONICAL_WIRE_FIELD_ORDER",
@@ -55,4 +57,4 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-__all__ = list(_SYMBOLS)
+__all__ = tuple(_SYMBOLS)

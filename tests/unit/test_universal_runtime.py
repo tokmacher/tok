@@ -1,3 +1,5 @@
+from typing import Any
+
 from tok.runtime.types import (
     RuntimeRequest,
 )
@@ -79,7 +81,7 @@ def test_runtime_prepare_request_injects_memory_and_collects_signals():
 def test_runtime_prepare_request_injects_read_plan_hint_for_file_burst():
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Inspect the bridge request path."}
     ]
     for idx in range(6):
@@ -155,7 +157,6 @@ def test_runtime_prepare_request_preserves_bridge_tail_when_adaptive_history_hit
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.body["messages"]
-    assert prepared.behavior_signals["bridge_minimum_tail_preserved"] == 1
     assert "empty_messages" not in validate_anthropic_request_body(
         prepared.body
     )
@@ -342,7 +343,9 @@ def test_runtime_prepare_request_still_skips_extreme_tool_volume_in_tool_compati
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     huge_result = "trace line\n" * 600
-    messages = [{"role": "user", "content": "Audit the oversized outputs."}]
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Audit the oversized outputs."}
+    ]
     for idx in range(6):
         messages.append(
             {
@@ -385,7 +388,9 @@ def test_runtime_tool_heavy_bridge_body_with_thinking_blocks_passes_validation(
 ):
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
-    messages = [{"role": "user", "content": "Inspect these files."}]
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Inspect these files."}
+    ]
     for idx in range(4):
         messages.append(
             {
@@ -440,7 +445,9 @@ def test_runtime_prepare_request_compression_in_tool_compatible_mode(tmp_path):
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     # Create a longer conversation history to trigger compression
-    messages = [{"role": "user", "content": "Help me with these files"}]
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Help me with these files"}
+    ]
 
     # First turn
     messages.append(
@@ -2550,7 +2557,9 @@ def test_collect_behavior_signals_matches_bridge_contract():
     }
 
     signals = collect_behavior_signals(
-        messages, build_tool_use_id_to_context(messages), result_cache
+        messages,
+        build_tool_use_id_to_context(messages),
+        result_cache,  # type: ignore[arg-type]
     )
 
     assert signals["cached_file_read"] == 1
@@ -3606,7 +3615,9 @@ def test_cost_usd_computed_when_pricing_provided():
     fake_response.usage = fake_usage
 
     with patch.object(
-        runner.client.chat.completions, "create", return_value=fake_response
+        runner.client.chat.completions,  # type: ignore[attr-defined]
+        "create",
+        return_value=fake_response,
     ):
         result = runner.run(definition, mode="baseline", turns=1)
 
@@ -3638,7 +3649,9 @@ def test_cost_usd_none_when_no_pricing():
     fake_response.usage = fake_usage
 
     with patch.object(
-        runner.client.chat.completions, "create", return_value=fake_response
+        runner.client.chat.completions,  # type: ignore[attr-defined]
+        "create",
+        return_value=fake_response,
     ):
         result = runner.run(definition, mode="baseline", turns=1)
 

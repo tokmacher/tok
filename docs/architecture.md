@@ -10,7 +10,7 @@ Current architecture posture:
 
 ## Runtime Topology
 
-```
+```text
 ┌──────────────────┐
 │ Universal Runtime│
 │ request shaping  │
@@ -42,23 +42,23 @@ The Claude bridge remains the primary acceptance surface.
 ### Request Path
 
 1. Claude Code sends a `/v1/messages` POST to `localhost:9090`
-2. The bridge adapter forwards the normalized request into `UniversalTokRuntime`
-3. If history exceeds `keep_turns` human turns:
+1. The bridge adapter forwards the normalized request into `UniversalTokRuntime`
+1. If history exceeds `keep_turns` human turns:
    - Older messages are compressed into a `>>>` rolling state line using the live bridge memory schema
    - Only the last `keep_turns` human turns are kept verbatim
    - Tool-use/tool-result pairs are never split
-4. The runtime injects the Tok output directive and projected memory
-5. Compressed request is forwarded to `api.anthropic.com`
+1. The runtime injects the Tok output directive and projected memory
+1. Compressed request is forwarded to `api.anthropic.com`
 
 ### Response Path
 
 1. Anthropic returns a response (streaming SSE or non-streaming JSON)
-2. For streaming: the full SSE stream is buffered, then the bridge adapter passes the accumulated text to the runtime
-3. The runtime detects if the response is in Tok grammar:
+1. For streaming: the full SSE stream is buffered, then the bridge adapter passes the accumulated text to the runtime
+1. The runtime detects if the response is in Tok grammar:
    - **Tok mode**: `@thought` blocks are stripped, `|>` content from `@msg role:assistant` is extracted
    - **Markdown fallback**: Headers, bold, italic, horizontal rules are stripped
-4. The bridge re-emits the processed response to Claude Code
-5. Memory, family-mode state, savings, and invisible-pressure signals are recorded through shared runtime logic
+1. The bridge re-emits the processed response to Claude Code
+1. Memory, family-mode state, savings, and invisible-pressure signals are recorded through shared runtime logic
 
 ### Fail-Open Behavior
 
@@ -89,9 +89,9 @@ derived-contract drift rather than a competing second IDL.
 ### Request Preparation Rules
 
 1. Keep the last `keep_turns` human turns verbatim; everything older compresses into the state line via `BridgeMemoryState`.
-2. Tool-use/tool-result pairs must remain intact (never split across compression boundaries).
-3. Tool density determines whether history rewrite is skipped to preserve fidelity on heavy tool sessions.
-4. The runtime keeps semantic deduplication, tool-result compression, and history winnowing active by default, then escalates into tool-compatible shaping only when the session is recovery-sensitive.
+1. Tool-use/tool-result pairs must remain intact (never split across compression boundaries).
+1. Tool density determines whether history rewrite is skipped to preserve fidelity on heavy tool sessions.
+1. The runtime keeps semantic deduplication, tool-result compression, and history winnowing active by default, then escalates into tool-compatible shaping only when the session is recovery-sensitive.
 
 ### Response Classification
 
@@ -114,7 +114,7 @@ derived-contract drift rather than a competing second IDL.
 
 ## Module Layout
 
-```
+```text
 src/tok/
 ├── universal_runtime.py          # Canonical runtime facade
 ├── protocol/
@@ -161,10 +161,10 @@ Success requires:
 
 Runtime health is evaluated on two axes that must move together:
 
-| Axis | Metric | Direction |
-|------|--------|-----------|
-| Efficiency | tokens per successful step | ↓ lower is better |
-| Depth | `reasoning_depth_per_token` = (steps × tool_diversity) / tokens | ↑ higher is better |
+| Axis       | Metric                                                          | Direction          |
+| ---------- | --------------------------------------------------------------- | ------------------ |
+| Efficiency | tokens per successful step                                      | ↓ lower is better  |
+| Depth      | `reasoning_depth_per_token` = (steps × tool_diversity) / tokens | ↑ higher is better |
 
 If token savings increase while `reasoning_depth_per_token` decreases, the compression is over-aggressive and the change should be treated as a regression.
 
@@ -186,9 +186,9 @@ The ledger is projected into the working-memory state line to prevent the model 
 The input compression (`compress_history`) works by:
 
 1. Walking backwards through the message list
-2. Counting human turns at safe-cut boundaries (messages without `tool_result` blocks)
-3. After `keep_turns` human turns, everything before that point becomes "old"
-4. Old messages are summarized into bounded working-memory fields:
+1. Counting human turns at safe-cut boundaries (messages without `tool_result` blocks)
+1. After `keep_turns` human turns, everything before that point becomes "old"
+1. Old messages are summarized into bounded working-memory fields:
    - `turns`: compressed user-turn count
    - `goal`: active objective
    - `files`: hottest referenced code/doc files
@@ -197,6 +197,6 @@ The input compression (`compress_history`) works by:
    - `errs`: recent error signals
    - `constraints`: user instructions that must persist
    - `next`: near-term intended action when available
-5. The summary is encoded as a `>>>` state line appended to the injected runtime directive
+1. The summary is encoded as a `>>>` state line appended to the injected runtime directive
 
 This produces O(1) context growth — the state line is a fixed size regardless of conversation length.

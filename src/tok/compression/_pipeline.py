@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import _should_include_tok_state  # noqa: F401
 from ._tool_result_codecs import (
     _compress_config_json,
     _compress_env_ps,
@@ -29,9 +28,10 @@ from ._history_pipeline import (
     _compress_git_log_impl,
     _detect_tool_content_type_impl,
     compress_history_impl,
-    compress_recent_window_impl,
+    compress_recent_window_impl as _compress_recent_window_impl,
     inject_system_additions_impl,
 )
+from ._history_pipeline import RECENT_WINDOW_THRESHOLD
 
 __all__ = [
     "TOOL_COMPRESS_THRESHOLD",
@@ -103,4 +103,20 @@ def compress_tool_results_impl(
         semantic_hash_cache=semantic_hash_cache,
         bypass_result_cache=bypass_result_cache,
         hot_summary_records=hot_summary_records,
+    )
+
+
+def compress_recent_window_impl(
+    messages: list[dict[str, Any]],
+    tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
+    threshold: int = RECENT_WINDOW_THRESHOLD,
+    tool_compatible: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Apply content-aware compression to tool_result blocks in the recent window."""
+    _sync_threshold()
+    return _compress_recent_window_impl(
+        messages,
+        tool_use_id_to_context=tool_use_id_to_context,
+        threshold=threshold,
+        tool_compatible=tool_compatible,
     )

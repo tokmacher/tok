@@ -4,6 +4,8 @@ import logging
 import re
 from typing import Any, TYPE_CHECKING
 
+from ...utils.event_logging import log_macro_used
+
 if TYPE_CHECKING:
     from ..core import RuntimeSession
     from ..memory.tok_state import BridgeMemoryState
@@ -57,6 +59,7 @@ def _attribute_macro_savings(
         savings = count_tokens(expanded) - count_tokens(reference)
         if savings > 0:
             registry.record_savings(macro_name, savings)
+            log_macro_used(macro_name, tokens_saved=savings)
             session.pending_behavior_signals["macro_savings_attributed"] = (
                 session.pending_behavior_signals.get(
                     "macro_savings_attributed", 0
@@ -145,6 +148,7 @@ def execute_jit_macro(
         )
         # Record use in registry
         session.bridge_memory.macro_registry.record_use(macro_name)
+        log_macro_used(macro_name)
         return str(result)
     except Exception as e:
         logger.error("JIT execution failure for @%s: %s", macro_name, e)

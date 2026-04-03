@@ -528,7 +528,7 @@ def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
         "provider_sensitive_assistant_tool_use_text_interleaving",
     }
     summary = summarize_message_structure(body["messages"])
-    assert summary["provider_sensitivity_risks"] == {
+    assert cast(dict[str, Any], summary)["provider_sensitivity_risks"] == {
         "assistant_large_tool_use_batch": 1,
         "assistant_tool_use_text_interleaving": 1,
         "assistant_large_tool_use_text_interleaving": 1,
@@ -598,7 +598,7 @@ def test_outgoing_bridge_validation_flags_small_interleaved_tool_use_batch():
         "provider_sensitive_assistant_tool_use_text_interleaving",
     ]
     summary = summarize_message_structure(body["messages"])
-    assert summary["provider_sensitivity_risks"] == {
+    assert cast(dict[str, Any], summary)["provider_sensitivity_risks"] == {
         "assistant_tool_use_text_interleaving": 1
     }
 
@@ -1038,7 +1038,7 @@ def test_stream_recovery_history_floor_leaves_safe_outgoing_body(
     )
 
 
-def test_canonicalization_strips_thinking_blocks_from_assistant_message():
+def test_canonicalization_preserves_thinking_blocks_in_assistant_message():
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1059,22 +1059,26 @@ def test_canonicalization_strips_thinking_blocks_from_assistant_message():
 
     canonical, changed, signals = canonicalize_anthropic_bridge_body(body)
 
-    assert changed is True
+    assert changed is False
     assert canonical["messages"] == [
         {
             "role": "assistant",
             "content": [
                 {
+                    "type": "thinking",
+                    "thinking": "Let me analyze this...",
+                },
+                {
                     "type": "tool_use",
                     "id": "tool_1",
                     "name": "view_file",
                     "input": {"path": "src/tok/gateway.py"},
-                }
+                },
             ],
         }
     ]
-    assert signals.get("tok_bridge_thinking_block_dropped", 0) == 1
-    assert signals.get("tok_bridge_unsupported_block_dropped", 0) == 1
+    assert signals.get("tok_bridge_thinking_block_dropped", 0) == 0
+    assert signals.get("tok_bridge_unsupported_block_dropped", 0) == 0
 
 
 def test_canonicalization_sanitizes_invalid_tool_ids_and_matching_results():
@@ -1444,7 +1448,7 @@ def test_bridge_strict_failure_signals_classify_invalid_and_pairing_failures():
     assert signals["tok_bridge_strict_pairing_or_ordering_failure"] == 1
 
 
-def test_assistant_message_with_only_unsupported_blocks_is_dropped():
+def test_assistant_message_with_only_thinking_blocks_is_preserved():
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1462,10 +1466,15 @@ def test_assistant_message_with_only_unsupported_blocks_is_dropped():
     canonical, changed, signals = canonicalize_anthropic_bridge_body(body)
 
     assert changed is True
-    assert len(canonical["messages"]) == 1
-    assert canonical["messages"][0]["role"] == "user"
-    assert signals.get("tok_bridge_thinking_block_dropped", 0) == 2
-    assert signals.get("tok_bridge_unsupported_block_dropped", 0) == 2
+    assert len(canonical["messages"]) == 2
+    assert canonical["messages"][0]["role"] == "assistant"
+    assert canonical["messages"][0]["content"] == [
+        {"type": "thinking", "thinking": "internal thought"},
+        {"type": "redacted_thinking", "data": "..."},
+    ]
+    assert canonical["messages"][1]["role"] == "user"
+    assert signals.get("tok_bridge_thinking_block_dropped", 0) == 0
+    assert signals.get("tok_bridge_unsupported_block_dropped", 0) == 0
 
 
 def test_user_message_retains_supported_blocks_after_filtering():
@@ -1508,7 +1517,7 @@ def test_user_message_retains_supported_blocks_after_filtering():
             ],
         },
     ]
-    assert signals.get("tok_bridge_thinking_block_dropped", 0) == 1
+    assert signals.get("tok_bridge_thinking_block_dropped", 0) == 0
     assert signals.get("tok_bridge_unsupported_block_dropped", 0) == 1
     assert signals.get("tok_bridge_user_tool_result_text_split", 0) == 1
 
@@ -1685,8 +1694,8 @@ def test_strict_bridge_validation_rejects_unsupported_block_types():
                     "role": "assistant",
                     "content": [
                         {
-                            "type": "thinking",
-                            "thinking": "this should have been removed",
+                            "type": "unknown_block",
+                            "text": "this should have been removed",
                         }
                     ],
                 }
@@ -1717,8 +1726,5 @@ def test_summarize_message_structure_includes_unsupported_blocks():
 
     summary = cast(dict[str, Any], summarize_message_structure(messages))
 
-    assert summary["unsupported_blocks"] == {
-        "thinking": 1,
-        "redacted_thinking": 1,
-    }
+    assert summary["unsupported_blocks"] == {}
     assert summary["tool_use_blocks"] == 1

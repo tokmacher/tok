@@ -10,11 +10,11 @@ for validation, but they do not define the public default behavior.
 The first public release supports exactly this workflow:
 
 1. `pip install tok-protocol`
-2. `tok install` (adds `claude()` shell wrapper)
-3. `tok bridge start`
-4. Use Claude Code normally
-5. `tok bridge status` / `tok doctor` / `tok stats` to monitor
-6. `tok bridge stop` to end the session
+1. `tok install` (adds `claude()` shell wrapper)
+1. `tok bridge start`
+1. Use Claude Code normally
+1. `tok bridge status` / `tok doctor` / `tok stats` to monitor
+1. `tok bridge stop` to end the session
 
 The default CLI help surface should reinforce that path by centering:
 
@@ -26,10 +26,10 @@ The default CLI help surface should reinforce that path by centering:
 The only supported Python helper path in this release is:
 
 1. create one `RuntimeSession`
-2. call `tok.wrap(...)`
-3. send the prepared request through your client
-4. call `tok.process(...)`
-5. reuse the same session for the next turn
+1. call `tok.wrap(...)`
+1. send the prepared request through your client
+1. call `tok.process(...)`
+1. reuse the same session for the next turn
 
 ## Unsupported Paths
 
@@ -57,14 +57,14 @@ The following are explicitly out of scope for the first release:
 A public release requires:
 
 1. All CI checks green on `main`
-2. No regressions in `success_rate=1.0` on required benchmark families
-3. Savings stay in the validated reference band (45-55%)
-4. Onboarding docs are coherent and tested in a clean-room venv
-5. No known security issues
-6. Coverage for the supported release surface stays at or above 80%
-7. Live Claude validation confirms the bridge-first workflow behaves correctly against a real session
-8. The release shape is narrow, explicit, and defensible
-9. The release candidate is cut from a clean, fully revalidated tree
+1. No regressions in `success_rate=1.0` on required benchmark families
+1. Savings stay in the validated reference band (45-55%)
+1. Onboarding docs are coherent and tested in a clean-room venv
+1. No known security issues
+1. Coverage for the supported release surface stays at or above 80%
+1. Live Claude validation confirms the bridge-first workflow behaves correctly against a real session
+1. The release shape is narrow, explicit, and defensible
+1. The release candidate is cut from a clean, fully revalidated tree
 
 The expected automated revalidation pass for that candidate is:
 
@@ -81,7 +81,7 @@ python -m build
 The bounded IDL stress audit now has two required interpretations:
 
 1. A baseline run is the source of truth for protocol-IDL coherence. It decides whether `src/tok/protocol/schema.py` and `src/tok/protocol/models.py` still describe one coherent canonical surface.
-2. A Tok-captured run is a runtime-product audit. It decides whether caching, answer-repair heuristics, or fail-open behavior distort that same bounded audit.
+1. A Tok-captured run is a runtime-product audit. It decides whether caching, answer-repair heuristics, or fail-open behavior distort that same bounded audit.
 
 Release review should classify findings this way:
 

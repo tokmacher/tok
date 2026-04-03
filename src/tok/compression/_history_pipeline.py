@@ -55,6 +55,7 @@ from ..runtime.repeat_targets import (
     build_file_summary,
     normalize_path_target,
 )
+from ..utils.event_logging import log_semantic_dedup
 
 __all__ = [
     "TOOL_COMPRESS_THRESHOLD",
@@ -625,12 +626,8 @@ def compress_tool_results_impl(
                     continue
 
             if _is_precision_read_context(ctx):
-                if (
-                    result_cache is not None
-                    and ctx is not None
-                    and tool_use_id_to_context is not None
-                    and not bypass_result_cache
-                ):
+                if result_cache is not None and not bypass_result_cache:
+                    assert ctx is not None
                     compressed, _saved = _apply_result_cache(
                         raw,
                         ctx,
@@ -719,6 +716,7 @@ def compress_tool_results_impl(
                             breakdown["semantic_dedup"] = breakdown.get(
                                 "semantic_dedup", 0
                             ) + max(0, saved)
+                            log_semantic_dedup(cache_key, saved)
                             block["content"] = token
                             continue
                     else:
@@ -828,9 +826,13 @@ def inject_system_additions_impl(
         )
     output_directive = "\n\n".join(directive_parts)
 
+    include_tok_state = _should_include_tok_state(
+        tok_state, tool_compatible=tool_compatible
+    )
+
     if (
         tool_compatible
-        and not _should_include_tok_state(tok_state, tool_compatible=True)
+        and not include_tok_state
         and not grammar
         and not todo
         and not deltas
@@ -849,9 +851,6 @@ def inject_system_additions_impl(
         else:
             body["system"] = output_directive
         return body
-    include_tok_state = _should_include_tok_state(
-        tok_state, tool_compatible=tool_compatible
-    )
 
     dynamic_blocks = []
     if grammar:

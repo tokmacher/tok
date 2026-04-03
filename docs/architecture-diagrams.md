@@ -162,6 +162,6 @@ flowchart TB
     STD --> AA["Human-agent and agent-agent standardization"]
 ```
 
----
+______________________________________________________________________
 
 See the repository root `roadmap.md` for latest planning and phase status.

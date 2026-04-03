@@ -103,12 +103,6 @@ from .pipeline.tool_processing import (
     _count_tool_density,
     _should_skip_history_rewrite,
 )
-from ..explorer import (
-    explore_file,
-    explore_module,
-    get_file_overview,
-    list_large_files,
-)
 from .repeat_targets import (
     HotSummaryRecord,
     RepeatTargetEvent,
