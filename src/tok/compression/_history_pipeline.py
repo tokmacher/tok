@@ -521,6 +521,73 @@ def tok_tool_result_impl(
     return compressed
 
 
+def _build_last_file_read_ids(
+    messages: list[dict[str, Any]],
+    tool_use_id_to_context: dict[str, dict[str, Any]] | None,
+) -> frozenset[str]:
+    """Return tool_use_ids of the most recent file-like read per normalized path.
+
+    These entries are exempted from result-cache compression so the model always
+    has at least one verbatim copy of each file in context.
+    """
+    if tool_use_id_to_context is None:
+        return frozenset()
+
+    path_to_last_id: dict[str, str] = {}
+    for msg in messages:
+        content = msg.get("content")
+        if msg.get("role") != "tool_result":
+            continue
+        if isinstance(content, list):
+            for block in content:
+                if not (
+                    isinstance(block, dict)
+                    and block.get("type") == "tool_result"
+                ):
+                    continue
+                tool_id = block.get("tool_use_id", "")
+                ctx = tool_use_id_to_context.get(tool_id)
+                if not ctx:
+                    continue
+                tool_name = str(ctx.get("name", "")).lower()
+                if tool_name not in FILE_LIKE_TOOLS:
+                    continue
+                args = ctx.get("args")
+                if not isinstance(args, dict):
+                    continue
+                path = str(
+                    args.get("path")
+                    or args.get("file_path")
+                    or args.get("AbsolutePath")
+                    or args.get("TargetFile")
+                    or ""
+                )
+                if path:
+                    path_to_last_id[path] = tool_id
+        elif isinstance(content, str):
+            tool_id = msg.get("tool_use_id", "")
+            ctx = tool_use_id_to_context.get(tool_id)
+            if not ctx:
+                continue
+            tool_name = str(ctx.get("name", "")).lower()
+            if tool_name not in FILE_LIKE_TOOLS:
+                continue
+            args = ctx.get("args")
+            if not isinstance(args, dict):
+                continue
+            path = str(
+                args.get("path")
+                or args.get("file_path")
+                or args.get("AbsolutePath")
+                or args.get("TargetFile")
+                or ""
+            )
+            if path:
+                path_to_last_id[path] = tool_id
+
+    return frozenset(path_to_last_id.values())
+
+
 def compress_tool_results_impl(
     messages: list[dict[str, Any]],
     result_cache: dict[
@@ -532,8 +599,58 @@ def compress_tool_results_impl(
     semantic_hash_cache: dict[str, str] | None = None,
     bypass_result_cache: bool = False,
     hot_summary_records: dict[str, Any] | None = None,
+    session_files_read: set[str] | None = None,
+    files_fully_delivered: dict[str, int] | None = None,
+    current_turn: int | None = None,
+    keep_turns_window: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
+    last_file_read_ids = _build_last_file_read_ids(
+        messages, tool_use_id_to_context
+    )
+
+    def _extract_normalized_path(context: dict[str, Any]) -> str:
+        raw_args = context.get("args")
+        args = raw_args if isinstance(raw_args, dict) else None
+        if not args:
+            return ""
+        path = str(
+            args.get("path")
+            or args.get("file_path")
+            or args.get("AbsolutePath")
+            or args.get("TargetFile")
+            or ""
+        )
+        return path.lower().strip()
+
+    def _is_file_fully_delivered(norm_path: str) -> bool:
+        if files_fully_delivered is None:
+            return True
+        delivery_turn = files_fully_delivered.get(norm_path)
+        if delivery_turn is None:
+            return False
+        if current_turn is None or keep_turns_window is None:
+            return True
+        return (current_turn - delivery_turn) < keep_turns_window
+
+    def _mark_file_fully_delivered(norm_path: str) -> None:
+        if files_fully_delivered is not None and norm_path:
+            files_fully_delivered[norm_path] = current_turn or 0
+
+    def _cache_semantic_hash(
+        context: dict[str, Any] | None,
+        raw: str,
+        cache: dict[str, str],
+    ) -> None:
+        cache_key = _make_semantic_cache_key(context, raw)
+        if cache_key is None:
+            return
+        args = context.get("args") if isinstance(context, dict) else None
+        if isinstance(args, dict) and any(
+            k in args for k in ("offset", "limit", "start", "end")
+        ):
+            return
+        cache[cache_key] = _compute_semantic_hash(raw)
 
     def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
         if not context:
@@ -574,7 +691,31 @@ def compress_tool_results_impl(
                         breakdown.get("tok_bypass_cache_applied", 0) + 1
                     )
                     continue
+                if tool_id in last_file_read_ids:
+                    if context:
+                        norm_path = _extract_normalized_path(context)
+                        _mark_file_fully_delivered(norm_path)
+                    continue
                 if context:
+                    norm_path = _extract_normalized_path(context)
+                    if (
+                        session_files_read is not None
+                        and norm_path
+                        and norm_path not in session_files_read
+                    ):
+                        session_files_read.add(norm_path)
+                        if (
+                            semantic_hash_cache is not None
+                            and len(content) >= _SEMANTIC_HASH_MIN_CHARS
+                        ):
+                            _cache_semantic_hash(
+                                context, content, semantic_hash_cache
+                            )
+                        _mark_file_fully_delivered(norm_path)
+                        continue
+                    if not _is_file_fully_delivered(norm_path):
+                        _mark_file_fully_delivered(norm_path)
+                        continue
                     compressed, saved = _apply_result_cache(
                         content,
                         context,
@@ -626,6 +767,18 @@ def compress_tool_results_impl(
                     continue
 
             if _is_precision_read_context(ctx):
+                norm_path = _extract_normalized_path(ctx) if ctx else ""
+                if (
+                    session_files_read is not None
+                    and norm_path
+                    and norm_path not in session_files_read
+                ):
+                    session_files_read.add(norm_path)
+                    if (
+                        semantic_hash_cache is not None
+                        and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
+                    ):
+                        _cache_semantic_hash(ctx, raw, semantic_hash_cache)
                 if result_cache is not None and not bypass_result_cache:
                     assert ctx is not None
                     compressed, _saved = _apply_result_cache(
@@ -646,10 +799,32 @@ def compress_tool_results_impl(
                     block["content"] = compressed
                 else:
                     block["content"] = raw
+                _mark_file_fully_delivered(norm_path)
+                continue
+
+            if tool_id in last_file_read_ids:
+                norm_path = _extract_normalized_path(ctx) if ctx else ""
+                _mark_file_fully_delivered(norm_path)
+                continue
+
+            norm_path = _extract_normalized_path(ctx) if ctx else ""
+            if (
+                session_files_read is not None
+                and norm_path
+                and norm_path not in session_files_read
+            ):
+                session_files_read.add(norm_path)
+                if (
+                    semantic_hash_cache is not None
+                    and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
+                ):
+                    _cache_semantic_hash(ctx, raw, semantic_hash_cache)
+                _mark_file_fully_delivered(norm_path)
                 continue
 
             if (
-                semantic_hash_cache is not None
+                _is_file_fully_delivered(norm_path)
+                and semantic_hash_cache is not None
                 and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
                 and tool_use_id_to_context is not None
             ):
@@ -723,7 +898,8 @@ def compress_tool_results_impl(
                         semantic_hash_cache[cache_key] = content_hash
 
             if (
-                result_cache is not None
+                _is_file_fully_delivered(norm_path)
+                and result_cache is not None
                 and tool_use_id_to_context is not None
                 and not bypass_result_cache
             ):
@@ -803,19 +979,25 @@ def inject_system_additions_impl(
     directive_parts = []
     if not tool_compatible:
         directive_parts.append("=== MODE: TOK-NATIVE ===")
-    if not tool_compatible and (pressure > 1):
-        directive_parts.append(TOK_PROTOCOL_LAW)
 
-    if tool_compatible:
-        base_directive = TOK_TOOL_COMPAT_DIRECTIVE
+    use_protocol_law = (
+        not tool_compatible
+        and 1 < pressure <= 50
+        and not (
+            behavior_signals
+            and behavior_signals.get("semantic_drift_detected")
+        )
+    )
+    if use_protocol_law:
+        directive_parts.append(TOK_PROTOCOL_LAW)
+    elif tool_compatible:
+        directive_parts.append(TOK_TOOL_COMPAT_DIRECTIVE)
     elif pressure > 50 or (
         behavior_signals and behavior_signals.get("semantic_drift_detected")
     ):
-        base_directive = TOK_OUTPUT_DIRECTIVE_REINFORCED
+        directive_parts.append(TOK_OUTPUT_DIRECTIVE_REINFORCED)
     else:
-        base_directive = TOK_OUTPUT_DIRECTIVE_MINIMAL
-
-    directive_parts.append(base_directive)
+        directive_parts.append(TOK_OUTPUT_DIRECTIVE_MINIMAL)
     if runtime_hints:
         directive_parts.append(
             "\n".join(

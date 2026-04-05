@@ -3,6 +3,7 @@ from __future__ import annotations
 """Runtime request-preparation helpers extracted from core."""
 
 import copy
+import json
 import os
 from pathlib import Path
 from typing import Any, cast
@@ -19,6 +20,8 @@ from ..compression import (
 from ..neuro.ir import Instruction
 from .config import (
     FILE_READ_DENSITY_THRESHOLD,
+    RUNTIME_HINTS_MAX_PER_TURN,
+    TOK_FILE_DELIVERY_STALE_TURNS,
     TOK_LARGE_FILE_HINT,
     TOK_READ_PLAN_HINT,
     TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
@@ -445,6 +448,86 @@ def _resolve_effective_tool_compatible(
     return bool(reasons), reasons
 
 
+def _snapshot_latest_assistant_thinking(
+    messages: list[dict[str, Any]],
+) -> str | None:
+    """Return JSON-serialized thinking blocks from the latest assistant message.
+
+    Returns ``None`` when no assistant message contains thinking/redacted_thinking
+    blocks.  The caller can later pass the returned string to
+    ``_restore_latest_assistant_thinking`` to guarantee the blocks survive every
+    intermediate deep-copy and canonicalisation step untouched.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        thinking_blocks = [
+            b
+            for b in content
+            if isinstance(b, dict)
+            and b.get("type") in {"thinking", "redacted_thinking"}
+        ]
+        if thinking_blocks:
+            return json.dumps(thinking_blocks, ensure_ascii=False)
+        return None
+    return None
+
+
+def _restore_latest_assistant_thinking(
+    messages: list[dict[str, Any]],
+    snapshot: str | None,
+) -> bool:
+    """Replace thinking blocks in the latest assistant message with *snapshot*.
+
+    This is the inverse of ``_snapshot_latest_assistant_thinking``.  It walks
+    the latest assistant message and swaps every thinking/redacted_thinking
+    block with the authoritative version from *snapshot*, preserving the
+    block positions so that non-thinking blocks (text, tool_use) are untouched.
+
+    Returns ``True`` when a restoration was performed.
+    """
+    if snapshot is None:
+        return False
+    try:
+        original_blocks: list[dict[str, Any]] = json.loads(snapshot)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not original_blocks:
+        return False
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        if not any(
+            isinstance(b, dict)
+            and b.get("type") in {"thinking", "redacted_thinking"}
+            for b in content
+        ):
+            continue
+        restored: list[dict[str, Any]] = []
+        orig_idx = 0
+        for block in content:
+            if not isinstance(block, dict):
+                restored.append(block)
+                continue
+            if block.get("type") in {
+                "thinking",
+                "redacted_thinking",
+            } and orig_idx < len(original_blocks):
+                restored.append(original_blocks[orig_idx])
+                orig_idx += 1
+            else:
+                restored.append(block)
+        msg["content"] = restored
+        return True
+    return False
+
+
 def prepare_request_impl(
     runtime_self: UniversalTokRuntime,
     request: RuntimeRequest,
@@ -459,6 +542,8 @@ def prepare_request_impl(
     if request.system is not None:
         body["system"] = copy.deepcopy(request.system)
     original_body = copy.deepcopy(body)
+
+    _thinking_snapshot = _snapshot_latest_assistant_thinking(request.messages)
     compressed = False
 
     _pre_existing_session_signals = dict(session.pending_behavior_signals)
@@ -477,6 +562,10 @@ def prepare_request_impl(
         if cleaned_sys and cleaned_sys != current_sys:
             body["system"] = cleaned_sys
             session.pending_behavior_signals["tok_prompt_optimized"] = 1
+            if session.bridge_memory.top_hot_files(1):
+                session.pending_behavior_signals[
+                    "smoothness_prompt_optimization_active_task"
+                ] = 1
             compressed = True
             logger.warning(
                 "tok_prompt_optimized: system prompt reduced from %d to %d chars",
@@ -608,6 +697,21 @@ def prepare_request_impl(
         "reacquisition_tokens_avoided_estimate": 0,
         "repeat_tool_collapse_applied": 0,
     }
+
+    from tok.runtime.smoothness.models import TokMode
+
+    _lossless_mode_active = (
+        session.current_tok_mode == TokMode.LOSSLESS_TASK_MODE
+    )
+    if _lossless_mode_active:
+        should_skip_history = True
+        skip_reason = "lossless_task_mode"
+        history_skip_reason = skip_reason
+        behavior_signals["lossless_task_mode_history_skipped"] = 1
+        logger.info(
+            "LOSSLESS_TASK_MODE: skipping active-workset compression entirely"
+        )
+
     current_pressure = calculate_invisible_pressure(behavior_signals)
     request_policy = request.request_policy
     previous_effective_tool_compatible = (
@@ -823,6 +927,10 @@ def prepare_request_impl(
                 compression_level=policy.tool_levels[mode],
                 semantic_hash_cache=session.semantic_hash_cache,
                 hot_summary_records=session._hot_summary_records,
+                session_files_read=session._files_read_this_session,
+                files_fully_delivered=session._files_fully_delivered,
+                current_turn=session.bridge_memory.turn,
+                keep_turns_window=TOK_FILE_DELIVERY_STALE_TURNS,
             )
             tool_saved = sum(type_breakdown.values()) // 4
             if tool_saved > 0:
@@ -854,6 +962,7 @@ def prepare_request_impl(
 
         recent: list[dict[str, Any]] = body["messages"]
         tok_state = ""
+        session_memory = ""
         keep_turns = session.adaptive_keep_turns()
         if session._tok_memory_snap_triggered:
             logger.info("Memory snap triggered: forcing keep_turns=0")
@@ -1030,16 +1139,48 @@ def prepare_request_impl(
                 logger.info(
                     f"HISTORY WINNOWING SUCCESS: msgs {len(body['messages'])} -> {len(recent)}"
                 )
-                body["messages"] = recent
-                compressed = True
-                if effective_tool_compatible:
-                    behavior_signals["tool_compatible_compression"] = (
-                        behavior_signals.get("tool_compatible_compression", 0)
-                        + 1
+                _in_active_tool_loop = any(
+                    behavior_signals.get(k, 0) > 0
+                    for k in (
+                        "repeat_file_read",
+                        "repeat_search",
+                        "repeat_command",
+                        "repeated_tool_call",
                     )
-                session_memory = session.refresh_hot_memory(
-                    tok_state, model=request.model
                 )
+                from tok.runtime.smoothness.models import TokMode
+
+                current_mode = session.current_tok_mode
+                if _in_active_tool_loop and current_mode in (
+                    TokMode.GUARDED_TOK,
+                    TokMode.SMOOTH_MODE,
+                    TokMode.LOSSLESS_TASK_MODE,
+                ):
+                    should_skip_history = True
+                    behavior_signals[
+                        "smoothness_guarded_history_winnowing_skipped"
+                    ] = 1
+                    logger.info(
+                        "GUARDED_TOK: skipping history winnowing in active tool loop (mode=%s)",
+                        session.current_tok_mode.value,
+                    )
+                else:
+                    if _in_active_tool_loop:
+                        behavior_signals[
+                            "smoothness_history_winnowing_active_loop"
+                        ] = 1
+                    body["messages"] = recent
+                    compressed = True
+                    if effective_tool_compatible:
+                        behavior_signals["tool_compatible_compression"] = (
+                            behavior_signals.get(
+                                "tool_compatible_compression", 0
+                            )
+                            + 1
+                        )
+                    session_memory = session.refresh_hot_memory(
+                        tok_state, model=request.model
+                    )
             else:
                 behavior_signals["tok_history_cut_point_missing"] = 1
                 tool_result_count = sum(
@@ -1094,6 +1235,8 @@ def prepare_request_impl(
                     should_skip_history=should_skip_history,
                     _recent_messages=recent,
                 )
+                if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
+                    runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
                 body = _inject_system(
                     body,
                     injected_state_payload,
@@ -1112,6 +1255,8 @@ def prepare_request_impl(
             # Short session: skip ALL Tok additions to avoid overhead
             behavior_signals["short_session_system_additions_skipped"] = 1
         else:
+            if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
+                runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
             system_body = inject_system_additions(
                 body,
                 tok_state=session_memory,
@@ -1200,6 +1345,13 @@ def prepare_request_impl(
         body = canonical_body
         for key, value in canonical_signals.items():
             behavior_signals[key] = behavior_signals.get(key, 0) + value
+
+    if _restore_latest_assistant_thinking(
+        body.get("messages", []), _thinking_snapshot
+    ):
+        logger.debug(
+            "thinking_block_restore: restored latest assistant thinking blocks after canonicalization"
+        )
 
     return PreparedRuntimeRequest(
         body=body,

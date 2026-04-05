@@ -15,7 +15,42 @@ PROMPT_METRIC_KEYS = (
 )
 
 
-def degradation_reason(signals: dict[str, int], *, baseline_only: bool) -> str:
+def _get_worst_smoothness_event_type(
+    smoothness_event_counts: dict[str, int],
+) -> str | None:
+    if not smoothness_event_counts:
+        return None
+
+    priority = [
+        "stream_read_error",
+        "stream_recovery_started",
+        "stream_recovery_loop_breaker",
+        "upstream_400_after_prepared_payload",
+        "thinking_block_mutation",
+        "messages_changed_open_tool_loop",
+        "history_winnowing_active_loop",
+        "semantic_dedup_active_file",
+        "prompt_optimization_active_task",
+        "repeated_active_file_read",
+        "repeated_search_same_target",
+        "user_interrupt_redirection",
+        "direct_action_after_first_read",
+        "empty_stream_success",
+        "stream_recovery_succeeded",
+    ]
+
+    for event in priority:
+        if smoothness_event_counts.get(event, 0) > 0:
+            return event
+    return None
+
+
+def degradation_reason(
+    signals: dict[str, int],
+    *,
+    baseline_only: bool,
+    smoothness_event_counts: dict[str, int] | None = None,
+) -> str:
     stream_transport_count = (
         int(signals.get("stream_recovery_read_error", 0))
         + int(signals.get("stream_recovery_empty_success", 0))
@@ -76,7 +111,15 @@ def degradation_reason(signals: dict[str, int], *, baseline_only: bool) -> str:
         or signals.get("state_resend_full_turn", 0)
     ):
         return "answer anchor retention"
-    return ""
+
+    base_reason = ""
+
+    if smoothness_event_counts:
+        worst_event = _get_worst_smoothness_event_type(smoothness_event_counts)
+        if worst_event:
+            base_reason = f"smoothness_event: {worst_event}"
+
+    return base_reason
 
 
 def session_quality(
@@ -84,9 +127,14 @@ def session_quality(
     *,
     baseline_only: bool,
     tokens_saved: int = 0,
+    smoothness_score: int = 100,
 ) -> str:
     if baseline_only:
         return "degraded"
+    if smoothness_score < 55:
+        return "degraded"
+    if smoothness_score < 70:
+        return "watch"
     if signals.get("tok_bridge_invalid_tool_history_session_reset", 0):
         return "degraded"
     if (

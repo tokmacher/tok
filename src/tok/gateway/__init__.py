@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
 from ..runtime.memory.bridge_memory import BridgeMemoryState
+from ..runtime.smoothness import SmoothnessTracker
 from ..stats import SavingsTracker
 from ..universal_runtime import (
     RuntimeSession,
@@ -296,6 +297,10 @@ class BridgeSession:
     tracker: SavingsTracker = field(default_factory=SavingsTracker)
     # Canonical runtime state: delegates to this
     runtime_session: RuntimeSession = field(default_factory=RuntimeSession)
+    # Smoothness tracking for interaction quality
+    smoothness_tracker: SmoothnessTracker = field(
+        default_factory=SmoothnessTracker
+    )
 
     def __post_init__(self) -> None:
         self.request_policy_default = (

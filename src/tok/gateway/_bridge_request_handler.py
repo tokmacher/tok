@@ -88,6 +88,36 @@ async def send_with_tok_fail_open_retry(
         and compressed_request
         and session.fail_open
     ):
+        from ..runtime.smoothness.models import TokMode
+
+        current_mode = None
+        try:
+            current_mode = session.runtime_session.current_tok_mode
+        except Exception:
+            pass
+
+        skip_provider_safe_recanonicalization = current_mode in (
+            TokMode.SMOOTH_MODE,
+            TokMode.LOSSLESS_TASK_MODE,
+        )
+        if skip_provider_safe_recanonicalization:
+            if (
+                allow_original_retry
+                and original_content is not None
+                and _payloads_materially_differ(content, original_content)
+            ):
+                logger.warning(
+                    "SMOOTH_MODE active: skipping provider-safe recanonicalization, retrying with original payload"
+                )
+                await response.aclose()
+                request_obj = client.build_request(
+                    method, url, headers=headers, content=original_content
+                )
+                response = await client.send(request_obj, stream=stream)
+                retried_without_tok = True
+                retry_signals["fail_open_smooth_mode_original_retry"] = 1
+                return response, retried_without_tok, retry_signals
+
         fallback_content = retry_content
         if fallback_content is None and allow_original_retry:
             fallback_content = original_content

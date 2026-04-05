@@ -3628,6 +3628,498 @@ def test_streaming_empty_success_tool_use_loop_breaker_falls_back(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Thinking-enabled requests force non-streaming upstream
+# ---------------------------------------------------------------------------
+
+
+def test_thinking_enabled_forces_non_streaming_upstream(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "think hard"}],
+                "system": "",
+                "stream": True,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        resp_json = {
+            "model": "claude-sonnet-4",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20},
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "Let me think about this...",
+                    "signature": "sig_abc123",
+                },
+                {"type": "text", "text": "Here is my answer."},
+            ],
+        }
+        return httpx.Response(
+            200,
+            json=resp_json,
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "think hard"}],
+            "thinking": {"type": "enabled", "budget_tokens": 5000},
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assert sent_bodies[0]["stream"] is False
+    assert response.headers.get("content-type") == "text/event-stream"
+
+
+def test_thinking_enabled_returns_sse_with_thinking_blocks(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "think"}],
+                "system": "",
+                "stream": True,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "internal reasoning",
+                        "signature": "sig_xyz",
+                    },
+                    {"type": "text", "text": "The answer is 42."},
+                ],
+            },
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "think"}],
+            "thinking": {"type": "enabled", "budget_tokens": 5000},
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    output = response.text
+    assert "thinking_delta" in output
+    assert "sig_xyz" in output
+    assert "internal reasoning" in output
+    assert "text_delta" in output
+    assert "The answer is 42." in output
+    assert "message_start" in output
+    assert "message_stop" in output
+
+
+def test_thinking_enabled_preserves_block_order(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [
+                    {"role": "user", "content": "think and use tools"}
+                ],
+                "system": "",
+                "stream": True,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 30},
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "planning...",
+                        "signature": "sig_order",
+                    },
+                    {"type": "text", "text": "I will read a file."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Read",
+                        "input": {"file_path": "/x"},
+                    },
+                ],
+            },
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "think and use tools"}],
+            "thinking": {"type": "enabled", "budget_tokens": 5000},
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    output = response.text
+    thinking_pos = output.find("thinking_delta")
+    text_pos = output.find("text_delta")
+    tool_pos = output.find("tool_use")
+    assert thinking_pos < text_pos < tool_pos
+
+
+def test_no_thinking_uses_streaming_path(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "hello"}],
+                "system": "",
+                "stream": True,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    sse_data = (
+        "event: message_start\ndata: "
+        + json.dumps(
+            {
+                "type": "message_start",
+                "message": {
+                    "model": "claude-sonnet-4",
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                },
+            }
+        )
+        + "\n\n"
+        + "event: content_block_start\ndata: "
+        + json.dumps(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            }
+        )
+        + "\n\n"
+        + "event: content_block_delta\ndata: "
+        + json.dumps(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "hello back"},
+            }
+        )
+        + "\n\n"
+        + "event: content_block_stop\ndata: "
+        + json.dumps({"type": "content_block_stop", "index": 0})
+        + "\n\n"
+        + "event: message_delta\ndata: "
+        + json.dumps({"type": "message_delta", "usage": {"output_tokens": 1}})
+        + "\n\n"
+        + "event: message_stop\ndata: "
+        + json.dumps({"type": "message_stop"})
+        + "\n\n"
+    )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        return httpx.Response(
+            200,
+            content=sse_data.encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("content-type") == "text/event-stream"
+    assert "hello back" in response.text
+
+
+def test_thinking_enabled_with_redacted_thinking(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "think"}],
+                "system": "",
+                "stream": True,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+                "content": [
+                    {
+                        "type": "redacted_thinking",
+                        "data": "redacted_blob_abc",
+                    },
+                    {"type": "text", "text": "Final answer."},
+                ],
+            },
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "think"}],
+            "thinking": {"type": "enabled", "budget_tokens": 5000},
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    output = response.text
+    assert "redacted_thinking" in output
+    assert "redacted_blob_abc" in output
+    assert "Final answer." in output
+
+
+def test_thinking_disabled_does_not_force_non_streaming(tmp_path, monkeypatch):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_bodies: list[dict[str, Any]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "hello"}],
+                "system": "",
+                "stream": True,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        sse_data = (
+            "event: message_start\ndata: "
+            + json.dumps(
+                {
+                    "type": "message_start",
+                    "message": {
+                        "model": "claude-sonnet-4",
+                        "usage": {"input_tokens": 10, "output_tokens": 5},
+                    },
+                }
+            )
+            + "\n\n"
+            + "event: content_block_start\ndata: "
+            + json.dumps(
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                }
+            )
+            + "\n\n"
+            + "event: content_block_delta\ndata: "
+            + json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "ok"},
+                }
+            )
+            + "\n\n"
+            + "event: content_block_stop\ndata: "
+            + json.dumps({"type": "content_block_stop", "index": 0})
+            + "\n\n"
+            + "event: message_delta\ndata: "
+            + json.dumps(
+                {"type": "message_delta", "usage": {"output_tokens": 1}}
+            )
+            + "\n\n"
+            + "event: message_stop\ndata: "
+            + json.dumps({"type": "message_stop"})
+            + "\n\n"
+        )
+        return httpx.Response(
+            200,
+            content=sse_data.encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "disabled"},
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 1
+    assert sent_bodies[0]["stream"] is True
+
+
+# ---------------------------------------------------------------------------
 # Malformed signal coverage
 # ---------------------------------------------------------------------------
 
@@ -3776,7 +4268,7 @@ def test_non_streaming_processing_error_fail_open_records_usage(
 
     summary = session.tracker.session_summary()
     assert summary is not None
-    assert summary["actual_tokens"] > 0
+    assert summary["actual_tokens"]  # type: ignore[comparison-overlap]
 
 
 def test_non_streaming_processing_error_fail_closed_propagates(

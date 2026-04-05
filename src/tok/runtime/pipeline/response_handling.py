@@ -109,10 +109,12 @@ def _handle_answer_ready_phase(
     )
 
     if answer_ready_failed:
-        merged_signals["answer_ready_repair_requested"] = 1
         if session._answer_ready_repair_active:
             merged_signals["answer_ready_repair_failed"] = 1
-        session._answer_ready_repair_pending = True
+            session._answer_ready_repair_pending = False
+        else:
+            merged_signals["answer_ready_repair_requested"] = 1
+            session._answer_ready_repair_pending = True
     elif session._answer_ready_repair_active:
         merged_signals["answer_ready_repair_resolved"] = 1
         session._answer_ready_repair_pending = False
@@ -195,13 +197,13 @@ def _handle_late_assembly_phase(
                 repair_mode=session._late_answer_assembly_repair_mode_active,
                 outcome="failed",
             )
-        if session._late_answer_followthrough_pending:
-            merged_signals["late_answer_followthrough_failed"] = 1
-            session._late_answer_followthrough_pending = False
-        session._late_answer_assembly_repair_pending = True
-        session._late_answer_assembly_repair_mode_pending = (
-            late_answer_assembly_mode
-        )
+            session._late_answer_assembly_repair_pending = False
+            session._late_answer_assembly_repair_mode_pending = ""
+        else:
+            session._late_answer_assembly_repair_pending = True
+            session._late_answer_assembly_repair_mode_pending = (
+                late_answer_assembly_mode
+            )
     elif session._late_answer_assembly_repair_active:
         if _late_answer_assembly_repair_satisfied(
             session._late_answer_assembly_repair_mode_active,
@@ -214,12 +216,6 @@ def _handle_late_assembly_phase(
                 repair_mode=session._late_answer_assembly_repair_mode_active,
                 outcome="resolved",
             )
-            if session._late_answer_assembly_repair_mode_active == "tool_only":
-                merged_signals["late_answer_followthrough_requested"] = 1
-                merged_signals[
-                    "late_answer_followthrough_after_tool_only_repair"
-                ] = 1
-                session._late_answer_followthrough_pending = True
         session._late_answer_assembly_repair_pending = False
         session._late_answer_assembly_repair_mode_pending = ""
     else:

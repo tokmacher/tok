@@ -12,6 +12,7 @@ import httpx
 
 from ..runtime.pipeline.request_validation import normalize_tool_use_blocks
 from ..runtime.policy.translator import IS_TOK
+from ..runtime.smoothness.models import SmoothnessEventType
 from . import (
     BridgeSession,
     _RUNTIME,
@@ -97,6 +98,23 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
             events.append(
                 f"event: content_block_delta\ndata: {json.dumps(sig_delta)}\n\n".encode()
             )
+        stop = {"type": "content_block_stop", "index": i}
+        events.append(
+            f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
+        )
+
+    elif block_type == "redacted_thinking":
+        start = {
+            "type": "content_block_start",
+            "index": i,
+            "content_block": {
+                "type": "redacted_thinking",
+                "data": block.get("data"),
+            },
+        }
+        events.append(
+            f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
+        )
         stop = {"type": "content_block_stop", "index": i}
         events.append(
             f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
@@ -247,6 +265,13 @@ async def buffer_strip_restream_impl(
                 "Stream read error during buffering, emitting partial content: %s",
                 read_error,
             )
+            try:
+                session.smoothness_tracker.record(
+                    SmoothnessEventType.STREAM_READ_ERROR,
+                    {"error": read_error},
+                )
+            except Exception:
+                pass
         text = raw.decode("utf-8", errors="replace")
         sse_events = text.split("\n\n")
 
@@ -427,6 +452,12 @@ async def buffer_strip_restream_impl(
                 stream_behavior_signals["stream_recovery_read_error"] = 1
             else:
                 stream_behavior_signals["stream_recovery_empty_success"] = 1
+                try:
+                    session.smoothness_tracker.record(
+                        SmoothnessEventType.EMPTY_STREAM_SUCCESS,
+                    )
+                except Exception:
+                    pass
             session.runtime_session._stream_recovery_reacquisition_budget = 1
             session.runtime_session._stream_recovery_history_floor_budget = 1
             session.runtime_session.note_request_policy_stream_recovery()
@@ -439,6 +470,12 @@ async def buffer_strip_restream_impl(
                 logger.warning(
                     "stream_recovery_retry_started: empty streamed success detected; retrying upstream non-stream"
                 )
+                try:
+                    session.smoothness_tracker.record(
+                        SmoothnessEventType.STREAM_RECOVERY_STARTED,
+                    )
+                except Exception:
+                    pass
                 recovery_payload = request_content
                 try:
                     parsed_request = json.loads(request_content)
@@ -591,6 +628,12 @@ async def buffer_strip_restream_impl(
                                         logger.warning(
                                             "stream_recovery_loop_breaker_triggered: repeated identical tool_use-only recovery detected; falling back to avoid retry loop"
                                         )
+                                        try:
+                                            session.smoothness_tracker.record(
+                                                SmoothnessEventType.STREAM_RECOVERY_LOOP_BREAKER,
+                                            )
+                                        except Exception:
+                                            pass
                                         recovered = False
                                 else:
                                     session.runtime_session._stream_recovery_tool_use_only_signature = ""
@@ -608,6 +651,13 @@ async def buffer_strip_restream_impl(
                                     logger.info(
                                         "stream_recovery_succeeded_text: recovered empty streamed success via non-stream retry"
                                     )
+                                    try:
+                                        session.smoothness_tracker.record(
+                                            SmoothnessEventType.STREAM_RECOVERY_SUCCEEDED,
+                                            {"recovery_type": "text"},
+                                        )
+                                    except Exception:
+                                        pass
                                 if recovered_tool_use:
                                     stream_behavior_signals[
                                         "stream_recovery_success_tool_use"
@@ -618,6 +668,13 @@ async def buffer_strip_restream_impl(
                                     logger.info(
                                         "stream_recovery_succeeded_tool_use: recovered empty streamed success via non-stream retry"
                                     )
+                                    try:
+                                        session.smoothness_tracker.record(
+                                            SmoothnessEventType.STREAM_RECOVERY_SUCCEEDED,
+                                            {"recovery_type": "tool_use"},
+                                        )
+                                    except Exception:
+                                        pass
                                 _merge_signal_counts(
                                     response_signals,
                                     recovery_success_signals,

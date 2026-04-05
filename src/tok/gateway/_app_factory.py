@@ -6,6 +6,7 @@ import asyncio  # noqa: F401
 import copy
 import json
 import random  # noqa: F401
+from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
 
 import httpx
@@ -13,6 +14,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
 from ..runtime.pipeline.request_validation import normalize_tool_use_blocks
+from ..runtime.smoothness import SmoothnessEventType
 from ..universal_runtime import RuntimeRequest
 from . import (
     ANTHROPIC_API_BASE,
@@ -27,7 +29,7 @@ from ._bridge_preflight import (
     _run_bridge_preflight,
 )
 from ._bridge_request_handler import send_with_tok_fail_open_retry
-from ._bridge_streaming import buffer_strip_restream_impl
+from ._bridge_streaming import _emit_sse_block, buffer_strip_restream_impl
 from ._anthropic_optimizations import apply_anthropic_optimizations
 
 __all__ = ["buffer_strip_restream_impl", "create_app_impl"]
@@ -55,6 +57,70 @@ def _note_request_policy_recovery_watch(
         or signals.get("tok_history_pairing_safety_degraded", 0)
     ):
         session.runtime_session.note_request_policy_tool_mode_recovery()
+
+
+def _rebuild_content_preserving_position(
+    original_content: list[dict[str, Any]],
+    processed_blocks: list[dict[str, Any]],
+    passthrough_blocks: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Replace text blocks with processed output while keeping non-text blocks in place.
+
+    Non-text blocks are only replaced when they carry a unique ``id`` field that
+    matches a passthrough entry (e.g. normalised tool_use blocks).  Blocks
+    without an ``id`` — thinking, redacted_thinking — are always emitted
+    verbatim from *original_content* so their cryptographic signatures are
+    never altered.
+    """
+    passthrough_by_id: dict[str, dict[str, Any]] = {}
+    if passthrough_blocks is not None:
+        for block in passthrough_blocks:
+            if isinstance(block, dict):
+                block_id = block.get("id", "")
+                if block_id:
+                    passthrough_by_id[block_id] = block
+    result: list[dict[str, Any]] = []
+    processed_idx = 0
+    for block in original_content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            if processed_idx < len(processed_blocks):
+                result.append(processed_blocks[processed_idx])
+                processed_idx += 1
+        else:
+            block_id = block.get("id", "")
+            if block_id and block_id in passthrough_by_id:
+                result.append(passthrough_by_id[block_id])
+            else:
+                result.append(block)
+    while processed_idx < len(processed_blocks):
+        result.append(processed_blocks[processed_idx])
+        processed_idx += 1
+    return result
+
+
+async def _json_to_sse(resp_json: dict[str, Any]) -> AsyncIterator[bytes]:
+    model = resp_json.get("model", "")
+    usage = resp_json.get("usage", {})
+    message_start = {
+        "type": "message_start",
+        "message": {"model": model, "usage": usage},
+    }
+    yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n".encode()
+    content = resp_json.get("content", [])
+    for i, block in enumerate(content):
+        if not isinstance(block, dict):
+            continue
+        for event_bytes in _emit_sse_block(i, block):
+            yield event_bytes
+    message_delta = {
+        "type": "message_delta",
+        "delta": {"stop_reason": resp_json.get("stop_reason", "end_turn")},
+        "usage": usage,
+    }
+    yield f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n".encode()
+    yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
 
 
 def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
@@ -295,6 +361,23 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "last_degradation_reason": str(
                 session_summary.get("last_degradation_reason", "")
             ),
+            "smoothness_score": session.runtime_session.latest_turn_smoothness_score,
+            "labour_index": session.runtime_session.latest_turn_labour_index,
+            "current_mode": session.runtime_session.current_tok_mode.name,
+            "stream_instability_events": sum(
+                v
+                for k, v in session.runtime_session.smoothness_event_counts.items()
+                if "stream" in k.lower()
+            ),
+            "thinking_mutation_events": int(
+                session.runtime_session.smoothness_event_counts.get(
+                    "thinking_block_mutation", 0
+                )
+            ),
+            "task_score": session.runtime_session.current_task_smoothness_score,
+            "repeated_active_file_reads": int(
+                signals.get("repeat_file_read", 0)
+            ),
         }
 
     @app.api_route(
@@ -305,6 +388,8 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         body_bytes = await request.body()
         original_body_bytes = body_bytes
         request_state = {"fallback_recorded": False}
+
+        session.smoothness_tracker.start_turn()
 
         skip = {
             "host",
@@ -439,6 +524,16 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         tok_tool_header or "<unset>",
                     )
 
+                    from ..runtime.smoothness.models import TokMode
+
+                    if (
+                        session.runtime_session.current_tok_mode
+                        == TokMode.LOSSLESS_TASK_MODE
+                    ):
+                        logger.warning(
+                            "LOSSLESS_TASK_MODE active: preserving full task flow for emergency mode"
+                        )
+
                     prepared = _RUNTIME.prepare_request(
                         RuntimeRequest(
                             model=request_model,
@@ -474,6 +569,36 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     _note_request_policy_recovery_watch(
                         session, behavior_signals
                     )
+                    if behavior_signals.get(
+                        "smoothness_history_winnowing_active_loop"
+                    ):
+                        try:
+                            session.smoothness_tracker.record(
+                                SmoothnessEventType.HISTORY_WINNOWING_ACTIVE_LOOP,
+                            )
+                        except Exception:
+                            pass
+                    if behavior_signals.get(
+                        "smoothness_prompt_optimization_active_task"
+                    ):
+                        try:
+                            session.smoothness_tracker.record(
+                                SmoothnessEventType.PROMPT_OPTIMIZATION_ACTIVE_TASK,
+                            )
+                        except Exception:
+                            pass
+                    if behavior_signals.get("repeat_file_read", 0) > 0:
+                        try:
+                            session.smoothness_tracker.record(
+                                SmoothnessEventType.REPEATED_ACTIVE_FILE_READ,
+                                {
+                                    "count": behavior_signals.get(
+                                        "repeat_file_read", 0
+                                    )
+                                },
+                            )
+                        except Exception:
+                            pass
                     for key, value in source_behavior_signals.items():
                         behavior_signals[key] = (
                             behavior_signals.get(key, 0) + value
@@ -627,9 +752,44 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             target_url += f"?{request.url.query}"
 
         is_streaming = False
+        thinking_forced_non_stream = False
         try:
             body_dict = json.loads(body_bytes)
             is_streaming = bool(body_dict.get("stream", False))
+            thinking_cfg = (
+                body_dict.get("thinking")
+                if isinstance(body_dict, dict)
+                else None
+            )
+            if (
+                is_streaming
+                and isinstance(thinking_cfg, dict)
+                and thinking_cfg.get("type") == "enabled"
+            ):
+                body_dict["stream"] = False
+                body_bytes = json.dumps(body_dict).encode()
+                is_streaming = False
+                thinking_forced_non_stream = True
+                behavior_signals["thinking_forced_non_stream"] = 1
+                logger.info(
+                    "thinking_forced_non_stream: extended thinking detected, forcing non-streaming upstream"
+                )
+            if is_streaming:
+                from ..runtime.smoothness.models import TokMode
+
+                current_mode = session.runtime_session.current_tok_mode
+                if current_mode in (
+                    TokMode.SMOOTH_MODE,
+                    TokMode.LOSSLESS_TASK_MODE,
+                ):
+                    body_dict["stream"] = False
+                    body_bytes = json.dumps(body_dict).encode()
+                    is_streaming = False
+                    behavior_signals["smoothness_streaming_disabled"] = 1
+                    logger.info(
+                        "smoothness_streaming_disabled: SMOOTH_MODE or LOSSLESS_TASK_MODE active, forcing non-streaming (mode=%s)",
+                        current_mode.value,
+                    )
         except (json.JSONDecodeError, ValueError):
             logger.debug("Failed to parse JSON for streaming detection")
         except Exception as exc:
@@ -900,8 +1060,10 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             tool_compatible=request_tool_compatible,
                         )
                         response_signals = processed.behavior_signals
-                        new_content = (
-                            processed.content_blocks + passthrough_blocks
+                        new_content = _rebuild_content_preserving_position(
+                            resp_json.get("content", []),
+                            processed.content_blocks,
+                            passthrough_blocks,
                         )
                         resp_json["content"] = new_content
                         total_output_saved = processed.output_saved_tokens
@@ -949,6 +1111,57 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             prompt_metrics=prompt_metrics
                             if compressed
                             else None,
+                        )
+
+                        session.capture_event(
+                            {
+                                "event": "response",
+                                "model": resp_json["model"],
+                                "request_policy": request_policy,
+                                "tool_compatible": request_tool_compatible,
+                                "baseline_only": session.runtime_session._baseline_only,
+                                "fallback_count": int(
+                                    session.tracker.behavior_signals().get(
+                                        "tok_fallback_activated", 0
+                                    )
+                                ),
+                                "behavior_signals": response_signals or {},
+                                "session_quality": str(
+                                    (
+                                        session.tracker.session_summary() or {}
+                                    ).get("session_quality", "clean")
+                                ),
+                                "session_tokens_saved": int(
+                                    (
+                                        session.tracker.session_summary() or {}
+                                    ).get("tokens_saved", 0)
+                                ),
+                            }
+                        )
+
+                        # Finish smoothness turn
+                        turn_report = session.smoothness_tracker.finish_turn()
+
+                        # Update session state with smoothness data
+                        event_counts: dict[str, int] = {}
+                        for event in turn_report.events:
+                            key = event.event_type.value
+                            event_counts[key] = event_counts.get(key, 0) + 1
+
+                        session.runtime_session.update_smoothness_state(
+                            turn_score=turn_report.score,
+                            labour_index=turn_report.labour_index,
+                            tok_mode=turn_report.mode,
+                            event_counts=event_counts,
+                        )
+
+                        logger.info(
+                            "Smoothness turn complete | turn_id=%s | score=%d | labour_index=%d | mode=%s | events=%d",
+                            turn_report.turn_id,
+                            turn_report.score,
+                            turn_report.labour_index,
+                            turn_report.mode.value,
+                            len(turn_report.events),
                         )
                         session.capture_event(
                             {
@@ -1037,6 +1250,16 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             )
                     else:
                         raise
+
+            if thinking_forced_non_stream and response.status_code == 200:
+                sse_headers = _safe_headers(response.headers)
+                sse_headers["content-type"] = "text/event-stream"
+                return StreamingResponse(
+                    _json_to_sse(resp_json),
+                    status_code=200,
+                    headers=sse_headers,
+                    media_type="text/event-stream",
+                )
 
             return Response(
                 content=content,

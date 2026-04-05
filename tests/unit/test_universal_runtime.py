@@ -1785,8 +1785,8 @@ def test_late_answer_only_repair_failure_is_tracked(tmp_path):
         )
         == 1
     )
-    assert session._late_answer_assembly_repair_pending is True
-    assert session._late_answer_assembly_repair_mode_pending == "answer_only"
+    assert session._late_answer_assembly_repair_pending is False
+    assert session._late_answer_assembly_repair_mode_pending == ""
 
 
 def test_genuine_freshness_miss_still_wins_over_mixed_for_late_repair_mode(
@@ -1881,20 +1881,8 @@ def test_late_answer_assembly_repair_resolved_after_clean_tool_only_turn(
         )
         == 1
     )
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_followthrough_requested", 0
-        )
-        == 1
-    )
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_followthrough_after_tool_only_repair", 0
-        )
-        == 1
-    )
     assert session._late_answer_assembly_repair_pending is False
-    assert session._late_answer_followthrough_pending is True
+    assert session._late_answer_followthrough_pending is False
 
 
 def test_prepare_request_activates_late_answer_followthrough_once(tmp_path):
@@ -2024,11 +2012,8 @@ def test_answer_ready_repair_failed_on_second_answer_ready_miss(tmp_path):
         behavior_signals={"answer_ready_turn": 1},
     )
 
-    assert (
-        processed.behavior_signals.get("answer_ready_repair_requested", 0) == 1
-    )
     assert processed.behavior_signals.get("answer_ready_repair_failed", 0) == 1
-    assert session._answer_ready_repair_pending is True
+    assert session._answer_ready_repair_pending is False
 
 
 def test_late_answer_assembly_repair_failed_on_second_late_miss(tmp_path):
@@ -2058,17 +2043,11 @@ def test_late_answer_assembly_repair_failed_on_second_late_miss(tmp_path):
     )
 
     assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_requested", 0
-        )
-        == 1
-    )
-    assert (
         processed.behavior_signals.get("late_answer_assembly_repair_failed", 0)
         == 1
     )
-    assert session._late_answer_assembly_repair_pending is True
-    assert session._late_answer_assembly_repair_mode_pending == "tool_only"
+    assert session._late_answer_assembly_repair_pending is False
+    assert session._late_answer_assembly_repair_mode_pending == ""
 
 
 def test_answer_ready_repair_not_triggered_for_non_answer_ready_tool_turn(

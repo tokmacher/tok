@@ -32,6 +32,7 @@ from typing import Any, cast
 logger = logging.getLogger("tok.runtime")
 
 from .memory.bridge_memory import BridgeMemoryState, clean_system_context
+from .smoothness.models import TokMode
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -287,6 +288,21 @@ class RuntimeSession:
     _request_policy_tool_recovery_watch_turns: int = field(
         default=0, init=False, repr=False
     )
+    # Smoothness tracking fields
+    _latest_turn_smoothness_score: int = field(
+        default=100, init=False, repr=False
+    )
+    _latest_turn_labour_index: int = field(default=0, init=False, repr=False)
+    _current_task_smoothness_score: int = field(
+        default=100, init=False, repr=False
+    )
+    _current_task_labour_index: int = field(default=0, init=False, repr=False)
+    _current_tok_mode: TokMode = field(
+        default=TokMode.FULL_TOK, init=False, repr=False
+    )
+    _smoothness_event_counts: dict[str, int] = field(
+        default_factory=dict, init=False, repr=False
+    )
     _request_policy_last_effective_tool_compatible: bool = field(
         default=False, init=False, repr=False
     )
@@ -324,6 +340,12 @@ class RuntimeSession:
         default_factory=dict, init=False, repr=False
     )
     _evidence_alias_map: dict[str, str] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _files_read_this_session: set[str] = field(
+        default_factory=set, init=False, repr=False
+    )
+    _files_fully_delivered: dict[str, int] = field(
         default_factory=dict, init=False, repr=False
     )
 
@@ -705,6 +727,63 @@ class RuntimeSession:
             "state_resend_full_turn": 1,
             "state_resend_reason_delta_not_smaller": 1,
         }
+
+    @property
+    def latest_turn_smoothness_score(self) -> int:
+        """Latest turn's smoothness score (0-100)."""
+        return self._latest_turn_smoothness_score
+
+    @property
+    def latest_turn_labour_index(self) -> int:
+        """Latest turn's labour index."""
+        return self._latest_turn_labour_index
+
+    @property
+    def current_task_smoothness_score(self) -> int:
+        """Current task's smoothness score (0-100)."""
+        return self._current_task_smoothness_score
+
+    @property
+    def current_task_labour_index(self) -> int:
+        """Current task's labour index."""
+        return self._current_task_labour_index
+
+    @property
+    def current_tok_mode(self) -> TokMode:
+        """Current Tok compression mode."""
+        return self._current_tok_mode
+
+    @property
+    def smoothness_event_counts(self) -> dict[str, int]:
+        """Count of smoothness events by type."""
+        return dict(self._smoothness_event_counts)
+
+    def update_smoothness_state(
+        self,
+        turn_score: int,
+        labour_index: int,
+        tok_mode: TokMode,
+        event_counts: dict[str, int],
+    ) -> None:
+        """Update smoothness state after a turn completes.
+
+        Args:
+            turn_score: Smoothness score for the completed turn (0-100)
+            labour_index: Labour index for the completed turn
+            tok_mode: Tok mode selected for the next turn
+            event_counts: Event counts for the completed turn
+        """
+        self._latest_turn_smoothness_score = turn_score
+        self._latest_turn_labour_index = labour_index
+        self._current_tok_mode = tok_mode
+
+        for event_type, count in event_counts.items():
+            self._smoothness_event_counts[event_type] = (
+                self._smoothness_event_counts.get(event_type, 0) + count
+            )
+
+        self._current_task_smoothness_score = turn_score
+        self._current_task_labour_index = labour_index
 
     def _bump_signals(self, signals: dict[str, int]) -> None:
         for key, value in signals.items():

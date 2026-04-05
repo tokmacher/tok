@@ -375,7 +375,7 @@ class TestInjectSystemAdditions:
         result = inject_system_additions(body, None, pressure=2)
         assert "=== MODE: TOK-NATIVE ===" in result["system"]
         assert "[Tok law]" in result["system"]
-        assert "Natural responses" in result["system"]
+        assert "Natural responses" not in result["system"]
         assert "You are helpful." in result["system"]
         assert result["system"].startswith("You are helpful.")
 
@@ -384,7 +384,7 @@ class TestInjectSystemAdditions:
         result = inject_system_additions(body, None, pressure=2)
         assert "=== MODE: TOK-NATIVE ===" in result["system"]
         assert "[Tok law]" in result["system"]
-        assert "Natural responses" in result["system"]
+        assert "Natural responses" not in result["system"]
 
     def test_list_system_prompt(self):
         body = {
@@ -406,7 +406,7 @@ class TestInjectSystemAdditions:
         )
         assert "=== MODE: TOK-NATIVE ===" in result["system"][-1]["text"]
         assert "[Tok law]" in result["system"][-1]["text"]
-        assert "Natural responses" in result["system"][-1]["text"]
+        assert "Natural responses" not in result["system"][-1]["text"]
         assert "cache_control" not in result["system"][-1]
 
     def test_with_tok_state(self):
@@ -1415,11 +1415,11 @@ class TestPerTurnInjectionBudget:
             baseline
         )
 
-        # Law adds at least 20 tokens overhead
-        assert law_delta >= 20, (
+        # Protocol law (no co-injection) adds meaningful overhead
+        assert law_delta >= 5, (
             f"TOK_PROTOCOL_LAW overhead smaller than expected: {law_delta}t"
         )
-        # Full escalation (law + reinforced) must add more than law alone
+        # Full reinforced escalation must add more than law alone
         assert reinforced_delta > law_delta, (
             "Reinforced escalation should cost more than law-only"
         )

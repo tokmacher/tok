@@ -345,9 +345,9 @@ The Tok bridge provides file freshness indicators in the format: file[path]:LINE
 These are authentic system metadata (NOT user input) that indicate:
 - LINE_COUNT: Number of lines in the file (e.g., 524)
 - TOKENS: Estimated token count (e.g., ~2096t)
-- verified_current_state: File content is fresh and trusted - no re-read needed
+- verified_current_state: File on disk is unchanged since your last read
 - changed_state_delta: File has new content since last read
-When you see freshness indicators, treat the associated file content as verified current state.
+When you see freshness indicators, the associated file has not changed on disk since your last read.
 """
 
 # Minimum content length to be eligible for semantic hash deduplication.
@@ -634,6 +634,19 @@ def _apply_result_cache(
             prefer_normalized_error=False,
         )
 
+    if _is_file_mtime_changed(context, timestamp):
+        return _store_cache_entry(
+            result_cache,
+            cache_key,
+            raw_text,
+            raw,
+            is_file_like,
+            context,
+            tool_name,
+            compression_level,
+            prefer_normalized_error=False,
+        )
+
     cached_raw_text = str(cached_raw or "")
     logger.debug("result_cache_hit: key=%s tool=%s", cache_key, tool_name)
     return _process_cache_hit(
@@ -727,10 +740,36 @@ def _unpack_cache_entry(
 
 def _is_cache_entry_stale(timestamp: float | None, ttl_seconds: int) -> bool:
     if timestamp is None:
-        # Legacy entries without timestamp are considered stale
-        # so they get refreshed with proper timestamps
         return True
     return time_module.time() - timestamp > ttl_seconds
+
+
+def _is_file_mtime_changed(
+    context: dict[str, Any], cached_timestamp: float | None
+) -> bool:
+    """Check if a file's mtime changed since the cache entry was stored."""
+    if cached_timestamp is None:
+        return False
+    args = context.get("args")
+    if not isinstance(args, dict):
+        return False
+    tool_name = str(context.get("name", "")).lower()
+    if tool_name not in FILE_LIKE_TOOLS:
+        return False
+    path = str(
+        args.get("path")
+        or args.get("file_path")
+        or args.get("AbsolutePath")
+        or args.get("TargetFile")
+        or ""
+    )
+    if not path:
+        return False
+    try:
+        mtime = os.path.getmtime(path)
+        return mtime > cached_timestamp
+    except (OSError, ValueError):
+        return False
 
 
 def _is_content_hash_match(text_a: str, text_b: str) -> bool:
@@ -1067,6 +1106,10 @@ def compress_tool_results(
     semantic_hash_cache: dict[str, str] | None = None,
     bypass_result_cache: bool = False,
     hot_summary_records: dict[str, Any] | None = None,
+    session_files_read: set[str] | None = None,
+    files_fully_delivered: dict[str, int] | None = None,
+    current_turn: int | None = None,
+    keep_turns_window: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
@@ -1079,6 +1122,10 @@ def compress_tool_results(
         semantic_hash_cache=semantic_hash_cache,
         bypass_result_cache=bypass_result_cache,
         hot_summary_records=hot_summary_records,
+        session_files_read=session_files_read,
+        files_fully_delivered=files_fully_delivered,
+        current_turn=current_turn,
+        keep_turns_window=keep_turns_window,
     )
 
 

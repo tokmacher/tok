@@ -35,6 +35,7 @@ from .policy.semantic_validation import (
 )
 from .metrics import report_protocol_drift
 from .pipeline.tool_processing import count_tokens
+from .config import RUNTIME_HINTS_MAX_PER_TURN
 
 if TYPE_CHECKING:
     from .core import RuntimeSession, UniversalTokRuntime
@@ -142,6 +143,8 @@ def build_tool_compatible_resend(
             runtime_hints.extend(hot_recent_hints)
             for key, value in hot_metrics.items():
                 hot_hint_metrics[key] = hot_hint_metrics.get(key, 0) + value
+        if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
+            runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
         _annotate_reacquisition_diagnostics(
             behavior_signals,
             answer_ready=answer_ready,

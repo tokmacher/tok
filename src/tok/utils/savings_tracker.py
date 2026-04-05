@@ -286,7 +286,7 @@ class SavingsTracker:
             }
         )
 
-    def session_summary(self) -> dict[str, int | float | bool] | None:
+    def session_summary(self) -> dict[str, int | float | bool | str] | None:
         """Return canonical user-facing savings fields for the current session."""
         stats = self.load_stats()
         models = stats.get("models", {})

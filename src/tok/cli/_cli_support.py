@@ -159,8 +159,6 @@ def find_pids_on_port(port: int) -> list[int]:
 
     except (subprocess.SubprocessError, ValueError, TypeError) as e:
         logger.debug(f"Subprocess error checking port {port}: {e}")
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Timeout checking port {port} with lsof")
     except Exception as e:
         logger.debug(f"Unexpected error checking port {port}: {e}")
 
@@ -548,6 +546,40 @@ def session_status_rows(
     return rows
 
 
+def interaction_quality_rows(
+    *,
+    smoothness_score: int | None = None,
+    labour_index: int | None = None,
+    current_mode: str | None = None,
+    stream_instability_events: int | None = None,
+    thinking_mutation_events: int | None = None,
+    repeated_active_file_reads: int | None = None,
+    task_score: int | None = None,
+) -> list[tuple[str, str]]:
+    rows = []
+    if smoothness_score is not None:
+        rows.append(("Smoothness score", str(smoothness_score)))
+    if labour_index is not None:
+        rows.append(("Labour index", str(labour_index)))
+    if current_mode is not None:
+        rows.append(("Current mode", current_mode))
+    if stream_instability_events is not None:
+        rows.append(
+            ("Stream instability events", str(stream_instability_events))
+        )
+    if thinking_mutation_events is not None:
+        rows.append(
+            ("Thinking mutation events", str(thinking_mutation_events))
+        )
+    if repeated_active_file_reads is not None:
+        rows.append(
+            ("Repeated active-file reads", str(repeated_active_file_reads))
+        )
+    if task_score is not None:
+        rows.append(("Task score", str(task_score)))
+    return rows
+
+
 __all__ = [
     "bridge_url",
     "collector_url",
@@ -574,4 +606,5 @@ __all__ = [
     "session_recommendation",
     "savings_headline",
     "session_status_rows",
+    "interaction_quality_rows",
 ]

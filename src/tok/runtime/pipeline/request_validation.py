@@ -1,6 +1,9 @@
 """Validation utilities for Tok runtime requests."""
 
 import copy
+import hashlib
+import json
+import logging
 import os
 import re
 from typing import Annotated, Any, Literal
@@ -15,6 +18,8 @@ from pydantic import (
     model_validator,
 )
 
+
+logger = logging.getLogger("tok.runtime.validation")
 
 _ALLOWED_BLOCK_TYPES = frozenset(
     {"text", "tool_use", "tool_result", "thinking", "redacted_thinking"}
@@ -347,7 +352,10 @@ def _normalize_message_content_to_blocks(
                 if text:
                     blocks.append({"type": "text", "text": text})
             elif b_type in _ALLOWED_BLOCK_TYPES:
-                blocks.append(copy.deepcopy(b))
+                if b_type in {"thinking", "redacted_thinking"}:
+                    blocks.append(b)
+                else:
+                    blocks.append(copy.deepcopy(b))
             else:
                 drops[b_type] = drops.get(b_type, 0) + 1
         return blocks, drops
@@ -384,11 +392,18 @@ def _check_changed_content(
 
 def _canonicalize_bridge_message(
     message: dict[str, Any],
+    *,
+    preserve_content: bool = False,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Rewrite a single message into a canonical user or assistant role with blocks.
 
     Returns (canonical_message, drops) where drops maps dropped block type
     names to counts of blocks removed during normalization.
+
+    When preserve_content is True, the message content is passed through
+    unchanged. This is used for the latest assistant message containing
+    thinking blocks, which Anthropic requires to be returned unmodified
+    during tool-use turns.
     """
     role = str(message.get("role", "")).strip()
     if role == "tool_result":
@@ -405,6 +420,20 @@ def _canonicalize_bridge_message(
             )
 
         return {"role": "user", "content": [block]}, {}
+
+    if preserve_content:
+        content = message.get("content")
+        if isinstance(content, list):
+            return {"role": role, "content": content}, {}
+        elif isinstance(content, str):
+            text = content.strip()
+            if text:
+                return {
+                    "role": role,
+                    "content": [{"type": "text", "text": text}],
+                }, {}
+            return {"role": role, "content": []}, {}
+        return {"role": role, "content": []}, {}
 
     canonical_role = "assistant" if role == "assistant" else "user"
     blocks, drops = _normalize_message_content_to_blocks(
@@ -544,9 +573,35 @@ def _split_mixed_user_tool_result_messages(
 
 def _rewrite_provider_safe_tool_ids(
     messages: list[dict[str, Any]],
+    *,
+    protected_content_identities: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
-    """Rewrite invalid tool IDs to provider-safe IDs and preserve pairings."""
-    rewritten_messages = copy.deepcopy(messages)
+    """Rewrite invalid tool IDs to provider-safe IDs and preserve pairings.
+
+    Messages whose content list id() is in protected_content_identities will
+    have their content list preserved (not deep-copied). This is used to
+    protect the latest assistant message with thinking blocks.
+    """
+    if protected_content_identities is None:
+        protected_content_identities = set()
+
+    rewritten_messages: list[dict[str, Any]] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            rewritten_messages.append(msg)
+            continue
+        content = msg.get("content")
+        if id(content) in protected_content_identities and isinstance(
+            content, list
+        ):
+            new_msg = {
+                k: copy.deepcopy(v) if k != "content" else v
+                for k, v in msg.items()
+            }
+            rewritten_messages.append(new_msg)
+        else:
+            rewritten_messages.append(copy.deepcopy(msg))
+
     occupied_ids: set[str] = set()
     signals: dict[str, int] = {}
     changed = False
@@ -935,8 +990,14 @@ def _process_bridged_message(
     raw_message: dict[str, Any],
     signals: dict[str, int],
     total_drops: dict[str, int],
+    *,
+    preserve_content: bool = False,
 ) -> tuple[dict[str, Any] | None, bool]:
-    """Process a single message for canonicalization."""
+    """Process a single message for canonicalization.
+
+    When preserve_content is True, the message content is passed through
+    unchanged (for the latest assistant message with thinking blocks).
+    """
     if not isinstance(raw_message, dict):
         return None, False
 
@@ -950,7 +1011,9 @@ def _process_bridged_message(
         changed = True
 
     orig_content = raw_message.get("content")
-    msg, msg_drops = _canonicalize_bridge_message(raw_message)
+    msg, msg_drops = _canonicalize_bridge_message(
+        raw_message, preserve_content=preserve_content
+    )
 
     for b_type, count in msg_drops.items():
         total_drops[b_type] = total_drops.get(b_type, 0) + count
@@ -959,7 +1022,7 @@ def _process_bridged_message(
     if not msg["content"]:
         return None, True
 
-    if not changed:
+    if not changed and not preserve_content:
         changed = _check_changed_content(msg, orig_content, role)
 
     return msg, changed
@@ -967,16 +1030,23 @@ def _process_bridged_message(
 
 def _normalize_assistant_block_order(
     messages: list[dict[str, Any]],
+    *,
+    skip_identities: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Reorder assistant message blocks: non-tool_use first, tool_use contiguous at end.
 
     Enforces Anthropic's actual constraint: in every assistant message all
     non-tool_use blocks (text, thinking, redacted_thinking, etc.) must come
     before all tool_use blocks, and tool_use blocks must be contiguous.
+
+    Messages whose id() is in skip_identities are not reordered. This is used
+    to preserve the latest assistant message with thinking blocks unchanged.
     """
     changed = False
     for message in messages:
         if not isinstance(message, dict):
+            continue
+        if skip_identities is not None and id(message) in skip_identities:
             continue
         if str(message.get("role", "")).strip() != "assistant":
             continue
@@ -1002,42 +1072,171 @@ def _normalize_assistant_block_order(
     return messages, changed
 
 
-def canonicalize_anthropic_bridge_messages(
+def _content_hash(content: Any) -> str:
+    if not isinstance(content, list):
+        return ""
+    try:
+        return hashlib.sha256(
+            json.dumps(content, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:16]
+    except (TypeError, ValueError):
+        return ""
+
+
+def _block_type_sequence(content: Any) -> list[str]:
+    if not isinstance(content, list):
+        return []
+    return [
+        b.get("type", "?") if isinstance(b, dict) else "?" for b in content
+    ]
+
+
+def _has_thinking_with_signature(content: Any) -> bool:
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(b, dict)
+        and b.get("type") in {"thinking", "redacted_thinking"}
+        and bool(b.get("signature"))
+        for b in content
+    )
+
+
+def _find_protected_message(
     messages: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
-    """Canonicalize bridge messages to the Anthropic wire shape.
+) -> tuple[int | None, int | None]:
+    """Find the latest assistant message with thinking blocks."""
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if not isinstance(msg, dict):
+            continue
+        if str(msg.get("role", "")).strip() != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        if any(
+            isinstance(b, dict)
+            and b.get("type") in {"thinking", "redacted_thinking"}
+            for b in content
+        ):
+            return id(msg), id(content)
+    return None, None
 
-    Returns (canonical_messages, changed, signals).
 
-    Drops unsupported block types (anything outside {text, tool_use,
-    tool_result, thinking, redacted_thinking}) and emits
-    ``tok_bridge_unsupported_block_dropped`` when blocks are removed.
+def _get_protected_message_info(
+    messages: list[dict[str, Any]], protected_original_identity: int | None
+) -> tuple[str | None, list[str], bool, int | None]:
+    """Get hash, block types, signature status, and index of protected message."""
+    if protected_original_identity is None:
+        return None, [], False, None
+    for i, msg in enumerate(messages):
+        if id(msg) == protected_original_identity:
+            content = msg.get("content")
+            return (
+                _content_hash(content),
+                _block_type_sequence(content),
+                _has_thinking_with_signature(content),
+                i,
+            )
+    return None, [], False, None
 
-    This function removes unsupported block types (e.g., top-level tool_result),
-    rewrites top-level tool_results (emitting ``tok_bridge_top_level_tool_result_rewritten``),
-    merges adjacent messages of same role (``tok_bridge_adjacent_messages_merged``),
-    and preserves assistant thinking blocks so Claude-native reasoning remains
-    visible to the upstream provider and to the client stream.
-    """
-    if not isinstance(messages, list):
-        return messages, False, {}
 
+def _check_thinking_block_mutation(
+    merged_messages: list[dict[str, Any]],
+    before_hash: str | None,
+    before_block_types: list[str],
+    before_has_signature: bool,
+    protected_msg_index: int | None,
+    signals: dict[str, int],
+) -> None:
+    """Check if thinking blocks were mutated and log warning if so."""
+    if before_hash is None or protected_msg_index is None:
+        return
+    after_content: Any = None
+    for msg in merged_messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        if any(
+            isinstance(b, dict)
+            and b.get("type") in {"thinking", "redacted_thinking"}
+            for b in content
+        ):
+            after_content = content
+            break
+    if after_content is not None:
+        after_hash = _content_hash(after_content)
+        after_block_types = _block_type_sequence(after_content)
+        if before_hash != after_hash:
+            logger.warning(
+                "THINKING_BLOCK_MUTATION_DETECTED | "
+                "msg_index=%d | "
+                "before_hash=%s | after_hash=%s | "
+                "before_types=%s | after_types=%s | "
+                "has_signature=%s",
+                protected_msg_index,
+                before_hash,
+                after_hash,
+                ",".join(before_block_types),
+                ",".join(after_block_types),
+                before_has_signature,
+            )
+            signals["thinking_block_mutated"] = 1
+        else:
+            logger.debug(
+                "thinking_block_preserved | "
+                "msg_index=%d | hash=%s | types=%s | has_signature=%s",
+                protected_msg_index,
+                before_hash,
+                ",".join(before_block_types),
+                before_has_signature,
+            )
+
+
+def _process_messages_into_canonical_path(
+    messages: list[dict[str, Any]],
+    protected_original_identity: int | None,
+    signals: dict[str, int],
+    total_drops: dict[str, int],
+) -> tuple[list[dict[str, Any]], bool, int | None]:
+    """Process raw messages into canonical path."""
     canonical_path: list[dict[str, Any]] = []
-    signals: dict[str, int] = {}
-    total_drops: dict[str, int] = {}
     changed = False
+    protected_canonical_identity: int | None = None
 
     for raw_message in messages:
+        is_protected = id(raw_message) == protected_original_identity
         msg, message_changed = _process_bridged_message(
-            raw_message, signals, total_drops
+            raw_message, signals, total_drops, preserve_content=is_protected
         )
+        if is_protected and msg is not None:
+            protected_canonical_identity = id(msg)
         if message_changed:
             changed = True
         if msg is not None:
             canonical_path.append(msg)
 
+    return canonical_path, changed, protected_canonical_identity
+
+
+def _apply_canonicalization_pipeline(
+    canonical_path: list[dict[str, Any]],
+    protected_canonical_identity: int | None,
+    protected_content_identity: int | None,
+) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
+    """Apply the full canonicalization pipeline to messages."""
+    signals: dict[str, int] = {}
+    changed = False
+
+    skip_identities: set[int] | None = None
+    if protected_canonical_identity is not None:
+        skip_identities = {protected_canonical_identity}
+
     canonical_path, order_changed = _normalize_assistant_block_order(
-        canonical_path
+        canonical_path, skip_identities=skip_identities
     )
     if order_changed:
         changed = True
@@ -1060,22 +1259,94 @@ def canonicalize_anthropic_bridge_messages(
     )
     signals.update(merge_signals)
 
+    protected_content_identities: set[int] | None = None
+    if protected_content_identity is not None:
+        protected_content_identities = {protected_content_identity}
+
     merged_messages, id_changed, id_signals = _rewrite_provider_safe_tool_ids(
-        merged_messages
+        merged_messages,
+        protected_content_identities=protected_content_identities,
     )
     if id_changed:
         changed = True
     if id_signals:
         signals.update(id_signals)
 
-    if not changed and (
-        len(merged_messages) != len(messages) or merge_signals
-    ):
+    return merged_messages, changed, signals
+
+
+def canonicalize_anthropic_bridge_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
+    """Canonicalize bridge messages to the Anthropic wire shape.
+
+    Returns (canonical_messages, changed, signals).
+
+    Drops unsupported block types (anything outside {text, tool_use,
+    tool_result, thinking, redacted_thinking}) and emits
+    ``tok_bridge_unsupported_block_dropped`` when blocks are removed.
+
+    This function removes unsupported block types (e.g., top-level tool_result),
+    rewrites top-level tool_results (emitting ``tok_bridge_top_level_tool_result_rewritten``),
+    merges adjacent messages of same role (``tok_bridge_adjacent_messages_merged``),
+    and preserves assistant thinking blocks so Claude-native reasoning remains
+    visible to the upstream provider and to the client stream.
+
+    CRITICAL: The latest assistant message containing thinking/redacted_thinking
+    blocks is preserved unchanged (no normalization, no reordering). This is
+    required by Anthropic's protocol for multi-turn tool-use continuity.
+    """
+    if not isinstance(messages, list):
+        return messages, False, {}
+
+    protected_original_identity, protected_content_identity = (
+        _find_protected_message(messages)
+    )
+
+    (
+        before_hash,
+        before_block_types,
+        before_has_signature,
+        protected_msg_index,
+    ) = _get_protected_message_info(messages, protected_original_identity)
+
+    signals: dict[str, int] = {}
+    total_drops: dict[str, int] = {}
+
+    (
+        canonical_path,
+        changed,
+        protected_canonical_identity,
+    ) = _process_messages_into_canonical_path(
+        messages, protected_original_identity, signals, total_drops
+    )
+
+    merged_messages, pipeline_changed, pipeline_signals = (
+        _apply_canonicalization_pipeline(
+            canonical_path,
+            protected_canonical_identity,
+            protected_content_identity,
+        )
+    )
+    changed = changed or pipeline_changed
+    signals.update(pipeline_signals)
+
+    if not changed and (len(merged_messages) != len(messages)):
         changed = True
 
     if total_drops:
         total_drop_count = sum(total_drops.values())
         signals["tok_bridge_unsupported_block_dropped"] = total_drop_count
+
+    if before_hash is not None and protected_msg_index is not None:
+        _check_thinking_block_mutation(
+            merged_messages,
+            before_hash,
+            before_block_types,
+            before_has_signature,
+            protected_msg_index,
+            signals,
+        )
 
     if changed:
         signals["tok_bridge_canonicalized"] = 1

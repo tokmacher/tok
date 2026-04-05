@@ -190,10 +190,116 @@ def collect_tool_context_validation_signals(
     return signals
 
 
+def _extract_path(tool_input: dict[str, Any]) -> str | None:
+    return (
+        str(
+            tool_input.get("path")
+            or tool_input.get("file_path")
+            or tool_input.get("AbsolutePath")
+            or tool_input.get("TargetFile")
+            or ""
+        ).strip()
+        or None
+    )
+
+
+def _extract_command(tool_input: dict[str, Any]) -> str | None:
+    return (
+        str(tool_input.get("command") or tool_input.get("cmd") or "").strip()
+        or None
+    )
+
+
+def _extract_query(tool_input: dict[str, Any]) -> str | None:
+    return (
+        str(
+            tool_input.get("query")
+            or tool_input.get("pattern")
+            or tool_input.get("search")
+            or tool_input.get("text")
+            or ""
+        ).strip()
+        or None
+    )
+
+
+def _find_current_mode(messages: list[dict[str, Any]]) -> Any | None:
+    from ..smoothness.models import TokMode
+
+    for msg in messages:
+        if msg.get("role") != "system":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                continue
+            text = block.get("text", "")
+            if "runtime_session" not in text:
+                continue
+            try:
+                import re
+
+                match = re.search(r'"current_tok_mode"\s*:\s*"([^"]+)"', text)
+                if match:
+                    return TokMode(match.group(1))
+            except Exception:
+                pass
+    return None
+
+
+def _is_raw_mode(current_mode: Any, path: str | None) -> bool:
+    from ..smoothness.models import TokMode
+
+    return bool(
+        current_mode
+        in (
+            TokMode.SMOOTH_MODE,
+            TokMode.LOSSLESS_TASK_MODE,
+        )
+        and path
+    )
+
+
+def _build_normalized_event(
+    block: dict[str, Any],
+    tool_input: dict[str, Any],
+    tool_name: str,
+    path: str | None,
+    command: str | None,
+    query: str | None,
+    current_mode: Any | None,
+) -> NormalizedToolEvent:
+    compressibility_class = normalize_tool_family(
+        tool_name, query=query, command=command
+    )
+    if compressibility_class not in {"file_read", "search", "command"}:
+        compressibility_class = "tool_result"
+    if _is_raw_mode(current_mode, path):
+        compressibility_class = cast(
+            Literal["raw", "file_read", "search", "command", "tool_result"],
+            "raw",
+        )
+    fidelity_requirement = "high" if path or command else "default"
+    return NormalizedToolEvent(
+        id=str(block.get("id", "")),
+        name=tool_name,
+        args=tool_input,
+        path=path,
+        command=command,
+        query=query,
+        compressibility_class=compressibility_class,
+        fidelity_requirement=fidelity_requirement,
+    )
+
+
 def normalize_tool_events(
     messages: list[dict[str, Any]],
 ) -> list[NormalizedToolEvent]:
     """Normalize assistant tool_use blocks into runtime-level events."""
+    current_mode = _find_current_mode(messages)
+
     events: list[NormalizedToolEvent] = []
     for msg in messages:
         if msg.get("role") != "assistant":
@@ -208,54 +314,18 @@ def normalize_tool_events(
             if not isinstance(tool_input, dict):
                 tool_input = {}
             tool_name = str(block.get("name", ""))
-            path = (
-                str(
-                    tool_input.get("path")
-                    or tool_input.get("file_path")
-                    or tool_input.get("AbsolutePath")
-                    or tool_input.get("TargetFile")
-                    or ""
-                ).strip()
-                or None
-            )
-            command = (
-                str(
-                    tool_input.get("command") or tool_input.get("cmd") or ""
-                ).strip()
-                or None
-            )
-            query = (
-                str(
-                    tool_input.get("query")
-                    or tool_input.get("pattern")
-                    or tool_input.get("search")
-                    or tool_input.get("text")
-                    or ""
-                ).strip()
-                or None
-            )
-            compressibility_class = normalize_tool_family(
-                tool_name, query=query, command=command
-            )
-            if compressibility_class not in {"file_read", "search", "command"}:
-                compressibility_class = "tool_result"
-            compressibility_class = cast(
-                Literal[
-                    "raw", "file_read", "search", "command", "tool_result"
-                ],
-                compressibility_class,
-            )
-            fidelity_requirement = "high" if path or command else "default"
+            path = _extract_path(tool_input)
+            command = _extract_command(tool_input)
+            query = _extract_query(tool_input)
             events.append(
-                NormalizedToolEvent(
-                    id=str(block.get("id", "")),
-                    name=tool_name,
-                    args=tool_input,
-                    path=path,
-                    command=command,
-                    query=query,
-                    compressibility_class=compressibility_class,
-                    fidelity_requirement=fidelity_requirement,
+                _build_normalized_event(
+                    block,
+                    tool_input,
+                    tool_name,
+                    path,
+                    command,
+                    query,
+                    current_mode,
                 )
             )
     return events

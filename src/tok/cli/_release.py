@@ -28,6 +28,7 @@ from ._cli_support import (
     bridge_url,
     console,
     get_running_bridge_pid,
+    interaction_quality_rows,
     memory_root,
     msg_text,
     render_stats_panel,
@@ -75,6 +76,19 @@ def stats_command(
     recent_completed = tracker.recent_summary(recent) if recent else None
     since_completed = tracker.since_summary(since) if since else None
 
+    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+    pid = get_running_bridge_pid(port)
+    health_payload = None
+    if pid:
+        try:
+            import httpx
+
+            resp = httpx.get(bridge_url(port, "/health"), timeout=2.0)
+            if resp.status_code == 200:
+                health_payload = resp.json()
+        except Exception:
+            pass
+
     if not total:
         if session_summary:
             pct = float(session_summary["savings_pct"])
@@ -108,6 +122,47 @@ def stats_command(
                     border_style=status_border(verdict_style),
                 )
             )
+
+            iq_rows = interaction_quality_rows(
+                smoothness_score=int(health_payload.get("smoothness_score", 0))
+                if health_payload
+                else None,
+                labour_index=int(health_payload.get("labour_index", 0))
+                if health_payload
+                else None,
+                current_mode=str(health_payload.get("current_mode", ""))
+                if health_payload
+                else None,
+                stream_instability_events=int(
+                    health_payload.get("stream_instability_events", 0)
+                )
+                if health_payload
+                else None,
+                thinking_mutation_events=int(
+                    health_payload.get("thinking_mutation_events", 0)
+                )
+                if health_payload
+                else None,
+                repeated_active_file_reads=int(
+                    health_payload.get("repeated_active_file_reads", 0)
+                )
+                if health_payload
+                else None,
+                task_score=int(health_payload.get("task_score", 0))
+                if health_payload
+                else None,
+            )
+            if iq_rows:
+                console.print(
+                    render_stats_panel(
+                        "Interaction Quality",
+                        headline="Session flow metrics",
+                        headline_style="bold cyan",
+                        subhead="Lower labour index = smoother session",
+                        rows=iq_rows,
+                        border_style="cyan",
+                    )
+                )
         elif not session and last_session is False:
             if last_completed:
                 pct = float(last_completed["savings_pct"])
@@ -700,6 +755,33 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
                         border_style=status_border(verdict_style),
                     )
                 )
+
+                iq_rows = interaction_quality_rows(
+                    smoothness_score=int(payload.get("smoothness_score", 0)),
+                    labour_index=int(payload.get("labour_index", 0)),
+                    current_mode=str(payload.get("current_mode", "")),
+                    stream_instability_events=int(
+                        payload.get("stream_instability_events", 0)
+                    ),
+                    thinking_mutation_events=int(
+                        payload.get("thinking_mutation_events", 0)
+                    ),
+                    repeated_active_file_reads=int(
+                        payload.get("repeated_active_file_reads", 0)
+                    ),
+                    task_score=int(payload.get("task_score", 0)),
+                )
+                if iq_rows:
+                    console.print(
+                        render_stats_panel(
+                            "Interaction Quality",
+                            headline="Session flow metrics",
+                            headline_style="bold cyan",
+                            subhead="Lower labour index = smoother session",
+                            rows=iq_rows,
+                            border_style="cyan",
+                        )
+                    )
                 if baseline_only:
                     console.print(
                         "[yellow]⚠️ Tok verdict:[/yellow] bridge is alive but the current session has degraded to baseline."

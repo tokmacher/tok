@@ -93,6 +93,10 @@ def compress_tool_results_impl(
     semantic_hash_cache: dict[str, str] | None = None,
     bypass_result_cache: bool = False,
     hot_summary_records: dict[str, Any] | None = None,
+    session_files_read: set[str] | None = None,
+    files_fully_delivered: dict[str, int] | None = None,
+    current_turn: int | None = None,
+    keep_turns_window: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     _sync_threshold()
     return _history.compress_tool_results_impl(
@@ -103,6 +107,10 @@ def compress_tool_results_impl(
         semantic_hash_cache=semantic_hash_cache,
         bypass_result_cache=bypass_result_cache,
         hot_summary_records=hot_summary_records,
+        session_files_read=session_files_read,
+        files_fully_delivered=files_fully_delivered,
+        current_turn=current_turn,
+        keep_turns_window=keep_turns_window,
     )
 
 

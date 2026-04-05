@@ -8,6 +8,10 @@ from typing import Any
 
 from fastapi import Response
 
+from ..runtime._request_preparation import (
+    _restore_latest_assistant_thinking,
+    _snapshot_latest_assistant_thinking,
+)
 from ..runtime.pipeline.request_validation import (
     bridge_strict_failure_signals,
     canonicalize_anthropic_bridge_body,
@@ -20,6 +24,7 @@ from ..runtime.pipeline.request_validation import (
     validate_anthropic_bridge_body,
     validate_anthropic_outgoing_bridge_body,
 )
+from ..runtime.smoothness.models import SmoothnessEventType
 from . import (
     BridgeSession,
     _log_bridge_body_structure,
@@ -451,11 +456,30 @@ def _run_bridge_preflight(
     reset_recovery_state: bool = True,
 ) -> tuple[dict[str, Any], dict[str, int], bool, Response | None]:
     """Canonicalize, validate, and recover bridge tool history before send."""
+    _thinking_snapshot = _snapshot_latest_assistant_thinking(
+        original_body.get("messages", [])
+    )
     (
         canonical_body,
         bridge_canonicalized,
         bridge_signals,
     ) = canonicalize_anthropic_bridge_body(body)
+    if bridge_signals.get("thinking_block_mutated"):
+        try:
+            session.smoothness_tracker.record(
+                SmoothnessEventType.THINKING_BLOCK_MUTATION,
+                {
+                    "msg_index": bridge_signals.get(
+                        "thinking_block_mutated_msg_index"
+                    )
+                },
+            )
+        except Exception:
+            pass
+    if _thinking_snapshot:
+        _restore_latest_assistant_thinking(
+            canonical_body.get("messages", []), _thinking_snapshot
+        )
     tool_history_recovery_applied = False
     invalid_tool_history_unrecoverable = False
     strict_failures = validate_anthropic_bridge_body(canonical_body)
@@ -473,6 +497,19 @@ def _run_bridge_preflight(
         behavior_signals["tok_bridge_tool_history_repaired"] = 1
     if pairing_repaired:
         behavior_signals["tok_bridge_tool_history_pairing_repaired"] = 1
+    if (
+        request_fingerprint.get("messages_changed")
+        and behavior_signals.get(
+            "request_policy_reason_structured_tool_loop", 0
+        )
+        > 0
+    ):
+        try:
+            session.smoothness_tracker.record(
+                SmoothnessEventType.MESSAGES_CHANGED_OPEN_TOOL_LOOP,
+            )
+        except Exception:
+            pass
     if (
         request_fingerprint["prompt_caching"]
         and request_fingerprint["body_materially_differs"]
