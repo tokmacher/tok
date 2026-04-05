@@ -314,7 +314,10 @@ def _process_repeat_file_results(
     ):
         return
     if is_repeat_file:
-        if result_cache is not None and _is_cached_hit(
+        args = context.get("args") if isinstance(context, dict) else None
+        if isinstance(args, dict) and args.get("tok_bypass_cache"):
+            bump("bypass_reacquire", 1)
+        elif result_cache is not None and _is_cached_hit(
             tool_name, context, result_text, result_cache
         ):
             bump("cached_file_read", 1)

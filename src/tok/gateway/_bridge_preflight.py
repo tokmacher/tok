@@ -476,10 +476,24 @@ def _run_bridge_preflight(
             )
         except Exception:
             pass
+    _restore_performed = False
     if _thinking_snapshot:
-        _restore_latest_assistant_thinking(
+        _restore_performed = _restore_latest_assistant_thinking(
             canonical_body.get("messages", []), _thinking_snapshot
         )
+    if _restore_performed and bridge_signals.get("thinking_block_mutated"):
+        bridge_signals.pop("thinking_block_mutated", None)
+        bridge_signals["thinking_block_mutation_restored"] = 1
+        logger.debug(
+            "thinking_block_mutation_restored | "
+            "snapshot restore succeeded; penalized signal cleared"
+        )
+        try:
+            session.smoothness_tracker.record(
+                SmoothnessEventType.THINKING_BLOCK_MUTATION_RESTORED,
+            )
+        except Exception:
+            pass
     tool_history_recovery_applied = False
     invalid_tool_history_unrecoverable = False
     strict_failures = validate_anthropic_bridge_body(canonical_body)

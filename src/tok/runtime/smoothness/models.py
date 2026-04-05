@@ -29,6 +29,7 @@ class SmoothnessEventType(str, Enum):
     STREAM_RECOVERY_LOOP_BREAKER = "stream_recovery_loop_breaker"
     UPSTREAM_400_AFTER_PREPARED_PAYLOAD = "upstream_400_after_prepared_payload"
     THINKING_BLOCK_MUTATION = "thinking_block_mutation"
+    THINKING_BLOCK_MUTATION_RESTORED = "thinking_block_mutation_restored"
     MESSAGES_CHANGED_OPEN_TOOL_LOOP = "messages_changed_open_tool_loop"
     HISTORY_WINNOWING_ACTIVE_LOOP = "history_winnowing_active_loop"
     SEMANTIC_DEDUP_ACTIVE_FILE = "semantic_dedup_active_file"

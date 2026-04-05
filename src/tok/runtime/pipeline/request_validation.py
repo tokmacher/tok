@@ -1149,28 +1149,55 @@ def _check_thinking_block_mutation(
     before_has_signature: bool,
     protected_msg_index: int | None,
     signals: dict[str, int],
+    *,
+    protected_content_identity: int | None = None,
+    seen_mutation_pairs: set[tuple[str, str]] | None = None,
 ) -> None:
     """Check if thinking blocks were mutated and log warning if so."""
     if before_hash is None or protected_msg_index is None:
         return
     after_content: Any = None
-    for msg in merged_messages:
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        if any(
-            isinstance(b, dict)
-            and b.get("type") in {"thinking", "redacted_thinking"}
-            for b in content
-        ):
-            after_content = content
-            break
+    if protected_content_identity is not None:
+        for msg in merged_messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if (
+                isinstance(content, list)
+                and id(content) == protected_content_identity
+            ):
+                after_content = content
+                break
+    if after_content is None:
+        for msg in merged_messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            if any(
+                isinstance(b, dict)
+                and b.get("type") in {"thinking", "redacted_thinking"}
+                for b in content
+            ):
+                after_content = content
+                break
     if after_content is not None:
         after_hash = _content_hash(after_content)
         after_block_types = _block_type_sequence(after_content)
+        mutation_pair = (before_hash, after_hash)
         if before_hash != after_hash:
+            if seen_mutation_pairs is not None:
+                if mutation_pair in seen_mutation_pairs:
+                    logger.debug(
+                        "THINKING_BLOCK_MUTATION_DEDUPLICATED | "
+                        "msg_index=%d | before_hash=%s | after_hash=%s",
+                        protected_msg_index,
+                        before_hash,
+                        after_hash,
+                    )
+                    return
+                seen_mutation_pairs.add(mutation_pair)
             logger.warning(
                 "THINKING_BLOCK_MUTATION_DETECTED | "
                 "msg_index=%d | "
@@ -1338,6 +1365,8 @@ def canonicalize_anthropic_bridge_messages(
         total_drop_count = sum(total_drops.values())
         signals["tok_bridge_unsupported_block_dropped"] = total_drop_count
 
+    seen_mutation_pairs: set[tuple[str, str]] = set()
+
     if before_hash is not None and protected_msg_index is not None:
         _check_thinking_block_mutation(
             merged_messages,
@@ -1346,6 +1375,8 @@ def canonicalize_anthropic_bridge_messages(
             before_has_signature,
             protected_msg_index,
             signals,
+            protected_content_identity=protected_content_identity,
+            seen_mutation_pairs=seen_mutation_pairs,
         )
 
     if changed:
