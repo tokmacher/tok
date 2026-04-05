@@ -279,6 +279,18 @@ class RuntimeSession:
     _stream_recovery_tool_use_only_repeat_count: int = field(
         default=0, init=False, repr=False
     )
+    _stream_recovery_cooldown_remaining: int = field(
+        default=0, init=False, repr=False
+    )
+    _stream_recovery_cooldown_suppressed: bool = field(
+        default=False, init=False, repr=False
+    )
+    _stream_read_error_consecutive_count: int = field(
+        default=0, init=False, repr=False
+    )
+    _stream_read_error_last_stage: str = field(
+        default="", init=False, repr=False
+    )
     _request_policy_tool_mode_sticky_turns: int = field(
         default=0, init=False, repr=False
     )

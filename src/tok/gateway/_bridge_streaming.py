@@ -177,6 +177,57 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
     return events
 
 
+def _record_stream_read_error(
+    session: BridgeSession,
+    stage_label: str,
+    read_error_text: str,
+) -> None:
+    """Record stream read error with shared bookkeeping and observability."""
+    logger.warning(
+        "Stream read error during %s: %s",
+        stage_label,
+        read_error_text,
+    )
+    try:
+        session.smoothness_tracker.record(
+            SmoothnessEventType.STREAM_READ_ERROR,
+            {"error": read_error_text},
+        )
+    except Exception:
+        pass
+
+    runtime_session = session.runtime_session
+    if not hasattr(runtime_session, "_stream_read_error_consecutive_count"):
+        runtime_session._stream_read_error_consecutive_count = 0
+    if not hasattr(runtime_session, "_stream_read_error_last_stage"):
+        runtime_session._stream_read_error_last_stage = ""
+
+    runtime_session._stream_read_error_consecutive_count += 1
+    runtime_session._stream_read_error_last_stage = stage_label
+
+
+def _clear_stream_read_error_streak(session: BridgeSession) -> None:
+    """Clear shared stream read-error streak state after successful visible completion."""
+    runtime_session = session.runtime_session
+    runtime_session._stream_read_error_consecutive_count = 0
+    runtime_session._stream_read_error_last_stage = ""
+
+
+def _stream_recovery_allowed_now(
+    session: BridgeSession,
+) -> tuple[bool, str]:
+    """Return whether stream recovery may start now."""
+    runtime_session = session.runtime_session
+    cooldown_remaining = getattr(
+        runtime_session,
+        "_stream_recovery_cooldown_remaining",
+        0,
+    )
+    if cooldown_remaining > 0:
+        return False, "cooldown_active"
+    return True, "eligible"
+
+
 async def passthrough_stream_impl(
     session: BridgeSession,
     client: httpx.AsyncClient,
@@ -213,17 +264,7 @@ async def passthrough_stream_impl(
                     pass
     except (httpx.ReadError, httpcore.ReadError) as e:
         read_error = str(e)
-        logger.warning(
-            "Stream read error during passthrough streaming: %s",
-            read_error,
-        )
-        try:
-            session.smoothness_tracker.record(
-                SmoothnessEventType.STREAM_READ_ERROR,
-                {"error": read_error},
-            )
-        except Exception:
-            pass
+        _record_stream_read_error(session, "passthrough", read_error)
     finally:
         response_aclose: Callable[[], Awaitable[None]] | None = getattr(
             response, "aclose", None
@@ -274,17 +315,7 @@ async def buffer_strip_restream_impl(
                 raw += chunk
         except (httpx.ReadError, httpcore.ReadError) as e:
             read_error = str(e)
-            logger.warning(
-                "Stream read error during buffering, emitting partial content: %s",
-                read_error,
-            )
-            try:
-                session.smoothness_tracker.record(
-                    SmoothnessEventType.STREAM_READ_ERROR,
-                    {"error": read_error},
-                )
-            except Exception:
-                pass
+            _record_stream_read_error(session, "buffering", read_error)
         text = raw.decode("utf-8", errors="replace")
         sse_events = text.split("\n\n")
 
@@ -460,6 +491,9 @@ async def buffer_strip_restream_impl(
             read_error is not None or len(translated_blocks) == 0
         )
         if recovery_required:
+            recovery_allowed, recovery_reason = _stream_recovery_allowed_now(
+                session
+            )
             stream_behavior_signals["stream_empty_after_success"] = 1
             if read_error is not None:
                 stream_behavior_signals["stream_recovery_read_error"] = 1
@@ -471,9 +505,14 @@ async def buffer_strip_restream_impl(
                     )
                 except Exception:
                     pass
-            session.runtime_session._stream_recovery_reacquisition_budget = 1
-            session.runtime_session._stream_recovery_history_floor_budget = 1
-            session.runtime_session.note_request_policy_stream_recovery()
+            if recovery_allowed:
+                session.runtime_session._stream_recovery_reacquisition_budget = 1
+                session.runtime_session._stream_recovery_history_floor_budget = 1
+                session.runtime_session.note_request_policy_stream_recovery()
+                session.runtime_session._stream_recovery_cooldown_remaining = 1
+                session.runtime_session._stream_recovery_cooldown_suppressed = False
+            else:
+                session.runtime_session._stream_recovery_cooldown_suppressed = True
             recovered = False
             recovery_model = ""
             recovery_usage: dict[str, Any] = {}
@@ -742,6 +781,7 @@ async def buffer_strip_restream_impl(
                                     ):
                                         yield event_bytes
                                 yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
+                                _clear_stream_read_error_streak(session)
                                 return
             if not recovered:
                 stream_behavior_signals["stream_recovery_fallback"] = 1
@@ -847,6 +887,8 @@ async def buffer_strip_restream_impl(
 
             except (json.JSONDecodeError, KeyError):
                 yield (event_str + "\n\n").encode()
+        if content_emitted:
+            _clear_stream_read_error_streak(session)
     finally:
         response_aclose: Callable[[], Awaitable[None]] | None = getattr(
             response, "aclose", None

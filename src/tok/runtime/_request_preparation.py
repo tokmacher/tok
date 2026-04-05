@@ -421,6 +421,13 @@ def _resolve_effective_tool_compatible(
     reasons: list[str] = []
     if session._request_policy_tool_mode_sticky_turns > 0:
         reasons.append("sticky")
+    cooldown_remaining = getattr(
+        session, "_stream_recovery_cooldown_remaining", 0
+    )
+    if cooldown_remaining > 0:
+        session._stream_recovery_cooldown_remaining = max(
+            0, cooldown_remaining - 1
+        )
     if (
         session._stream_recovery_reacquisition_budget > 0
         or session._stream_recovery_history_floor_budget > 0
@@ -825,6 +832,17 @@ def prepare_request_impl(
         for reason in request_policy_reasons:
             behavior_signals[f"request_policy_reason_{reason}"] = 1
 
+        cooldown_suppressed = getattr(
+            session, "_stream_recovery_cooldown_suppressed", False
+        )
+        active_recovery_present = (
+            session._stream_recovery_reacquisition_budget > 0
+            or session._stream_recovery_history_floor_budget > 0
+        )
+        if cooldown_suppressed and not active_recovery_present:
+            behavior_signals["request_policy_recovery_cooldown_suppressed"] = 1
+        if cooldown_suppressed:
+            session._stream_recovery_cooldown_suppressed = False
         if (
             request_policy == "natural_first"
             and session._request_policy_tool_mode_sticky_turns > 0

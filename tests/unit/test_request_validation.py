@@ -1686,6 +1686,89 @@ def test_strict_bridge_validation_rejects_unsupported_block_types():
     assert "unsupported_block_type" in failures
 
 
+def test_strict_bridge_validation_rejects_invalid_system_blocks():
+    """Test that invalid system blocks are caught gracefully."""
+    failures = validate_anthropic_bridge_body(
+        {
+            "model": "claude-sonnet-4",
+            "system": [
+                {"type": "text", "text": "Valid block"},
+                {
+                    "type": "invalid_block",
+                    "data": "This should fail validation",
+                },
+            ],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Hello"}],
+                }
+            ],
+        }
+    )
+    assert failures == ["invalid_system_block"]
+
+
+def test_strict_bridge_validation_rejects_malformed_system_blocks():
+    """Test that malformed system blocks are caught gracefully."""
+    failures = validate_anthropic_bridge_body(
+        {
+            "model": "claude-sonnet-4",
+            "system": [
+                {
+                    "type": "tool_use",
+                    "id": "",  # Empty ID should fail validation
+                    "name": "test_tool",
+                    "input": {"key": "value"},
+                }
+            ],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Hello"}],
+                }
+            ],
+        }
+    )
+    assert failures == ["invalid_system_block"]
+
+
+def test_strict_bridge_validation_rejects_malformed_system_blocks_v2():
+    """Test that malformed system blocks are caught gracefully."""
+    failures = validate_anthropic_bridge_body(
+        {
+            "model": "claude-sonnet-4",
+            "system": [
+                {
+                    "type": "tool_use",
+                    "id": "",  # Empty ID should fail validation
+                    "name": "test_tool",
+                    "input": {"key": "value"},
+                }
+            ],
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+    )
+    assert failures == ["invalid_system_block"]
+    """Test that valid system blocks pass validation."""
+    failures = validate_anthropic_bridge_body(
+        {
+            "model": "claude-sonnet-4",
+            "system": [
+                {"type": "text", "text": "You are a helpful assistant."},
+                {"type": "thinking", "thinking": "Let me think about this..."},
+            ],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Hello"}],
+                }
+            ],
+        }
+    )
+    assert failures == []
+
+
 def test_summarize_message_structure_includes_unsupported_blocks():
     messages: list[dict[str, Any]] = [
         {

@@ -312,7 +312,10 @@ class _CanonicalBridgeBody(BaseModel):
         cls, value: str | list[dict[str, Any]] | None
     ) -> str | list[dict[str, Any]] | None:
         if isinstance(value, list):
-            _CANONICAL_CONTENT_ADAPTER.validate_python(value)
+            try:
+                _CANONICAL_CONTENT_ADAPTER.validate_python(value)
+            except ValidationError:
+                raise ValueError("invalid_system_block") from None
         return value
 
 
@@ -325,6 +328,12 @@ def _validate_canonical_bridge_body_model(body: dict[str, Any]) -> list[str]:
         errors = exc.errors()
         if errors and all(err.get("loc") == ("messages",) for err in errors):
             return []
+        if errors and any(
+            err.get("loc") == ("system",)
+            and "invalid_system_block" in str(err.get("msg", ""))
+            for err in errors
+        ):
+            return ["invalid_system_block"]
         return ["bridge_wire_model_invalid"]
 
 
