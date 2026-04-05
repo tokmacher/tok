@@ -785,6 +785,52 @@ def test_natural_first_escalates_on_stream_recovery_watch(tmp_path):
     )
 
 
+def test_request_policy_is_not_held_by_recovery_when_only_cooldown_is_active(
+    tmp_path,
+):
+    """Request policy should not be held by recovery when only cooldown is active."""
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+
+    session._stream_recovery_cooldown_remaining = 1
+    session._stream_recovery_cooldown_suppressed = True
+    session._stream_recovery_reacquisition_budget = 0
+    session._stream_recovery_history_floor_budget = 0
+
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": "Test cooldown-only suppression.",
+            }
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert (
+        prepared.behavior_signals.get(
+            "request_policy_reason_stream_recovery", 0
+        )
+        == 0
+    )
+    assert (
+        prepared.behavior_signals.get("request_policy_held_by_recovery", 0)
+        == 0
+    )
+    assert (
+        prepared.behavior_signals.get(
+            "request_policy_recovery_cooldown_suppressed", 0
+        )
+        == 1
+    )
+
+    assert session._stream_recovery_cooldown_suppressed is False
+
+
 def test_natural_first_escalates_on_invalid_tool_history_recovery(tmp_path):
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")

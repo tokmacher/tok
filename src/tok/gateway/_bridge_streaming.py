@@ -244,6 +244,7 @@ async def passthrough_stream_impl(
     """
     sse_model: str = "unknown"
     sse_usage: dict[str, Any] = {}
+    read_error_occurred: bool = False
     try:
         async for chunk in response.aiter_bytes():
             yield chunk
@@ -263,6 +264,7 @@ async def passthrough_stream_impl(
                 except (json.JSONDecodeError, KeyError):
                     pass
     except (httpx.ReadError, httpcore.ReadError) as e:
+        read_error_occurred = True
         read_error = str(e)
         _record_stream_read_error(session, "passthrough", read_error)
     finally:
@@ -276,6 +278,8 @@ async def passthrough_stream_impl(
         )
         if callable(client_aclose):
             await client_aclose()
+        if not read_error_occurred:
+            _clear_stream_read_error_streak(session)
         if sse_model != "unknown" and sse_usage:
             session.tracker.record_call(
                 model=sse_model,
