@@ -3,6 +3,7 @@ from __future__ import annotations
 """Runtime request-preparation helpers extracted from core."""
 
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -451,12 +452,17 @@ def _resolve_effective_tool_compatible(
 def _snapshot_latest_assistant_thinking(
     messages: list[dict[str, Any]],
 ) -> str | None:
-    """Return JSON-serialized thinking blocks from the latest assistant message.
+    """Return structured snapshot of the latest protected assistant message.
 
     Returns ``None`` when no assistant message contains thinking/redacted_thinking
     blocks.  The caller can later pass the returned string to
-    ``_restore_latest_assistant_thinking`` to guarantee the blocks survive every
-    intermediate deep-copy and canonicalisation step untouched.
+    ``_restore_latest_assistant_thinking`` to guarantee the full protected content
+    list survives every intermediate deep-copy and canonicalisation step untouched.
+
+    The snapshot is a JSON-structured object containing:
+        - full_content: the complete content list from the protected message
+        - content_hash: SHA256 hash of the full_content JSON serialization
+        - block_types: sequence of block type identifiers (e.g., ["thinking", "text"])
     """
     for msg in reversed(messages):
         if msg.get("role") != "assistant":
@@ -470,9 +476,19 @@ def _snapshot_latest_assistant_thinking(
             if isinstance(b, dict)
             and b.get("type") in {"thinking", "redacted_thinking"}
         ]
-        if thinking_blocks:
-            return json.dumps(thinking_blocks, ensure_ascii=False)
-        return None
+        if not thinking_blocks:
+            return None
+
+        block_types = [b.get("type") for b in content if isinstance(b, dict)]
+        content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)
+        content_hash = hashlib.sha256(content_json.encode()).hexdigest()
+
+        snapshot = {
+            "full_content": content,
+            "content_hash": content_hash,
+            "block_types": block_types,
+        }
+        return json.dumps(snapshot, ensure_ascii=False)
     return None
 
 
@@ -480,23 +496,30 @@ def _restore_latest_assistant_thinking(
     messages: list[dict[str, Any]],
     snapshot: str | None,
 ) -> bool:
-    """Replace thinking blocks in the latest assistant message with *snapshot*.
+    """Replace the full protected content list in the latest assistant message.
 
-    This is the inverse of ``_snapshot_latest_assistant_thinking``.  It walks
-    the latest assistant message and swaps every thinking/redacted_thinking
-    block with the authoritative version from *snapshot*, preserving the
-    block positions so that non-thinking blocks (text, tool_use) are untouched.
+    This is the inverse of ``_snapshot_latest_assistant_thinking``.  It finds
+    the latest assistant message with thinking/redacted_thinking blocks and
+    replaces its entire content list with the original protected content from
+    *snapshot*.
 
-    Returns ``True`` when a restoration was performed.
+    Restoration only succeeds if the post-restore hash matches the original
+    snapshot hash exactly.  Partial or misaligned restoration returns failure.
+
+    Returns ``True`` only when exact hash verification passes.
     """
     if snapshot is None:
         return False
     try:
-        original_blocks: list[dict[str, Any]] = json.loads(snapshot)
-    except (json.JSONDecodeError, TypeError):
+        snapshot_data = json.loads(snapshot)
+        original_content = snapshot_data.get("full_content")
+        original_hash = snapshot_data.get("content_hash")
+        original_block_types = snapshot_data.get("block_types")
+    except (json.JSONDecodeError, TypeError, AttributeError):
         return False
-    if not original_blocks:
+    if not original_content or not original_hash or not original_block_types:
         return False
+
     for msg in reversed(messages):
         if msg.get("role") != "assistant":
             continue
@@ -509,22 +532,20 @@ def _restore_latest_assistant_thinking(
             for b in content
         ):
             continue
-        restored: list[dict[str, Any]] = []
-        orig_idx = 0
-        for block in content:
-            if not isinstance(block, dict):
-                restored.append(block)
-                continue
-            if block.get("type") in {
-                "thinking",
-                "redacted_thinking",
-            } and orig_idx < len(original_blocks):
-                restored.append(original_blocks[orig_idx])
-                orig_idx += 1
-            else:
-                restored.append(block)
-        msg["content"] = restored
-        return True
+
+        msg["content"] = original_content
+
+        restored_content_json = json.dumps(
+            original_content, ensure_ascii=False, sort_keys=True
+        )
+        restored_hash = hashlib.sha256(
+            restored_content_json.encode()
+        ).hexdigest()
+
+        if restored_hash == original_hash:
+            return True
+        else:
+            return False
     return False
 
 

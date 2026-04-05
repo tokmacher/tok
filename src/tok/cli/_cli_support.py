@@ -339,7 +339,7 @@ def session_signals_text(payload: dict[str, Any]) -> str:
     signal_map = (
         ("fallback", int(payload.get("fallback_count", 0))),
         ("drift", int(payload.get("semantic_drift_count", 0))),
-        ("fail-open", int(payload.get("fail_open_count", 0))),
+        ("compat-fallback", int(payload.get("fail_open_count", 0))),
         ("reacq", reacq_count),
         (
             "shape-orig",
@@ -512,7 +512,7 @@ def session_status_rows(
         if stream_transport_recoveries > 0:
             rows.append(
                 (
-                    "Stream transport",
+                    "Stream transport incidents (per-call)",
                     f"{int(summary.get('stream_recovery_empty_success_count', 0))} empty, {int(summary.get('stream_recovery_read_error_count', 0))} read-error",
                 )
             )
@@ -565,7 +565,10 @@ def interaction_quality_rows(
         rows.append(("Current mode", current_mode))
     if stream_instability_events is not None:
         rows.append(
-            ("Stream instability events", str(stream_instability_events))
+            (
+                "Stream instability events (per-turn)",
+                str(stream_instability_events),
+            )
         )
     if thinking_mutation_events is not None:
         rows.append(

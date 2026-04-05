@@ -211,6 +211,19 @@ async def passthrough_stream_impl(
                         sse_usage.update(d.get("usage", {}))
                 except (json.JSONDecodeError, KeyError):
                     pass
+    except (httpx.ReadError, httpcore.ReadError) as e:
+        read_error = str(e)
+        logger.warning(
+            "Stream read error during passthrough streaming: %s",
+            read_error,
+        )
+        try:
+            session.smoothness_tracker.record(
+                SmoothnessEventType.STREAM_READ_ERROR,
+                {"error": read_error},
+            )
+        except Exception:
+            pass
     finally:
         response_aclose: Callable[[], Awaitable[None]] | None = getattr(
             response, "aclose", None
