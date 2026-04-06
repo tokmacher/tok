@@ -285,6 +285,8 @@ class BridgeSession:
     rate_limit_throttle_window_sec: int = int(
         os.getenv("TOK_RATE_LIMIT_THROTTLE_WINDOW_SEC", "30")
     )
+    _rate_limit_throttle_until: float = 0.0
+    _rate_limit_429_history: list[float] = field(default_factory=list)
     # TOK_MODE=baseline still forces the conservative baseline path.
     # Otherwise, TOK_REQUEST_POLICY can explicitly override the stable
     # tool-compatible request policy default.

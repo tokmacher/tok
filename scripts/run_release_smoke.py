@@ -20,7 +20,7 @@ class SmokeStep:
 
 IMPORT_CHECK = (
     "import tok.stats",
-    "import tok.savings_tracker",
+    "import tok.utils.savings_tracker",
     "import tok.gateway.stats",
     "import tok.universal_runtime",
     "import tok.runtime.core",

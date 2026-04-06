@@ -271,16 +271,16 @@ def _build_normalized_event(
     query: str | None,
     current_mode: Any | None,
 ) -> NormalizedToolEvent:
-    compressibility_class = normalize_tool_family(
-        tool_name, query=query, command=command
+    compressibility_class: Literal[
+        "raw", "file_read", "search", "command", "tool_result"
+    ] = cast(
+        Literal["raw", "file_read", "search", "command", "tool_result"],
+        normalize_tool_family(tool_name, query=query, command=command),
     )
     if compressibility_class not in {"file_read", "search", "command"}:
         compressibility_class = "tool_result"
     if _is_raw_mode(current_mode, path):
-        compressibility_class = cast(
-            Literal["raw", "file_read", "search", "command", "tool_result"],
-            "raw",
-        )
+        compressibility_class = "raw"
     fidelity_requirement = "high" if path or command else "default"
     return NormalizedToolEvent(
         id=str(block.get("id", "")),

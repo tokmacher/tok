@@ -38,7 +38,7 @@ def _main() -> None:
         raise SystemExit(1) from None
     except KeyboardInterrupt:
         print("\ntok: bridge stopped.", file=sys.stderr)
-        raise SystemExit(0)
+        raise SystemExit(0) from None
     except Exception as exc:
         print(
             f"tok: unexpected startup failure — {exc}\n"

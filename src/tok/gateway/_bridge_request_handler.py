@@ -2,7 +2,9 @@ from __future__ import annotations
 
 """Fail-open request helpers for the Tok gateway."""
 
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -115,6 +117,27 @@ def _validate_outgoing_bridge_body_from_bytes(
     return validate_anthropic_outgoing_bridge_body(body)
 
 
+def _rate_limit_retry_delay_seconds(
+    session: BridgeSession, *, attempt_index: int, retry_after: str | None
+) -> float:
+    retry_after_delay = 0.0
+    if retry_after:
+        try:
+            parsed_retry_after = float(retry_after)
+            if parsed_retry_after > 0.0:
+                retry_after_delay = parsed_retry_after
+        except ValueError:
+            retry_after_delay = 0.0
+
+    backoff_seconds: float = min(
+        session.rate_limit_backoff_cap_ms / 1000.0,
+        (session.rate_limit_backoff_base_ms / 1000.0) * (2**attempt_index),
+    )
+    if retry_after_delay > backoff_seconds:
+        return retry_after_delay
+    return backoff_seconds
+
+
 async def send_with_tok_fail_open_retry(
     session: BridgeSession,
     client: httpx.AsyncClient,
@@ -128,13 +151,50 @@ async def send_with_tok_fail_open_retry(
     allow_original_retry: bool = True,
     stream: bool = False,
     compressed_request: bool = False,
+    sleep_fn: Callable[[float], Awaitable[None]] | None = None,
 ) -> tuple[httpx.Response, bool, dict[str, int]]:
+    if sleep_fn is None:
+        sleep_fn = asyncio.sleep
     request_obj = client.build_request(
         method, url, headers=headers, content=content
     )
     response = await client.send(request_obj, stream=stream)
     retried_without_tok = False
     retry_signals: dict[str, int] = {}
+    retry_attempts = 0
+
+    while response.status_code == 429 and retry_attempts < max(
+        0, session.rate_limit_retry_max_attempts
+    ):
+        retry_after = response.headers.get("retry-after")
+        delay = _rate_limit_retry_delay_seconds(
+            session, attempt_index=retry_attempts, retry_after=retry_after
+        )
+        logger.warning(
+            "rate_limit_retry_attempt: attempt=%d delay=%.2f retry_after=%s",
+            retry_attempts + 1,
+            delay,
+            retry_after or "unknown",
+        )
+        retry_signals["rate_limit_retry_attempt"] = (
+            retry_signals.get("rate_limit_retry_attempt", 0) + 1
+        )
+        await response.aclose()
+        await sleep_fn(delay)
+        request_obj = client.build_request(
+            method, url, headers=headers, content=content
+        )
+        response = await client.send(request_obj, stream=stream)
+        retry_attempts += 1
+
+    if response.status_code == 429:
+        retry_after = response.headers.get("retry-after", "unknown")
+        logger.warning(
+            "rate_limit_retry_exhausted: retries exhausted after %d attempt(s) (retry_after=%s)",
+            retry_attempts,
+            retry_after,
+        )
+        retry_signals["rate_limit_retry_exhausted"] = 1
 
     logger.warning(
         "Fail-open check: status=%d, compressed=%s, has_orig=%s, fail_open=%s",

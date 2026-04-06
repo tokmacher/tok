@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio  # noqa: F401
 import copy
 import json
-import random  # noqa: F401
+import math
+import random  # noqa: F401 - compatibility anchor for gateway tests
+import time
 from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
 
@@ -57,6 +59,67 @@ def _note_request_policy_recovery_watch(
         or signals.get("tok_history_pairing_safety_degraded", 0)
     ):
         session.runtime_session.note_request_policy_tool_mode_recovery()
+
+
+def _rate_limit_throttle_remaining(session: BridgeSession) -> float:
+    remaining = session._rate_limit_throttle_until - time.time()
+    return max(0.0, remaining)
+
+
+def _is_rate_limited(session: BridgeSession) -> bool:
+    return _rate_limit_throttle_remaining(session) > 0.0
+
+
+def _record_rate_limit_hit(session: BridgeSession) -> None:
+    now = time.time()
+    history = session._rate_limit_429_history
+
+    window_sec = max(1, int(session.rate_limit_throttle_window_sec))
+    history[:] = [ts for ts in history if now - ts <= window_sec]
+    history.append(now)
+
+    if (
+        session.rate_limit_throttle_threshold > 0
+        and len(history) >= session.rate_limit_throttle_threshold
+        and session.rate_limit_throttle_cooldown_sec > 0
+    ):
+        session._rate_limit_throttle_until = now + float(
+            session.rate_limit_throttle_cooldown_sec
+        )
+
+
+def _build_rate_limit_response(retry_after_seconds: float) -> Response:
+    retry_after_header = str(max(1, int(math.ceil(retry_after_seconds))))
+    return Response(
+        content=json.dumps(
+            {
+                "error": {
+                    "type": "rate_limit_error",
+                    "message": "Tok gateway is temporarily rate limited; retry later.",
+                }
+            }
+        ),
+        status_code=429,
+        media_type="application/json",
+        headers={"Retry-After": retry_after_header},
+    )
+
+
+def _normalize_rate_limit_response(
+    session: BridgeSession, response: httpx.Response
+) -> Response:
+    _record_rate_limit_hit(session)
+    remaining = _rate_limit_throttle_remaining(session)
+    retry_after_header = response.headers.get("retry-after")
+    retry_after_seconds = remaining
+    if retry_after_seconds <= 0.0 and retry_after_header:
+        try:
+            retry_after_seconds = max(0.0, float(retry_after_header))
+        except ValueError:
+            retry_after_seconds = 1.0
+    if retry_after_seconds <= 0.0:
+        retry_after_seconds = 1.0
+    return _build_rate_limit_response(retry_after_seconds)
 
 
 def _rebuild_content_preserving_position(
@@ -388,6 +451,16 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         body_bytes = await request.body()
         original_body_bytes = body_bytes
         request_state = {"fallback_recorded": False}
+
+        if path.startswith("v1/") and _is_rate_limited(session):
+            logger.warning(
+                "rate_limit_throttle_active: blocking request to %s for %.2fs",
+                path,
+                _rate_limit_throttle_remaining(session),
+            )
+            return _build_rate_limit_response(
+                _rate_limit_throttle_remaining(session)
+            )
 
         session.smoothness_tracker.start_turn()
 
@@ -814,12 +887,17 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         allow_original_retry=not raw_retry_forbidden,
                         stream=True,
                         compressed_request=compressed,
+                        sleep_fn=asyncio.sleep,
                     )
                     for key, value in retry_signals.items():
                         behavior_signals[key] = (
                             behavior_signals.get(key, 0) + value
                         )
                     _note_request_policy_recovery_watch(session, retry_signals)
+                    if response.status_code == 429:
+                        return _normalize_rate_limit_response(
+                            session, response
+                        )
                     if retried_without_tok:
                         compressed = False
                         saved_toks = 0
@@ -976,10 +1054,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 retry_content=provider_safe_original_body_bytes,
                 allow_original_retry=not raw_retry_forbidden,
                 compressed_request=compressed,
+                sleep_fn=asyncio.sleep,
             )
             for key, value in retry_signals.items():
                 behavior_signals[key] = behavior_signals.get(key, 0) + value
             _note_request_policy_recovery_watch(session, retry_signals)
+            if response.status_code == 429:
+                return _normalize_rate_limit_response(session, response)
             if retried_without_tok:
                 compressed = False
                 saved_toks = 0

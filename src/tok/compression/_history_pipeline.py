@@ -59,6 +59,7 @@ from ..utils.event_logging import log_semantic_dedup
 
 __all__ = [
     "TOOL_COMPRESS_THRESHOLD",
+    "RECENT_WINDOW_THRESHOLD",
     "_compress_git_log_impl",
     "_detect_tool_content_type_impl",
     "compress_history_impl",

@@ -433,7 +433,17 @@ def _canonicalize_bridge_message(
     if preserve_content:
         content = message.get("content")
         if isinstance(content, list):
-            return {"role": role, "content": content}, {}
+            preserved_blocks: list[dict[str, Any]] = []
+            drops: dict[str, int] = {}
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                block_type = str(block.get("type", "")).strip()
+                if block_type in _ALLOWED_BLOCK_TYPES:
+                    preserved_blocks.append(copy.deepcopy(block))
+                elif block_type:
+                    drops[block_type] = drops.get(block_type, 0) + 1
+            return {"role": role, "content": preserved_blocks}, drops
         elif isinstance(content, str):
             text = content.strip()
             if text:
@@ -1416,6 +1426,14 @@ def canonicalize_anthropic_bridge_body(
     new_body["messages"] = canonical_messages
     validation_failures = _validate_canonical_bridge_body_model(new_body)
     if validation_failures:
+        non_blocking_failures = [
+            failure
+            for failure in validation_failures
+            if failure in _NON_BLOCKING_OUTGOING_FAILURES
+        ]
+        if len(non_blocking_failures) == len(validation_failures):
+            signals["tok_bridge_canonical_validation_nonblocking"] = 1
+            return new_body, True, signals
         failed_signals = dict(signals)
         failed_signals["tok_bridge_canonical_validation_failed"] = 1
         return copy.deepcopy(body), False, failed_signals

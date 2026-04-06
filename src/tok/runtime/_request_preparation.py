@@ -900,7 +900,7 @@ def prepare_request_impl(
         if effective_tool_compatible:
             runtime_hints.append(TOK_LARGE_FILE_HINT)
         answer_ready = False
-        resend_signals = {}
+        resend_signals: dict[str, int] = {}
         has_answer_anchor = False
         read_only_audit_turn = (
             effective_tool_compatible

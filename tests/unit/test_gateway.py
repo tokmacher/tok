@@ -215,6 +215,13 @@ def test_health_endpoint(monkeypatch):
         "request_policy_held_by_recovery_count": 0,
         "session_quality": "clean",
         "last_degradation_reason": "",
+        "smoothness_score": 100,
+        "labour_index": 0,
+        "current_mode": "FULL_TOK",
+        "stream_instability_events": 0,
+        "thinking_mutation_events": 0,
+        "task_score": 100,
+        "repeated_active_file_reads": 0,
     }
 
 

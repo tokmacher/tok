@@ -141,24 +141,24 @@ class StressTurnRecord:
     tool_contract_failure: bool
     state_payload_chars: int
     resend_mode: str
-    resend_decision_reason: str
-    memory_loaded_chars: int
-    tool_result_volume_chars: int
-    tool_dense_session: bool
-    answer_fact_projection_present: bool
-    payload_pressure_ready: bool
-    compaction_eligible_ready: bool
-    validated_target_reacquired: bool
-    validated_target_exact_reacquired: bool
-    validated_target_reconfirmation_attempt: bool
-    answer_anchor_reacquisition_attempt: bool
-    answer_ready_reacquisition_attempt: bool
-    repair_phase_reacquisition_attempt: bool
-    benign_reverification_attempt: bool
-    request_messages: int
-    latency_ms: float
-    usage: dict[str, int]
-    baseline_only: bool
+    resend_decision_reason: str = ""
+    memory_loaded_chars: int = 0
+    tool_result_volume_chars: int = 0
+    tool_dense_session: bool = False
+    answer_fact_projection_present: bool = False
+    payload_pressure_ready: bool = False
+    compaction_eligible_ready: bool = False
+    validated_target_reacquired: bool = False
+    validated_target_exact_reacquired: bool = False
+    validated_target_reconfirmation_attempt: bool = False
+    answer_anchor_reacquisition_attempt: bool = False
+    answer_ready_reacquisition_attempt: bool = False
+    repair_phase_reacquisition_attempt: bool = False
+    benign_reverification_attempt: bool = False
+    request_messages: int = 0
+    latency_ms: float = 0.0
+    usage: dict[str, int] = field(default_factory=dict)
+    baseline_only: bool = False
     task_completed_validated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
