@@ -23,19 +23,20 @@ The default CLI help surface should reinforce that path by centering:
 - `tok doctor`
 - `tok stats` / `tok savings`
 
-The only supported Python helper path in this release is:
+The only supported product path in this release is the bridge-first workflow above.
 
-1. create one `RuntimeSession`
-1. call `tok.wrap(...)`
-1. send the prepared request through your client
-1. call `tok.process(...)`
-1. reuse the same session for the next turn
+Python helper APIs such as `tok.wrap(...)` and `tok.process(...)` remain available
+for advanced or experimental integration work, but they are not part of the
+supported 0.1 public release story and should not be documented as canonical.
+
+The release-surface manifest in `src/tok/release_surface.py` is the source of truth
+for what counts as supported, experimental, and internal in this release.
 
 ## Unsupported Paths
 
 The following are explicitly out of scope for the first release:
 
-- broader SDK/decorator APIs beyond `RuntimeSession`, `tok.wrap(...)`, and `tok.process(...)`
+- broader SDK/decorator APIs beyond the bridge-first public workflow
 - `tok-native` and `tok-minimal` compression paths
 - Windows support
 - Python 3.9 or earlier

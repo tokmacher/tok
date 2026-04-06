@@ -135,13 +135,18 @@ src/tok/
 
 ## Repo Classification
 
-- Canonical runtime: `universal_runtime.py`, `runtime/core.py`
+- Canonical runtime: `runtime/core.py`
+- Compatibility shim: `universal_runtime.py`
 - Primary adapter: `gateway/__init__.py`
-- Secondary adapters: `adapters.py`, `live_runner.py`, `agent.py`, partial `tok_orchestrator.py`
+- Secondary / experimental adapters: `adapters.py`, `live_runner.py`, `agent.py`, `adapters/orchestrator.py`
 - Canonical protocol IDL: `protocol/schema.py`, `protocol/models.py`
 - Derived runtime contract: `runtime/tools.py`
 - Bridge transport adaptation: `runtime/pipeline/request_preparation.py`, `runtime/pipeline/request_validation.py`
-- Experimental / legacy: deeper orchestrator internals and archive material
+- Experimental / legacy: deeper orchestrator internals, monitoring/dashboard code, and archive material
+
+The release surface for `0.1.0` is intentionally narrower than the repository layout:
+see `src/tok/release_surface.py` for the supported-versus-experimental split that
+governs the public story.
 
 This means Tok should currently be described as bridge-first infrastructure, not as a
 fully generalized protocol product.

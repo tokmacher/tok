@@ -10,12 +10,6 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from .adapters.adapters import (
-        ClaudeBridgeAdapter,
-        OpenAIChatAdapter,
-        OrchestratorAdapter,
-        TextLoopAdapter,
-    )
     from .protocol.encoder import TokEncoder
     from .protocol.format_bridge import Bridge
     from .protocol.models import TokNode
@@ -128,32 +122,26 @@ def process(
 __all__ = [
     "Bridge",
     "BlockSchema",
-    "ClaudeBridgeAdapter",
     "DEFAULT_SCHEMA",
     "DocumentTransformer",
     "explore_file",
     "explore_module",
     "get_file_overview",
     "list_large_files",
-    "OpenAIChatAdapter",
-    "OrchestratorAdapter",
     "PreparedRuntimeRequest",
     "ProcessedRuntimeResponse",
     "RuntimeRequest",
     "RuntimeSession",
     "Sifter",
-    "TextLoopAdapter",
     "TokEncoder",
     "TokNode",
     "TokParser",
     "TokRegistry",
     "TokSchema",
     "UniversalTokRuntime",
-    "process",
     "serialize",
     "tok_to_dict",
     "tok_to_tok",
-    "wrap",
     "TokError",
     "CompressionError",
     "SessionError",

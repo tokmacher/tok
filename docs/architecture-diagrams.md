@@ -11,7 +11,7 @@ flowchart TB
     CB["ClaudeBridgeAdapter<br/>gateway/__init__.py"]
     OA["OpenAIChatAdapter<br/>live_runner.py"]
     TL["TextLoopAdapter<br/>agent.py"]
-    OR["OrchestratorAdapter<br/>tok_orchestrator.py boundary"]
+    OR["OrchestratorAdapter<br/>adapters/orchestrator.py"]
     PS["Protocol Substrate<br/>format_bridge.py<br/>parser.py<br/>encoder.py<br/>schema.py"]
 
     CB --> RT
@@ -143,13 +143,16 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    USER["User Input"] --> LOOP["TokOrchestrator main loop<br/>sliding window<br/>retry logic<br/>tool execution<br/>strict-mode validation"]
+    USER["User Input"] --> LOOP["Deferred orchestrator loop<br/>sliding window<br/>retry logic<br/>tool execution<br/>strict-mode validation"]
 
     LOOP --> BOUNDARY["OrchestratorAdapter<br/>runtime boundary now present"]
     BOUNDARY --> RT["UniversalTokRuntime"]
 
     LEGACY["Legacy-owned today<br/>multi-system prompt assembly<br/>large turn loop<br/>truncation policy"] -. still deferred .-> LOOP
 ```
+
+The release-surface manifest in `src/tok/release_surface.py` defines which exports
+and commands are supported versus experimental for the first public release.
 
 ## 8. Adoption Story
 

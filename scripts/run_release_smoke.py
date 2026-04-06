@@ -24,7 +24,19 @@ IMPORT_CHECK = (
     "import tok.gateway.stats",
     "import tok.universal_runtime",
     "import tok.runtime.core",
+    "import tok.release_surface",
     "print('tok release smoke imports OK')",
+)
+
+SURFACE_GATE_CHECK = (
+    "from typer.testing import CliRunner",
+    "from tok.cli import app",
+    "from tok.release_surface import validate_release_surface",
+    "import tok",
+    "help_output = CliRunner().invoke(app, ['--help']).output",
+    "failures = validate_release_surface(exported_names=tok.__all__, cli_help_output=help_output, root_app=app)",
+    "print('surface_gate_failures=' + repr(failures))",
+    "raise SystemExit(1 if failures else 0)",
 )
 
 
@@ -41,6 +53,16 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
             "python",
             "-c",
             "; ".join(IMPORT_CHECK),
+        ),
+    ),
+    SmokeStep(
+        "Release-surface gate",
+        (
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "; ".join(SURFACE_GATE_CHECK),
         ),
     ),
     SmokeStep(

@@ -5942,6 +5942,146 @@ def test_retry_blocks_provider_sensitive_provider_safe_payload(
     assert "provider-safe payload failed final local validation" in caplog.text
 
 
+def _interleaved_assistant_thinking_between_tool_use_blocks() -> list[
+    dict[str, Any]
+]:
+    """Return messages with thinking blocks interleaved between tool_use blocks."""
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Inspect concurrency path."}],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_small_1",
+                    "name": "read_file",
+                    "input": {"path": "file_1.py"},
+                },
+                {
+                    "type": "thinking",
+                    "thinking": "Thinking between tool uses.",
+                },
+                {
+                    "type": "tool_use",
+                    "id": "toolu_small_2",
+                    "name": "read_file",
+                    "input": {"path": "file_2.py"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_small_1",
+                    "content": "result 1",
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_small_2",
+                    "content": "result 2",
+                },
+            ],
+        },
+    ]
+
+
+def test_fail_open_retry_rewrites_interleaved_assistant_thinking_between_tool_use_blocks(
+    tmp_path, monkeypatch, caplog
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4",
+        "max_tokens": 8192,
+        "messages": _interleaved_assistant_thinking_between_tool_use_blocks(),
+        "stream": False,
+    }
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": _interleaved_assistant_thinking_between_tool_use_blocks(),
+                "system": "tok injected system",
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=42,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        if len(sent_bodies) == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "`tool_use` ids were found without `tool_result` blocks immediately after"
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    assert len(sent_bodies) == 2
+    # Verify retry payload has thinking blocks removed
+    retry_message_content = sent_bodies[1]["messages"][1]["content"]
+    assert all(block["type"] != "thinking" for block in retry_message_content)
+    assert all(
+        block["type"] != "redacted_thinking" for block in retry_message_content
+    )
+    # Verify tool_use block order is preserved
+    tool_use_blocks = [
+        block for block in retry_message_content if block["type"] == "tool_use"
+    ]
+    assert [block["id"] for block in tool_use_blocks] == [
+        "toolu_small_1",
+        "toolu_small_2",
+    ]
+    # Verify the observability signal is emitted
+    assert (
+        "provider_safe_removed_assistant_thinking_between_tool_use"
+        in caplog.text
+    )
+
+
 def test_gateway_fail_open_false_propagates_request_processing_error(
     tmp_path, monkeypatch
 ):

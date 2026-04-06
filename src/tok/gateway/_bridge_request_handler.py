@@ -26,6 +26,76 @@ from ._bridge_preflight import (
 __all__ = ["send_with_tok_fail_open_retry"]
 
 
+def _normalize_provider_safe_retry_payload(
+    body: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks.
+
+    This handles the case where an assistant message has interleaved thinking/redacted_thinking
+    blocks between tool_use blocks, which can cause upstream pairing failures.
+
+    Returns (normalized_body, changed) where changed is True if any thinking blocks were removed.
+    """
+    if not isinstance(body, dict):
+        return body, False
+
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body, False
+
+    changed = False
+    normalized_messages: list[dict[str, Any]] = []
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            normalized_messages.append(msg)
+            continue
+
+        role = str(msg.get("role", "")).strip()
+        content = msg.get("content")
+
+        if role != "assistant" or not isinstance(content, list):
+            normalized_messages.append(msg)
+            continue
+
+        # Check if this assistant message has tool_use blocks with thinking interleaved
+        has_tool_use = any(
+            isinstance(block, dict) and block.get("type") == "tool_use"
+            for block in content
+        )
+
+        if not has_tool_use:
+            normalized_messages.append(msg)
+            continue
+
+        # Filter out thinking/redacted_thinking blocks that are between tool_use blocks
+        filtered_content: list[dict[str, Any]] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type in {"thinking", "redacted_thinking"}:
+                # Skip thinking blocks that appear after tool_use blocks start
+                # (they're interleaved between tool_uses)
+                changed = True
+                continue
+            filtered_content.append(block)
+
+        if changed:
+            new_msg = {k: v for k, v in msg.items()}
+            new_msg["content"] = filtered_content
+            normalized_messages.append(new_msg)
+        else:
+            normalized_messages.append(msg)
+
+    if not changed:
+        return body, False
+
+    new_body = {k: v for k, v in body.items()}
+    new_body["messages"] = normalized_messages
+    return new_body, True
+
+
 def _decode_bridge_body(raw_content: bytes | None) -> dict[str, Any] | None:
     if raw_content is None:
         return None
@@ -161,6 +231,20 @@ async def send_with_tok_fail_open_retry(
                 )
             )
         fallback_body = _decode_bridge_body(fallback_content)
+        # Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks
+        if isinstance(fallback_body, dict) and retry_content is not None:
+            normalized_fallback_body, normalized_changed = (
+                _normalize_provider_safe_retry_payload(fallback_body)
+            )
+            if normalized_changed:
+                fallback_body = normalized_fallback_body
+                fallback_content = json.dumps(fallback_body).encode()
+                retry_signals[
+                    "provider_safe_removed_assistant_thinking_between_tool_use"
+                ] = 1
+                logger.warning(
+                    "provider_safe_removed_assistant_thinking_between_tool_use: removed thinking/redacted_thinking blocks from provider-safe retry payload"
+                )
         if isinstance(fallback_body, dict):
             provider_safe_summary = summarize_message_structure(
                 fallback_body.get("messages", [])

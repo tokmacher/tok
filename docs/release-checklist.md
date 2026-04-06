@@ -10,6 +10,7 @@ Steps for cutting a Tok release.
 - [ ] Run lint and hygiene: `pre-commit run --all-files && ruff check src/tok tests`
 - [ ] Run type check: `mypy src/tok/`
 - [ ] Run maintainer release smoke: `python scripts/run_release_smoke.py`
+- [ ] Confirm the release-surface gate passes and no experimental root exports are advertised as canonical
 - [ ] Build package: `python -m build`
 - [ ] Verify wheel installs cleanly in a fresh venv
 - [ ] Run the clean-room install verification from the README
