@@ -385,16 +385,10 @@ def is_safe_cut(msg: dict[str, Any]) -> bool:
     return classify_cut_eligibility(msg).eligible
 
 
-def _summarize_causal_failures(
+def _scan_tool_calls_by_id(
     messages: list[dict[str, Any]],
-    error_scores: dict[str, int],
-    blocker_scores: dict[str, int],
-) -> None:
-    """Augment error/blocker scores with causal context from tool_result pairs.
-
-    For each tool_use/tool_result pair whose result contains an error signal,
-    records "cmd→error" so errs/blockers reflect *why* the failure happened.
-    """
+) -> dict[str, str]:
+    """Build a map of tool_use_id -> command label from assistant messages."""
     tool_call_by_id: dict[str, str] = {}
     for msg in messages:
         if msg.get("role") != "assistant":
@@ -416,6 +410,56 @@ def _summarize_causal_failures(
                 or tool_name
             ).strip()[:40]
             tool_call_by_id[tool_id] = cmd
+    return tool_call_by_id
+
+
+_ERROR_SIGNAL_TOKENS = frozenset(
+    {
+        "error",
+        "failed",
+        "traceback",
+        "exception",
+        "assertionerror",
+        "syntaxerror",
+    }
+)
+
+
+def _contains_error_signal(text: str) -> bool:
+    """Check if text contains error-related keywords."""
+    lowered = text.lower()
+    return any(tok in lowered for tok in _ERROR_SIGNAL_TOKENS)
+
+
+def _record_causal_failure(
+    result_text: str,
+    tool_id: str,
+    tool_call_by_id: dict[str, str],
+    error_scores: dict[str, int],
+    blocker_scores: dict[str, int],
+) -> None:
+    """Record a causal failure entry from a tool result."""
+    cmd_label = tool_call_by_id.get(tool_id, "tool")
+    first_err = next(
+        (ln.strip()[:50] for ln in result_text.splitlines() if ln.strip()),
+        "",
+    )
+    causal = re.sub(r"\s+", "_", f"{cmd_label}\u2192{first_err}")[:60]
+    blocker_scores[causal] = blocker_scores.get(causal, 0) + 3
+    error_scores[causal] = error_scores.get(causal, 0) + 3
+
+
+def _summarize_causal_failures(
+    messages: list[dict[str, Any]],
+    error_scores: dict[str, int],
+    blocker_scores: dict[str, int],
+) -> None:
+    """Augment error/blocker scores with causal context from tool_result pairs.
+
+    For each tool_use/tool_result pair whose result contains an error signal,
+    records "cmd→error" so errs/blockers reflect *why* the failure happened.
+    """
+    tool_call_by_id = _scan_tool_calls_by_id(messages)
 
     for msg in messages:
         if msg.get("role") != "user":
@@ -432,31 +476,15 @@ def _summarize_causal_failures(
             tool_id = str(block.get("tool_use_id", ""))
             raw = block.get("content", "")
             result_text = raw if isinstance(raw, str) else text_of(raw)
-            lowered = result_text.lower()
-            if not any(
-                tok in lowered
-                for tok in (
-                    "error",
-                    "failed",
-                    "traceback",
-                    "exception",
-                    "assertionerror",
-                    "syntaxerror",
-                )
-            ):
+            if not _contains_error_signal(result_text):
                 continue
-            cmd_label = tool_call_by_id.get(tool_id, "tool")
-            first_err = next(
-                (
-                    ln.strip()[:50]
-                    for ln in result_text.splitlines()
-                    if ln.strip()
-                ),
-                "",
+            _record_causal_failure(
+                result_text,
+                tool_id,
+                tool_call_by_id,
+                error_scores,
+                blocker_scores,
             )
-            causal = re.sub(r"\s+", "_", f"{cmd_label}\u2192{first_err}")[:60]
-            blocker_scores[causal] = blocker_scores.get(causal, 0) + 3
-            error_scores[causal] = error_scores.get(causal, 0) + 3
 
 
 def _summarize_decision_hypotheses(
@@ -783,6 +811,130 @@ def _is_content_hash_match(text_a: str, text_b: str) -> bool:
     return hash_a == hash_b
 
 
+def _update_cache_after_hit(
+    result_cache: MutableMapping[str, ResultCacheEntry],
+    cache_key: str,
+    host_stub_replayed: bool,
+    entry_length: int,
+    cached_hash: str,
+    cached_raw: str,
+    content_hash: str,
+    raw: str,
+) -> None:
+    """Update the cache entry after a cache hit."""
+    if host_stub_replayed and entry_length == 3:
+        result_cache[cache_key] = (
+            cached_hash,
+            cached_raw,
+            time_module.time(),
+        )
+    else:
+        result_cache[cache_key] = (
+            content_hash,
+            raw,
+            time_module.time(),
+        )
+
+
+def _count_changed_lines(diff_lines: list[str]) -> int:
+    """Count the number of changed lines in a unified diff."""
+    return sum(
+        1
+        for l in diff_lines
+        if l.startswith(("+", "-")) and not l.startswith(("+++", "---"))
+    )
+
+
+def _should_strip_diff_whitespace(normalized_tool_name: str) -> bool:
+    """Check if diff whitespace should be stripped for this tool type."""
+    return normalized_tool_name in (
+        "view_file",
+        "read_file",
+        "cat",
+        "bash",
+        "run_terminal",
+        "computer",
+        "sh",
+        "edit_file",
+        "write_file",
+    )
+
+
+def _handle_hash_mismatch_result(
+    raw_text: str,
+    cached_raw_text: str,
+    content_hash: str,
+    cached_hash: str,
+    normalized_error: str | None,
+    tool_name: Any,
+    compression_level: str,
+    context: dict[str, Any],
+) -> tuple[str, int]:
+    """Handle the case when content hash doesn't match (content changed)."""
+    if normalized_error:
+        stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
+        saved = len(raw_text) - len(stub)
+        if saved < 0:
+            return normalized_error + "\n", 0
+        return stub, saved
+    compressed = tok_tool_result(
+        raw_text,
+        compression_level=compression_level,
+        tool_context=context,
+    )
+    header = f">>> tool:{tool_name}|delta|changed\n"
+    return header + compressed, len(raw_text) - (len(header) + len(compressed))
+
+
+def _handle_diff_result(
+    raw_text: str,
+    cached_raw_text: str,
+    content_hash: str,
+    cached_hash: str,
+    normalized_error: str | None,
+    tool_name: Any,
+    compression_level: str,
+    context: dict[str, Any],
+) -> tuple[str, int]:
+    """Handle the case when diff is empty or too large."""
+    # Content differs but diff is empty (edge case with trailing newlines)
+    if not content_hash != cached_hash:
+        pass  # Treat as changed content
+    elif normalized_error:
+        stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
+        saved = len(raw_text) - len(stub)
+        if saved < 0:
+            return normalized_error + "\n", 0
+        return stub, saved
+    compressed = tok_tool_result(
+        raw_text,
+        compression_level=compression_level,
+        tool_context=context,
+    )
+    header = f">>> tool:{tool_name}|delta|changed\n"
+    return header + compressed, len(raw_text) - (len(header) + len(compressed))
+
+
+def _build_diff_result(
+    raw_text: str,
+    tool_name: Any,
+    normalized_tool_name: str,
+    diff_lines: list[str],
+) -> tuple[str, int]:
+    """Build the result with diff output."""
+    changed_lines = _count_changed_lines(diff_lines)
+    header = f">>> tool:{tool_name}|delta|changed_lines:{changed_lines}"
+    diff_text = "".join(diff_lines)
+    if _should_strip_diff_whitespace(normalized_tool_name):
+        stripped_diff = [l for l in diff_lines if not l.startswith(" ")]
+        diff_text = "".join(stripped_diff)
+    result = header + "\n" + diff_text
+    saved = len(raw_text) - len(result)
+    if saved > 0:
+        log_delta_compress(str(tool_name), len(raw_text), len(result))
+    return result, saved
+
+
 def _process_cache_hit(
     raw: str,
     raw_text: str,
@@ -843,73 +995,36 @@ def _process_cache_hit(
     diff_lines = list(difflib.unified_diff(old_lines, new_lines))
     diff_text = "".join(diff_lines)
 
-    if host_stub_replayed and entry_length == 3:
-        result_cache[cache_key] = (
-            cached_hash,
-            cached_raw,
-            time_module.time(),
-        )
-    else:
-        result_cache[cache_key] = (
-            content_hash,
-            raw,
-            time_module.time(),
-        )
+    _update_cache_after_hit(
+        result_cache,
+        cache_key,
+        host_stub_replayed,
+        entry_length,
+        cached_hash,
+        cached_raw,
+        content_hash,
+        raw,
+    )
 
     if not diff_lines or len(diff_text) >= 0.7 * len(raw_text):
-        # Verify content is actually identical when diff is empty
-        # (empty diff can occur for files differing only in trailing newlines)
-        if not diff_lines and content_hash != cached_hash:
-            # Content differs but diff is empty (edge case with trailing newlines)
-            # Treat as changed content
-            pass
-        elif not diff_lines:
-            # Content is truly identical - return unchanged stub
+        if not diff_lines and content_hash == cached_hash:
             stub = f">>> tool:{tool_name}|unchanged|cached"
             log_delta_compress(str(tool_name), len(raw_text), len(stub))
             return stub, len(raw_text) - len(stub)
-        if normalized_error:
-            stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
-            saved = len(raw_text) - len(stub)
-            if saved < 0:
-                return normalized_error + "\n", 0
-            return stub, saved
-        compressed = tok_tool_result(
+        return _handle_diff_result(
             raw_text,
-            compression_level=compression_level,
-            tool_context=context,
-        )
-        header = f">>> tool:{tool_name}|delta|changed\n"
-        return header + compressed, len(raw_text) - (
-            len(header) + len(compressed)
+            cached_raw_text,
+            content_hash,
+            cached_hash,
+            normalized_error,
+            tool_name,
+            compression_level,
+            context,
         )
 
-    changed_lines = sum(
-        1
-        for l in diff_lines
-        if l.startswith(("+", "-")) and not l.startswith(("+++", "---"))
+    return _build_diff_result(
+        raw_text, tool_name, normalized_tool_name, diff_lines
     )
-    header = f">>> tool:{tool_name}|delta|changed_lines:{changed_lines}"
-
-    if normalized_tool_name in (
-        "view_file",
-        "read_file",
-        "cat",
-        "bash",
-        "run_terminal",
-        "computer",
-        "sh",
-        "edit_file",
-        "write_file",
-    ):
-        stripped_diff = [l for l in diff_lines if not l.startswith(" ")]
-        diff_text = "".join(stripped_diff)
-
-    result = header + "\n" + diff_text
-    saved = len(raw_text) - len(result)
-    if saved > 0:
-        log_delta_compress(str(tool_name), len(raw_text), len(result))
-    return result, saved
 
 
 def _should_replay_host_stub(
@@ -1108,6 +1223,7 @@ def compress_tool_results(
     hot_summary_records: dict[str, Any] | None = None,
     session_files_read: set[str] | None = None,
     files_fully_delivered: dict[str, int] | None = None,
+    first_exact_evidence_seen: set[str] | None = None,
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -1124,6 +1240,7 @@ def compress_tool_results(
         hot_summary_records=hot_summary_records,
         session_files_read=session_files_read,
         files_fully_delivered=files_fully_delivered,
+        first_exact_evidence_seen=first_exact_evidence_seen,
         current_turn=current_turn,
         keep_turns_window=keep_turns_window,
     )
@@ -1186,6 +1303,7 @@ def compress_recent_window(
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     threshold: int = RECENT_WINDOW_THRESHOLD,
     tool_compatible: bool = False,
+    first_exact_evidence_seen: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     from ._pipeline import compress_recent_window_impl
@@ -1195,13 +1313,57 @@ def compress_recent_window(
         tool_use_id_to_context=tool_use_id_to_context,
         threshold=threshold,
         tool_compatible=tool_compatible,
+        first_exact_evidence_seen=first_exact_evidence_seen,
     )
 
 
-def compress_user_prompt(prompt: str) -> str:
-    """Extract tasks, requirements, and constraints from a verbose prompt."""
-    lines = [ln.strip() for ln in prompt.splitlines() if ln.strip()]
-    filtered_lines: list[str] = []
+def _extract_goal_from_line(line: str) -> str | None:
+    """Extract goal from a single line if it matches goal patterns."""
+    lower = line.lower()
+    if any(
+        prefix in lower
+        for prefix in (
+            "task:",
+            "goal:",
+            "requirement:",
+            "implement ",
+            "add ",
+        )
+    ):
+        return line[:60]
+    if line.startswith(("- ", "* ", "1. ")) and any(
+        keyword in lower
+        for keyword in ("should", "must", "need to", "implement")
+    ):
+        return re.sub(r"^[-*1.\s]+", "", line)[:60]
+    return None
+
+
+def _extract_constraint_from_line(line: str) -> str | None:
+    """Extract constraint from a single line if it matches constraint patterns."""
+    lower = line.lower()
+    if any(
+        keyword in lower
+        for keyword in ("avoid", "don't", "do not", "never", "only")
+    ):
+        return line[:60]
+    return None
+
+
+def _extract_files_from_line(line: str) -> set[str]:
+    """Extract file references from a single line."""
+    files: set[str] = set()
+    for match in re.finditer(
+        r"\b([\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|yaml|sh|txt|css|html|sql|rs|go|rb))\b",
+        line,
+    ):
+        files.add(match.group(1))
+    return files
+
+
+def _filter_prompt_lines(lines: list[str]) -> list[str]:
+    """Filter out lines that should be excluded from prompt processing."""
+    filtered: list[str] = []
     for line in lines:
         lower = line.lower()
         if (
@@ -1213,48 +1375,41 @@ def compress_user_prompt(prompt: str) -> str:
             )
         ):
             continue
-        filtered_lines.append(line)
+        filtered.append(line)
+    return filtered
 
-    if not filtered_lines and "optimized task context" in prompt.lower():
-        return re.sub(
-            r"### Optimized Task Context\n", "", prompt, flags=re.I
-        ).strip()
 
+def _extract_prompt_content(
+    filtered_lines: list[str],
+) -> tuple[list[str], list[str], set[str]]:
+    """Extract goals, constraints, and files from filtered lines.
+
+    Returns (goals, constraints, files).
+    """
     goals: list[str] = []
     constraints: list[str] = []
     files: set[str] = set()
 
     for line in filtered_lines:
-        lower = line.lower()
-        if any(
-            prefix in lower
-            for prefix in (
-                "task:",
-                "goal:",
-                "requirement:",
-                "implement ",
-                "add ",
-            )
-        ):
-            goals.append(line[:60])
-        elif line.startswith(("- ", "* ", "1. ")) and any(
-            keyword in lower
-            for keyword in ("should", "must", "need to", "implement")
-        ):
-            goals.append(re.sub(r"^[-*1.\s]+", "", line)[:60])
+        goal = _extract_goal_from_line(line)
+        if goal:
+            goals.append(goal)
+        constraint = _extract_constraint_from_line(line)
+        if constraint:
+            constraints.append(constraint)
+        files.update(_extract_files_from_line(line))
 
-        if any(
-            keyword in lower
-            for keyword in ("avoid", "don't", "do not", "never", "only")
-        ):
-            constraints.append(line[:60])
+    return goals, constraints, files
 
-        for match in re.finditer(
-            r"\b([\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|yaml|sh|txt|css|html|sql|rs|go|rb))\b",
-            line,
-        ):
-            files.add(match.group(1))
 
+def _build_prompt_result(
+    goals: list[str],
+    constraints: list[str],
+    files: set[str],
+    filtered_lines: list[str],
+    original_prompt: str,
+) -> str:
+    """Build the final prompt compression result."""
     parts: list[str] = []
     if goals:
         parts.append(f"goal:{','.join(goals[:2])}")
@@ -1267,6 +1422,22 @@ def compress_user_prompt(prompt: str) -> str:
         for line in filtered_lines:
             if len(line) > 10:
                 return f"goal:{line[:100].strip()}"
-        return f"goal:{prompt[:100].strip()}"
+        return f"goal:{original_prompt[:100].strip()}"
 
     return "|".join(parts)
+
+
+def compress_user_prompt(prompt: str) -> str:
+    """Extract tasks, requirements, and constraints from a verbose prompt."""
+    lines = [ln.strip() for ln in prompt.splitlines() if ln.strip()]
+    filtered_lines = _filter_prompt_lines(lines)
+
+    if not filtered_lines and "optimized task context" in prompt.lower():
+        return re.sub(
+            r"### Optimized Task Context\n", "", prompt, flags=re.I
+        ).strip()
+
+    goals, constraints, files = _extract_prompt_content(filtered_lines)
+    return _build_prompt_result(
+        goals, constraints, files, filtered_lines, prompt
+    )

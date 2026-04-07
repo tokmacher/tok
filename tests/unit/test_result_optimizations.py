@@ -1,4 +1,5 @@
 from tok.compression import truncate_large_result, tok_tool_result
+from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
 
 
@@ -13,6 +14,65 @@ def test_semantic_truncation():
     assert "... [TRUNCATED" in truncated
     assert "line 0:" in truncated
     assert "line 99:" in truncated
+
+
+def test_semantic_truncation_prefers_structure_boundary():
+    lines = [
+        "class Example:",
+        "    def alpha(self):",
+        "        return 1",
+    ]
+    lines.extend([f"        alpha payload line {i}" for i in range(6)])
+    lines.append("")
+    lines.append("class NextExample:")
+    lines.extend([f"    beta payload line {i}" for i in range(36)])
+
+    large_text = "\n".join(lines)
+    assert len(large_text) > 750
+
+    truncated = truncate_large_result(large_text, limit=500)
+    assert "... [TRUNCATED" in truncated
+    assert "continue at line" in truncated
+    assert "\n\n... [TRUNCATED" in truncated
+
+
+def test_stable_file_summary_prefers_structural_lines():
+    text = "\n".join(
+        [
+            "class Example:",
+            "    def resolve(self):",
+            "        logger.debug('noise')",
+            "        value = compute_value()",
+            "        return value",
+            "",
+            "def helper():",
+            "    pass",
+        ]
+    )
+
+    summary = build_file_summary(text, max_chars=280, max_lines=6)
+
+    assert "class Example:" in summary
+    assert "def resolve(self):" in summary
+    assert "value = compute_value()" in summary or "return value" in summary
+    assert "logger.debug" not in summary
+
+
+def test_stable_search_summary_prefers_matched_code_lines():
+    text = "\n".join(
+        [
+            "src/example.py:3:        logger.debug('noise')",
+            "src/example.py:4:    def resolve(self):",
+            "src/example.py:5:        result = compute_value()",
+            "src/example.py:6:        return result",
+        ]
+    )
+
+    summary = build_search_summary(text, max_chars=280, max_lines=4)
+
+    assert "def resolve(self):" in summary
+    assert "result = compute_value()" in summary or "return result" in summary
+    assert "logger.debug" not in summary
 
 
 def test_result_cache_persistence(tmp_path):

@@ -9,15 +9,18 @@ import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from ..compression import FILE_LIKE_TOOLS
 
 SEARCH_LIKE_TOOLS = frozenset({"grep", "grep_search", "search", "rg"})
 COMMAND_LIKE_TOOLS = frozenset({"bash", "sh", "run_terminal", "computer"})
+LISTING_LIKE_TOOLS = frozenset({"list_dir", "ls"})
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _SCOPE_RE = re.compile(r"^\s*(class |def |async def )")
+_SEARCH_RESULT_LINE_RE = re.compile(r"^(.*?:\d+(?::\d+)?):\s*(.*)$")
+_ASSIGNMENT_RE = re.compile(r"(?<![=!<>])=(?!=)")
 _SHELL_UNSAFE_MARKERS = (
     "&&",
     "||",
@@ -33,7 +36,12 @@ _SHELL_UNSAFE_MARKERS = (
 )
 
 _EVIDENCE_DOMAIN = Literal[
-    "file_current", "file_history", "search", "file_metadata", "unknown"
+    "file_current",
+    "file_history",
+    "search",
+    "listing",
+    "file_metadata",
+    "unknown",
 ]
 _EVIDENCE_VARIANT = Literal[
     "full", "snippet", "diff", "metadata", "copy", "search_results"
@@ -145,81 +153,94 @@ def _is_temp_path(path: str) -> bool:
     return any(normalized.startswith(p) for p in _TMP_PREFIXES)
 
 
-def resolve_evidence_intent(
-    tool_name: str,
-    *,
-    path: str | None = None,
-    query: str | None = None,
-    command: str | None = None,
+def _resolve_command_intent(
+    command: str, path: str | None
 ) -> EvidenceIntent | None:
-    lowered = str(tool_name or "").strip().lower()
+    """Resolve evidence intent for command-like tools."""
+    git_path, git_rev = extract_git_history_path(command)
+    if git_path:
+        return EvidenceIntent(
+            domain="file_history",
+            anchor=git_path,
+            variant="diff",
+            novelty_key=git_rev,
+            display_label=f"{git_path}@{git_rev}",
+            source_kind="git_history",
+        )
 
-    if lowered in COMMAND_LIKE_TOOLS and command:
-        git_path, git_rev = extract_git_history_path(command)
-        if git_path:
-            return EvidenceIntent(
-                domain="file_history",
-                anchor=git_path,
-                variant="diff",
-                novelty_key=git_rev,
-                display_label=f"{git_path}@{git_rev}",
-                source_kind="git_history",
-            )
+    shell_query, shell_scope = extract_shell_search_params(command)
+    if shell_query:
+        scope = shell_scope or ""
+        anchor = json.dumps(
+            {"query": shell_query, "scope": scope},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return EvidenceIntent(
+            domain="search",
+            anchor=anchor,
+            variant="search_results",
+            novelty_key=anchor,
+            display_label=(
+                f"{shell_query} @ {scope}" if scope else shell_query
+            ),
+            source_kind="shell_search",
+        )
 
-        shell_query, shell_scope = extract_shell_search_params(command)
-        if shell_query:
-            scope = shell_scope or ""
-            anchor = json.dumps(
-                {"query": shell_query, "scope": scope},
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            return EvidenceIntent(
-                domain="search",
-                anchor=anchor,
-                variant="search_results",
-                novelty_key=anchor,
-                display_label=(
-                    f"{shell_query} @ {scope}" if scope else shell_query
-                ),
-                source_kind="shell_search",
-            )
+    meta_subtype = extract_metadata_probe(command)
+    if meta_subtype:
+        meta_path = path or ""
+        domain = (
+            "listing" if meta_subtype in {"ls", "find"} else "file_metadata"
+        )
+        return EvidenceIntent(
+            domain=domain,
+            anchor=normalize_path_target(meta_path) or meta_subtype,
+            variant="metadata",
+            novelty_key=meta_subtype,
+            display_label=(
+                f"{meta_subtype}:{meta_path}" if meta_path else meta_subtype
+            ),
+            source_kind="metadata_probe",
+        )
 
-        meta_subtype = extract_metadata_probe(command)
-        if meta_subtype:
-            meta_path = path or ""
-            return EvidenceIntent(
-                domain="file_metadata",
-                anchor=normalize_path_target(meta_path) or meta_subtype,
-                variant="metadata",
-                novelty_key=meta_subtype,
-                display_label=(
-                    f"{meta_subtype}:{meta_path}"
-                    if meta_path
-                    else meta_subtype
-                ),
-                source_kind="metadata_probe",
-            )
+    shell_read_path = extract_shell_file_read_path(command)
+    if shell_read_path:
+        is_temp = _is_temp_path(shell_read_path)
+        return EvidenceIntent(
+            domain="file_current",
+            anchor=(normalize_path_target(shell_read_path) or "path-missing"),
+            variant="copy" if is_temp else "full",
+            novelty_key="",
+            display_label=shell_read_path,
+            source_kind="temp_copy" if is_temp else "shell_read",
+        )
+    return None
 
-        shell_read_path = extract_shell_file_read_path(command)
-        if shell_read_path:
-            is_temp = _is_temp_path(shell_read_path)
-            return EvidenceIntent(
-                domain="file_current",
-                anchor=(
-                    normalize_path_target(shell_read_path) or "path-missing"
-                ),
-                variant="copy" if is_temp else "full",
-                novelty_key="",
-                display_label=shell_read_path,
-                source_kind="temp_copy" if is_temp else "shell_read",
-            )
+
+def _resolve_native_intent(
+    tool_name: str,
+    path: str | None,
+    query: str | None,
+) -> EvidenceIntent | None:
+    """Resolve evidence intent for native tools (file, listing, search)."""
+    lowered = tool_name
 
     if lowered in FILE_LIKE_TOOLS and path:
         return EvidenceIntent(
             domain="file_current",
             anchor=normalize_path_target(path) or "path-missing",
             variant="full",
+            novelty_key="",
+            display_label=path,
+            source_kind="native_tool",
+        )
+
+    if lowered in LISTING_LIKE_TOOLS and path:
+        return EvidenceIntent(
+            domain="listing",
+            anchor=normalize_path_target(path) or "path-missing",
+            variant="search_results",
             novelty_key="",
             display_label=path,
             source_kind="native_tool",
@@ -240,8 +261,24 @@ def resolve_evidence_intent(
             display_label=f"{query} @ {scope}" if scope else query,
             source_kind="native_tool",
         )
-
     return None
+
+
+def resolve_evidence_intent(
+    tool_name: str,
+    *,
+    path: str | None = None,
+    query: str | None = None,
+    command: str | None = None,
+) -> EvidenceIntent | None:
+    lowered = str(tool_name or "").strip().lower()
+
+    if lowered in COMMAND_LIKE_TOOLS and command:
+        intent = _resolve_command_intent(command, path)
+        if intent:
+            return intent
+
+    return _resolve_native_intent(lowered, path, query)
 
 
 def extract_shell_file_read_path(command: str) -> str | None:
@@ -348,6 +385,8 @@ def normalize_tool_family(
     lowered = str(tool_name or "").strip().lower()
     if lowered in FILE_LIKE_TOOLS:
         return "file_read"
+    if lowered in LISTING_LIKE_TOOLS:
+        return "listing"
     if lowered in COMMAND_LIKE_TOOLS and extract_shell_file_read_path(
         command or ""
     ):
@@ -359,12 +398,165 @@ def normalize_tool_family(
     return lowered or "unknown"
 
 
+def _normalize_identity_args(
+    args: dict[str, Any] | None,
+    *,
+    excluded_keys: frozenset[str],
+) -> dict[str, Any]:
+    if not isinstance(args, dict):
+        return {}
+    normalized: dict[str, Any] = {}
+    for key, value in args.items():
+        if key in excluded_keys:
+            continue
+        if isinstance(value, str):
+            cleaned = " ".join(value.split())
+            if cleaned:
+                normalized[key] = cleaned
+            continue
+        if isinstance(value, int | float | bool):
+            normalized[key] = value
+            continue
+        if value is not None:
+            normalized[key] = str(value).strip()
+    return normalized
+
+
+def _normalize_command_parts(parts: list[str]) -> list[str]:
+    """Normalize command parts by stripping env wrappers and uv run."""
+    while parts and Path(parts[0]).name.lower() in {"env", "/usr/bin/env"}:
+        parts = parts[1:]
+    if (
+        len(parts) >= 2
+        and Path(parts[0]).name.lower() == "uv"
+        and parts[1] == "run"
+    ):
+        parts = parts[2:]
+    return parts
+
+
+def _parse_listing_args(parts: list[str]) -> tuple[str, str]:
+    """Parse listing command arguments to extract path and mode.
+
+    Returns (listing_path, mode_string).
+    """
+    listing_path = ""
+    mode_parts: list[str] = []
+    for arg in parts:
+        if arg == "--":
+            continue
+        if arg.startswith("-"):
+            mode_parts.append(arg)
+            continue
+        if not listing_path:
+            listing_path = arg
+        else:
+            mode_parts.append(arg)
+    return listing_path, " ".join(mode_parts).strip()
+
+
+def _extract_shell_listing_target(command: str) -> tuple[str, str]:
+    text = " ".join(str(command or "").strip().split())
+    if not text:
+        return "", ""
+    try:
+        parts = shlex.split(text)
+    except Exception:
+        return "", ""
+    parts = _normalize_command_parts(parts)
+    if not parts:
+        return "", ""
+    command_name = Path(parts[0]).name.lower()
+    if command_name not in {"ls", "find"}:
+        return "", ""
+    return _parse_listing_args(parts[1:])
+
+
+def evidence_identity_key(
+    tool_name: str,
+    *,
+    path: str | None = None,
+    query: str | None = None,
+    command: str | None = None,
+    args: dict[str, Any] | None = None,
+) -> str | None:
+    """Return the exact-observation identity key for an evidence target."""
+    lowered = str(tool_name or "").strip().lower()
+    tool_args = args if isinstance(args, dict) else {}
+    excluded = frozenset(
+        {
+            "path",
+            "file_path",
+            "AbsolutePath",
+            "TargetFile",
+            "query",
+            "pattern",
+            "search",
+            "text",
+            "command",
+            "cmd",
+            "tok_bypass_cache",
+            "offset",
+            "limit",
+            "start",
+            "end",
+        }
+    )
+
+    shell_file_read_path = extract_shell_file_read_path(command or "")
+    if lowered in FILE_LIKE_TOOLS or shell_file_read_path:
+        resolved_path = path or shell_file_read_path or ""
+        return "file_read|" + (
+            normalize_path_target(resolved_path) or "path-missing"
+        )
+
+    shell_query, shell_scope = extract_shell_search_params(command or "")
+    if lowered in SEARCH_LIKE_TOOLS or shell_query:
+        query_value = query or shell_query or ""
+        scope_value = normalize_path_target(path or shell_scope or "")
+        payload = {
+            "flags": _normalize_identity_args(
+                tool_args,
+                excluded_keys=excluded,
+            ),
+            "query": " ".join(str(query_value or "").split()),
+            "scope": scope_value,
+        }
+        return "search|" + json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        )
+
+    shell_listing_path, shell_listing_mode = _extract_shell_listing_target(
+        command or ""
+    )
+    if lowered in LISTING_LIKE_TOOLS or shell_listing_path:
+        listing_path = normalize_path_target(path or shell_listing_path or "")
+        mode_payload = (
+            {"command_mode": shell_listing_mode}
+            if shell_listing_mode
+            else _normalize_identity_args(
+                tool_args,
+                excluded_keys=excluded,
+            )
+        )
+        payload = {
+            "mode": mode_payload,
+            "path": listing_path or "path-missing",
+        }
+        return "listing|" + json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        )
+
+    return None
+
+
 def logical_target_identity(
     tool_name: str,
     *,
     path: str | None = None,
     query: str | None = None,
     command: str | None = None,
+    args: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     family = normalize_tool_family(tool_name, query=query, command=command)
     if family == "file_read":
@@ -376,6 +568,32 @@ def logical_target_identity(
         payload = {
             "query": " ".join(str(query or "").split()),
             "search_path": normalize_path_target(path or ""),
+        }
+        return family, json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        )
+    if family == "listing":
+        shell_path, shell_mode = _extract_shell_listing_target(command or "")
+        target_path = (
+            normalize_path_target(path or shell_path or "") or "path-missing"
+        )
+        normalized_args = _normalize_identity_args(
+            args if isinstance(args, dict) else {},
+            excluded_keys=frozenset(
+                {
+                    "path",
+                    "file_path",
+                    "AbsolutePath",
+                    "TargetFile",
+                    "text",
+                    "command",
+                    "cmd",
+                }
+            ),
+        )
+        payload = {
+            "mode": shell_mode or normalized_args,
+            "path": target_path,
         }
         return family, json.dumps(
             payload, sort_keys=True, separators=(",", ":")
@@ -416,6 +634,9 @@ def display_target_label(
         if q and p:
             return f"{q} @ {p}"
         return q or logical_target
+    if family == "listing":
+        p = str(path or "").strip()
+        return p or logical_target
     if family == "command":
         family_name = normalize_command_family(command or "")
         return family_name or logical_target
@@ -454,6 +675,112 @@ def _non_empty_lines(text: str) -> list[str]:
     ]
 
 
+def _summary_scoring_text(line: str) -> str:
+    stripped = str(line or "").strip()
+    if not stripped:
+        return ""
+    match = _SEARCH_RESULT_LINE_RE.match(stripped)
+    if match:
+        payload = match.group(2).strip()
+        if payload:
+            return payload
+    return stripped
+
+
+# Scoring lookup tables for _summary_line_score
+_HIGH_SCORE_PREFIXES = [
+    (("def ", "async def ", "class "), 120),
+    (("return ", "raise ", "yield "), 110),
+    (("import ", "from "), 90),
+    (
+        (
+            "if ",
+            "elif ",
+            "else:",
+            "for ",
+            "while ",
+            "try:",
+            "except ",
+            "with ",
+            "match ",
+            "case ",
+        ),
+        70,
+    ),
+]
+_LOW_SCORE_PREFIXES = [("@", 20)]
+_NEGATIVE_SCORE_PREFIXES = [
+    (("pass", "continue", "break"), 80),
+    ("#", 40),
+]
+_NEGATIVE_TOKENS = frozenset(
+    ("logger.debug", "logger.info", "logger.warning", "logger.error", "print(")
+)
+_NEGATIVE_EXCEPTIONS = frozenset(("except Exception", "except BaseException"))
+
+
+def _calculate_positive_score(text: str, lower: str) -> int:
+    """Calculate positive score contribution from prefixes."""
+    score = 0
+    for prefixes, points in _HIGH_SCORE_PREFIXES:
+        if lower.startswith(prefixes):
+            score += points
+    for prefix, points in _LOW_SCORE_PREFIXES:
+        if lower.startswith(prefix):
+            score += points
+    return score
+
+
+def _calculate_negative_score(text: str, lower: str) -> int:
+    """Calculate negative score contribution."""
+    score = 0
+    for prefixes, points in _NEGATIVE_SCORE_PREFIXES:
+        if lower.startswith(prefixes):
+            score -= points
+    for exc in _NEGATIVE_EXCEPTIONS:
+        if exc in text:
+            score -= 80
+    if any(token in text for token in _NEGATIVE_TOKENS):
+        score -= 60
+    return score
+
+
+def _summary_line_score(line: str) -> int:
+    text = _summary_scoring_text(line)
+    if not text:
+        return -1000
+
+    score = 0
+    lower = text.lstrip()
+
+    score += _calculate_positive_score(text, lower)
+
+    if _ASSIGNMENT_RE.search(text) and not any(
+        token in text for token in ("==", "!=", ">=", "<=")
+    ):
+        score += 100
+    if "(" in text and ")" in text and not lower.startswith("#"):
+        score += 30
+
+    score += _calculate_negative_score(text, lower)
+
+    return score
+
+
+def _structural_summary_indices(lines: list[str], max_lines: int) -> list[int]:
+    scored: list[tuple[int, int]] = []
+    for idx, line in enumerate(lines):
+        score = _summary_line_score(line)
+        if score > 0:
+            scored.append((score, idx))
+
+    if not scored:
+        return []
+
+    top = sorted(scored, key=lambda item: (-item[0], item[1]))[:max_lines]
+    return sorted({idx for _, idx in top})
+
+
 def _find_enclosing_scope(
     all_lines: list[str], summary_lines: list[str]
 ) -> str:
@@ -473,11 +800,19 @@ def build_file_summary(text: str, *, max_chars: int, max_lines: int) -> str:
     lines = _non_empty_lines(text)
     if not lines:
         return ""
+    structural_indices = _structural_summary_indices(lines, max_lines)
+    all_lines = str(text or "").splitlines()
+    if structural_indices:
+        head = [lines[idx] for idx in structural_indices]
+        scope_prefix = _find_enclosing_scope(all_lines, head)
+        if scope_prefix and scope_prefix not in head:
+            head.insert(0, scope_prefix)
+        return _join_summary_lines(head, max_chars)
+
     head = lines[: min(8, max_lines)]
     tail_count = min(4, max(0, max_lines - len(head)))
     if len(lines) > 12 and tail_count:
         head.extend(lines[-tail_count:])
-    all_lines = str(text or "").splitlines()
     scope_prefix = _find_enclosing_scope(all_lines, head)
     if scope_prefix and scope_prefix not in head:
         head.insert(0, scope_prefix)
@@ -505,7 +840,16 @@ def build_file_skeleton(text: str, *, max_chars: int, max_lines: int) -> str:
 
 
 def build_search_summary(text: str, *, max_chars: int, max_lines: int) -> str:
-    return _join_summary_lines(_non_empty_lines(text)[:max_lines], max_chars)
+    lines = _non_empty_lines(text)
+    if not lines:
+        return ""
+
+    structural_indices = _structural_summary_indices(lines, max_lines)
+    if structural_indices:
+        selected = [lines[idx] for idx in structural_indices]
+        return _join_summary_lines(selected, max_chars)
+
+    return _join_summary_lines(lines[:max_lines], max_chars)
 
 
 def canonicalize_command_output(text: str) -> str:
@@ -548,6 +892,10 @@ def build_summary_for_family(
         return build_search_summary(
             text, max_chars=search_max_chars, max_lines=search_max_lines
         )
+    if family == "listing":
+        return build_search_summary(
+            text, max_chars=search_max_chars, max_lines=search_max_lines
+        )
     if family == "command":
         return build_command_summary(
             text, max_chars=command_max_chars, max_lines=command_max_lines
@@ -576,6 +924,7 @@ class HotSummaryRecord:
     token_cost: int
     result_digest: str
     last_seen_turn: int
+    exact_evidence_key: str = ""
     hot_promotion_turn: int = 0
     stuck_promotion_turn: int = 0
     last_injected_turn: int = 0

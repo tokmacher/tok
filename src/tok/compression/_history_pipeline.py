@@ -53,6 +53,7 @@ from ..runtime.config import RESULT_CACHE_TTL_SECONDS
 from ..runtime.repeat_targets import (
     build_file_skeleton,
     build_file_summary,
+    evidence_identity_key,
     normalize_path_target,
 )
 from ..utils.event_logging import log_semantic_dedup
@@ -602,6 +603,7 @@ def compress_tool_results_impl(
     hot_summary_records: dict[str, Any] | None = None,
     session_files_read: set[str] | None = None,
     files_fully_delivered: dict[str, int] | None = None,
+    first_exact_evidence_seen: set[str] | None = None,
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -664,6 +666,28 @@ def compress_tool_results_impl(
             return False
         return any(k in args for k in ("offset", "limit", "start", "end"))
 
+    def _first_exact_guard(context: dict[str, Any] | None, raw: str) -> bool:
+        if first_exact_evidence_seen is None or not context:
+            return False
+        key = evidence_identity_key(
+            str(context.get("name", "")),
+            path=_extract_normalized_path(context),
+            query=str(context.get("query") or "").strip() or None,
+            command=str(
+                (context.get("args") or {}).get("command")
+                or (context.get("args") or {}).get("cmd")
+                or ""
+            ).strip()
+            or None,
+            args=context.get("args")
+            if isinstance(context.get("args"), dict)
+            else None,
+        )
+        if not key or key in first_exact_evidence_seen:
+            return False
+        first_exact_evidence_seen.add(key)
+        return True
+
     def _truncate_stable_snippet(text: str, limit: int) -> str:
         cleaned = " ".join(str(text or "").split())
         if len(cleaned) <= limit:
@@ -671,6 +695,28 @@ def compress_tool_results_impl(
         if limit <= 1:
             return cleaned[:limit]
         return cleaned[: limit - 1].rstrip() + "…"
+
+    def _preserve_first_exact_observation(
+        context: dict[str, Any] | None,
+        raw: str,
+        norm_path: str = "",
+    ) -> bool:
+        if not _first_exact_guard(context, raw):
+            return False
+        if (
+            session_files_read is not None
+            and norm_path
+            and norm_path not in session_files_read
+        ):
+            session_files_read.add(norm_path)
+            if (
+                semantic_hash_cache is not None
+                and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
+            ):
+                _cache_semantic_hash(context, raw, semantic_hash_cache)
+        if norm_path:
+            _mark_file_fully_delivered(norm_path)
+        return True
 
     for msg in messages:
         content = msg.get("content")
@@ -699,6 +745,11 @@ def compress_tool_results_impl(
                     continue
                 if context:
                     norm_path = _extract_normalized_path(context)
+                    if _preserve_first_exact_observation(
+                        context, content, norm_path
+                    ):
+                        msg["content"] = content
+                        continue
                     if (
                         session_files_read is not None
                         and norm_path
@@ -765,6 +816,12 @@ def compress_tool_results_impl(
                     breakdown["tok_bypass_cache_applied"] = (
                         breakdown.get("tok_bypass_cache_applied", 0) + 1
                     )
+                    continue
+
+            if ctx:
+                norm_path = _extract_normalized_path(ctx)
+                if _preserve_first_exact_observation(ctx, raw, norm_path):
+                    block["content"] = raw
                     continue
 
             if _is_precision_read_context(ctx):
@@ -906,6 +963,11 @@ def compress_tool_results_impl(
             ):
                 context = ctx
                 if context:
+                    if _preserve_first_exact_observation(
+                        context, raw, norm_path
+                    ):
+                        block["content"] = raw
+                        continue
                     compressed, saved = _apply_result_cache(
                         raw,
                         context,
@@ -1085,6 +1147,7 @@ def compress_recent_window_impl(
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     threshold: int = RECENT_WINDOW_THRESHOLD,
     tool_compatible: bool = False,
+    first_exact_evidence_seen: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
         if not context:
@@ -1096,6 +1159,55 @@ def compress_recent_window_impl(
         if not isinstance(args, dict):
             return False
         return any(k in args for k in ("offset", "limit", "start", "end"))
+
+    def _preserve_first_exact_observation(
+        context: dict[str, Any] | None,
+    ) -> bool:
+        if first_exact_evidence_seen is None or not context:
+            return False
+        key = evidence_identity_key(
+            str(context.get("name", "")),
+            path=str(context.get("path") or "").strip() or None,
+            query=str(context.get("query") or "").strip() or None,
+            command=str(
+                (context.get("args") or {}).get("command")
+                or (context.get("args") or {}).get("cmd")
+                or ""
+            ).strip()
+            or None,
+            args=context.get("args")
+            if isinstance(context.get("args"), dict)
+            else None,
+        )
+        if not key or key in first_exact_evidence_seen:
+            return False
+        first_exact_evidence_seen.add(key)
+        return True
+
+    def _first_exact_guard(
+        context: dict[str, Any] | None,
+        raw: str,
+    ) -> bool:
+        if first_exact_evidence_seen is None or not context:
+            return False
+        key = evidence_identity_key(
+            str(context.get("name", "")),
+            path=str(context.get("path") or "").strip() or None,
+            query=str(context.get("query") or "").strip() or None,
+            command=str(
+                (context.get("args") or {}).get("command")
+                or (context.get("args") or {}).get("cmd")
+                or ""
+            ).strip()
+            or None,
+            args=context.get("args")
+            if isinstance(context.get("args"), dict)
+            else None,
+        )
+        if not key or key in first_exact_evidence_seen:
+            return False
+        first_exact_evidence_seen.add(key)
+        return True
 
     breakdown: dict[str, int] = {}
     compressors: dict[str, Compressor] = {
@@ -1117,6 +1229,9 @@ def compress_recent_window_impl(
             tool_id = str(msg.get("tool_use_id", ""))
             ctx = (tool_use_id_to_context or {}).get(tool_id, {})
             if _is_precision_read_context(ctx):
+                continue
+            if _first_exact_guard(ctx, ""):
+                msg["content"] = content
                 continue
             tool_name = str(ctx.get("name", "")).lower()
             kind = _detect_tool_content_type_impl(content)
@@ -1153,10 +1268,43 @@ def compress_recent_window_impl(
             if not isinstance(raw, str):
                 continue
 
+            tool_id = block.get("tool_use_id", "")
+            ctx: dict[str, Any] | None = None
+            if tool_use_id_to_context is not None:
+                ctx = tool_use_id_to_context.get(tool_id)
+                if (
+                    ctx
+                    and isinstance(ctx.get("args"), dict)
+                    and ctx["args"].get("tok_bypass_cache")
+                ):
+                    breakdown["tok_bypass_cache_applied"] = (
+                        breakdown.get("tok_bypass_cache_applied", 0) + 1
+                    )
+                    continue
+
+            if first_exact_evidence_seen is not None and ctx:
+                key = evidence_identity_key(
+                    str(ctx.get("name", "")),
+                    path=str(ctx.get("path") or "").strip() or None,
+                    query=str(ctx.get("query") or "").strip() or None,
+                    command=str(
+                        (ctx.get("args") or {}).get("command")
+                        or (ctx.get("args") or {}).get("cmd")
+                        or ""
+                    ).strip()
+                    or None,
+                    args=ctx.get("args")
+                    if isinstance(ctx.get("args"), dict)
+                    else None,
+                )
+                if key and key not in first_exact_evidence_seen:
+                    first_exact_evidence_seen.add(key)
+                    block["content"] = raw
+                    continue
+
             kind = _detect_tool_content_type_impl(raw)
             if kind in {"raw", "file"}:
-                tool_id = block.get("tool_use_id", "")
-                ctx = (tool_use_id_to_context or {}).get(tool_id, {})
+                ctx = ctx or {}
                 if _is_precision_read_context(ctx):
                     continue
                 tool_name = str(ctx.get("name", "")).lower()

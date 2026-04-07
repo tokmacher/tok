@@ -95,6 +95,7 @@ def compress_tool_results_impl(
     hot_summary_records: dict[str, Any] | None = None,
     session_files_read: set[str] | None = None,
     files_fully_delivered: dict[str, int] | None = None,
+    first_exact_evidence_seen: set[str] | None = None,
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -109,6 +110,7 @@ def compress_tool_results_impl(
         hot_summary_records=hot_summary_records,
         session_files_read=session_files_read,
         files_fully_delivered=files_fully_delivered,
+        first_exact_evidence_seen=first_exact_evidence_seen,
         current_turn=current_turn,
         keep_turns_window=keep_turns_window,
     )
@@ -119,6 +121,7 @@ def compress_recent_window_impl(
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     threshold: int = RECENT_WINDOW_THRESHOLD,
     tool_compatible: bool = False,
+    first_exact_evidence_seen: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     _sync_threshold()
@@ -127,4 +130,5 @@ def compress_recent_window_impl(
         tool_use_id_to_context=tool_use_id_to_context,
         threshold=threshold,
         tool_compatible=tool_compatible,
+        first_exact_evidence_seen=first_exact_evidence_seen,
     )

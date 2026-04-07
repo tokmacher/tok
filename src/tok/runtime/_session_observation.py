@@ -85,20 +85,70 @@ def prepared_prompt_tokens(
     return token_count
 
 
+def _is_eligible_hot_record(
+    record: Any,
+    current_turn: int,
+    seen_exact_keys: set[str],
+) -> bool:
+    """Check if a hot summary record is eligible for hint injection."""
+    if record.tool_family == "search":
+        exact_key = record.exact_evidence_key
+        if not exact_key or exact_key not in seen_exact_keys:
+            return False
+    promoted_turn = max(record.hot_promotion_turn, record.stuck_promotion_turn)
+    if not promoted_turn or promoted_turn <= record.last_injected_turn:
+        return False
+    return current_turn >= promoted_turn
+
+
+def _build_hot_hint(
+    record: Any, current_turn: int
+) -> tuple[str, dict[str, int]]:
+    """Build a hot hint string and metrics for a single record.
+
+    Returns (hint_block, record_metrics).
+    """
+    label = record.display_target
+    if record.tool_family == "file_read":
+        reminder = f"@hot_recent_file:{label} |> {record.summary}"
+    elif record.tool_family == "search":
+        reminder = f"@hot_recent_search:{label} |> {record.summary}"
+    else:
+        reminder = f"@hot_recent_command:{label} |> {record.summary}"
+    guidance = (
+        "This target is stuck and unchanged. Reuse the cached result and move forward without rereading it."
+        if record.tool_family == "file_read" and record.stuck_promotion_turn
+        else "Reuse this cached result unless you have a concrete reason to reacquire it."
+    )
+    block = reminder + "\n" + guidance
+
+    metrics: dict[str, int] = {
+        "hot_recent_hint_injected": 1,
+        "reacquisition_tokens_avoided_estimate": record.token_cost,
+    }
+    if (
+        record.tool_family in {"search", "command"}
+        and record.unchanged_result_count > 0
+    ):
+        metrics["repeat_tool_collapse_applied"] = 1
+
+    record.last_injected_turn = current_turn
+    return block, metrics
+
+
 def hot_recent_runtime_hints(
     session: RuntimeSession,
 ) -> tuple[list[str], dict[str, int]]:
     current_turn = max(1, session.bridge_memory.turn)
-    candidates = []
-    for record in session._hot_summary_records.values():
-        promoted_turn = max(
-            record.hot_promotion_turn, record.stuck_promotion_turn
-        )
-        if not promoted_turn or promoted_turn <= record.last_injected_turn:
-            continue
-        if current_turn < promoted_turn:
-            continue
-        candidates.append(record)
+    seen_exact_keys = (
+        session._first_exact_evidence_seen
+        | session._pending_exact_evidence_keys
+    )
+    candidates = [
+        record
+        for record in session._hot_summary_records.values()
+        if _is_eligible_hot_record(record, current_turn, seen_exact_keys)
+    ]
     candidates.sort(
         key=lambda record: (
             record.stuck_window_count,
@@ -116,29 +166,10 @@ def hot_recent_runtime_hints(
         "reacquisition_tokens_avoided_estimate": 0,
     }
     for record in selected:
-        label = record.display_target
-        if record.tool_family == "file_read":
-            reminder = f"@hot_recent_file:{label} |> {record.summary}"
-        elif record.tool_family == "search":
-            reminder = f"@hot_recent_search:{label} |> {record.summary}"
-        else:
-            reminder = f"@hot_recent_command:{label} |> {record.summary}"
-        guidance = (
-            "This target is stuck and unchanged. Reuse the cached result and move forward without rereading it."
-            if record.tool_family == "file_read"
-            and record.stuck_promotion_turn
-            else "Reuse this cached result unless you have a concrete reason to reacquire it."
-        )
-        block = reminder + "\n" + guidance
+        block, record_metrics = _build_hot_hint(record, current_turn)
         hints.append(block)
-        metrics["hot_recent_hint_injected"] += 1
-        metrics["reacquisition_tokens_avoided_estimate"] += record.token_cost
-        if (
-            record.tool_family in {"search", "command"}
-            and record.unchanged_result_count > 0
-        ):
-            metrics["repeat_tool_collapse_applied"] += 1
-        record.last_injected_turn = current_turn
+        for key, value in record_metrics.items():
+            metrics[key] = metrics.get(key, 0) + value
     if hints:
         metrics["hot_hint_tokens_added"] = count_tokens("\n\n".join(hints))
     return hints, metrics
@@ -173,13 +204,18 @@ def evidence_intent_advisories(session: RuntimeSession) -> list[str]:
     return []
 
 
-def apply_predictive_cache_warming(
-    session: RuntimeSession, logical_target: str
-) -> dict[str, int]:
+def _is_same_directory(file_a: str, file_b: str) -> bool:
+    """Check if two file paths share the same parent directory."""
+    return str(file_a.rsplit("/", 1)[0]) == str(file_b.rsplit("/", 1)[0])
+
+
+def _collect_predictive_candidates(
+    session: RuntimeSession,
+    logical_target: str,
+    last_seen_turn: int,
+) -> list[str]:
+    """Collect candidate keys for predictive cache warming."""
     candidate_keys: list[str] = []
-    record = session._hot_summary_records.get(f"file_read|{logical_target}")
-    if not record:
-        return {}
     for key, other in sorted(
         session._hot_summary_records.items(),
         key=lambda item: item[1].last_seen_turn,
@@ -187,19 +223,24 @@ def apply_predictive_cache_warming(
     ):
         if key == f"file_read|{logical_target}":
             continue
-        if other.tool_family == "file_read" and str(
-            other.logical_target.rsplit("/", 1)[0]
-        ) == str(logical_target.rsplit("/", 1)[0]):
+        if other.tool_family == "file_read" and _is_same_directory(
+            other.logical_target, logical_target
+        ):
             candidate_keys.append(key)
         if other.tool_family == "search":
             same_turn = any(
-                event.turn_index == record.last_seen_turn
+                event.turn_index == last_seen_turn
                 and event.tool_family == "search"
                 and f"{event.tool_family}|{event.logical_target}" == key
                 for event in session._recent_repeat_target_events
             )
             if same_turn:
                 candidate_keys.append(key)
+    return candidate_keys
+
+
+def _dedupe_candidates(candidate_keys: list[str]) -> list[str]:
+    """Remove duplicate keys while preserving order."""
     deduped: list[str] = []
     seen: set[str] = set()
     for key in candidate_keys:
@@ -207,12 +248,31 @@ def apply_predictive_cache_warming(
             continue
         seen.add(key)
         deduped.append(key)
+    return deduped
+
+
+def _warm_cache_keys(session: RuntimeSession, selected: list[str]) -> int:
+    """Add selected keys to predictive cache warm set. Returns warmed count."""
     warmed = 0
-    selected = deduped[:TOK_PREDICTIVE_CACHE_TOP_K]
     for key in selected:
         if key in session._hot_summary_records:
             session._predictive_cache_warm_keys.add(key)
             warmed += 1
+    return warmed
+
+
+def apply_predictive_cache_warming(
+    session: RuntimeSession, logical_target: str
+) -> dict[str, int]:
+    record = session._hot_summary_records.get(f"file_read|{logical_target}")
+    if not record:
+        return {}
+    candidate_keys = _collect_predictive_candidates(
+        session, logical_target, record.last_seen_turn
+    )
+    deduped = _dedupe_candidates(candidate_keys)
+    selected = deduped[:TOK_PREDICTIVE_CACHE_TOP_K]
+    warmed = _warm_cache_keys(session, selected)
     if not selected:
         return {}
     return {

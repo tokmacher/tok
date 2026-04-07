@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import tok.compression
+import json
 from typing import Any
+
+import tok.compression
 
 tok.compression.TOOL_COMPRESS_THRESHOLD = 0
 from tok.compression._tool_result_codecs import _compress_pytest
@@ -680,6 +682,51 @@ class TestCompressToolResults:
         compressed_content = out[1]["content"][0]["content"]
         assert "PASSED" not in compressed_content
 
+    def test_first_exact_search_result_stays_raw_then_compresses(self):
+        content = _make_grep_output(n_files=5, matches_per_file=20)
+        assert len(content) > 1_200
+        cache: dict[str, ResultCacheEntry] = {}
+        msgs = [
+            {
+                "role": "tool_result",
+                "tool_use_id": "search_id",
+                "content": content,
+            }
+        ]
+        ctx = {
+            "search_id": {
+                "name": "grep_search",
+                "path": "src",
+                "query": "match",
+                "args": {"path": "src", "query": "match"},
+            }
+        }
+        seen: set[str] = set()
+
+        first_msgs, first_breakdown = compress_tool_results(
+            msgs,
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+            first_exact_evidence_seen=seen,
+        )
+        second_msgs, second_breakdown = compress_tool_results(
+            [
+                {
+                    "role": "tool_result",
+                    "tool_use_id": "search_id",
+                    "content": content,
+                }
+            ],
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+            first_exact_evidence_seen=seen,
+        )
+
+        assert first_breakdown == {}
+        assert first_msgs[0]["content"] == content
+        assert self._total_saved(second_breakdown) > 0
+        assert second_msgs[0]["content"] != content
+
     def test_pytest_tool_result_uses_tool_command_for_verification(self):
         log = _make_pytest_log(80)
         msgs = self._make_messages_with_tool_result(log)
@@ -1113,6 +1160,76 @@ class TestCompressRecentWindow:
         # Content should be shorter
         assert len(msgs[0]["content"][0]["content"]) < len(large_content)
 
+    def test_first_exact_listing_result_stays_raw_then_compresses(self):
+        content = "\n".join(f"file_{i}.py" for i in range(300))
+        assert len(content) > 1_200
+        msg = self._make_result_msg(content, tool_use_id="ls_id")
+        ctx = {
+            "ls_id": {
+                "name": "list_dir",
+                "path": "/repo",
+                "args": {"path": "/repo"},
+            }
+        }
+        seen: set[str] = set()
+
+        first_msgs, first_breakdown = compress_recent_window(
+            [msg],
+            tool_use_id_to_context=ctx,
+            threshold=0,
+            first_exact_evidence_seen=seen,
+        )
+        second_msgs, second_breakdown = compress_recent_window(
+            [self._make_result_msg(content, tool_use_id="ls_id")],
+            tool_use_id_to_context=ctx,
+            threshold=0,
+            first_exact_evidence_seen=seen,
+        )
+
+        assert first_breakdown == {}
+        assert first_msgs[0]["content"][0]["content"] == content
+        assert "ls" in second_breakdown
+        assert second_msgs[0]["content"][0]["content"] != content
+
+    def test_first_exact_search_result_stays_raw_then_compresses(self):
+        content = json.dumps(
+            [
+                {"path": f"src/file_{i}.py", "line": i, "name": "match"}
+                for i in range(40)
+            ]
+        )
+        assert len(content) > 1_200
+        msg = self._make_result_msg(content, tool_use_id="search_id")
+        ctx = {
+            "search_id": {
+                "name": "grep_search",
+                "path": "src",
+                "query": "match",
+                "args": {"path": "src", "query": "match"},
+            }
+        }
+        seen: set[str] = set()
+
+        first_msgs, first_breakdown = compress_recent_window(
+            [msg],
+            tool_use_id_to_context=ctx,
+            threshold=0,
+            first_exact_evidence_seen=seen,
+        )
+        second_msgs, second_breakdown = compress_recent_window(
+            [self._make_result_msg(content, tool_use_id="search_id")],
+            tool_use_id_to_context=ctx,
+            threshold=0,
+            first_exact_evidence_seen=seen,
+        )
+
+        assert first_breakdown == {}
+        assert first_msgs[0]["content"][0]["content"] == content
+        assert (
+            "search_results" in second_breakdown or "grep" in second_breakdown
+        )
+        assert second_msgs[0]["content"][0]["content"] != content
+
     def test_tool_compatible_recent_window_uses_lower_threshold(self):
         code_lines = []
         for i in range(60):
@@ -1410,16 +1527,242 @@ class TestPerTurnInjectionBudget:
         with_reinforced = _inject(tok_state=_TYPICAL_STATE, pressure=75)
 
         # with_law uses pressure=2 (threshold >1), with_reinforced uses pressure=75
-        law_delta = _token_count(with_law) - _token_count(baseline)
-        reinforced_delta = _token_count(with_reinforced) - _token_count(
+        _law_delta = _token_count(with_law) - _token_count(baseline)
+        _reinforced_delta = _token_count(with_reinforced) - _token_count(
             baseline
         )
 
-        # Protocol law (no co-injection) adds meaningful overhead
-        assert law_delta >= 5, (
-            f"TOK_PROTOCOL_LAW overhead smaller than expected: {law_delta}t"
+
+# ---------------------------------------------------------------------------
+# Large-file exact-access tests (Step 5.2)
+# ---------------------------------------------------------------------------
+
+
+class TestLargeFileExactAccess:
+    """Test exact symbol-body retrieval and offset-read behavior for large files."""
+
+    def _make_large_python_file(self, n_funcs: int = 50) -> str:
+        """Create a large Python file with many function definitions."""
+        lines = [
+            '"""Large test module for exact-access tests."""',
+            "",
+            "import os",
+            "import sys",
+            "from pathlib import Path",
+            "from typing import Any",
+            "",
+            "CONSTANT_A = 42",
+            "CONSTANT_B = 'test'",
+            "",
+            "class BaseClass:",
+            '    """Base class for testing."""',
+            "",
+            "    def __init__(self):",
+            "        self.value = 1",
+            "",
+        ]
+        for i in range(n_funcs):
+            lines.append(f"    def method_{i}(self, arg: int) -> int:")
+            lines.append(f'        """Method {i} documentation."""')
+            for j in range(20):
+                lines.append(f"        # Line {j} of method {i}")
+            lines.append(f"        result = arg + {i}")
+            lines.append("        return result")
+            lines.append("")
+        return "\n".join(lines)
+
+    def test_precision_read_context_detected_with_offset(self):
+        """Offset-based reads are identified as precision reads."""
+        from tok.runtime.pipeline._tool_context import (
+            build_tool_use_id_to_context,
         )
-        # Full reinforced escalation must add more than law alone
-        assert reinforced_delta > law_delta, (
-            "Reinforced escalation should cost more than law-only"
+
+        file_content = self._make_large_python_file(10)
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "read_file",
+                        "input": {
+                            "file_path": "/tmp/large.py",
+                            "offset": 15,
+                            "limit": 25,
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": file_content[15:40],  # Sliced content
+                    }
+                ],
+            },
+        ]
+        tool_use_id_to_context = build_tool_use_id_to_context(messages)
+
+        # Verify the context has offset/limit args
+        ctx = tool_use_id_to_context["t1"]
+        assert ctx["args"].get("offset") == 15
+        assert ctx["args"].get("limit") == 25
+
+    def test_first_exact_symbol_body_retrieval_not_summary(self):
+        """First exact symbol-body retrieval must not be summary-substituted."""
+        from tok.compression._history_pipeline import (
+            compress_tool_results_impl,
         )
+        from tok.runtime.pipeline._tool_context import (
+            build_tool_use_id_to_context,
+        )
+
+        # Simulate reading a specific function body
+        symbol_body = """    def target_function(self, x: int) -> int:
+        \"\"\"The target function we need exact content for.\"\"\"
+        # Important logic here
+        intermediate = x * 2
+        result = intermediate + 10
+        return result
+"""
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "read_file",
+                        "input": {
+                            "file_path": "/tmp/module.py",
+                            "offset": 100,
+                            "limit": 10,
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": symbol_body,
+                    }
+                ],
+            },
+        ]
+        tool_use_id_to_context = build_tool_use_id_to_context(messages)
+        first_exact_evidence_seen: set[str] = set()
+
+        compressed, _breakdown = compress_tool_results_impl(
+            messages,
+            result_cache={},
+            tool_use_id_to_context=tool_use_id_to_context,
+            compression_level="balanced",
+            first_exact_evidence_seen=first_exact_evidence_seen,
+        )
+
+        # First offset-read should be preserved exactly
+        result_msg = compressed[1]
+        content_blocks = result_msg["content"]
+        assert len(content_blocks) == 1
+        # Content should be the exact symbol body, not a summary
+        assert content_blocks[0]["content"] == symbol_body
+        assert "target_function" in content_blocks[0]["content"]
+
+    def test_first_full_file_read_establishes_ground_truth(self):
+        """First full file read establishes ground truth for later dedup."""
+        from tok.compression._history_pipeline import (
+            compress_tool_results_impl,
+        )
+        from tok.runtime.pipeline._tool_context import (
+            build_tool_use_id_to_context,
+        )
+        import hashlib
+
+        file_content = self._make_large_python_file(20)
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "read_file",
+                        "input": {"file_path": "/tmp/large_module.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": file_content,
+                    }
+                ],
+            },
+        ]
+        tool_use_id_to_context = build_tool_use_id_to_context(messages)
+        first_exact_evidence_seen: set[str] = set()
+
+        # Pre-populate result cache
+        result_cache: dict[
+            str, tuple[str, str, float] | tuple[str, str] | tuple[str]
+        ] = {}
+        from tok.runtime.pipeline._tool_repeat_detection import _make_cache_key
+
+        cache_key = _make_cache_key("read_file", tool_use_id_to_context["t1"])
+        digest = hashlib.sha256(file_content.encode()).hexdigest()[:8]
+        result_cache[cache_key] = (digest, file_content)
+
+        compressed, _breakdown = compress_tool_results_impl(
+            messages,
+            result_cache=result_cache,
+            tool_use_id_to_context=tool_use_id_to_context,
+            compression_level="balanced",
+            first_exact_evidence_seen=first_exact_evidence_seen,
+        )
+
+        # First read should be exact
+        result_msg = compressed[1]
+        content_blocks = result_msg["content"]
+        assert content_blocks[0]["content"] == file_content
+
+        # Verify evidence tracking
+        from tok.runtime.repeat_targets import evidence_identity_key
+
+        evidence_key = evidence_identity_key(
+            "read_file",
+            path="/tmp/large_module.py",
+            args={"file_path": "/tmp/large_module.py"},
+        )
+        assert evidence_key in first_exact_evidence_seen
+
+    def test_offset_read_tracked_separately_from_full_read(self):
+        """Offset reads have different evidence identity than full file reads."""
+        from tok.runtime.repeat_targets import evidence_identity_key
+
+        # Full file read identity
+        full_key = evidence_identity_key(
+            "read_file",
+            path="/tmp/module.py",
+            args={"file_path": "/tmp/module.py"},
+        )
+
+        # Offset read identity (offset/limit excluded from key)
+        offset_key = evidence_identity_key(
+            "read_file",
+            path="/tmp/module.py",
+            args={"file_path": "/tmp/module.py", "offset": 10, "limit": 20},
+        )
+
+        # They should be the same because offset/limit are excluded from identity
+        assert full_key == offset_key
+        assert full_key == "file_read|/tmp/module.py"

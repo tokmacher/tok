@@ -354,6 +354,12 @@ class RuntimeSession:
     _evidence_alias_map: dict[str, str] = field(
         default_factory=dict, init=False, repr=False
     )
+    _first_exact_evidence_seen: set[str] = field(
+        default_factory=set, init=False, repr=False
+    )
+    _pending_exact_evidence_keys: set[str] = field(
+        default_factory=set, init=False, repr=False
+    )
     _files_read_this_session: set[str] = field(
         default_factory=set, init=False, repr=False
     )
@@ -393,6 +399,8 @@ class RuntimeSession:
             self._last_tool_compatible_state = ""
             self._last_tool_compatible_state_fields = {}
             self._observed_tool_result_ids.clear()
+            self._first_exact_evidence_seen.clear()
+            self._pending_exact_evidence_keys.clear()
             self._stream_recovery_reacquisition_budget = 0
             self._stream_recovery_history_floor_budget = 0
             self._stream_recovery_tool_use_only_signature = ""
@@ -657,6 +665,8 @@ class RuntimeSession:
         query: str | None,
         command: str | None,
         raw_content: str,
+        tool_args: dict[str, Any] | None = None,
+        exact_evidence_key: str | None = None,
         blocker_rediscovery: bool = False,
     ) -> dict[str, int]:
         """Record a new result-bearing logical target event for repeat-target control."""
@@ -670,6 +680,8 @@ class RuntimeSession:
             query=query,
             command=command,
             raw_content=raw_content,
+            tool_args=tool_args,
+            exact_evidence_key=exact_evidence_key,
             blocker_rediscovery=blocker_rediscovery,
         )
 

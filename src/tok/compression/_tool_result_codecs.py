@@ -414,6 +414,60 @@ def _compress_git_diff(text: str) -> str:
     return header + "\n" + "\n".join(result)
 
 
+def _leading_whitespace_width(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
+
+
+def _line_boundary_priority(prev_line: str, next_line: str) -> int:
+    prev_stripped = prev_line.strip()
+    next_stripped = next_line.strip()
+    if not prev_stripped or not next_stripped:
+        return 0
+
+    prev_indent = _leading_whitespace_width(prev_line)
+    next_indent = _leading_whitespace_width(next_line)
+    if next_indent < prev_indent:
+        return 0
+
+    if re.match(
+        r"^\s*(?:@|def |class |async def |if |for |while |with |try\b|except\b|elif\b|else\b|match\b|case\b)",
+        next_line,
+    ):
+        return 1
+
+    return 2
+
+
+def _choose_line_boundary(
+    lines: list[str],
+    offsets: list[int],
+    target_chars: int,
+    search_window_chars: int,
+) -> int:
+    if len(lines) <= 1:
+        return len(lines)
+
+    candidates: list[tuple[int, int, int]] = []
+    for idx in range(1, len(lines)):
+        distance = abs(offsets[idx] - target_chars)
+        if distance > search_window_chars:
+            continue
+        candidates.append(
+            (
+                _line_boundary_priority(lines[idx - 1], lines[idx]),
+                distance,
+                idx,
+            )
+        )
+
+    if candidates:
+        return min(candidates)[2]
+
+    return min(
+        range(1, len(lines)), key=lambda idx: abs(offsets[idx] - target_chars)
+    )
+
+
 def _compress_ls(text: str) -> str:
     lines = [line for line in text.splitlines() if line.strip()]
     is_la = any(
@@ -869,6 +923,69 @@ def _tighten_compressed_output(
 def truncate_large_result(text: str, limit: int = 1200) -> str:
     if len(text) <= int(limit * 1.5):
         return text
+
+    lines = text.splitlines(keepends=True)
+    if len(lines) <= 1:
+        signals = re.compile(
+            r"\b(error|fail|exception|traceback|parse_error|collision|conflict|issue|bug|diff|warning)\b",
+            re.IGNORECASE,
+        )
+
+        head = text[: limit // 2]
+        tail = text[-limit // 2 :]
+        middle = text[limit // 2 : -limit // 2]
+
+        important_line = ""
+        for line in middle.splitlines():
+            if signals.search(line):
+                important_line = (
+                    f"\n... [SIGNAL FOUND] {line.strip()[:100]} ..."
+                )
+                break
+
+        omitted = len(text) - (limit // 2 * 2)
+        return f"{head}\n... [TRUNCATED {omitted} CHARS] ...{important_line}\n{tail}"
+
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+
+    search_window_chars = max(80, limit // 4)
+    head_target = max(1, limit // 2)
+    tail_target = max(head_target + 1, len(text) - (limit // 2))
+
+    head_idx = _choose_line_boundary(
+        lines, offsets, head_target, search_window_chars
+    )
+    tail_idx = _choose_line_boundary(
+        lines, offsets, tail_target, search_window_chars
+    )
+    if head_idx >= tail_idx:
+        tail_idx = min(len(lines), max(head_idx + 1, tail_idx))
+    if head_idx >= tail_idx:
+        head_idx = max(1, len(lines) // 2)
+        tail_idx = min(len(lines), head_idx + 1)
+
+    head_text = "".join(lines[:head_idx])
+    tail_text = "".join(lines[tail_idx:])
+    omitted_chars = max(0, len(text) - len(head_text) - len(tail_text))
+    continuation_line = tail_idx + 1 if tail_idx < len(lines) else len(lines)
+    marker = (
+        f"... [TRUNCATED {omitted_chars} CHARS; omitted lines "
+        f"{head_idx + 1}-{tail_idx}; continue at line {continuation_line}] ..."
+    )
+
+    compressed = head_text
+    if compressed and not compressed.endswith("\n"):
+        compressed += "\n"
+    compressed += marker
+    if tail_text:
+        if not tail_text.startswith("\n"):
+            compressed += "\n"
+        compressed += tail_text
+
+    if len(compressed) < len(text):
+        return compressed
 
     signals = re.compile(
         r"\b(error|fail|exception|traceback|parse_error|collision|conflict|issue|bug|diff|warning)\b",

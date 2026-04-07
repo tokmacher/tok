@@ -24,9 +24,21 @@ from ..repeat_targets import (
     extract_metadata_probe,
     extract_shell_file_read_path,
     extract_shell_search_params,
+    evidence_identity_key,
     resolve_evidence_intent,
 )
 from .request_validation import validate_anthropic_request_body
+
+
+def _process_content_list(content: list[Any]) -> Any:
+    """Process a list content block and return adapted content."""
+    if not content:
+        return " "
+    if all(isinstance(b, dict) and b.get("type") == "text" for b in content):
+        # Pure text array -> flatten to string for Bedrock/OpenAI compatibility
+        return "\n".join(b.get("text", "") for b in content).strip() or " "
+    # Ensure tool-only assistant messages have at least a placeholder space
+    return content
 
 
 def apply_schema_adaptations(
@@ -50,26 +62,8 @@ def apply_schema_adaptations(
         # Guard against None or empty values
         if content is None:
             content = " "
-
-        if isinstance(content, list):
-            if not content:
-                content = " "
-            elif all(
-                isinstance(b, dict) and b.get("type") == "text"
-                for b in content
-            ):
-                # Pure text array -> flatten to string for Bedrock/OpenAI compatibility
-                content = (
-                    "\n".join(b.get("text", "") for b in content).strip()
-                    or " "
-                )
-            elif not any(
-                isinstance(b, dict) and b.get("type") == "text"
-                for b in content
-            ):
-                # Ensure tool-only assistant messages have at least a placeholder space
-                pass
-
+        elif isinstance(content, list):
+            content = _process_content_list(content)
         elif isinstance(content, str) and not content.strip():
             content = " "
 
@@ -400,6 +394,7 @@ def _process_single_tool_snapshot(
     path: str | None,
     query: str | None,
     command: str | None,
+    tool_args: dict[str, Any] | None,
     snippet: str,
     blocker_rediscovery: bool,
     captured: list[int],
@@ -438,6 +433,14 @@ def _process_single_tool_snapshot(
             captured,
         )
 
+    exact_key = evidence_identity_key(
+        tool_name,
+        path=path,
+        query=query,
+        command=command,
+        args=tool_args,
+    )
+
     observed = session.observe_repeat_target_result(
         tool_id="",
         tool_name=tool_name,
@@ -445,6 +448,8 @@ def _process_single_tool_snapshot(
         query=query,
         command=command,
         raw_content=snippet,
+        tool_args=tool_args,
+        exact_evidence_key=exact_key,
         blocker_rediscovery=blocker_rediscovery,
     )
     for key, value in observed.items():
@@ -467,8 +472,11 @@ def _apply_evidence_intent_snapshot(
     if evidence_intent.domain == "file_history" and command:
         _record_file_history_snapshot(session, command, snippet, captured)
         return
-    if evidence_intent.domain == "file_metadata" and command:
+    if evidence_intent.domain in {"file_metadata", "listing"} and command:
         _record_file_metadata_snapshot(session, path, command, snippet)
+        return
+    if evidence_intent.domain == "listing" and path and not command:
+        session.record_metadata_snapshot(path, "listing", snippet)
         return
     if evidence_intent.domain == "file_current":
         _record_file_current_snapshot(
@@ -621,6 +629,7 @@ def _capture_repeat_target_snapshots(
             path,
             query,
             command,
+            args if isinstance(args, dict) else None,
             snippet,
             blocker_rediscovery,
             captured,
@@ -729,11 +738,12 @@ def _inject_system(
 ) -> dict[str, Any]:
     """Inject Tok state and hints into the system prompt."""
     # Memory Serialization: Handle BridgeMemoryState objects
-    tok_state = current_memory
+    tok_state: str | Any = current_memory
     if hasattr(current_memory, "wire_state"):
         from ..config import TOOL_COMPAT_MEMORY_PROFILE
+        from typing import cast
 
-        tok_state = current_memory.wire_state(
+        tok_state = cast(Any, current_memory).wire_state(
             profile=TOOL_COMPAT_MEMORY_PROFILE if tool_compatible else None,
             markers=behavior_signals.get(
                 "_project_markers_proxy"

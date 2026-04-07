@@ -75,6 +75,7 @@ from .repeat_targets import (
     HotSummaryRecord,
     RepeatTargetEvent,
     build_summary_for_family,
+    evidence_identity_key,
     resolve_evidence_intent,
     stable_digest,
 )
@@ -92,6 +93,8 @@ def observe_repeat_target_result_impl(
     query: str | None,
     command: str | None,
     raw_content: str,
+    tool_args: dict[str, Any] | None = None,
+    exact_evidence_key: str | None = None,
     blocker_rediscovery: bool = False,
 ) -> dict[str, int]:
     """Record a new result-bearing logical target event for repeat-target control."""
@@ -114,6 +117,17 @@ def observe_repeat_target_result_impl(
         return {}
     if tool_id:
         session_self._observed_tool_result_ids[tool_id] = None
+
+    if not exact_evidence_key:
+        exact_evidence_key = evidence_identity_key(
+            tool_name,
+            path=path,
+            query=query,
+            command=command,
+            args=tool_args,
+        )
+    if exact_evidence_key:
+        session_self._pending_exact_evidence_keys.add(exact_evidence_key)
 
     evidence_intent = resolve_evidence_intent(
         tool_name, path=path, query=query, command=command
@@ -175,6 +189,7 @@ def observe_repeat_target_result_impl(
         token_cost=token_cost,
         result_digest=digest,
         last_seen_turn=current_turn,
+        exact_evidence_key=exact_evidence_key or "",
         hot_promotion_turn=record.hot_promotion_turn if record else 0,
         stuck_promotion_turn=record.stuck_promotion_turn if record else 0,
         last_injected_turn=record.last_injected_turn if record else 0,
@@ -968,6 +983,7 @@ def prepare_request_impl(
                 hot_summary_records=session._hot_summary_records,
                 session_files_read=session._files_read_this_session,
                 files_fully_delivered=session._files_fully_delivered,
+                first_exact_evidence_seen=session._first_exact_evidence_seen,
                 current_turn=session.bridge_memory.turn,
                 keep_turns_window=TOK_FILE_DELIVERY_STALE_TURNS,
             )
@@ -1072,6 +1088,7 @@ def prepare_request_impl(
                 recent,
                 tool_use_id_to_context=id_to_context,
                 tool_compatible=effective_tool_compatible,
+                first_exact_evidence_seen=session._first_exact_evidence_seen,
             )
             if (
                 request.adapter_kind == "claude-bridge"
@@ -1088,6 +1105,7 @@ def prepare_request_impl(
                     recent,
                     tool_use_id_to_context=id_to_context,
                     tool_compatible=effective_tool_compatible,
+                    first_exact_evidence_seen=session._first_exact_evidence_seen,
                 )
                 behavior_signals["bridge_minimum_tail_preserved"] = 1
             if (
@@ -1311,6 +1329,11 @@ def prepare_request_impl(
             behavior_signals[key] = behavior_signals.get(key, 0) + value
         if _mut_signals.get("tok_preflight_rejected"):
             body = original_body
+            if session._pending_exact_evidence_keys:
+                session._first_exact_evidence_seen.update(
+                    session._pending_exact_evidence_keys
+                )
+                session._pending_exact_evidence_keys.clear()
             session._bump_signals(_mut_signals)
             session._save_bridge_memory()
             return PreparedRuntimeRequest(
@@ -1374,6 +1397,12 @@ def prepare_request_impl(
         prepared_prompt_tokens = session.prepared_prompt_tokens(body)
         baseline_prompt_tokens = prepared_prompt_tokens
         saved_prompt_tokens = 0
+
+    if session._pending_exact_evidence_keys:
+        session._first_exact_evidence_seen.update(
+            session._pending_exact_evidence_keys
+        )
+        session._pending_exact_evidence_keys.clear()
 
     canonical_body, canonicalized, canonical_signals = (
         canonicalize_anthropic_bridge_body(body)

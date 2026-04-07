@@ -78,6 +78,150 @@ def logical_target_key_from_context(
     )
 
 
+def _should_bypass_next_tool_use(block: dict[str, Any]) -> bool:
+    """Check if a text block contains the bypass marker."""
+    return (
+        isinstance(block, dict)
+        and block.get("type") == "text"
+        and "@tok_bypass_next_read" in str(block.get("text", ""))
+    )
+
+
+def _extract_tool_input_fields(
+    tool_input: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    """Extract path and query fields from tool input."""
+    path = (
+        tool_input.get("path")
+        or tool_input.get("file_path")
+        or tool_input.get("AbsolutePath")
+        or tool_input.get("TargetFile")
+    )
+    query = (
+        tool_input.get("query")
+        or tool_input.get("pattern")
+        or tool_input.get("search")
+        or tool_input.get("text")
+    )
+    return path, query
+
+
+def _apply_bypass_marker(
+    tool_input: dict[str, Any],
+    tool_name: str,
+    path: str | None,
+    tool_id: Any,
+) -> tuple[dict[str, Any], bool]:
+    """Apply bypass marker to tool_input if target is supported.
+
+    Returns updated tool_input and invalid_bypass_marker flag.
+    """
+    if _is_supported_bypass_target(str(tool_name), tool_input):
+        tool_input = dict(tool_input)
+        tool_input["tok_bypass_cache"] = True
+        logger.info(
+            "tok_bypass_cache applied via marker | tool_id=%s tool=%s path=%s",
+            tool_id,
+            tool_name,
+            str(path).strip() if path else "",
+        )
+        return tool_input, False
+    logger.warning(
+        "TOK_BYPASS_NEXT_READ_CONSUMED_BY_NON_READ_TOOL | "
+        "marker ignored for unsupported tool | tool_id=%s tool=%s",
+        tool_id,
+        tool_name,
+    )
+    return tool_input, True
+
+
+def _build_context_dict(
+    tool_name: Any,
+    tool_input: dict[str, Any],
+    path: str | None,
+    query: str | None,
+    invalid_bypass_marker: bool,
+) -> dict[str, Any]:
+    """Build and validate the context dictionary for a tool use."""
+    context_payload = {
+        "name": tool_name,
+        "args": tool_input,
+        "path": str(path).strip() if path else None,
+        "query": str(query).strip() if query else None,
+    }
+    try:
+        validated = ToolContextModel.model_validate(context_payload)
+        context_dict = validated.model_dump()
+    except ValidationError:
+        context_dict = {
+            "name": str(tool_name or "").strip(),
+            "args": dict(tool_input) if isinstance(tool_input, dict) else {},
+            "path": str(path).strip() if path else None,
+            "query": str(query).strip() if query else None,
+            "tool_context_validation_failed": True,
+        }
+    if (
+        invalid_bypass_marker
+        and "tool_context_validation_failed" not in context_dict
+    ):
+        context_dict["invalid_bypass_marker"] = True
+    return context_dict
+
+
+def _process_message_blocks(
+    content: list[Any],
+    result: dict[str, dict[str, Any]],
+) -> None:
+    """Process all blocks in a message for tool_use extraction."""
+    bypass_next_tool_use = False
+    invalid_bypass_index = 0
+    for block in content:
+        if _should_bypass_next_tool_use(block):
+            bypass_next_tool_use = True
+            logger.info(
+                "tok_bypass_next_read marker observed in assistant text"
+            )
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        _process_single_tool_use(
+            block, result, bypass_next_tool_use, invalid_bypass_index
+        )
+        bypass_next_tool_use = False
+
+
+def _process_single_tool_use(
+    block: dict[str, Any],
+    result: dict[str, dict[str, Any]],
+    bypass_next_tool_use: bool,
+    invalid_bypass_index: int,
+) -> int:
+    """Process a single tool_use block and update result.
+
+    Returns updated invalid_bypass_index.
+    """
+    tool_id = block.get("id", "")
+    tool_name = block.get("name", "")
+    tool_input = block.get("input", {})
+    if not tool_id or not isinstance(tool_input, dict):
+        if bypass_next_tool_use:
+            invalid_bypass_index += 1
+            result[f"__invalid_bypass_marker__:{invalid_bypass_index}"] = {
+                "invalid_bypass_marker": True
+            }
+        return invalid_bypass_index
+
+    path, query = _extract_tool_input_fields(tool_input)
+    invalid_bypass_marker = False
+    if bypass_next_tool_use:
+        tool_input, invalid_bypass_marker = _apply_bypass_marker(
+            tool_input, str(tool_name), path, tool_id
+        )
+    result[tool_id] = _build_context_dict(
+        tool_name, tool_input, path, query, invalid_bypass_marker
+    )
+    return invalid_bypass_index
+
+
 def build_tool_use_id_to_context(
     messages: list[dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
@@ -89,85 +233,7 @@ def build_tool_use_id_to_context(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        bypass_next_tool_use = False
-        invalid_bypass_index = 0
-        for block in content:
-            if (
-                isinstance(block, dict)
-                and block.get("type") == "text"
-                and "@tok_bypass_next_read" in str(block.get("text", ""))
-            ):
-                bypass_next_tool_use = True
-                logger.info(
-                    "tok_bypass_next_read marker observed in assistant text"
-                )
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
-                continue
-            tool_id = block.get("id", "")
-            tool_name = block.get("name", "")
-            tool_input = block.get("input", {})
-            if not tool_id or not isinstance(tool_input, dict):
-                if bypass_next_tool_use:
-                    invalid_bypass_index += 1
-                    result[
-                        f"__invalid_bypass_marker__:{invalid_bypass_index}"
-                    ] = {"invalid_bypass_marker": True}
-                    bypass_next_tool_use = False
-                continue
-            path = (
-                tool_input.get("path")
-                or tool_input.get("file_path")
-                or tool_input.get("AbsolutePath")
-                or tool_input.get("TargetFile")
-            )
-            query = (
-                tool_input.get("query")
-                or tool_input.get("pattern")
-                or tool_input.get("search")
-                or tool_input.get("text")
-            )
-            invalid_bypass_marker = False
-            if bypass_next_tool_use:
-                if _is_supported_bypass_target(str(tool_name), tool_input):
-                    tool_input = dict(tool_input)
-                    tool_input["tok_bypass_cache"] = True
-                    logger.info(
-                        "tok_bypass_cache applied via marker | tool_id=%s tool=%s path=%s",
-                        tool_id,
-                        tool_name,
-                        str(path).strip() if path else "",
-                    )
-                else:
-                    invalid_bypass_marker = True
-                    logger.info(
-                        "invalid tok_bypass_next_read target ignored | tool_id=%s tool=%s",
-                        tool_id,
-                        tool_name,
-                    )
-                bypass_next_tool_use = False
-            context_payload = {
-                "name": tool_name,
-                "args": tool_input,
-                "path": str(path).strip() if path else None,
-                "query": str(query).strip() if query else None,
-            }
-            try:
-                validated = ToolContextModel.model_validate(context_payload)
-                context_dict = validated.model_dump()
-            except ValidationError:
-                context_dict = {
-                    "name": str(tool_name or "").strip(),
-                    "args": dict(tool_input)
-                    if isinstance(tool_input, dict)
-                    else {},
-                    "path": str(path).strip() if path else None,
-                    "query": str(query).strip() if query else None,
-                    "tool_context_validation_failed": True,
-                }
-            else:
-                if invalid_bypass_marker:
-                    context_dict["invalid_bypass_marker"] = True
-            result[tool_id] = context_dict
+        _process_message_blocks(content, result)
     return result
 
 
@@ -223,9 +289,24 @@ def _extract_query(tool_input: dict[str, Any]) -> str | None:
     )
 
 
-def _find_current_mode(messages: list[dict[str, Any]]) -> Any | None:
+def _extract_tok_mode_from_block(block: dict[str, Any]) -> Any | None:
+    """Extract TokMode from a text block containing runtime_session JSON."""
     from ..smoothness.models import TokMode
+    import re
 
+    text = block.get("text", "")
+    if "runtime_session" not in text:
+        return None
+    try:
+        match = re.search(r'"current_tok_mode"\s*:\s*"([^"]+)"', text)
+        if match:
+            return TokMode(match.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def _find_current_mode(messages: list[dict[str, Any]]) -> Any | None:
     for msg in messages:
         if msg.get("role") != "system":
             continue
@@ -235,17 +316,9 @@ def _find_current_mode(messages: list[dict[str, Any]]) -> Any | None:
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "text":
                 continue
-            text = block.get("text", "")
-            if "runtime_session" not in text:
-                continue
-            try:
-                import re
-
-                match = re.search(r'"current_tok_mode"\s*:\s*"([^"]+)"', text)
-                if match:
-                    return TokMode(match.group(1))
-            except Exception:
-                pass
+            mode = _extract_tok_mode_from_block(block)
+            if mode:
+                return mode
     return None
 
 

@@ -11,6 +11,7 @@ from tok.runtime.core import (
     RuntimeSession,
     UniversalTokRuntime,
 )
+from tok.runtime.repeat_targets import HotSummaryRecord, evidence_identity_key
 from tok.runtime.memory.tok_state import (
     _delta_tok_state_fields,
 )
@@ -161,7 +162,7 @@ def test_repeated_search_promotes_hot_search_hint(tmp_path):
         f"src/foo.py:{line}:needle match" for line in range(1, 10)
     )
 
-    runtime.prepare_request(
+    first = runtime.prepare_request(
         RuntimeRequest(
             model="claude-sonnet-4",
             tool_compatible=True,
@@ -179,6 +180,8 @@ def test_repeated_search_promotes_hot_search_hint(tmp_path):
         ),
         session,
     )
+    assert "@hot_recent_search:" not in str(first.body.get("system", ""))
+
     prepared = runtime.prepare_request(
         RuntimeRequest(
             model="claude-sonnet-4",
@@ -200,6 +203,40 @@ def test_repeated_search_promotes_hot_search_hint(tmp_path):
         prepared.body.get("system", "")
     )
     assert prepared.behavior_signals["repeat_target_hot"] >= 1
+
+
+def test_hot_recent_search_hints_require_session_exact_observation(tmp_path):
+    _, session = _runtime(tmp_path)
+    exact_key = evidence_identity_key(
+        "grep_search",
+        path="src",
+        query="needle",
+        args={"query": "needle", "path": "src"},
+    )
+    session._hot_summary_records["search|needle-src"] = HotSummaryRecord(
+        tool_family="search",
+        logical_target="needle-src",
+        display_target="needle @ src",
+        summary="needle match summary",
+        token_cost=12,
+        result_digest="digest",
+        last_seen_turn=4,
+        exact_evidence_key=exact_key or "",
+        hot_promotion_turn=4,
+    )
+    session.bridge_memory.turn = 5
+
+    hints, metrics = session.hot_recent_runtime_hints()
+    assert hints == []
+    assert metrics["hot_recent_hint_injected"] == 0
+
+    if exact_key:
+        session._first_exact_evidence_seen.add(exact_key)
+
+    hints, metrics = session.hot_recent_runtime_hints()
+    assert hints
+    assert "@hot_recent_search:needle @ src |>" in hints[0]
+    assert metrics["hot_recent_hint_injected"] == 1
 
 
 def test_repeated_command_family_promotes_hot_command_hint(tmp_path):

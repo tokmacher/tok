@@ -77,7 +77,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "C901"]
 ignore = ["E501", "E741", "N806", "E402", "N813", "B023", "N802", "F811", "F402", "B025", "N817", "I001", "N804", "E731"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 15
+max-complexity = 8
 
 [tool.ruff.lint.per-file-ignores]
 "src/tok/gateway/_cache_control.py" = ["C901"]
