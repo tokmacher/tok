@@ -296,6 +296,86 @@ The answer to this question determines the classification of the observed behavi
 
 ______________________________________________________________________
 
+## Audit Findings: Live Search Surface Implementation Trace
+
+### Implementation Path
+
+| Component                        | Location                                             | Purpose                                                                            |
+| -------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `SEARCH_LIKE_TOOLS`              | `src/tok/runtime/repeat_targets.py:16`               | Defines search-like tools: `frozenset({"grep", "grep_search", "search", "rg"})`    |
+| `evidence_identity_key()`        | `src/tok/runtime/repeat_targets.py:531-606`          | Generates unique key for search: `search\|{"flags":..., "query":..., "scope":...}` |
+| `search_result_evidence_level()` | `src/tok/runtime/repeat_targets.py:310-332`          | Classifies output as "navigation" or "exact_content"                               |
+| `_first_exact_guard()`           | `src/tok/compression/_history_pipeline.py:1194-1217` | Prevents compression of first exact observation                                    |
+| `compress_recent_window_impl()`  | `src/tok/compression/_history_pipeline.py:1152-1354` | Compression for recent window with evidence level check                            |
+| `compress_tool_results_impl()`   | `src/tok/compression/_history_pipeline.py`           | Compression for tool results - **GAP: missing evidence level check**               |
+
+### Payload Shape
+
+- Search tool context includes: `name`, `args`, `path`, `query`
+- Evidence identity key format: `search|{"flags":{...},"query":"...","scope":"..."}`
+- Evidence levels: `"navigation"` (path-only) vs `"exact_content"` (line-level)
+
+### Gap Identified
+
+**`compress_recent_window_impl()`** (lines 1319-1323) checks evidence level before tracking:
+
+```python
+if (
+    tool_name in SEARCH_LIKE_TOOLS
+    and search_result_evidence_level(raw) == "navigation"
+):
+    continue  # Skip tracking, stay raw
+```
+
+**`compress_tool_results_impl()`** does NOT have this check - it tracks evidence key regardless of level.
+
+**Impact:**
+
+- Path-only results incorrectly count as "first exact evidence" in `compress_tool_results_impl`
+- Later content-level results may be treated as "repeat" and compress incorrectly
+
+______________________________________________________________________
+
+## Decision: YES, This Surface Should Compress on Repeat
+
+### Rationale
+
+1. `SEARCH_LIKE_TOOLS` includes `"search"` - the surface IS covered by repeat compression logic
+1. The first-exact guard mechanism exists and works for `exact_content` results
+1. Rule 4 in this benchmark explicitly allows repeat dedup after exact evidence established
+1. Existing tests confirm intended behavior: `test_second_identical_hot_search_result_may_compress_after_exact_seen`
+
+### Locked No-Regression Rules
+
+| Rule                    | Description                                                              |
+| ----------------------- | ------------------------------------------------------------------------ |
+| First exact stays raw   | First `exact_content` search MUST stay raw                               |
+| Path-only stays raw     | `navigation` results MUST stay raw on repeat (no evidence tracking)      |
+| Repeat may compress     | Repeat `exact_content` search MAY compress after first exact observation |
+| Identity includes scope | Evidence identity key must include query + scope + flags                 |
+
+### Current Behavior Classification
+
+| Scenario                      | `compress_recent_window_impl` | `compress_tool_results_impl` |
+| ----------------------------- | ----------------------------- | ---------------------------- |
+| First `exact_content` search  | Raw (CORRECT)                 | Raw (CORRECT)                |
+| Repeat `exact_content` search | Can compress (CORRECT)        | Can compress (CORRECT)       |
+| Path-only results             | Stay raw (CORRECT)            | Stay raw (CORRECT)           |
+
+### Status: FIXED
+
+The gap has been resolved by adding a search-specific repeat compression path in `compress_tool_results_impl()` that:
+
+1. Checks if tool is in `SEARCH_LIKE_TOOLS`
+1. Generates evidence identity key from query + scope + flags
+1. Only compresses if key is already in `first_exact_evidence_seen` (repeat)
+1. Skips navigation-only results (path-only stays raw)
+1. Applies result cache or semantic hash compression for repeat exact-content searches
+
+**Commit:** Search-specific repeat compression path added to `src/tok/compression/_history_pipeline.py`
+
+______________________________________________________________________
+
 ## Policy Boundary: Live Search Surface Compression Rules
 
 ### Rule A: Compressor-Managed Surfaces

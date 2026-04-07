@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from typing import Any
 
 from tok.compression._history_pipeline import compress_tool_results_impl
@@ -69,6 +70,7 @@ class TestHotSearchFirstExactProtection:
         result_cache[cache_key] = (
             hashlib.sha256(search_output.encode()).hexdigest()[:8],
             search_output,
+            time.time(),
         )
 
         compressed, breakdown = compress_tool_results_impl(
@@ -113,6 +115,7 @@ class TestHotSearchFirstExactProtection:
         result_cache[cache_key] = (
             hashlib.sha256(search_output.encode()).hexdigest()[:8],
             search_output,
+            time.time(),
         )
 
         compressed, breakdown = compress_tool_results_impl(
@@ -457,7 +460,7 @@ class TestFirstPassSearchEvidenceLevel:
             "grep_search", tool_use_id_to_context["s1"]
         )
         digest = hashlib.sha256(line_level_results.encode()).hexdigest()[:8]
-        result_cache[cache_key] = (digest, line_level_results)
+        result_cache[cache_key] = (digest, line_level_results, time.time())
 
         compressed, breakdown = compress_tool_results_impl(
             messages,

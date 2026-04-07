@@ -831,6 +831,96 @@ def compress_tool_results_impl(
                     block["content"] = raw
                     continue
 
+            # Search-specific repeat compression path
+            # Search tools use query+scope identity, not norm_path
+            tool_name = str(ctx.get("name", "")).lower() if ctx else ""
+            if (
+                ctx
+                and tool_name in SEARCH_LIKE_TOOLS
+                and first_exact_evidence_seen is not None
+            ):
+                search_key = evidence_identity_key(
+                    tool_name,
+                    path=str(ctx.get("path") or "").strip() or None,
+                    query=str(ctx.get("query") or "").strip() or None,
+                    args=ctx.get("args")
+                    if isinstance(ctx.get("args"), dict)
+                    else None,
+                )
+                # Only compress if this is a repeat (key already seen)
+                if search_key and search_key in first_exact_evidence_seen:
+                    # Skip navigation-only results - they stay raw
+                    if search_result_evidence_level(raw) == "navigation":
+                        block["content"] = raw
+                        continue
+                    # Apply result cache compression for repeat search
+                    if result_cache is not None and not bypass_result_cache:
+                        compressed, saved = _apply_result_cache(
+                            raw,
+                            ctx,
+                            result_cache,
+                            compression_level=compression_level,
+                            bypass_cache=bypass_result_cache,
+                            ttl_seconds=RESULT_CACHE_TTL_SECONDS,
+                        )
+                        if saved > 0:
+                            breakdown["search_repeat_cached"] = (
+                                breakdown.get("search_repeat_cached", 0)
+                                + saved
+                            )
+                        block["content"] = compressed
+                        continue
+                    # Apply semantic hash compression for repeat search
+                    if (
+                        semantic_hash_cache is not None
+                        and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
+                    ):
+                        cache_key = _make_semantic_cache_key(ctx, raw)
+                        if cache_key is not None:
+                            content_hash = _compute_semantic_hash(raw)
+                            prev_hash = semantic_hash_cache.get(cache_key)
+                            if prev_hash == content_hash:
+                                # Build compressed representation
+                                summary = ""
+                                if hot_summary_records is not None:
+                                    record_key = f"search|{search_key}"
+                                    record = hot_summary_records.get(
+                                        record_key
+                                    )
+                                    if record and hasattr(record, "summary"):
+                                        summary = record.summary
+                                if not summary:
+                                    from ..runtime.repeat_targets import (
+                                        build_search_summary,
+                                    )
+
+                                    try:
+                                        summary = build_search_summary(
+                                            raw,
+                                            max_chars=280,
+                                            max_lines=12,
+                                        )
+                                    except Exception:
+                                        pass
+                                if not summary:
+                                    summary = _truncate_stable_snippet(
+                                        raw, 280
+                                    )
+                                token = (
+                                    f"@stable_result(hash:{content_hash})\n"
+                                    f"@stable_summary |> {summary}"
+                                )
+                                saved = len(raw) - len(token)
+                                if saved > 0:
+                                    breakdown["search_repeat_dedup"] = (
+                                        breakdown.get("search_repeat_dedup", 0)
+                                        + saved
+                                    )
+                                    block["content"] = token
+                                    continue
+                            else:
+                                semantic_hash_cache[cache_key] = content_hash
+
             if _is_precision_read_context(ctx):
                 norm_path = _extract_normalized_path(ctx) if ctx else ""
                 if (

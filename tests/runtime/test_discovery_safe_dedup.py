@@ -10,6 +10,7 @@ See: docs/internal/discovery-safe-dedup-benchmark.md
 from __future__ import annotations
 
 import hashlib
+import time
 from typing import Any
 
 from tok.compression._history_pipeline import compress_tool_results_impl
@@ -71,7 +72,7 @@ class TestFirstExactObservationContract:
         ] = {}
         cache_key = _make_cache_key("read_file", tool_use_id_to_context["t1"])
         digest = hashlib.sha256(file_content.encode()).hexdigest()[:8]
-        result_cache[cache_key] = (digest, file_content)
+        result_cache[cache_key] = (digest, file_content, time.time())
 
         compressed, breakdown = compress_tool_results_impl(
             messages,
@@ -115,7 +116,7 @@ class TestFirstExactObservationContract:
         ] = {}
         cache_key = _make_cache_key("read_file", tool_use_id_to_context["t1"])
         digest = hashlib.sha256(file_content.encode()).hexdigest()[:8]
-        result_cache[cache_key] = (digest, file_content)
+        result_cache[cache_key] = (digest, file_content, time.time())
 
         compressed, breakdown = compress_tool_results_impl(
             messages,
@@ -136,6 +137,7 @@ class TestFirstExactObservationContract:
             second_result == file_content
             or "tok_compressed" in second_result
             or "|unchanged|" in second_result
+            or "@stable_result" in second_result
         )
 
         # Verify evidence key was tracked only once
@@ -171,7 +173,7 @@ class TestFirstGrepSearchObservationContract:
             "grep_search", tool_use_id_to_context["t1"]
         )
         digest = hashlib.sha256(grep_results.encode()).hexdigest()[:8]
-        result_cache[cache_key] = (digest, grep_results)
+        result_cache[cache_key] = (digest, grep_results, time.time())
 
         compressed, breakdown = compress_tool_results_impl(
             messages,
@@ -221,7 +223,7 @@ class TestFirstGrepSearchObservationContract:
             "grep_search", tool_use_id_to_context["t1"]
         )
         digest = hashlib.sha256(grep_results.encode()).hexdigest()[:8]
-        result_cache[cache_key] = (digest, grep_results)
+        result_cache[cache_key] = (digest, grep_results, time.time())
 
         compressed, breakdown = compress_tool_results_impl(
             messages,
