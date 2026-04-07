@@ -74,9 +74,11 @@ from .policy.semantic_validation import calculate_invisible_pressure
 from .repeat_targets import (
     HotSummaryRecord,
     RepeatTargetEvent,
+    SEARCH_LIKE_TOOLS,
     build_summary_for_family,
     evidence_identity_key,
     resolve_evidence_intent,
+    search_result_evidence_level,
     stable_digest,
 )
 from .types import PreparedRuntimeRequest, RuntimeRequest
@@ -126,13 +128,20 @@ def observe_repeat_target_result_impl(
             command=command,
             args=tool_args,
         )
-    if exact_evidence_key:
-        session_self._pending_exact_evidence_keys.add(exact_evidence_key)
-
     evidence_intent = resolve_evidence_intent(
         tool_name, path=path, query=query, command=command
     )
     evidence_anchor = evidence_intent.anchor if evidence_intent else ""
+
+    search_like_result = tool_name in SEARCH_LIKE_TOOLS or (
+        evidence_intent is not None and evidence_intent.domain == "search"
+    )
+    if exact_evidence_key:
+        if not (
+            search_like_result
+            and search_result_evidence_level(text) == "navigation"
+        ):
+            session_self._pending_exact_evidence_keys.add(exact_evidence_key)
 
     current_turn = max(1, session_self.bridge_memory.turn)
     token_cost = max(0, count_tokens(text))

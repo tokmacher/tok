@@ -666,6 +666,15 @@ def _compress_search_results(text: str) -> str:
             for key in sample.keys()
             if all(key in item for item in data[:5])
         ]
+        evidence_keys = {
+            key
+            for key in common_keys
+            if key
+            in {"line", "snippet", "content", "text", "match", "context"}
+        }
+        if not evidence_keys:
+            return text
+
         header_keys = [
             key
             for key in ("path", "file", "name", "title", "line", "id")
@@ -674,15 +683,35 @@ def _compress_search_results(text: str) -> str:
         if not header_keys:
             header_keys = common_keys[:3]
 
+        value_keys = [
+            key
+            for key in (
+                "path",
+                "file",
+                "name",
+                "line",
+                "snippet",
+                "text",
+                "match",
+                "context",
+                "id",
+            )
+            if key in common_keys
+        ]
+        if not value_keys:
+            return text
+
         result = [
             f">>> tool:search_results|count:{len(data)}|keys:{','.join(header_keys)}"
         ]
         for item in data:
             vals = [
-                str(item.get(key, ""))[:50].replace("\n", " ")
-                for key in header_keys
+                str(item.get(key, ""))[:80].replace("\n", " ")
+                for key in value_keys
             ]
-            result.append(" | ".join(vals))
+            if not any(val.strip() for val in vals):
+                continue
+            result.append(":".join(vals))
 
         return "\n".join(result)
     except Exception:

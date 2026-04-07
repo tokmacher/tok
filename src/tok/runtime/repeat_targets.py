@@ -20,6 +20,7 @@ LISTING_LIKE_TOOLS = frozenset({"list_dir", "ls"})
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _SCOPE_RE = re.compile(r"^\s*(class |def |async def )")
 _SEARCH_RESULT_LINE_RE = re.compile(r"^(.*?:\d+(?::\d+)?):\s*(.*)$")
+_SEARCH_RESULT_CONTEXT_LINE_RE = re.compile(r"^[^\s:][^:]*-\d+-(.*)$")
 _ASSIGNMENT_RE = re.compile(r"(?<![=!<>])=(?!=)")
 _SHELL_UNSAFE_MARKERS = (
     "&&",
@@ -43,6 +44,8 @@ _EVIDENCE_DOMAIN = Literal[
     "file_metadata",
     "unknown",
 ]
+
+SearchResultEvidenceLevel = Literal["navigation", "exact_content"]
 _EVIDENCE_VARIANT = Literal[
     "full", "snippet", "diff", "metadata", "copy", "search_results"
 ]
@@ -279,6 +282,59 @@ def resolve_evidence_intent(
             return intent
 
     return _resolve_native_intent(lowered, path, query)
+
+
+_EVIDENCE_KEYS = frozenset(
+    {"line", "snippet", "content", "text", "match", "context"}
+)
+
+
+def _has_line_evidence(lines: list[str]) -> bool:
+    """Check if any line matches search result evidence patterns."""
+    return any(_SEARCH_RESULT_LINE_RE.match(line) for line in lines) or any(
+        _SEARCH_RESULT_CONTEXT_LINE_RE.match(line) for line in lines
+    )
+
+
+def _has_json_array_evidence(data: list[Any]) -> bool:
+    """Check if JSON array contains items with evidence keys."""
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        keys = {str(key).lower() for key in item.keys()}
+        if _EVIDENCE_KEYS.intersection(keys):
+            return True
+    return False
+
+
+def search_result_evidence_level(text: str) -> SearchResultEvidenceLevel:
+    """Classify search output as navigational or exact content evidence."""
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return "navigation"
+
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if not lines:
+        return "navigation"
+
+    if _has_line_evidence(lines):
+        return "exact_content"
+
+    if cleaned.startswith("[") and cleaned.endswith("]"):
+        try:
+            data = json.loads(cleaned)
+        except Exception:
+            return "navigation"
+        if isinstance(data, list) and _has_json_array_evidence(data):
+            return "exact_content"
+        return "navigation"
+
+    return "navigation"
+
+
+def search_result_has_line_evidence(text: str) -> bool:
+    """Return True when a search result includes line-level grounding evidence."""
+    return search_result_evidence_level(text) == "exact_content"
 
 
 def extract_shell_file_read_path(command: str) -> str | None:

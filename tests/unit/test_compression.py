@@ -8,7 +8,10 @@ from typing import Any
 import tok.compression
 
 tok.compression.TOOL_COMPRESS_THRESHOLD = 0
-from tok.compression._tool_result_codecs import _compress_pytest
+from tok.compression._tool_result_codecs import (
+    _compress_pytest,
+    _compress_search_results,
+)
 
 from tok.compression import (
     CANONICAL_MEMORY_FIELDS,
@@ -1229,6 +1232,15 @@ class TestCompressRecentWindow:
             "search_results" in second_breakdown or "grep" in second_breakdown
         )
         assert second_msgs[0]["content"][0]["content"] != content
+
+    def test_path_only_search_results_remain_uncompressed(self):
+        content = json.dumps(
+            [
+                {"path": f"src/file_{i}.py", "name": f"match_{i}"}
+                for i in range(5)
+            ]
+        )
+        assert _compress_search_results(content) == content
 
     def test_tool_compatible_recent_window_uses_lower_threshold(self):
         code_lines = []

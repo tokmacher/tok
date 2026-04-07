@@ -176,9 +176,9 @@ class ReadOnlyToolExecutor:
                 "contract_signal": "bad_tool_args",
             }
         if shutil.which("rg"):
-            cmd = ["rg", "-n", query, str(search_path)]
+            cmd = ["rg", "-n", "-C", "2", query, str(search_path)]
         else:
-            cmd = ["grep", "-R", "-n", query, str(search_path)]
+            cmd = ["grep", "-R", "-n", "-C", "2", query, str(search_path)]
         try:
             proc = subprocess.run(
                 cmd,

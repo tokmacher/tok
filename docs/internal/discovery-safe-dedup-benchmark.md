@@ -127,6 +127,20 @@ This ensures:
 - The model can verify claims against original source
 - No information loss occurs at discovery boundary
 
+#### Rule 2: First-Pass Search Must Return Evidence Sufficient for Grounding
+
+When a discovery search is issued on first pass:
+
+- First-pass discovery search on the live discovery surface should return line-level evidence with surrounding context by default
+- Path-only search output is valid only for explicitly navigational searches and is not sufficient first-pass exact evidence for content discovery
+- Repeat compression is only allowed after line-level or equivalent exact evidence has been seen in-session
+
+This ensures:
+
+- The model can reason directly from returned evidence without requiring immediate re-queries
+- File paths alone do not constitute "exact observation" for code content discovery
+- Content discovery requires actual content (lines, context, matches) not just location hints
+
 #### Rule 3: Unified First-Observation Rule with Evidence-Specific Identity
 
 No cache or stabilization layer may replace the first exact observation in-session. This applies globally across:
@@ -164,10 +178,51 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+## Phase 3: Contradictory Live Smoke Test
+
+### Observed Failure
+
+During latest benchmark run, the first-pass search behavior conflicted with previous smoke test expectations:
+
+| Failure Mode                    | Description                                      |
+| ------------------------------- | ------------------------------------------------ |
+| Path-only first search          | First search returned only file paths            |
+| Missing matching lines          | No matching lines were visible in initial result |
+| Insufficient grounding evidence | Content required for reasoning was absent        |
+
+### Later Improvement
+
+Subsequent search behavior showed correct patterns:
+
+| Improvement Mode          | Description                                         |
+| ------------------------- | --------------------------------------------------- |
+| Content+context on repeat | Subsequent search returned exact lines with context |
+| Targeted regex worked     | Regex-like targeted search operated correctly       |
+| Clean offset reads        | Offset-based file reads functioned properly         |
+
+### Classification
+
+The audit classifies first-pass path-only `Search(pattern: ...)` results on discovery-oriented surfaces as a **behavioral defect**, not the intended default.
+
+- **First pass**: discovery search should surface line-level evidence with surrounding context first.
+- **Upgrade trigger**: later repeats may compress once exact evidence is already in-session.
+- **Root cause**: wrapper / tool-selection behavior and search-result shaping, not cache warming or repeat dedup alone.
+- **Semantics split**: treat path-only output as navigational-only; treat content+context as the discovery default.
+
+### Phase 3 Metrics
+
+| Metric                                             | Description                                                                              |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `first-pass-path-only-results`                     | Number of first-pass searches returning only file paths (no line content)                |
+| `later-searches-upgraded-to-content`               | Number of later searches that upgraded from path-only to content+context                 |
+| `search-surfaces-modes-with-differential-behavior` | Number of search surfaces/modes observed with inconsistent first-pass vs repeat behavior |
+
+______________________________________________________________________
+
 ## Version
 
 **Version:** 0.1.0
-**Last Updated:** 2026-04-06
+**Last Updated:** 2026-04-07
 
 ______________________________________________________________________
 
@@ -204,3 +259,66 @@ Additional metrics collected during Phase 2 to quantify remaining issues:
 | `file-targeted-grep-error-stubs`         | Number of times file-targeted grep returned error stub on first pass                 |
 | `repeated-offset-reads-from-truncation`  | Number of repeated offset reads caused by truncation at answer lines                 |
 | `stable-summaries-missing-decisive-line` | Number of stable summaries that did not expose the line containing the actual answer |
+
+______________________________________________________________________
+
+## Phase 4: Live Search Surface Repeat-Compression Audit
+
+### Scope
+
+This audit focuses specifically on the Claude-facing live `Search(pattern: ...)` surface, including wrapper/cache/compression layers that can affect first-pass output mode. The issue is no longer broad discovery safety—it is a single surface-specific repeat-compression question.
+
+### Confirmed Working Behaviors
+
+| Behavior                       | Status  | Description                                                        |
+| ------------------------------ | ------- | ------------------------------------------------------------------ |
+| First-pass search raw          | Working | Initial search calls return exact, uncompressed content            |
+| First-pass read exact          | Working | File reads on first access return full exact content               |
+| Hot-search first-pass behavior | Working | Hot-recent search path correctly preserves first exact observation |
+| Targeted discovery usable      | Working | Targeted regex searches operate correctly with content+context     |
+
+### Remaining Question
+
+| Question                                           | Status      |
+| -------------------------------------------------- | ----------- |
+| Repeated identical Search(pattern: ...) stayed raw | Under audit |
+
+**Observation:** During testing, repeated identical `Search(pattern: ...)` calls remained in raw/full form rather than compressing to stable summaries after the first exact observation.
+
+### Acceptance Question
+
+**Is this live surface intended to compress on repeat?**
+
+The answer to this question determines the classification of the observed behavior:
+
+- **If YES**: The current behavior (remaining raw on repeat) is a gap/bug that should be fixed.
+- **If NO**: The current behavior is intentional and must be treated as an explicit surface behavior, not an accidental gap.
+
+______________________________________________________________________
+
+## Policy Boundary: Live Search Surface Compression Rules
+
+### Rule A: Compressor-Managed Surfaces
+
+If a live search surface is compressor-managed, repeated identical exact-content results **may compress after first exact observation**.
+
+- The first exact observation establishes the evidence identity
+- Subsequent identical observations via the same evidence key may use compressed representation
+- Compression must not occur until after first exact evidence is established in-session
+
+### Rule B: Intentionally Raw Surfaces
+
+If a live search surface is intentionally raw, that must be treated as **an explicit surface behavior, not an accidental gap**.
+
+- Raw-on-repeat behavior must be documented and intentional
+- The surface contract must clearly state that compression is not applied
+- This is a valid design choice for critical discovery paths
+
+### Rule C: First-Pass Raw Grounding Mandatory
+
+Regardless of repeat behavior:
+
+- **First-pass raw grounding remains mandatory**
+- First discovery search must return line-level evidence with surrounding context
+- Path-only output is not sufficient first-pass exact evidence for content discovery
+- No cache, stabilization, or compression layer may replace the first exact observation

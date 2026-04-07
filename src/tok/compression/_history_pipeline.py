@@ -53,8 +53,10 @@ from ..runtime.config import RESULT_CACHE_TTL_SECONDS
 from ..runtime.repeat_targets import (
     build_file_skeleton,
     build_file_summary,
+    SEARCH_LIKE_TOOLS,
     evidence_identity_key,
     normalize_path_target,
+    search_result_evidence_level,
 )
 from ..utils.event_logging import log_semantic_dedup
 
@@ -669,6 +671,12 @@ def compress_tool_results_impl(
     def _first_exact_guard(context: dict[str, Any] | None, raw: str) -> bool:
         if first_exact_evidence_seen is None or not context:
             return False
+        tool_name = str(context.get("name", "")).lower()
+        if (
+            tool_name in SEARCH_LIKE_TOOLS
+            and search_result_evidence_level(raw) == "navigation"
+        ):
+            return False
         key = evidence_identity_key(
             str(context.get("name", "")),
             path=_extract_normalized_path(context),
@@ -803,10 +811,9 @@ def compress_tool_results_impl(
             if not isinstance(raw, str):
                 continue
 
-            tool_id = ""
+            tool_id = block.get("tool_use_id", "")
             ctx: dict[str, Any] | None = None
             if tool_use_id_to_context is not None:
-                tool_id = block.get("tool_use_id", "")
                 ctx = tool_use_id_to_context.get(tool_id)
                 if (
                     ctx
@@ -1230,10 +1237,15 @@ def compress_recent_window_impl(
             ctx = (tool_use_id_to_context or {}).get(tool_id, {})
             if _is_precision_read_context(ctx):
                 continue
-            if _first_exact_guard(ctx, ""):
+            tool_name = str(ctx.get("name", "")).lower()
+            if (
+                tool_name in SEARCH_LIKE_TOOLS
+                and search_result_evidence_level(content) == "navigation"
+            ):
+                continue
+            if _first_exact_guard(ctx, content):
                 msg["content"] = content
                 continue
-            tool_name = str(ctx.get("name", "")).lower()
             kind = _detect_tool_content_type_impl(content)
             if tool_name in FILE_LIKE_TOOLS:
                 kind = "file"
@@ -1282,6 +1294,12 @@ def compress_recent_window_impl(
                     )
                     continue
 
+            tool_name = str(ctx.get("name", "")).lower() if ctx else ""
+            if (
+                tool_name in SEARCH_LIKE_TOOLS
+                and search_result_evidence_level(raw) == "navigation"
+            ):
+                continue
             if first_exact_evidence_seen is not None and ctx:
                 key = evidence_identity_key(
                     str(ctx.get("name", "")),
@@ -1298,6 +1316,11 @@ def compress_recent_window_impl(
                     else None,
                 )
                 if key and key not in first_exact_evidence_seen:
+                    if (
+                        tool_name in SEARCH_LIKE_TOOLS
+                        and search_result_evidence_level(raw) == "navigation"
+                    ):
+                        continue
                     first_exact_evidence_seen.add(key)
                     block["content"] = raw
                     continue
