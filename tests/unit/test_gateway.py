@@ -33,6 +33,109 @@ from tok.runtime.pipeline.request_validation import (
 from tok.runtime.memory.bridge_memory import MemoryEntry
 
 
+# Fake classes and helpers for test_gateway_developer_smoke_surfaces_recovery_and_repair_outcomes
+class _FakeStreamResponse:
+    async def aiter_bytes(self):
+        if False:
+            yield b""
+        raise httpx.ReadError("boom")
+
+
+class _FakeClient:
+    async def aclose(self):
+        pass
+
+
+async def _fake_send_recovery_test(self, request, stream=False):
+    del self, stream
+    if "example.com" in str(request.url):
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "",
+                        "name": "Read",
+                        "input": {"file_path": "/tmp/example.py"},
+                    }
+                ],
+                "usage": {"input_tokens": 8, "output_tokens": 3},
+            },
+        )
+    return httpx.Response(
+        200,
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "content": [{"type": "text", "text": "ok"}],
+        },
+    )
+
+
+def _fake_prepare_request_recovery_test(
+    request, session, *, result_cache=None
+):
+    del session, result_cache
+    return PreparedRuntimeRequest(
+        body={
+            "model": request.model,
+            "max_tokens": 8192,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "",
+                            "name": "Read",
+                            "input": {"file_path": "/tmp/example.py"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "",
+                            "content": "example contents",
+                        }
+                    ],
+                },
+                {"role": "user", "content": "Summarize the result."},
+            ],
+            "stream": False,
+        },
+        compressed=True,
+        input_saved_tokens=24,
+        behavior_signals={},
+        type_breakdown={},
+        mode="balanced",
+        normalized_tool_events=[],
+    )
+
+
+async def _collect_stream_chunks(session):
+    chunks = []
+    async for chunk in _buffer_strip_restream(
+        session,
+        _FakeClient(),
+        _FakeStreamResponse(),
+        tool_compatible=True,
+        request_method="POST",
+        request_url="https://example.com/v1/messages",
+        request_headers={},
+        request_content=json.dumps({"stream": True}).encode(),
+        request_state={"fallback_recorded": False},
+    ):
+        chunks.append(chunk)
+    return chunks
+
+
 def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
     tool_uses = [
         {
@@ -159,6 +262,7 @@ def test_health_endpoint(monkeypatch):
         "status": "ok",
         "bridge": "tok",
         "port": 9191,
+        "api_base": "https://api.anthropic.com",
         "mode": "tool-compatible",
         "request_policy": "natural_first",
         "baseline_only": False,
@@ -223,6 +327,26 @@ def test_health_endpoint(monkeypatch):
         "task_score": 100,
         "repeated_active_file_reads": 0,
     }
+
+
+def test_health_endpoint_reports_custom_api_base(tmp_path):
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.reset_session_stats()
+    session = BridgeSession(
+        port=9191,
+        tracker=tracker,
+        api_base="https://example.test/custom",
+    )
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["api_base"] == "https://example.test/custom"
 
 
 def test_bridge_session_defaults_request_policy_to_natural_first(
@@ -291,6 +415,267 @@ def test_health_endpoint_reports_baseline_only_and_session_savings(tmp_path):
     assert payload["baseline_cost_usd"] > payload["actual_cost_usd"]
     assert payload["session_quality"] == "degraded"
     assert payload["last_degradation_reason"] == "baseline fallback"
+
+
+def test_gateway_uses_configured_api_base_for_upstream_target(
+    tmp_path, monkeypatch
+):
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_requests: list[tuple[str, str, dict[str, Any]]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        sent_requests.append(
+            (
+                str(request.url),
+                request.headers["host"],
+                json.loads(request.read().decode()),
+            )
+        )
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+            headers={"content-type": "application/json"},
+        )
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            fail_open=True,
+            api_base="https://example.test/custom",
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_requests) == 1
+    target_url, host, body = sent_requests[0]
+    assert target_url == "https://example.test/custom/v1/messages"
+    assert host == "example.test"
+    assert body["model"] == "claude-sonnet-4"
+    assert body["max_tokens"] == 8192
+    assert body["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+    ]
+    assert body["stream"] is False
+
+
+def test_gateway_uses_tok_api_base_env_var_for_upstream_target(
+    tmp_path, monkeypatch
+):
+    """Verify TOK_API_BASE environment variable is consumed and reaches request URL."""
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_requests: list[tuple[str, str, dict[str, Any]]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        sent_requests.append(
+            (
+                str(request.url),
+                request.headers["host"],
+                json.loads(request.read().decode()),
+            )
+        )
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+            headers={"content-type": "application/json"},
+        )
+
+    # Set TOK_API_BASE environment variable
+    monkeypatch.setenv("TOK_API_BASE", "https://env.example.test/api")
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    # BridgeSession should pick up TOK_API_BASE from env
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            fail_open=True,
+            # No explicit api_base - should use TOK_API_BASE env var
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_requests) == 1
+    target_url, host, body = sent_requests[0]
+    assert target_url == "https://env.example.test/api/v1/messages"
+    assert host == "env.example.test"
+    assert body["model"] == "claude-sonnet-4"
+
+
+def test_gateway_defaults_to_anthropic_api_base_when_no_override(
+    tmp_path, monkeypatch
+):
+    """Verify default behavior uses Anthropic API base when no override is supplied."""
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    sent_requests: list[tuple[str, str, dict[str, Any]]] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+            },
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        sent_requests.append(
+            (
+                str(request.url),
+                request.headers["host"],
+                json.loads(request.read().decode()),
+            )
+        )
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+            headers={"content-type": "application/json"},
+        )
+
+    # Ensure TOK_API_BASE is not set
+    monkeypatch.delenv("TOK_API_BASE", raising=False)
+
+    monkeypatch.setattr(
+        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    # BridgeSession with no explicit api_base and no env var
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            fail_open=True,
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(sent_requests) == 1
+    target_url, host, body = sent_requests[0]
+    # Default should be Anthropic API
+    assert target_url == "https://api.anthropic.com/v1/messages"
+    assert host == "api.anthropic.com"
+    assert body["model"] == "claude-sonnet-4"
+
+
+def test_bridge_session_api_base_property_reflects_env_var(monkeypatch):
+    """Verify BridgeSession.api_base property reflects TOK_API_BASE env var."""
+    # Test with env var set
+    monkeypatch.setenv("TOK_API_BASE", "https://custom.api.test/v1")
+    session = BridgeSession()
+    assert session.api_base == "https://custom.api.test/v1"
+
+    # Test with env var unset - should default to Anthropic
+    monkeypatch.delenv("TOK_API_BASE", raising=False)
+    session2 = BridgeSession()
+    assert session2.api_base == "https://api.anthropic.com"
+
+    # Test explicit api_base overrides env var
+    monkeypatch.setenv("TOK_API_BASE", "https://env.api.test")
+    session3 = BridgeSession(api_base="https://explicit.api.test")
+    assert session3.api_base == "https://explicit.api.test"
 
 
 def test_health_endpoint_reports_recovery_and_repair_counters(tmp_path):
@@ -1963,111 +2348,18 @@ def test_gateway_developer_smoke_surfaces_recovery_and_repair_outcomes(
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
 
-    class FakeStreamResponse:
-        async def aiter_bytes(self):
-            if False:
-                yield b""
-            raise httpx.ReadError("boom")
-
-    class FakeClient:
-        async def aclose(self):
-            pass
-
-    async def _fake_send(self, request, stream=False):
-        del self, stream
-        if "example.com" in str(request.url):
-            return httpx.Response(
-                200,
-                json={
-                    "model": "claude-sonnet-4",
-                    "max_tokens": 8192,
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "",
-                            "name": "Read",
-                            "input": {"file_path": "/tmp/example.py"},
-                        }
-                    ],
-                    "usage": {"input_tokens": 8, "output_tokens": 3},
-                },
-            )
-        return httpx.Response(
-            200,
-            json={
-                "model": "claude-sonnet-4",
-                "max_tokens": 8192,
-                "usage": {"input_tokens": 10, "output_tokens": 5},
-                "content": [{"type": "text", "text": "ok"}],
-            },
-        )
-
-    def _fake_prepare_request(request, session, *, result_cache=None):
-        del session, result_cache
-        return PreparedRuntimeRequest(
-            body={
-                "model": request.model,
-                "max_tokens": 8192,
-                "messages": [
-                    {
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "id": "",
-                                "name": "Read",
-                                "input": {"file_path": "/tmp/example.py"},
-                            }
-                        ],
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": "",
-                                "content": "example contents",
-                            }
-                        ],
-                    },
-                    {"role": "user", "content": "Summarize the result."},
-                ],
-                "stream": False,
-            },
-            compressed=True,
-            input_saved_tokens=24,
-            behavior_signals={},
-            type_breakdown={},
-            mode="balanced",
-            normalized_tool_events=[],
-        )
-
-    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send_recovery_test)
     monkeypatch.setattr(
-        gateway._RUNTIME, "prepare_request", _fake_prepare_request
+        gateway._RUNTIME,
+        "prepare_request",
+        _fake_prepare_request_recovery_test,
     )
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
     session = BridgeSession(memory_dir=memory_dir, fail_open=True)
     session.tracker.record_call = MagicMock()
 
-    async def _collect():
-        chunks = []
-        async for chunk in _buffer_strip_restream(
-            session,
-            FakeClient(),
-            FakeStreamResponse(),
-            tool_compatible=True,
-            request_method="POST",
-            request_url="https://example.com/v1/messages",
-            request_headers={},
-            request_content=json.dumps({"stream": True}).encode(),
-            request_state={"fallback_recorded": False},
-        ):
-            chunks.append(chunk)
-        return chunks
-
-    output = b"".join(asyncio.run(_collect())).decode()
+    output = b"".join(asyncio.run(_collect_stream_chunks(session))).decode()
     assert '"id": "toolu_recovery_1"' in output
 
     app = create_app(session)
@@ -3185,7 +3477,7 @@ def test_streaming_tool_json_deltas_become_tool_use_blocks():
     async def _collect():
         chunks = []
         async for chunk in _buffer_strip_restream(
-            session, client, FakeResponse()
+            session, client, FakeResponse(), client_owned=True
         ):
             chunks.append(chunk)
         return chunks
@@ -3360,6 +3652,7 @@ def test_streaming_empty_success_recovers_via_non_stream_text(
             request_headers={"x-test": "1"},
             request_content=json.dumps({"stream": True}).encode(),
             request_state={"fallback_recorded": False},
+            client_owned=True,
         ):
             chunks.append(chunk)
         return chunks

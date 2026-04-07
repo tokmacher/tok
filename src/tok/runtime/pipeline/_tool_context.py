@@ -183,10 +183,11 @@ def _process_message_blocks(
             )
         if not isinstance(block, dict) or block.get("type") != "tool_use":
             continue
-        _process_single_tool_use(
+        invalid_bypass_index, bypass_consumed = _process_single_tool_use(
             block, result, bypass_next_tool_use, invalid_bypass_index
         )
-        bypass_next_tool_use = False
+        if bypass_consumed:
+            bypass_next_tool_use = False
 
 
 def _process_single_tool_use(
@@ -194,10 +195,10 @@ def _process_single_tool_use(
     result: dict[str, dict[str, Any]],
     bypass_next_tool_use: bool,
     invalid_bypass_index: int,
-) -> int:
+) -> tuple[int, bool]:
     """Process a single tool_use block and update result.
 
-    Returns updated invalid_bypass_index.
+    Returns updated invalid_bypass_index and whether bypass marker was consumed.
     """
     tool_id = block.get("id", "")
     tool_name = block.get("name", "")
@@ -208,18 +209,22 @@ def _process_single_tool_use(
             result[f"__invalid_bypass_marker__:{invalid_bypass_index}"] = {
                 "invalid_bypass_marker": True
             }
-        return invalid_bypass_index
+        return invalid_bypass_index, False
 
     path, query = _extract_tool_input_fields(tool_input)
     invalid_bypass_marker = False
+    bypass_consumed = False
     if bypass_next_tool_use:
+        bypass_consumed = _is_supported_bypass_target(
+            str(tool_name), tool_input
+        )
         tool_input, invalid_bypass_marker = _apply_bypass_marker(
             tool_input, str(tool_name), path, tool_id
         )
     result[tool_id] = _build_context_dict(
         tool_name, tool_input, path, query, invalid_bypass_marker
     )
-    return invalid_bypass_index
+    return invalid_bypass_index, bypass_consumed
 
 
 def build_tool_use_id_to_context(

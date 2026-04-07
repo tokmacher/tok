@@ -10,6 +10,7 @@ import random  # noqa: F401 - compatibility anchor for gateway tests
 import time
 from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -35,6 +36,22 @@ from ._bridge_streaming import _emit_sse_block, buffer_strip_restream_impl
 from ._anthropic_optimizations import apply_anthropic_optimizations
 
 __all__ = ["buffer_strip_restream_impl", "create_app_impl"]
+
+
+def _upstream_host(api_base: str) -> str:
+    parsed = urlsplit(api_base.strip() or ANTHROPIC_API_BASE)
+    if parsed.netloc:
+        return parsed.netloc
+    fallback = parsed.path.split("/", 1)[0].strip()
+    return fallback or "api.anthropic.com"
+
+
+def _upstream_target_url(api_base: str, path: str, query: str) -> str:
+    base = api_base.strip() or ANTHROPIC_API_BASE
+    target_url = f"{base.rstrip('/')}/{path.lstrip('/')}"
+    if query:
+        target_url += f"?{query}"
+    return target_url
 
 
 def _note_request_policy_recovery_watch(
@@ -210,6 +227,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "status": "ok",
             "bridge": "tok",
             "port": session.port,
+            "api_base": session.api_base,
             "mode": _request_policy_mode_label(session.request_policy_default),
             "request_policy": session.request_policy_default,
             "baseline_only": session.runtime_session._baseline_only,
@@ -467,14 +485,14 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         skip = {
             "host",
             "content-length",
-            "transfer-encoding",
+            "accept-encoding",
             "connection",
             "x-tok-tool-compatible",
         }
         headers = {
             k: v for k, v in request.headers.items() if k.lower() not in skip
         }
-        headers["host"] = "api.anthropic.com"
+        headers["host"] = _upstream_host(session.api_base)
 
         has_x_api_key = any(k.lower() == "x-api-key" for k in headers)
         has_auth_bearer = any(
@@ -820,9 +838,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     )
                     raise
 
-        target_url = f"{ANTHROPIC_API_BASE}/{path}"
-        if request.url.query:
-            target_url += f"?{request.url.query}"
+        target_url = _upstream_target_url(
+            session.api_base, path, request.url.query
+        )
 
         is_streaming = False
         thinking_forced_non_stream = False
@@ -869,174 +887,178 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             logger.debug("Unexpected error during JSON parsing: %s", exc)
 
         if is_streaming:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                try:
-                    (
-                        response,
-                        retried_without_tok,
-                        retry_signals,
-                    ) = await send_with_tok_fail_open_retry(
-                        session,
-                        client,
-                        method=request.method,
-                        url=target_url,
-                        headers=headers,
-                        content=body_bytes,
-                        original_content=original_body_bytes,
-                        retry_content=provider_safe_original_body_bytes,
-                        allow_original_retry=not raw_retry_forbidden,
-                        stream=True,
-                        compressed_request=compressed,
-                        sleep_fn=asyncio.sleep,
+            client = httpx.AsyncClient(timeout=300.0)
+            try:
+                (
+                    response,
+                    retried_without_tok,
+                    retry_signals,
+                ) = await send_with_tok_fail_open_retry(
+                    session,
+                    client,
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body_bytes,
+                    original_content=original_body_bytes,
+                    retry_content=provider_safe_original_body_bytes,
+                    allow_original_retry=not raw_retry_forbidden,
+                    stream=True,
+                    compressed_request=compressed,
+                    sleep_fn=asyncio.sleep,
+                )
+                for key, value in retry_signals.items():
+                    behavior_signals[key] = (
+                        behavior_signals.get(key, 0) + value
                     )
+                _note_request_policy_recovery_watch(session, retry_signals)
+                if response.status_code == 429:
+                    await response.aclose()
+                    await client.aclose()
+                    return _normalize_rate_limit_response(session, response)
+                if retried_without_tok:
+                    compressed = False
+                    saved_toks = 0
+                    tool_breakdown = {}
+                    prompt_metrics = {
+                        "baseline_prompt_tokens": 0,
+                        "prepared_prompt_tokens": 0,
+                        "saved_prompt_tokens": 0,
+                        "hot_hint_tokens_added": 0,
+                        "reacquisition_tokens_avoided_estimate": 0,
+                    }
+                    behavior_signals = {
+                        "tok_fail_open_retry": 1,
+                        "tok_fallback_activated": 1,
+                    }
                     for key, value in retry_signals.items():
                         behavior_signals[key] = (
                             behavior_signals.get(key, 0) + value
                         )
-                    _note_request_policy_recovery_watch(session, retry_signals)
-                    if response.status_code == 429:
-                        return _normalize_rate_limit_response(
-                            session, response
+                    logger.warning(
+                        "tok_fallback_activated: upstream 400 retry, serving without compression"
+                    )
+                    _record_fallback_once(session, request_state)
+                resp_headers = _safe_headers(response.headers)
+                if response.status_code >= 400:
+                    error_content = await response.aread()
+                    await client.aclose()
+                    return Response(
+                        content=error_content,
+                        status_code=response.status_code,
+                        headers=resp_headers,
+                        media_type=response.headers.get(
+                            "content-type", "application/json"
+                        ),
+                    )
+
+                if path == "v1/messages":
+                    return StreamingResponse(
+                        buffer_strip_restream_impl(
+                            session,
+                            client,
+                            response,
+                            input_saved_tokens=saved_toks if compressed else 0,
+                            type_breakdown=tool_breakdown
+                            if compressed
+                            else None,
+                            behavior_signals=behavior_signals or None,
+                            prompt_metrics=prompt_metrics
+                            if compressed
+                            else None,
+                            tool_compatible=request_tool_compatible,
+                            request_method=request.method,
+                            request_url=target_url,
+                            request_headers=headers,
+                            request_content=(
+                                provider_safe_original_body_bytes
+                                if retried_without_tok
+                                else body_bytes
+                            ),
+                            request_state=request_state,
+                            client_owned=True,
+                        ),
+                        status_code=response.status_code,
+                        headers=resp_headers,
+                        media_type=response.headers.get(
+                            "content-type", "text/event-stream"
+                        ),
+                    )
+            except Exception as e:
+                logger.error(
+                    "Streaming error in Tok bridge: %s",
+                    str(e),
+                    exc_info=True,
+                )
+                await client.aclose()
+                if session.fail_open:
+                    logger.warning(
+                        "Streaming error - fail-open: retrying without Tok"
+                    )
+                    compressed = False
+                    saved_toks = 0
+                    tool_breakdown = {}
+                    behavior_signals = {
+                        "streaming_error_retry": 1,
+                    }
+                    retry_client = httpx.AsyncClient(timeout=300.0)
+                    try:
+                        (
+                            response,
+                            _retried,
+                            retry_signals,
+                        ) = await send_with_tok_fail_open_retry(
+                            session,
+                            retry_client,
+                            method=request.method,
+                            url=target_url,
+                            headers=headers,
+                            content=provider_safe_original_body_bytes,
+                            original_content=original_body_bytes,
+                            retry_content=provider_safe_original_body_bytes,
+                            allow_original_retry=not raw_retry_forbidden,
+                            stream=True,
+                            compressed_request=False,
                         )
-                    if retried_without_tok:
-                        compressed = False
-                        saved_toks = 0
-                        tool_breakdown = {}
-                        prompt_metrics = {
-                            "baseline_prompt_tokens": 0,
-                            "prepared_prompt_tokens": 0,
-                            "saved_prompt_tokens": 0,
-                            "hot_hint_tokens_added": 0,
-                            "reacquisition_tokens_avoided_estimate": 0,
-                        }
-                        behavior_signals = {
-                            "tok_fail_open_retry": 1,
-                            "tok_fallback_activated": 1,
-                        }
                         for key, value in retry_signals.items():
                             behavior_signals[key] = (
                                 behavior_signals.get(key, 0) + value
                             )
-                        logger.warning(
-                            "tok_fallback_activated: upstream 400 retry, serving without compression"
+                        _note_request_policy_recovery_watch(
+                            session, retry_signals
                         )
-                        _record_fallback_once(session, request_state)
-                    resp_headers = _safe_headers(response.headers)
-                    if response.status_code >= 400:
-                        error_content = await response.aread()
-                        return Response(
-                            content=error_content,
-                            status_code=response.status_code,
-                            headers=resp_headers,
-                            media_type=response.headers.get(
-                                "content-type", "application/json"
-                            ),
-                        )
-
-                    if path == "v1/messages":
-                        return StreamingResponse(
-                            buffer_strip_restream_impl(
-                                session,
-                                client,
-                                response,
-                                input_saved_tokens=saved_toks
-                                if compressed
-                                else 0,
-                                type_breakdown=tool_breakdown
-                                if compressed
-                                else None,
-                                behavior_signals=behavior_signals or None,
-                                prompt_metrics=prompt_metrics
-                                if compressed
-                                else None,
-                                tool_compatible=request_tool_compatible,
-                                request_method=request.method,
-                                request_url=target_url,
-                                request_headers=headers,
-                                request_content=(
-                                    provider_safe_original_body_bytes
-                                    if retried_without_tok
-                                    else body_bytes
+                        if path == "v1/messages":
+                            return StreamingResponse(
+                                buffer_strip_restream_impl(
+                                    session,
+                                    retry_client,
+                                    response,
+                                    input_saved_tokens=0,
+                                    type_breakdown=None,
+                                    behavior_signals=behavior_signals,
+                                    prompt_metrics=None,
+                                    tool_compatible=request_tool_compatible,
+                                    request_method=request.method,
+                                    request_url=target_url,
+                                    request_headers=headers,
+                                    request_content=provider_safe_original_body_bytes,
+                                    request_state=request_state,
+                                    client_owned=True,
                                 ),
-                                request_state=request_state,
-                            ),
-                            status_code=response.status_code,
-                            headers=resp_headers,
-                            media_type=response.headers.get(
-                                "content-type", "text/event-stream"
-                            ),
-                        )
-                except Exception as e:
-                    logger.error(
-                        "Streaming error in Tok bridge: %s",
-                        str(e),
-                        exc_info=True,
-                    )
-                    if session.fail_open:
-                        logger.warning(
-                            "Streaming error - fail-open: retrying without Tok"
-                        )
-                        compressed = False
-                        saved_toks = 0
-                        tool_breakdown = {}
-                        behavior_signals = {
-                            "streaming_error_retry": 1,
-                        }
-                        async with httpx.AsyncClient(
-                            timeout=300.0
-                        ) as retry_client:
-                            (
-                                response,
-                                _retried,
-                                retry_signals,
-                            ) = await send_with_tok_fail_open_retry(
-                                session,
-                                retry_client,
-                                method=request.method,
-                                url=target_url,
-                                headers=headers,
-                                content=provider_safe_original_body_bytes,
-                                original_content=original_body_bytes,
-                                retry_content=provider_safe_original_body_bytes,
-                                allow_original_retry=not raw_retry_forbidden,
-                                stream=True,
-                                compressed_request=False,
+                                status_code=response.status_code,
+                                headers=_safe_headers(response.headers),
+                                media_type=response.headers.get(
+                                    "content-type", "text/event-stream"
+                                ),
                             )
-                            for key, value in retry_signals.items():
-                                behavior_signals[key] = (
-                                    behavior_signals.get(key, 0) + value
-                                )
-                            _note_request_policy_recovery_watch(
-                                session, retry_signals
-                            )
-                            if path == "v1/messages":
-                                return StreamingResponse(
-                                    buffer_strip_restream_impl(
-                                        session,
-                                        retry_client,
-                                        response,
-                                        input_saved_tokens=0,
-                                        type_breakdown=None,
-                                        behavior_signals=behavior_signals,
-                                        prompt_metrics=None,
-                                        tool_compatible=request_tool_compatible,
-                                        request_method=request.method,
-                                        request_url=target_url,
-                                        request_headers=headers,
-                                        request_content=provider_safe_original_body_bytes,
-                                        request_state=request_state,
-                                    ),
-                                    status_code=response.status_code,
-                                    headers=_safe_headers(response.headers),
-                                    media_type=response.headers.get(
-                                        "content-type", "text/event-stream"
-                                    ),
-                                )
-                    return Response(
-                        content=f"Streaming error: {str(e)}",
-                        status_code=502,
-                        media_type="text/plain",
-                    )
+                    except Exception as retry_error:
+                        await retry_client.aclose()
+                        raise retry_error
+                return Response(
+                    content=f"Streaming error: {str(e)}",
+                    status_code=502,
+                    media_type="text/plain",
+                )
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             (

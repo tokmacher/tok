@@ -63,7 +63,6 @@ from .pipeline.request_validation import (
 from .pipeline.tool_processing import (
     _should_skip_history_rewrite,
     build_tool_use_id_to_context,
-    collect_tool_context_validation_signals,
     collect_behavior_signals,
     count_tokens,
     logical_target_key_from_context,
@@ -710,10 +709,6 @@ def prepare_request_impl(
         session._stream_recovery_reacquisition_budget = max(
             0, session._stream_recovery_reacquisition_budget - 1
         )
-    for key, value in collect_tool_context_validation_signals(
-        id_to_context
-    ).items():
-        behavior_signals[key] = behavior_signals.get(key, 0) + value
     behavior_signals["_project_markers_proxy"] = len(session._project_markers)
     for err_snippet in collect_transient_error_snippets(translated_messages):
         session.bridge_memory._upsert(

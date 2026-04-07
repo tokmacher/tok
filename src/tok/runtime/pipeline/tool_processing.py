@@ -29,6 +29,21 @@ from ._tool_repeat_detection import _iter_tool_results
 from ...utils.token_utils import count_tokens
 
 
+def _suppress_reacquisition_signals(signals: dict[str, int]) -> bool:
+    """Remove reacquisition-related signals and return True if any were suppressed."""
+    suppressed = False
+    for key in (
+        "repeat_file_read",
+        "repeat_search",
+        "reacquisition_cost_tokens",
+        "file_reacquisition_cost_tokens",
+        "search_reacquisition_cost_tokens",
+    ):
+        if signals.pop(key, 0):
+            suppressed = True
+    return suppressed
+
+
 def collect_behavior_signals(
     messages: list[dict[str, Any]],
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
@@ -85,6 +100,10 @@ def collect_behavior_signals(
             bump,
             count_tokens,
         )
+        for key, value in collect_tool_context_validation_signals(
+            tool_use_id_to_context
+        ).items():
+            bump(key, value)
 
     _detect_prose_leaks(messages, bump_one)
     _detect_error_patterns(messages, bump_one)
@@ -94,19 +113,10 @@ def collect_behavior_signals(
             bump("blocker_rediscovery")
             break
 
-    if suppress_reacquisition_once:
-        suppressed = False
-        for key in (
-            "repeat_file_read",
-            "repeat_search",
-            "reacquisition_cost_tokens",
-            "file_reacquisition_cost_tokens",
-            "search_reacquisition_cost_tokens",
-        ):
-            if signals.pop(key, 0):
-                suppressed = True
-        if suppressed:
-            bump("stream_recovery_reacquisition_suppressed")
+    if suppress_reacquisition_once and _suppress_reacquisition_signals(
+        signals
+    ):
+        bump("stream_recovery_reacquisition_suppressed")
 
     return signals
 

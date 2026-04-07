@@ -219,10 +219,83 @@ The audit classifies first-pass path-only `Search(pattern: ...)` results on disc
 
 ______________________________________________________________________
 
+## Step 0: Release Transport Hardening Benchmark
+
+### 0.1 Extended Benchmark Scope
+
+The benchmark has shifted from discovery behavior to release transport correctness. This section captures the release-critical infrastructure issues and their resolution criteria.
+
+#### 0.1.1 New Section: Release Transport Hardening Benchmark
+
+This extension adds release-blocking infrastructure validation to the existing discovery-safe deduplication benchmark.
+
+#### 0.1.2 Confirmed Wins (Out of Blocker Scope)
+
+| Win                               | Status   | Description                                                                                     |
+| --------------------------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| First-pass discovery search       | Verified | Working correctly - returns line-level evidence with surrounding context                        |
+| Repeat compression on live search | Verified | Working correctly - subsequent identical searches compress after first exact observation        |
+| Hot-search advisory behavior      | Verified | Working correctly - hot-search hints remain advisory and never suppress first exact observation |
+| Targeted search/read              | Verified | Working correctly - targeted regex searches and file reads operate with content+context         |
+
+#### 0.1.3 Confirmed Release Blockers
+
+| Blocker                       | Severity | Description                                                                                  |
+| ----------------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| Streaming client lifetime bug | Critical | Upstream client can close before generator consumption, causing premature stream termination |
+| `--api-base` plumbing break   | Critical | Configured API base fails to reach request URL construction in subprocess bridge mode        |
+| Mock-only streaming coverage  | Critical | No real streaming verification path exercises actual `aiter_bytes()` lifecycle               |
+
+#### 0.1.4 Live Operational Symptoms
+
+| Symptom            | Current State                                 |
+| ------------------ | --------------------------------------------- |
+| Session quality    | WATCH - degradation observed under load       |
+| Degradation reason | Stream transport instability                  |
+| Read-error count   | Elevated - requires monitoring from tok stats |
+| Recovery holdovers | Present - automatic retry logic engaged       |
+
+______________________________________________________________________
+
+### 0.2 Release Gate Lock
+
+Precise definition of "ready to release" for the 0.2.0 milestone:
+
+#### 0.2.1 Streaming Response Lifetime Rule
+
+**Rule:** Tok must not return a streaming response whose upstream client can close before generator consumption.
+
+- **Validation:** All streaming paths must ensure client lifetime extends through full generator exhaustion
+- **Test:** Verify `aiter_bytes()` completes without `ConnectionClosed` or `GeneratorExit` errors
+
+#### 0.2.2 API Base Plumbing Rule
+
+**Rule:** Configured API base must reach request URL construction in both foreground and subprocess bridge modes.
+
+- **Validation:** `--api-base` parameter propagates through CLI → config → adapter → transport
+- **Test:** Custom API base is used in actual HTTP requests in both execution modes
+
+#### 0.2.3 Real Streaming Coverage Rule
+
+**Rule:** At least one real streaming verification path must exercise the actual `aiter_bytes()` lifecycle.
+
+- **Validation:** Integration test with real (non-mock) streaming backend
+- **Test:** Full bytes→chunks→generator→consumption flow verified end-to-end
+
+#### 0.2.4 Session Quality Stability Rule
+
+**Rule:** Live session quality must no longer degrade due to stream transport instability under normal benchmark use.
+
+- **Validation:** 10 consecutive benchmark runs without transport-related errors
+- **Test:** Tok stats show zero read-errors and no recovery holdovers during standard workload
+
+______________________________________________________________________
+
 ## Version
 
-**Version:** 0.1.0
+**Version:** 0.2.0-draft
 **Last Updated:** 2026-04-07
+**Status:** Release gate locked - awaiting blocker resolution
 
 ______________________________________________________________________
 

@@ -462,6 +462,88 @@ class TestCLI:
         assert result.exit_code == 0
         assert captured["env"]["TOK_RESET_SESSION"] == "1"
 
+    def test_bridge_start_foreground_forwards_api_base(
+        self, monkeypatch, tmp_path
+    ):
+        from tok.cli import _bridge, _cli_support
+
+        no_bridge = lambda port: None
+        no_collector = lambda _debug=False: None
+
+        for mod in (_bridge, _cli_support):
+            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
+            monkeypatch.setattr(mod, "start_collector", no_collector)
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+
+        captured = {}
+
+        def _fake_run_bridge(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr("tok.gateway.run_bridge", _fake_run_bridge)
+
+        result = runner.invoke(
+            app,
+            [
+                "bridge",
+                "start",
+                "--foreground",
+                "--api-base",
+                "https://example.test/custom",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert captured["_api_base"] == "https://example.test/custom"
+
+    def test_bridge_start_subprocess_exports_custom_api_base(
+        self, monkeypatch, tmp_path
+    ):
+        from tok.cli import _bridge, _cli_support
+
+        no_bridge = lambda port: None
+        no_collector = lambda _debug=False: None
+        fake_memory_root = lambda: tmp_path / ".tok"
+
+        for mod in (_bridge, _cli_support):
+            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
+            monkeypatch.setattr(mod, "start_collector", no_collector)
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+            monkeypatch.setattr(mod, "memory_root", fake_memory_root)
+
+        captured = {}
+
+        class FakeProcess:
+            pid = 4321
+
+        class FakeResponse:
+            status_code = 200
+
+        def _fake_popen(*args, **kwargs):
+            captured["env"] = kwargs["env"]
+            return FakeProcess()
+
+        monkeypatch.setattr("subprocess.Popen", _fake_popen)
+        monkeypatch.setattr(
+            "httpx.get", lambda *args, **kwargs: FakeResponse()
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "bridge",
+                "start",
+                "--api-base",
+                "https://example.test/custom",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert captured["env"]["TOK_API_BASE"] == "https://example.test/custom"
+        assert captured["env"]["TOK_RESET_SESSION"] == "1"
+
     def test_savings_no_data(self):
         result = runner.invoke(app, ["savings"])
         assert result.exit_code == 0

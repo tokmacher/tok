@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 import uvicorn
 from typing import Any, cast
+from collections.abc import Callable
 from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
@@ -70,6 +71,12 @@ except Exception:
 
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
 
+
+def _default_api_base() -> str:
+    configured = os.getenv("TOK_API_BASE", ANTHROPIC_API_BASE).strip()
+    return configured or ANTHROPIC_API_BASE
+
+
 _REQUEST_POLICY_ALIASES = {
     "legacy": "legacy_tool_compatible",
     "legacy_tool_compatible": "legacy_tool_compatible",
@@ -109,24 +116,13 @@ def _request_policy_mode_label(policy: str) -> str:
     return "tool-compatible"
 
 
-def _log_bridge_body_structure(
-    event: str,
-    *,
-    body: dict[str, Any] | None = None,
-    content: bytes | None = None,
-    headers: dict[str, str] | None = None,
-    original_body: dict[str, Any] | None = None,
-    original_content: bytes | None = None,
-    compressed_request: bool | None = None,
-    canonicalized_changed: bool | None = None,
-    strict_failures: list[str] | None = None,
-    reverted_to_original: bool | None = None,
-) -> None:
-    summary: str | dict[str, Any]
+def _parse_request_body(
+    body: dict[str, Any] | None,
+    content: bytes | None,
+) -> tuple[dict[str, Any] | None, str | dict[str, Any]]:
+    """Parse request body from dict or bytes, returning (parsed_body, summary)."""
     parsed_body: dict[str, Any] | None = None
-    parsed_original_body: dict[str, Any] | None = (
-        original_body if isinstance(original_body, dict) else None
-    )
+    summary: str | dict[str, Any]
 
     if body is None and content is not None:
         try:
@@ -162,29 +158,74 @@ def _log_bridge_body_structure(
             "message_block_types": [],
         }
 
-    if parsed_original_body is None and original_content is not None:
+    return parsed_body, summary
+
+
+def _parse_original_body(
+    original_body: dict[str, Any] | None,
+    original_content: bytes | None,
+) -> dict[str, Any] | None:
+    """Parse original request body from dict or bytes."""
+    if isinstance(original_body, dict):
+        return original_body
+
+    if original_content is not None:
         try:
             parsed_original = json.loads(original_content)
         except Exception:
-            parsed_original_body = None
+            return None
         else:
             if isinstance(parsed_original, dict):
-                parsed_original_body = parsed_original
+                return parsed_original
+    return None
 
-    fingerprint: dict[str, object] = {}
-    if parsed_body is not None:
-        if parsed_original_body is not None:
-            fingerprint = _request_fingerprint_diff(
-                headers or {}, parsed_body, parsed_original_body
-            )
-        else:
-            fingerprint = _request_body_fingerprint(headers or {}, parsed_body)
 
-    log = (
-        logger.warning
-        if strict_failures or reverted_to_original
-        else logger.info
+def _build_request_fingerprint(
+    parsed_body: dict[str, Any] | None,
+    parsed_original_body: dict[str, Any] | None,
+    headers: dict[str, str] | None,
+) -> dict[str, object]:
+    """Build fingerprint from parsed bodies."""
+    if parsed_body is None:
+        return {}
+    if parsed_original_body is not None:
+        return _request_fingerprint_diff(
+            headers or {}, parsed_body, parsed_original_body
+        )
+    return _request_body_fingerprint(headers or {}, parsed_body)
+
+
+def _select_log_level(
+    strict_failures: list[str] | None,
+    reverted_to_original: bool | None,
+) -> Callable[..., None]:
+    """Select appropriate log level based on failure state."""
+    if strict_failures or reverted_to_original:
+        return logger.warning
+    return logger.info
+
+
+def _log_bridge_body_structure(
+    event: str,
+    *,
+    body: dict[str, Any] | None = None,
+    content: bytes | None = None,
+    headers: dict[str, str] | None = None,
+    original_body: dict[str, Any] | None = None,
+    original_content: bytes | None = None,
+    compressed_request: bool | None = None,
+    canonicalized_changed: bool | None = None,
+    strict_failures: list[str] | None = None,
+    reverted_to_original: bool | None = None,
+) -> None:
+    parsed_body, summary = _parse_request_body(body, content)
+    parsed_original_body = _parse_original_body(
+        original_body, original_content
     )
+    fingerprint = _build_request_fingerprint(
+        parsed_body, parsed_original_body, headers
+    )
+    log = _select_log_level(strict_failures, reverted_to_original)
     log(
         "Bridge request structure | event=%s compressed=%s canonicalized_changed=%s reverted_to_original=%s strict_failures=%s summary=%s fingerprint=%s",
         event,
@@ -267,6 +308,7 @@ class BridgeSession:
     debug: bool = os.getenv("TOK_DEBUG", "0") == "1"
     fail_open: bool = os.getenv("TOK_FAIL_OPEN", "1") == "1"
     capture: bool = os.getenv("TOK_CAPTURE", "0") == "1"
+    api_base: str = field(default_factory=_default_api_base)
     rate_limit_retry_max_attempts: int = int(
         os.getenv("TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS", "2")
     )
@@ -305,6 +347,7 @@ class BridgeSession:
     )
 
     def __post_init__(self) -> None:
+        self.api_base = self.api_base.strip() or ANTHROPIC_API_BASE
         self.request_policy_default = (
             _normalize_request_policy(self.request_policy_default)
             or _default_request_policy()
@@ -434,6 +477,7 @@ async def _buffer_strip_restream(
     request_headers: dict[str, str] | None = None,
     request_content: bytes | None = None,
     request_state: dict[str, bool] | None = None,
+    client_owned: bool = False,
 ) -> AsyncIterator[bytes]:
     """Buffer the full SSE stream, translate Tok -> readable English/tool_use, re-emit."""
     from ._app_factory import buffer_strip_restream_impl
@@ -452,6 +496,7 @@ async def _buffer_strip_restream(
         request_headers=request_headers,
         request_content=request_content,
         request_state=request_state,
+        client_owned=client_owned,
     ):
         yield chunk
 
@@ -515,7 +560,7 @@ def run_bridge(
     debug: bool | None = None,
     fail_open: bool | None = None,
     _foreground: bool = True,
-    _api_base: str = "https://api.anthropic.com",
+    _api_base: str | None = None,
 ) -> None:
     """Start the bridge server."""
     _port_env: str = os.getenv(
@@ -532,6 +577,11 @@ def run_bridge(
         if fail_open is not None
         else os.getenv("TOK_FAIL_OPEN", "1") == "1"
     )
+    api_base = (
+        _api_base
+        if _api_base is not None
+        else os.getenv("TOK_API_BASE", ANTHROPIC_API_BASE)
+    ).strip() or ANTHROPIC_API_BASE
 
     try:
         TOK_DIR.mkdir(parents=True, exist_ok=True)
@@ -563,6 +613,7 @@ def run_bridge(
             keep_turns=keep_turns,
             debug=debug,
             fail_open=fail_open,
+            api_base=api_base,
         )
     except Exception as exc:
         logger.error("Failed to create bridge session: %s", exc)
@@ -581,6 +632,7 @@ def run_bridge(
     logger.info("Listening on http://%s:%d", host_display, port)
     logger.info("Keeping last %d human turns verbatim", keep_turns)
     logger.info("Fail-open: %s", "enabled" if fail_open else "disabled")
+    logger.info("Upstream API base: %s", session.api_base)
     logger.info(
         "Default Claude bridge mode: %s (request_policy=%s, TOK_MODE=%s, TOK_REQUEST_POLICY=%s)",
         _request_policy_mode_label(session.request_policy_default),

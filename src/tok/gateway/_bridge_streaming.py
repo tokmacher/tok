@@ -235,6 +235,7 @@ async def passthrough_stream_impl(
     input_saved_tokens: int = 0,
     behavior_signals: dict[str, int] | None = None,
     prompt_metrics: dict[str, int] | None = None,
+    client_owned: bool = False,
 ) -> AsyncIterator[bytes]:
     """Stream-through mode: yield raw SSE chunks without buffering.
 
@@ -273,11 +274,12 @@ async def passthrough_stream_impl(
         )
         if callable(response_aclose):
             await response_aclose()
-        client_aclose: Callable[[], Awaitable[None]] | None = getattr(
-            client, "aclose", None
-        )
-        if callable(client_aclose):
-            await client_aclose()
+        if client_owned:
+            client_aclose: Callable[[], Awaitable[None]] | None = getattr(
+                client, "aclose", None
+            )
+            if callable(client_aclose):
+                await client_aclose()
         if not read_error_occurred:
             _clear_stream_read_error_streak(session)
         if sse_model != "unknown" and sse_usage:
@@ -309,6 +311,7 @@ async def buffer_strip_restream_impl(
     request_headers: dict[str, str] | None = None,
     request_content: bytes | None = None,
     request_state: dict[str, bool] | None = None,
+    client_owned: bool = False,
 ) -> AsyncIterator[bytes]:
     """Buffer the full SSE stream, translate Tok -> readable English/tool_use, re-emit."""
     try:
@@ -899,8 +902,9 @@ async def buffer_strip_restream_impl(
         )
         if callable(response_aclose):
             await response_aclose()
-        client_aclose: Callable[[], Awaitable[None]] | None = getattr(
-            client, "aclose", None
-        )
-        if callable(client_aclose):
-            await client_aclose()
+        if client_owned:
+            client_aclose: Callable[[], Awaitable[None]] | None = getattr(
+                client, "aclose", None
+            )
+            if callable(client_aclose):
+                await client_aclose()
