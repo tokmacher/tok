@@ -31,6 +31,102 @@ _CODE_PATTERNS = re.compile(
     r"\bdef \b|\bclass \b|\bimport \b|\basync def \b|\bfunction \b"
 )
 
+# Thresholds for search-cost advisory
+_GREP_ADVISORY_MATCH_THRESHOLD = 50
+_GREP_ADVISORY_FILE_THRESHOLD = 10
+_GREP_ADVISORY_TOKEN_THRESHOLD = 2000  # Estimated tokens
+
+# Advisory cooldown state (per-query identity -> last advisory turn)
+# This is a module-level cache that gets cleared between sessions
+_advisory_cooldown: dict[str, int] = {}
+_ADVISORY_COOLDOWN_TURNS = 3
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimation: ~4 chars per token on average for code."""
+    return len(text) // 4
+
+
+def _build_search_advisory(
+    match_count: int,
+    file_count: int,
+    estimated_tokens: int = 0,
+    has_scope: bool = True,
+    query_identity: str | None = None,
+    current_turn: int = 0,
+) -> str:
+    """Build advisory footer for expensive search results.
+
+    The advisory is purely informational - it does not affect evidence policy
+    or compression behavior. It simply alerts the model to consider narrowing
+    scope on large result sets.
+
+    Args:
+        match_count: Number of matches found
+        file_count: Number of files with matches
+        estimated_tokens: Estimated token count of the result
+        has_scope: Whether the search had path/glob/type restrictions
+        query_identity: Canonical query identity for cooldown
+        current_turn: Current turn number for cooldown tracking
+
+    Returns:
+        Advisory footer string, or empty string if no advisory warranted.
+    """
+    # Check cooldown first
+    if query_identity and query_identity in _advisory_cooldown:
+        last_turn = _advisory_cooldown[query_identity]
+        if current_turn - last_turn < _ADVISORY_COOLDOWN_TURNS:
+            return ""  # Still in cooldown
+
+    # Determine if advisory is warranted
+    high_matches = match_count > _GREP_ADVISORY_MATCH_THRESHOLD
+    many_files = file_count > _GREP_ADVISORY_FILE_THRESHOLD
+    high_tokens = estimated_tokens > _GREP_ADVISORY_TOKEN_THRESHOLD
+    unscoped = not has_scope
+
+    if not (high_matches or many_files or high_tokens or unscoped):
+        return ""
+
+    # Build specialized advisory based on conditions
+    hints = []
+
+    if unscoped and (high_matches or many_files):
+        hints.append("unscoped search")
+        if many_files:
+            hints.append("try path: or glob: filter")
+        else:
+            hints.append("narrow with path or pattern")
+    elif many_files and high_matches:
+        hints.append(f"{file_count} files")
+        hints.append("try path: or glob: filter")
+    elif high_matches:
+        hints.append(f"{match_count} matches")
+        hints.append("consider narrower pattern")
+    elif many_files:
+        hints.append(f"{file_count} files")
+        hints.append("try path: filter")
+    elif high_tokens:
+        hints.append("large result")
+        hints.append("consider narrowing scope")
+    else:
+        # Fallback for unscoped without other triggers
+        hints.append("broad search")
+        hints.append("consider narrowing scope")
+
+    advisory = f"[tok advisory: {' - '.join(hints)}]"
+
+    # Record in cooldown
+    if query_identity:
+        _advisory_cooldown[query_identity] = current_turn
+
+    return advisory
+
+
+def clear_advisory_cooldown() -> None:
+    """Clear the advisory cooldown cache. Call between sessions."""
+    global _advisory_cooldown
+    _advisory_cooldown = {}
+
 
 def _detect_tool_content_type(text: str) -> str:
     """Detect the content type of a tool result."""
@@ -268,16 +364,31 @@ def _compress_grep(text: str) -> str:
     if total <= 3:
         return text
 
-    result = [
-        f">>> tool:grep|matches:{total}|files:{len([k for k in order if k != '__other__'])}"
-    ]
+    file_count = len([k for k in order if k != "__other__"])
+    result = [f">>> tool:grep|matches:{total}|files:{file_count}"]
     for key in order:
         snippets = by_file[key]
         first = snippets[0][:80]
         suffix = f" ({len(snippets)} matches)" if len(snippets) > 1 else ""
         result.append(
-            f"{key}: {len(snippets)} match{'es' if len(snippets) > 1 else ''} — {first}{suffix}"
+            f"{key}: {len(snippets)} match{'es' if len(snippets) > 1 else ''} \u2014 {first}{suffix}"
         )
+
+    # Add advisory footer for expensive searches
+    # Detect if search was scoped (single directory or specific path pattern)
+    has_scope = file_count == 1 or (
+        len(order) > 0
+        and all("/" in k or "\\" in k for k in order[:3] if k != "__other__")
+    )
+    estimated_tokens = _estimate_tokens(text)
+    advisory = _build_search_advisory(
+        match_count=total,
+        file_count=file_count,
+        estimated_tokens=estimated_tokens,
+        has_scope=has_scope,
+    )
+    if advisory:
+        result.append(advisory)
 
     return "\n".join(result)
 
@@ -701,8 +812,9 @@ def _compress_search_results(text: str) -> str:
         if not value_keys:
             return text
 
+        result_count = len(data)
         result = [
-            f">>> tool:search_results|count:{len(data)}|keys:{','.join(header_keys)}"
+            f">>> tool:search_results|count:{result_count}|keys:{','.join(header_keys)}"
         ]
         for item in data:
             vals = [
@@ -712,6 +824,18 @@ def _compress_search_results(text: str) -> str:
             if not any(val.strip() for val in vals):
                 continue
             result.append(":".join(vals))
+
+        # Add advisory footer for large result sets
+        # Use file_count=0 since we don't have per-file breakdown in JSON results
+        estimated_tokens = _estimate_tokens(text)
+        advisory = _build_search_advisory(
+            match_count=result_count,
+            file_count=0,
+            estimated_tokens=estimated_tokens,
+            has_scope=True,  # JSON results typically come from scoped searches
+        )
+        if advisory:
+            result.append(advisory)
 
         return "\n".join(result)
     except Exception:
@@ -850,8 +974,23 @@ def _compress_grep_context(text: str) -> str:
 
         result.append(line)
 
-    header = f">>> tool:grep_context|lines:{len(lines)}"
-    return header + "\n" + "\n".join(result)
+    line_count = len(lines)
+    header = f">>> tool:grep_context|lines:{line_count}"
+    output = header + "\n" + "\n".join(result)
+
+    # Add advisory footer for large context results
+    # Use match_count=line_count since we don't have separate match/file counts
+    estimated_tokens = _estimate_tokens(text)
+    advisory = _build_search_advisory(
+        match_count=line_count,
+        file_count=0,
+        estimated_tokens=estimated_tokens,
+        has_scope=True,  # Context results are typically scoped
+    )
+    if advisory:
+        output = output + "\n" + advisory
+
+    return output
 
 
 def _compress_env_ps(text: str, kind: str) -> str:

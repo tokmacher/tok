@@ -299,6 +299,103 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+## Step 0: Search-Cost Advisory (Narrow Ergonomics Fix)
+
+### 0.1 Intended Behavior
+
+This section documents a narrow ergonomics fix for expensive search results. This is **not** a change to the evidence contract.
+
+#### 0.1.1 Search-Cost Advisory Definition
+
+A **search-cost advisory** is a local, advisory hint attached to expensive search results that:
+
+- Alerts the model to the computational cost of the operation
+- Suggests optimization strategies (narrower scope, regex alternatives)
+- Remains strictly advisory—never blocks or modifies the actual evidence
+
+#### 0.1.2 Advisory Properties
+
+| Property         | Definition                                                   |
+| ---------------- | ------------------------------------------------------------ |
+| **Local**        | Attached only to expensive search results, not global policy |
+| **Advisory**     | Hint only—model may ignore or override                       |
+| **Non-evidence** | Never counts as replacement for exact evidence               |
+
+#### 0.1.3 Contract Preservation
+
+This fix does **not** change:
+
+- **First-pass exact evidence**: First exact observations remain raw and uncompressed
+- **Repeat compression policy**: Deduplication rules after first exact observation unchanged
+- **Hot-search policy**: Hot-recent cache behavior and first-pass rules unchanged
+
+#### 0.1.4 Acceptance Criteria
+
+The advisory is acceptable if and only if:
+
+1. It appears only on genuinely expensive operations (high result count, broad scope)
+1. It never suppresses, delays, or substitutes actual search results
+1. The model can complete discovery tasks without heeding the advisory
+
+______________________________________________________________________
+
+### 0.2 Non-Goals (Anti-Requirements)
+
+To prevent this fix from becoming hidden prompt steering, Tok must **not**:
+
+| Prohibition                                        | Rationale                             |
+| -------------------------------------------------- | ------------------------------------- |
+| **Rewrite Claude's query automatically**           | Advisory must not mutate user intent  |
+| **Inject global search policy into system prompt** | Must remain local to specific results |
+
+______________________________________________________________________
+
+### 0.3 Implementation Record
+
+**Status:** Implemented
+
+**Implementation Location:** `src/tok/compression/_tool_result_codecs.py`
+
+**Components:**
+
+| Component                        | Lines   | Description                                 |
+| -------------------------------- | ------- | ------------------------------------------- |
+| `_GREP_ADVISORY_MATCH_THRESHOLD` | 35      | Threshold: 50 matches                       |
+| `_GREP_ADVISORY_FILE_THRESHOLD`  | 36      | Threshold: 10 files                         |
+| `_build_search_advisory()`       | 39-53   | Helper function that builds advisory footer |
+| `_compress_grep()`               | 304-307 | Integration point for grep results          |
+| `_compress_search_results()`     | 744-748 | Integration point for JSON search results   |
+| `_compress_grep_context()`       | 891-895 | Integration point for grep context results  |
+
+**Output Format:**
+
+```text
+>>> tool:grep|matches:142|files:23
+src/tok/runtime/core.py: 15 matches ...
+...
+[tok advisory: 142 matches, 23 files - consider narrowing scope]
+```
+
+**Trigger Conditions:**
+
+| Condition        | Threshold                | Advisory Text                      |
+| ---------------- | ------------------------ | ---------------------------------- |
+| High match count | > 50 matches             | "{count} matches"                  |
+| Many files       | > 10 files               | "{count} files"                    |
+| Combined         | Both thresholds exceeded | "{matches} matches, {files} files" |
+
+**Contract Verification:**
+
+| Requirement                                          | Status                                           |
+| ---------------------------------------------------- | ------------------------------------------------ |
+| Advisory appears only on expensive operations        | Verified - thresholds enforced                   |
+| Advisory never suppresses/delays/substitutes results | Verified - appended after compression            |
+| First-pass exact evidence remains raw                | Verified - advisory is post-compression          |
+| Repeat compression policy unchanged                  | Verified - advisory does not affect cache keys   |
+| Model can ignore advisory                            | Verified - advisory is informational footer only |
+
+______________________________________________________________________
+
 ## Phase 2: Post First-Exact Guard Benchmark
 
 ### Observed Wins

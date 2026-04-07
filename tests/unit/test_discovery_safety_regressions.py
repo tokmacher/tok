@@ -5,6 +5,11 @@ import time
 from typing import Any
 
 from tok.compression._history_pipeline import compress_tool_results_impl
+from tok.compression._tool_result_codecs import (
+    _build_search_advisory,
+    _compress_grep,
+    clear_advisory_cooldown,
+)
 from tok.runtime.core import RuntimeSession
 from tok.runtime.pipeline._tool_context import build_tool_use_id_to_context
 from tok.runtime.pipeline._tool_repeat_detection import _make_cache_key
@@ -608,3 +613,203 @@ class TestLiveSurfaceConsistency:
             content_results in second_result
             or second_result == content_results
         )
+
+
+class TestSearchCostAdvisoryTriggers:
+    """Tests for search-cost advisory trigger conditions."""
+
+    def test_broad_search_gets_advisory(self):
+        """A broad/expensive search result should get the advisory."""
+        clear_advisory_cooldown()
+        # Generate 60 matches across 15 files
+        large_input = "\n".join(
+            f"src/module{i}.py:{j * 10}:match_{i}_{j}"
+            for i in range(15)
+            for j in range(4)
+        )
+        result = _compress_grep(large_input)
+        assert "[tok advisory:" in result
+        assert "files" in result or "matches" in result
+
+    def test_narrow_scoped_search_no_advisory(self):
+        """A narrow/path-scoped search result should not get the advisory."""
+        clear_advisory_cooldown()
+        # Single file, few matches
+        small_input = "src/file.py:10:match1\nsrc/file.py:20:match2"
+        result = _compress_grep(small_input)
+        # Small results are returned as-is (no compression at all)
+        assert "[tok advisory:" not in result
+
+    def test_advisory_appended_without_replacing_evidence(self):
+        """The advisory must be appended, not replace actual search evidence."""
+        clear_advisory_cooldown()
+        large_input = "\n".join(
+            f"src/module{i}.py:{j * 10}:code_here"
+            for i in range(12)
+            for j in range(5)
+        )
+        result = _compress_grep(large_input)
+        # Header must be present
+        assert ">>> tool:grep|matches:" in result
+        # File entries must be present
+        assert "src/module0.py:" in result
+        # Advisory must be at the end
+        assert result.endswith("]")
+        lines = result.splitlines()
+        assert "[tok advisory:" in lines[-1]
+
+    def test_unscoped_search_triggers_advisory(self):
+        """Unscoped searches with many results should suggest scope filters."""
+        clear_advisory_cooldown()
+        advisory = _build_search_advisory(
+            match_count=60,
+            file_count=12,
+            has_scope=False,
+        )
+        assert "unscoped" in advisory
+        assert "path" in advisory or "glob" in advisory
+
+    def test_many_files_triggers_path_suggestion(self):
+        """Many files should suggest path or glob filter."""
+        clear_advisory_cooldown()
+        advisory = _build_search_advisory(
+            match_count=30,
+            file_count=15,
+            has_scope=True,
+        )
+        assert "files" in advisory
+        assert "path" in advisory or "glob" in advisory
+
+
+class TestSearchCostAdvisoryCooldown:
+    """Tests for advisory cooldown behavior."""
+
+    def test_same_query_suppressed_during_cooldown(self):
+        """Same query identity should not get repeated advisories."""
+        clear_advisory_cooldown()
+        query_id = "test_query_identity"
+
+        # First call gets advisory
+        adv1 = _build_search_advisory(
+            match_count=60,
+            file_count=12,
+            query_identity=query_id,
+            current_turn=1,
+        )
+        assert "[tok advisory:" in adv1
+
+        # Second call within cooldown gets nothing
+        adv2 = _build_search_advisory(
+            match_count=60,
+            file_count=12,
+            query_identity=query_id,
+            current_turn=2,
+        )
+        assert adv2 == ""
+
+    def test_advisory_reappears_after_cooldown(self):
+        """Advisory should reappear after cooldown boundary."""
+        clear_advisory_cooldown()
+        query_id = "test_query_identity"
+
+        # Turn 1: gets advisory
+        adv1 = _build_search_advisory(
+            match_count=60,
+            file_count=12,
+            query_identity=query_id,
+            current_turn=1,
+        )
+        assert "[tok advisory:" in adv1
+
+        # Turn 4: after 3-turn cooldown, should get advisory again
+        adv4 = _build_search_advisory(
+            match_count=60,
+            file_count=12,
+            query_identity=query_id,
+            current_turn=4,
+        )
+        assert "[tok advisory:" in adv4
+
+    def test_different_queries_no_cooldown_interference(self):
+        """Different query identities should have independent cooldowns."""
+        clear_advisory_cooldown()
+
+        adv1 = _build_search_advisory(
+            match_count=60,
+            file_count=12,
+            query_identity="query_a",
+            current_turn=1,
+        )
+        adv2 = _build_search_advisory(
+            match_count=60,
+            file_count=12,
+            query_identity="query_b",
+            current_turn=1,
+        )
+        assert "[tok advisory:" in adv1
+        assert "[tok advisory:" in adv2
+
+
+class TestSearchCostAdvisoryEvidenceIntegrity:
+    """Tests ensuring advisory does not mutate discovery semantics."""
+
+    def test_advisory_not_part_of_evidence_identity(self):
+        """The advisory must not affect evidence identity computation."""
+        # Evidence identity is computed from tool name, path, query, args
+        # The advisory is not part of any of those
+        key = evidence_identity_key(
+            "grep_search",
+            path="src",
+            query="needle",
+            args={"query": "needle", "path": "src"},
+        )
+        assert key is not None
+        assert "[tok advisory:" not in key
+        assert "advisory" not in key
+
+    def test_advisory_does_not_change_evidence_classification(self):
+        """The advisory must not change navigation vs exact_content classification."""
+        # A path-only result should still be navigation even with advisory
+        path_only = "Found 6 matches in src/tok/compression.py"
+        assert search_result_evidence_level(path_only) == "navigation"
+
+        # An exact content result should still be exact_content
+        exact = "src/tok/compression.py:42:needle match"
+        assert search_result_evidence_level(exact) == "exact_content"
+
+        # Advisory text itself should not be classified as evidence
+        advisory = "[tok advisory: 60 matches - consider narrowing scope]"
+        # Advisory-only content is neither navigation nor exact_content
+        # (it's just metadata, not search output)
+        level = search_result_evidence_level(advisory)
+        # Should not be exact_content since it has no file:line:content pattern
+        assert level != "exact_content" or "tok advisory" not in advisory
+
+    def test_advisory_does_not_affect_repeat_compression_gating(self):
+        """The advisory must not affect first-exact observation tracking."""
+        clear_advisory_cooldown()
+        search_output = _search_output(60)  # Large enough to trigger advisory
+        messages = [
+            _tool_use("t1", "grep_search", query="needle", path="src"),
+            _tool_result("t1", search_output),
+        ]
+        tool_use_id_to_context = build_tool_use_id_to_context(messages)
+        first_exact_evidence_seen: set[str] = set()
+
+        compressed, breakdown = compress_tool_results_impl(
+            messages,
+            tool_use_id_to_context=tool_use_id_to_context,
+            compression_level="balanced",
+            first_exact_evidence_seen=first_exact_evidence_seen,
+        )
+
+        # First result must stay raw (first exact observation)
+        assert compressed[1]["content"][0]["content"] == search_output
+        # The evidence key should be tracked
+        evidence_key = evidence_identity_key(
+            "grep_search",
+            path="src",
+            query="needle",
+            args={"query": "needle", "path": "src"},
+        )
+        assert evidence_key in first_exact_evidence_seen
