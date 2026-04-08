@@ -1,15 +1,16 @@
 """Helper functions for handling runtime responses."""
 
 from __future__ import annotations
+
 import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..policy.semantic_validation import calculate_invisible_pressure
-from ..types import ReplayGateResult
+from tok.runtime.policy.semantic_validation import calculate_invisible_pressure
+from tok.runtime.types import ReplayGateResult
 
 if TYPE_CHECKING:
-    from ..core import RuntimeSession
+    from tok.runtime.core import RuntimeSession
 
 logger = logging.getLogger("tok.runtime")
 
@@ -18,7 +19,7 @@ def sort_cache_control_blocks(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Sort content blocks by cache_control TTL for Anthropic durability efficiency."""
-    from ..config import TTL_SECONDS
+    from tok.runtime.config import TTL_SECONDS
 
     if not isinstance(messages, list):
         return messages
@@ -35,9 +36,7 @@ def sort_cache_control_blocks(
                 else (
                     0
                     if "cache_control" not in block
-                    else -TTL_SECONDS.get(
-                        block.get("cache_control", {}).get("ttl", ""), 0
-                    )
+                    else -TTL_SECONDS.get(block.get("cache_control", {}).get("ttl", ""), 0)
                 )
             ),
         )
@@ -53,27 +52,16 @@ def evaluate_replay_gate(
     """Evaluate whether a replay should be granted based on performance gates."""
     invisible_pressure = calculate_invisible_pressure(behavior_signals)
     gate_checks = {
-        "min_savings_pct": savings_pct
-        >= float(replay_meta["min_savings_pct"]),
-        "max_invisible_pressure": invisible_pressure
-        <= int(replay_meta["max_invisible_pressure"]),
-        "max_repeat_file_read": behavior_signals.get("repeat_file_read", 0)
-        <= int(replay_meta["max_repeat_file_read"]),
-        "max_repeat_search": behavior_signals.get("repeat_search", 0)
-        <= int(replay_meta["max_repeat_search"]),
-        "max_non_tok_response": behavior_signals.get("non_tok_response", 0)
-        <= int(replay_meta["max_non_tok_response"]),
-        "max_fail_open_compat_response": behavior_signals.get(
-            "fail_open_compat_response", 0
-        )
+        "min_savings_pct": savings_pct >= float(replay_meta["min_savings_pct"]),
+        "max_invisible_pressure": invisible_pressure <= int(replay_meta["max_invisible_pressure"]),
+        "max_repeat_file_read": behavior_signals.get("repeat_file_read", 0) <= int(replay_meta["max_repeat_file_read"]),
+        "max_repeat_search": behavior_signals.get("repeat_search", 0) <= int(replay_meta["max_repeat_search"]),
+        "max_non_tok_response": behavior_signals.get("non_tok_response", 0) <= int(replay_meta["max_non_tok_response"]),
+        "max_fail_open_compat_response": behavior_signals.get("fail_open_compat_response", 0)
         <= int(replay_meta["max_fail_open_compat_response"]),
-        "max_malformed_tok_response": behavior_signals.get(
-            "malformed_tok_response", 0
-        )
+        "max_malformed_tok_response": behavior_signals.get("malformed_tok_response", 0)
         <= int(replay_meta["max_malformed_tok_response"]),
-        "max_blocker_rediscovery": behavior_signals.get(
-            "blocker_rediscovery", 0
-        )
+        "max_blocker_rediscovery": behavior_signals.get("blocker_rediscovery", 0)
         <= int(replay_meta["max_blocker_rediscovery"]),
     }
     failed = [name for name, ok in gate_checks.items() if not ok]
@@ -129,7 +117,9 @@ def _handle_followthrough_phase(
     has_tool: bool,
     has_answer_text: bool,
 ) -> bool:
-    from ..policy.answer_repair import _late_answer_assembly_repair_satisfied
+    from tok.runtime.policy.answer_repair import (
+        _late_answer_assembly_repair_satisfied,
+    )
 
     followthrough_guard_blocked = False
     if session._late_answer_followthrough_active:
@@ -158,7 +148,7 @@ def _handle_late_assembly_phase(
     tool_compatible: bool,
     followthrough_guard_blocked: bool,
 ) -> None:
-    from ..policy.answer_repair import (
+    from tok.runtime.policy.answer_repair import (
         _is_late_answer_assembly_context,
         _late_answer_assembly_repair_mode,
         _late_answer_assembly_repair_satisfied,
@@ -175,9 +165,7 @@ def _handle_late_assembly_phase(
         and not merged_signals.get("bad_tool_args_event")
         and not merged_signals.get("validated_target_exact_reacquired")
     ):
-        late_answer_assembly_mode = _late_answer_assembly_repair_mode(
-            merged_signals
-        )
+        late_answer_assembly_mode = _late_answer_assembly_repair_mode(merged_signals)
 
     if late_answer_assembly_mode:
         merged_signals["late_answer_assembly_repair_requested"] = 1
@@ -201,9 +189,7 @@ def _handle_late_assembly_phase(
             session._late_answer_assembly_repair_mode_pending = ""
         else:
             session._late_answer_assembly_repair_pending = True
-            session._late_answer_assembly_repair_mode_pending = (
-                late_answer_assembly_mode
-            )
+            session._late_answer_assembly_repair_mode_pending = late_answer_assembly_mode
     elif session._late_answer_assembly_repair_active:
         if _late_answer_assembly_repair_satisfied(
             session._late_answer_assembly_repair_mode_active,
@@ -234,12 +220,8 @@ def handle_answer_repair(
     tool_compatible: bool,
 ) -> None:
     """Update repair-pending flags and signals based on response content."""
-    _handle_answer_ready_phase(
-        session, merged_signals, has_tool, has_answer_text
-    )
-    followthrough_guard_blocked = _handle_followthrough_phase(
-        session, merged_signals, has_tool, has_answer_text
-    )
+    _handle_answer_ready_phase(session, merged_signals, has_tool, has_answer_text)
+    followthrough_guard_blocked = _handle_followthrough_phase(session, merged_signals, has_tool, has_answer_text)
     _handle_late_assembly_phase(
         session,
         merged_signals,

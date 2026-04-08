@@ -2,7 +2,10 @@
 
 ## Overview
 
-This document summarizes the internal documentation updates made to align with the current Tok implementation as of April 2026. The updates focus on recent changes to thinking block protection, smoothness scoring, transport observability, and validation handling.
+This document summarizes the internal documentation updates made to align with the
+current Tok implementation as of April 2026. The updates focus on recent changes to
+thinking block protection, smoothness scoring, transport observability, and validation
+handling.
 
 ## Documentation Files Updated
 
@@ -11,7 +14,8 @@ This document summarizes the internal documentation updates made to align with t
 **Key Updates:**
 
 - Added **Thinking Block Protection and Mutation Handling** section
-  - Latest-assistant protection using whole-content restore with SHA256 hash verification
+  - Latest-assistant protection using whole-content restore with SHA256 hash
+    verification
   - Mutation detection with 35-point penalty triggering SMOOTH_MODE
   - Restoration semantics requiring exact hash match
 - Added **Smoothness and Runtime Mode Behavior** section
@@ -120,12 +124,15 @@ This document summarizes the internal documentation updates made to align with t
 1. **Multi-thinking Protection** - Now fully documented with hash verification semantics
 1. **Event-Based Mode Overrides** - Clarified from score-only to event-driven selection
 1. **Transport vs Stream Distinction** - Added per-call vs per-turn event categorization
-1. **Validation Graceful Failure** - Documented controlled degradation without termination
-1. **Current Operational Focus** - Shifted emphasis to transport instability over thinking mutations
+1. **Validation Graceful Failure** - Documented controlled degradation without
+   termination
+1. **Current Operational Focus** - Shifted emphasis to transport instability over
+   thinking mutations
 
 ### Unresolved Ambiguities
 
-1. **Smoothness Mode Thresholds** - Exact numerical values remain implementation-dependent
+1. **Smoothness Mode Thresholds** - Exact numerical values remain
+   implementation-dependent
 1. **Long-term Multi-Agent Strategy** - Future work for agent coordination protocols
 1. **Advanced Policy Configuration** - Future work for operator customization options
 
@@ -172,6 +179,6 @@ tok stats --mode-history
 
 ______________________________________________________________________
 
-**Document Version:** Internal Documentation Update v1.0
-**Date:** April 6, 2026
-**Coverage:** Runtime behavior, bridge lifecycle, validation, smoothness scoring, transport observability
+**Document Version:** Internal Documentation Update v1.0 **Date:** April 6, 2026
+**Coverage:** Runtime behavior, bridge lifecycle, validation, smoothness scoring,
+transport observability

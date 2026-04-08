@@ -4,18 +4,19 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
-from ...compression import text_of
-from ..config import _PROJECT_MARKER_FILES
-from ..policy.smart_policy import (
+from typing import TYPE_CHECKING, Any
+
+from tok.compression import text_of
+from tok.neuro.integration import distill_bridge_history
+from tok.runtime.config import _PROJECT_MARKER_FILES
+from tok.runtime.policy.smart_policy import (
     advance_state,
     initial_state,
     policy_for_model,
 )
-from ...neuro.integration import distill_bridge_history
 
 if TYPE_CHECKING:
-    from ..core import RuntimeSession
+    from tok.runtime.core import RuntimeSession
 
 logger = logging.getLogger("tok.runtime")
 
@@ -25,25 +26,17 @@ def calculate_reasoning_depth(session: "RuntimeSession") -> float:
     if session._token_count == 0:
         return 0.0
     tool_diversity = len(session._tool_names_seen) or 1
-    return round(
-        (session._step_count * tool_diversity) / session._token_count, 4
-    )
+    return round((session._step_count * tool_diversity) / session._token_count, 4)
 
 
-def update_session_family_mode(
-    session: "RuntimeSession", model: str, signals: dict[str, int]
-) -> str:
+def update_session_family_mode(session: "RuntimeSession", model: str, signals: dict[str, int]) -> str:
     """Advance the family adaptive state and return the new mode."""
     if not model:
         return ""
     policy = policy_for_model(model)
-    current = session.family_states.setdefault(
-        policy.family.key, initial_state(policy)
-    )
+    current = session.family_states.setdefault(policy.family.key, initial_state(policy))
     # Pass tool names for task type detection
-    tool_names = (
-        list(session._tool_names_seen) if session._tool_names_seen else None
-    )
+    tool_names = list(session._tool_names_seen) if session._tool_names_seen else None
     next_state = advance_state(policy, current, signals, tool_names=tool_names)
     session.family_states[policy.family.key] = next_state
     return next_state.mode
@@ -51,7 +44,7 @@ def update_session_family_mode(
 
 def session_write_memory(session: "RuntimeSession", text: str) -> str:
     """Ingest Tok state from response text and update memory."""
-    from ..policy.macro_handling import _heal_macro_from_repair
+    from tok.runtime.policy.macro_handling import _heal_macro_from_repair
 
     tok_lines: list[str] = re.findall(r"^>>>.*$", text, re.MULTILINE)
     if not tok_lines:
@@ -66,11 +59,7 @@ def session_write_memory(session: "RuntimeSession", text: str) -> str:
     session._save_fallback_memory()
 
     is_error = bool(re.search(r"errs:[^|]+", latest_state))
-    if (
-        session._pending_macro_heal
-        and int(os.getenv("TOK_MACRO_HEAL", "1"))
-        and not is_error
-    ):
+    if session._pending_macro_heal and int(os.getenv("TOK_MACRO_HEAL", "1")) and not is_error:
         _heal_macro_from_repair(
             session._pending_macro_heal,
             session.bridge_memory,
@@ -84,9 +73,7 @@ def session_write_memory(session: "RuntimeSession", text: str) -> str:
             project_markers=session._project_markers,
         )
         if discovered:
-            logger.info(
-                "NeuroReactor: Discovered %d macros this turn", len(discovered)
-            )
+            logger.info("NeuroReactor: Discovered %d macros this turn", len(discovered))
 
     session._save_bridge_memory()
     session._save_result_cache()
@@ -94,26 +81,26 @@ def session_write_memory(session: "RuntimeSession", text: str) -> str:
 
 
 def get_adaptive_keep_turns(session: "RuntimeSession") -> int:
-    """Determine how many history turns to keep based on session age.
+    """
+    Determine how many history turns to keep based on session age.
     A session age ( self._step_count determines how many recent turns to preserve:
     - Young sessions (few steps): keep 3 turns for working memory stability
     - Mid sessions (steps 3-10): keep 2 turns
-    - Mature sessions (11+ steps): keep 2 turns as a minimum floor
+    - Mature sessions (11+ steps): keep 2 turns as a minimum floor.
     """
     return 2
 
 
 def _discover_project_markers(cwd: Path | None = None) -> frozenset[str]:
-    """Non-recursively scan the current working directory for project-type markers.
+    """
+    Non-recursively scan the current working directory for project-type markers.
 
     Returns only the filenames that actually exist (e.g. ``'package.json'``).
     Errors are silently swallowed so a missing CWD never crashes session init.
     """
     try:
         base = cwd if cwd is not None else Path.cwd()
-        return frozenset(
-            name for name in _PROJECT_MARKER_FILES if (base / name).exists()
-        )
+        return frozenset(name for name in _PROJECT_MARKER_FILES if (base / name).exists())
     except Exception:
         return frozenset()
 
@@ -147,9 +134,7 @@ def _check_blocker_line(lowered: str, blockers: list[str]) -> None:
             blockers.append(f"blocked_by:{blocker}")
 
 
-def _check_hypothesis_line(
-    stripped: str, lowered: str, hypotheses: list[str]
-) -> None:
+def _check_hypothesis_line(stripped: str, lowered: str, hypotheses: list[str]) -> None:
     """Check a line for hypothesis/question phrases and append if found."""
     if stripped.endswith("?") and len(stripped) < 150:
         if any(word in lowered for word in _HYPOTHESIS_QUESTION_WORDS):
@@ -176,10 +161,10 @@ def extract_memory_items(
 
 
 __all__ = [
-    "calculate_reasoning_depth",
-    "update_session_family_mode",
-    "session_write_memory",
-    "get_adaptive_keep_turns",
     "_discover_project_markers",
+    "calculate_reasoning_depth",
     "extract_memory_items",
+    "get_adaptive_keep_turns",
+    "session_write_memory",
+    "update_session_family_mode",
 ]

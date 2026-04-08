@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 from tok.explorer import (
-    get_file_overview,
     explore_file,
     explore_module,
+    get_file_overview,
     list_large_files,
 )
 
@@ -19,14 +19,14 @@ from tok.explorer import (
 class TestGetFileOverview:
     """Test suite for get_file_overview function."""
 
-    def test_returns_error_for_missing_file(self):
+    def test_returns_error_for_missing_file(self) -> None:
         """Verify error handling for non-existent file."""
         result = get_file_overview("/nonexistent/path.py")
 
         assert "error" in result
         assert "not found" in result["error"].lower()
 
-    def test_returns_error_for_directory(self):
+    def test_returns_error_for_directory(self) -> None:
         """Verify error handling for directory path."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = get_file_overview(tmpdir)
@@ -34,7 +34,7 @@ class TestGetFileOverview:
             assert "error" in result
             assert "not a file" in result["error"].lower()
 
-    def test_returns_error_for_non_python_file(self):
+    def test_returns_error_for_non_python_file(self) -> None:
         """Verify error handling for non-Python files."""
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
             f.write(b"some text")
@@ -47,18 +47,18 @@ class TestGetFileOverview:
             finally:
                 os.unlink(f.name)
 
-    def test_parses_python_file_correctly(self):
+    def test_parses_python_file_correctly(self) -> None:
         """Verify successful parsing of Python file."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as f:
-            f.write("""def foo():
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """def foo():
     pass
 
 class Bar:
     def method(self):
         pass
-""")
+"""
+            )
             f.flush()
 
             try:
@@ -74,11 +74,9 @@ class Bar:
             finally:
                 os.unlink(f.name)
 
-    def test_detects_large_file(self):
+    def test_detects_large_file(self) -> None:
         """Verify large file detection (>500 lines)."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             # Write 600 lines
             for i in range(600):
                 f.write(f"line_{i}\n")
@@ -91,11 +89,9 @@ class Bar:
             finally:
                 os.unlink(f.name)
 
-    def test_handles_syntax_error(self):
+    def test_handles_syntax_error(self) -> None:
         """Verify graceful handling of syntax errors."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def broken(  # missing closing\n")
             f.flush()
 
@@ -110,11 +106,9 @@ class Bar:
 class TestExploreFile:
     """Test suite for explore_file function."""
 
-    def test_overview_mode(self):
+    def test_overview_mode(self) -> None:
         """Verify overview mode output format."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def foo():\n    pass\n")
             f.flush()
 
@@ -127,7 +121,7 @@ class TestExploreFile:
             finally:
                 os.unlink(f.name)
 
-    def test_error_for_missing_file(self):
+    def test_error_for_missing_file(self) -> None:
         """Verify error handling for missing file."""
         result = explore_file("/nonexistent.py")
 
@@ -137,7 +131,7 @@ class TestExploreFile:
 class TestListLargeFiles:
     """Test suite for list_large_files function."""
 
-    def test_finds_large_python_files(self):
+    def test_finds_large_python_files(self) -> None:
         """Verify detection of large Python files in directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create small file (<500 lines)
@@ -146,9 +140,7 @@ class TestListLargeFiles:
 
             # Create large file (>500 lines)
             large = Path(tmpdir) / "large.py"
-            large.write_text(
-                "\n".join([f"line_{i}" for i in range(600)]) + "\n"
-            )
+            large.write_text("\n".join([f"line_{i}" for i in range(600)]) + "\n")
 
             result = list_large_files(tmpdir)
 
@@ -157,45 +149,37 @@ class TestListLargeFiles:
             assert result[0]["path"] == str(large)
             assert result[0]["line_count"] == 600
 
-    def test_skips_non_python_files(self):
+    def test_skips_non_python_files(self) -> None:
         """Verify non-Python files are ignored."""
         with tempfile.TemporaryDirectory() as tmpdir:
             txt_file = Path(tmpdir) / "large.txt"
-            txt_file.write_text(
-                "\n".join([f"line_{i}" for i in range(600)]) + "\n"
-            )
+            txt_file.write_text("\n".join([f"line_{i}" for i in range(600)]) + "\n")
 
             result = list_large_files(tmpdir)
 
             assert len(result) == 0
 
-    def test_skips_ignored_directories(self):
+    def test_skips_ignored_directories(self) -> None:
         """Verify __pycache__ and similar are skipped."""
         with tempfile.TemporaryDirectory() as tmpdir:
             pycache = Path(tmpdir) / "__pycache__"
             pycache.mkdir()
             large = pycache / "large.py"
-            large.write_text(
-                "\n".join([f"line_{i}" for i in range(600)]) + "\n"
-            )
+            large.write_text("\n".join([f"line_{i}" for i in range(600)]) + "\n")
 
             result = list_large_files(tmpdir)
 
             # Should skip __pycache__
             assert len(result) == 0
 
-    def test_returns_sorted_by_size(self):
+    def test_returns_sorted_by_size(self) -> None:
         """Verify results are sorted by line count descending."""
         with tempfile.TemporaryDirectory() as tmpdir:
             medium = Path(tmpdir) / "medium.py"
-            medium.write_text(
-                "\n".join([f"line_{i}" for i in range(600)]) + "\n"
-            )
+            medium.write_text("\n".join([f"line_{i}" for i in range(600)]) + "\n")
 
             large = Path(tmpdir) / "large.py"
-            large.write_text(
-                "\n".join([f"line_{i}" for i in range(1000)]) + "\n"
-            )
+            large.write_text("\n".join([f"line_{i}" for i in range(1000)]) + "\n")
 
             result = list_large_files(tmpdir)
 
@@ -207,11 +191,9 @@ class TestListLargeFiles:
 class TestExploreModule:
     """Test suite for explore_module function."""
 
-    def test_explores_single_file(self):
+    def test_explores_single_file(self) -> None:
         """Verify module exploration of single file."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def foo(): pass\n")
             f.flush()
 
@@ -222,7 +204,7 @@ class TestExploreModule:
             finally:
                 os.unlink(f.name)
 
-    def test_explores_directory(self):
+    def test_explores_directory(self) -> None:
         """Verify module exploration of directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             init_file = Path(tmpdir) / "__init__.py"
@@ -232,7 +214,7 @@ class TestExploreModule:
 
             assert result.startswith("@module")
 
-    def test_error_for_empty_directory(self):
+    def test_error_for_empty_directory(self) -> None:
         """Verify error for empty directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = explore_module(tmpdir)

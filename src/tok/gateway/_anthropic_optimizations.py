@@ -1,4 +1,5 @@
-"""Anthropic-specific request/response optimizations for the Claude bridge.
+"""
+Anthropic-specific request/response optimizations for the Claude bridge.
 
 These translations are ONLY applied when traffic flows through the Claude bridge
 adapter. Canonical Tok syntax remains unchanged for all other adapters.
@@ -36,7 +37,8 @@ _CACHE_MIN_CHARS = 800
 
 
 def split_system_for_caching(body: dict[str, Any]) -> dict[str, Any]:
-    """Vector 1: Convert system string to Anthropic cacheable array format.
+    """
+    Vector 1: Convert system string to Anthropic cacheable array format.
 
     If the system prompt contains the claw-code dynamic boundary sentinel,
     split into a static block (with cache_control) and a dynamic block.
@@ -88,13 +90,13 @@ def split_system_for_caching(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def sift_tool_results(body: dict[str, Any]) -> dict[str, Any]:
-    """Vector 2: Compress tool_result stdout before forwarding to Anthropic.
+    """
+    Vector 2: Compress tool_result stdout before forwarding to Anthropic.
 
     Walks all user messages, finds tool_result blocks, and applies content-type
     aware compression to raw stdout. This strips visual noise (ANSI codes,
     human-readable formatting, redundant headers) that wastes tokens.
     """
-
     messages = body.get("messages")
     if not isinstance(messages, list):
         return body
@@ -173,14 +175,13 @@ _BPE_TRANSLATIONS = [
 _STATE_LINE_RE = re.compile(r"^(>>> )(.+)$", re.MULTILINE)
 _PIPE_ATTR_RE = re.compile(r"\|([a-z_]+:)")
 
-_TOK_BLOCK_RE = re.compile(
-    r"^( {2,})@(msg|thought|Tool|result|meta|Delegate)\b", re.MULTILINE
-)
+_TOK_BLOCK_RE = re.compile(r"^( {2,})@(msg|thought|Tool|result|meta|Delegate)\b", re.MULTILINE)
 _BLANK_BETWEEN_BLOCKS_RE = re.compile(r"\n{3,}")
 
 
 def _translate_bpe(text: str) -> str:
-    """Vector 3: Translate canonical Tok syntax to Anthropic BPE-cheaper wire format.
+    """
+    Vector 3: Translate canonical Tok syntax to Anthropic BPE-cheaper wire format.
 
     Transformations (request-side only, on compressed state heading to api.anthropic.com):
       - >>>|  delimiters in state lines -> commas
@@ -204,13 +205,12 @@ def _translate_bpe(text: str) -> str:
 
     result = _TOK_BLOCK_RE.sub(lambda m: f"@{m.group(2)}", result)
 
-    result = _BLANK_BETWEEN_BLOCKS_RE.sub("\n", result)
-
-    return result
+    return _BLANK_BETWEEN_BLOCKS_RE.sub("\n", result)
 
 
-def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
-    """Apply BPE translation to all Tok-formatted text in a request body.
+def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:
+    """
+    Apply BPE translation to all Tok-formatted text in a request body.
 
     Walks message text blocks and translates canonical Tok syntax to
     Anthropic-optimized wire format. Only touches text that contains
@@ -273,7 +273,8 @@ def apply_anthropic_optimizations(
     *,
     is_claude_bridge: bool = True,
 ) -> dict[str, Any]:
-    """Apply all Anthropic-specific optimizations to a request body.
+    """
+    Apply all Anthropic-specific optimizations to a request body.
 
     This is the single entry point called from the gateway bridge handler.
     Only applies when is_claude_bridge is True (i.e., traffic is going to

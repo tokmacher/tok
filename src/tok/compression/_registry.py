@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-
 Compressor = Callable[[str], str]
 
 
@@ -25,6 +24,7 @@ def build_default_registry(
     compress_ps_output: Compressor,
     compress_env_output: Compressor,
 ) -> dict[str, Compressor]:
+    """Build a registry mapping content types to compressor functions."""
     return {
         "pytest": compress_pytest,
         "grep": compress_grep,

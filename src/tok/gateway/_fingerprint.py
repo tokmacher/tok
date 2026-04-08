@@ -1,6 +1,7 @@
 """Fingerprint helpers for gateway diagnostics."""
 
 from __future__ import annotations
+
 from typing import Any
 
 
@@ -13,16 +14,12 @@ def _get_header_value(headers: dict[str, str], name: str) -> str:
     return ""
 
 
-def _request_uses_prompt_caching(
-    headers: dict[str, str], body: dict[str, Any]
-) -> bool:
+def _request_uses_prompt_caching(headers: dict[str, str], body: dict[str, Any]) -> bool:
     """Return True when the inbound request uses Anthropic prompt caching."""
     beta_header = _get_header_value(headers, "anthropic-beta")
     if "prompt-caching" in beta_header:
         return True
-    if isinstance(body, dict) and _body_has_cache_control(body):
-        return True
-    return False
+    return bool(isinstance(body, dict) and _body_has_cache_control(body))
 
 
 def _system_fingerprint(system: object) -> dict[str, int | str]:
@@ -83,18 +80,14 @@ def _cache_control_counts_for_tools(tools: object) -> int:
     return _tools_helper(tools)
 
 
-def _request_body_fingerprint(
-    headers: dict[str, str], body: dict[str, Any]
-) -> dict[str, Any]:
+def _request_body_fingerprint(headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
     """Build a redacted request fingerprint for prompt-caching diagnostics."""
     system = _system_fingerprint(body.get("system"))
     cache_counts = _cache_control_counts_for_messages(body.get("messages"))
     cache_counts["system_blocks"] = int(system["cache_control_blocks"])
     cache_counts["tools"] = _cache_control_counts_for_tools(body.get("tools"))
     cache_counts["total"] = (
-        _cache_control_counts_for_messages(body.get("messages"))[
-            "message_text_blocks"
-        ]
+        _cache_control_counts_for_messages(body.get("messages"))["message_text_blocks"]
         + cache_counts["message_tool_result_blocks"]
         + cache_counts["message_tool_use_blocks"]
         + cache_counts["system_blocks"]
@@ -113,9 +106,7 @@ def _request_body_fingerprint(
     beta_header = _get_header_value(headers, "anthropic-beta")
     return {
         "anthropic_beta": beta_header or "<unset>",
-        "prompt_caching": (
-            "prompt-caching" in beta_header or cache_counts["total"] > 0
-        ),
+        "prompt_caching": ("prompt-caching" in beta_header or cache_counts["total"] > 0),
         "system": system,
         "cache_control": cache_counts,
     }

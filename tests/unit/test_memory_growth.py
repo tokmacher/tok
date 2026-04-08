@@ -26,9 +26,7 @@ def test_bridge_memory_growth_stays_bounded() -> None:
     assert tok_lengths, "Tok lengths should be recorded"
     assert tok_lengths[-1] < 9000, "Tok growth should stay below threshold"
     assert tok_lengths[-1] - tok_lengths[0] < 2500, "Tok growth should flatten"
-    assert json_lengths[-1] > tok_lengths[-1] * 1.5, (
-        "JSON log should grow faster"
-    )
+    assert json_lengths[-1] > tok_lengths[-1] * 1.5, "JSON log should grow faster"
 
     if plt:
         plt.figure()

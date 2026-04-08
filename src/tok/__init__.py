@@ -1,10 +1,11 @@
-from __future__ import annotations
-
-"""Top-level Tok package with lazy exports to avoid eager import cascades.
+"""
+Top-level Tok package with lazy exports to avoid eager import cascades.
 
 Convenience re-exports live here, but the canonical 0.1.0 protocol IDL lives in
 `tok.protocol.schema` and `tok.protocol.models`.
 """
+
+from __future__ import annotations
 
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
@@ -15,8 +16,7 @@ if TYPE_CHECKING:
     from .protocol.models import TokNode
     from .protocol.parser import TokParser
     from .protocol.schema import BlockSchema, TokSchema
-    from .runtime.core import UniversalTokRuntime
-    from .runtime.core import RuntimeSession
+    from .runtime.core import RuntimeSession, UniversalTokRuntime
     from .runtime.types import (
         PreparedRuntimeRequest,
         ProcessedRuntimeResponse,
@@ -25,6 +25,17 @@ if TYPE_CHECKING:
     from .utils.sifter import Sifter
     from .utils.tok_registry import TokRegistry
     from .utils.transformer import DocumentTransformer
+
+    # Redundant aliases to ensure exports are recognized
+    TokEncoder = TokEncoder
+    TokNode = TokNode
+    TokParser = TokParser
+    BlockSchema = BlockSchema
+    TokSchema = TokSchema
+    RuntimeRequest = RuntimeRequest
+    Sifter = Sifter
+    TokRegistry = TokRegistry
+    DocumentTransformer = DocumentTransformer
 
 _RUNTIME = None
 
@@ -119,15 +130,12 @@ def process(
     )
 
 
-__all__ = [
+__all__: list[str] = [
+    # Defended 0.1.0 surface - promoted per Plan 10C.1
     "Bridge",
+    # TYPE_CHECKING imports exposed for static analysis
     "BlockSchema",
-    "DEFAULT_SCHEMA",
     "DocumentTransformer",
-    "explore_file",
-    "explore_module",
-    "get_file_overview",
-    "list_large_files",
     "PreparedRuntimeRequest",
     "ProcessedRuntimeResponse",
     "RuntimeRequest",
@@ -139,15 +147,6 @@ __all__ = [
     "TokRegistry",
     "TokSchema",
     "UniversalTokRuntime",
-    "serialize",
-    "tok_to_dict",
-    "tok_to_tok",
-    "TokError",
-    "CompressionError",
-    "SessionError",
-    "BridgeUnavailableError",
-    "ReplayGateError",
-    "InvalidSessionStateError",
 ]
 
 __version__ = "0.1.0"

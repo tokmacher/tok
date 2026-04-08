@@ -8,7 +8,6 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -37,6 +36,259 @@ SURFACE_GATE_CHECK = (
     "failures = validate_release_surface(exported_names=tok.__all__, cli_help_output=help_output, root_app=app)",
     "print('surface_gate_failures=' + repr(failures))",
     "raise SystemExit(1 if failures else 0)",
+)
+
+VALIDATION_FAILURE_CHECK = (
+    "import textwrap",
+    """code = textwrap.dedent('''\
+import asyncio
+import json
+import socket
+
+import httpx
+import uvicorn
+from fastapi import FastAPI, Request
+
+from tok.gateway import BridgeSession, create_app
+
+
+class _UpstreamState:
+    def __init__(self) -> None:
+        self.call_count = 0
+        self.lock = asyncio.Lock()
+
+    async def increment(self) -> int:
+        async with self.lock:
+            self.call_count += 1
+            return self.call_count
+
+    async def get_count(self) -> int:
+        async with self.lock:
+            return self.call_count
+
+    def reset(self) -> None:
+        self.call_count = 0
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _create_synthetic_upstream(state: _UpstreamState) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/")
+    async def root() -> dict[str, str]:
+        return {"status": "ok", "service": "validation-failure-upstream"}
+
+    @app.post("/v1/messages")
+    async def messages(request: Request) -> dict[str, object]:
+        await state.increment()
+        return {
+            "type": "message",
+            "content": [{"type": "text", "text": "upstream should not be reached"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+
+    return app
+
+
+async def _start_server(app: FastAPI, port: int, health_url: str) -> tuple[uvicorn.Server, asyncio.Task]:
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve())
+
+    for _ in range(50):
+        await asyncio.sleep(0.1)
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(health_url)
+                if resp.status_code == 200:
+                    break
+        except Exception:
+            pass
+    else:
+        server.should_exit = True
+        task.cancel()
+        raise RuntimeError(f\"Server failed to start on port {port}\")
+
+    return server, task
+
+
+async def _stop_server(server: uvicorn.Server, task: asyncio.Task) -> None:
+    server.should_exit = True
+    try:
+        await asyncio.wait_for(task, timeout=5.0)
+    except asyncio.TimeoutError:
+        task.cancel()
+
+
+async def _run() -> None:
+    state = _UpstreamState()
+    state.reset()
+
+    upstream_port = _find_free_port()
+    bridge_port = _find_free_port()
+    upstream_base = f\"http://127.0.0.1:{upstream_port}\"
+
+    upstream_app = _create_synthetic_upstream(state)
+    upstream_server, upstream_task = await _start_server(
+        upstream_app, upstream_port, f\"{upstream_base}/\"
+    )
+
+    bridge_session = BridgeSession(
+        port=bridge_port,
+        api_base=upstream_base,
+        debug=False,
+        fail_open=False,
+    )
+    bridge_app = create_app(bridge_session)
+    bridge_server, bridge_task = await _start_server(
+        bridge_app, bridge_port, f\"http://127.0.0.1:{bridge_port}/health\"
+    )
+
+    try:
+        malformed_requests = [
+            # Missing required field: omit model
+            {
+                \"max_tokens\": 16,
+                \"messages\": [{\"role\": \"user\", \"content\": \"hello\"}],
+                \"stream\": False,
+            },
+            # Wrong type: messages is not a list
+            {
+                \"model\": \"claude-3-sonnet-20240229\",
+                \"max_tokens\": 16,
+                \"messages\": \"not-a-list\",
+                \"stream\": False,
+            },
+        ]
+
+        async with httpx.AsyncClient() as client:
+            for body in malformed_requests:
+                before = await state.get_count()
+
+                resp = await client.post(
+                    f\"http://127.0.0.1:{bridge_port}/v1/messages\",
+                    json=body,
+                    headers={\"x-api-key\": \"test-api-key\"},
+                    timeout=15.0,
+                )
+
+                # Stable failure contract: accept 400/422 only.
+                assert resp.status_code in (400, 422), (
+                    f\"Unexpected status {resp.status_code}: {resp.text[:500]}\"
+                )
+
+                # No raw internal leakage.
+                body_text = resp.text or \"\"
+                assert \"Traceback\" not in body_text, body_text[:500]
+                assert \"ValidationError\" not in body_text, body_text[:500]
+
+                # Must be boundary failure: upstream must not be called.
+                after = await state.get_count()
+                assert after == before == 0, (
+                    f\"Upstream executed during validation failure (before={before}, after={after}).\"
+                )
+
+                # JSON-ish response body (do not assert optional fields).
+                try:
+                    parsed = resp.json()
+                except Exception as exc:
+                    raise AssertionError(
+                        f\"Expected JSON-ish error body, got: {body_text[:500]}\"
+                    ) from exc
+                assert isinstance(parsed, dict), (
+                    f\"Expected dict-like error body, got: {type(parsed)}\"
+                )
+
+                if \"detail\" not in parsed and \"error\" not in parsed:
+                    raise AssertionError(
+                        \"Expected error body to include 'detail' or 'error' key. \"
+                        f\"Got keys={sorted(parsed.keys())}\"
+                    )
+
+    finally:
+        await _stop_server(bridge_server, bridge_task)
+        await _stop_server(upstream_server, upstream_task)
+
+    final_count = await state.get_count()
+    assert final_count == 0, f\"Upstream should not be called; got {final_count}\"
+
+
+asyncio.run(_run())
+''')""",
+    "exec(code, globals(), globals())",
+)
+
+RELEASE_SURFACE_DRIFT_CHECK = (
+    "import tok",
+    "from tok.release_surface import (SUPPORTED_ROOT_EXPORTS, CANDIDATE_PENDING_PROOF, EXPERIMENTAL_ROOT_EXPORTS)",
+    "effective = set(tok.__all__)",
+    "declared = set(SUPPORTED_ROOT_EXPORTS)",
+    "assert effective == declared, f'root_surface_drift: effective={sorted(effective)} declared={sorted(declared)}'",
+    "candidate_leaks = sorted(set(CANDIDATE_PENDING_PROOF) & effective)",
+    "assert not candidate_leaks, f'root_surface_candidate_leak: {candidate_leaks}'",
+    "experimental_leaks = sorted(set(EXPERIMENTAL_ROOT_EXPORTS) & effective)",
+    "assert not experimental_leaks, f'root_surface_experimental_leak: {experimental_leaks}'",
+    "print('release-surface drift smoke OK')",
+)
+
+CLEAN_INSTALL_IMPORT_CHECK = (
+    "import textwrap",
+    """code = textwrap.dedent('''\
+import os
+import subprocess
+import sys
+import tempfile
+import venv
+from pathlib import Path
+
+
+def _venv_python(venv_dir: Path) -> Path:
+    bin_dir = "Scripts" if os.name == "nt" else "bin"
+    return venv_dir / bin_dir / "python"
+
+
+root = Path.cwd()
+
+with tempfile.TemporaryDirectory(prefix="tok-clean-import-") as td:
+    tmp = Path(td)
+    dist_dir = tmp / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build a wheel from the current checkout.
+    subprocess.run(
+        [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist_dir)],
+        cwd=root,
+        check=True,
+    )
+    wheels = sorted(dist_dir.glob("*.whl"))
+    assert wheels, f"No wheel produced in {dist_dir}"
+    wheel = wheels[-1]
+
+    # Fresh venv install + import check.
+    venv_dir = tmp / "venv"
+    venv.EnvBuilder(with_pip=True).create(venv_dir)
+    vpy = _venv_python(venv_dir)
+    assert vpy.exists(), f"Venv python missing at {vpy}"
+
+    subprocess.run(
+        [str(vpy), "-m", "pip", "install", "--quiet", str(wheel)],
+        check=True,
+    )
+
+    check_code = (
+        "import tok; "
+        "from tok.release_surface import SUPPORTED_ROOT_EXPORTS; "
+        "assert set(tok.__all__) == set(SUPPORTED_ROOT_EXPORTS), (tok.__all__, SUPPORTED_ROOT_EXPORTS); "
+        "print('clean install/import smoke OK')"
+    )
+    subprocess.run([str(vpy), "-c", check_code], check=True)
+''')""",
+    "exec(code, globals(), globals())",
 )
 
 
@@ -80,6 +332,56 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
         ),
     ),
     SmokeStep(
+        "Primary streaming bridge smoke",
+        (
+            "uv",
+            "run",
+            "pytest",
+            "tests/smoke/test_primary_streaming_smoke.py",
+            "-q",
+        ),
+    ),
+    SmokeStep(
+        "Primary non-streaming bridge smoke",
+        (
+            "uv",
+            "run",
+            "pytest",
+            "tests/smoke/test_primary_non_streaming_smoke.py",
+            "-q",
+        ),
+    ),
+    SmokeStep(
+        "Validation-failure smoke",
+        (
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "; ".join(VALIDATION_FAILURE_CHECK),
+        ),
+    ),
+    SmokeStep(
+        "Release-surface drift smoke",
+        (
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "; ".join(RELEASE_SURFACE_DRIFT_CHECK),
+        ),
+    ),
+    SmokeStep(
+        "Clean install/import smoke",
+        (
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "; ".join(CLEAN_INSTALL_IMPORT_CHECK),
+        ),
+    ),
+    SmokeStep(
         "Build smoke",
         (
             "uv",
@@ -97,23 +399,16 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
 
 
 def _run_step(step: SmokeStep) -> int:
-    print(f"\n==> {step.name}", flush=True)
-    print("$ " + " ".join(step.command), flush=True)
     completed = subprocess.run(step.command, cwd=ROOT, check=False)
     return completed.returncode
 
 
 def main() -> int:
-    print("Tok release smoke sweep", flush=True)
-    print(f"repo: {ROOT}", flush=True)
-
     for step in SMOKE_STEPS:
         exit_code = _run_step(step)
         if exit_code != 0:
-            print(f"\nRelease smoke failed during: {step.name}", flush=True)
             return exit_code
 
-    print("\nRelease smoke passed", flush=True)
     return 0
 
 

@@ -1,5 +1,7 @@
-from typing import TypedDict
+"""Metrics calculation for neural components."""
+
 from collections.abc import Sequence
+from typing import TypedDict
 
 
 class RunMetrics(TypedDict):
@@ -32,7 +34,8 @@ def estimated_token_count(memory_list: Sequence[object]) -> int:
 
 
 def compute_auc(outcomes: Sequence[bool]) -> float:
-    """Computes an AUC-like aggregate of sample efficiency.
+    """
+    Computes an AUC-like aggregate of sample efficiency.
     Calculates the average cumulative accuracy at each step over time.
     """
     if not outcomes:
@@ -49,16 +52,20 @@ def compute_auc(outcomes: Sequence[bool]) -> float:
 
 
 class RollingRate:
+    """Rolling window success rate tracker."""
+
     def __init__(self, window: int = 200) -> None:
         self.window = window
         self.values: list[int] = []
 
     def push(self, ok: bool) -> None:
+        """Record a new success/failure outcome."""
         self.values.append(1 if ok else 0)
         if len(self.values) > self.window:
             self.values = self.values[-self.window :]
 
     def rate(self) -> float:
+        """Calculate the current success rate."""
         if not self.values:
             return 0.0
         return sum(self.values) / len(self.values)

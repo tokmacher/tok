@@ -1,3 +1,5 @@
+"""CLI commands for initializing Tok projects."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,9 +10,8 @@ import typer
 from ._cli_support import console
 
 
-def _ensure_gitignore_entries(
-    gitignore_path: Path, *, entries: list[str]
-) -> bool:
+def _ensure_gitignore_entries(gitignore_path: Path, *, entries: list[str]) -> bool:
+    """Ensure Tok entries exist in .gitignore file."""
     if gitignore_path.exists():
         existing = gitignore_path.read_text().splitlines()
     else:
@@ -32,28 +33,18 @@ def _ensure_gitignore_entries(
 
 
 def _maybe_create_env_file(env_path: Path) -> bool:
+    """Create a default .env file if it doesn't exist."""
     if env_path.exists():
         return False
-    env_path.write_text(
-        "\n".join(
-            [
-                "# Tok",
-                "TOK_PROJECT_DIR=.",
-                "TOK_COLLECTOR_DB=.tok/telemetry.db",
-                "",
-            ]
-        )
-    )
+    env_path.write_text("# Tok\nTOK_PROJECT_DIR=.\nTOK_COLLECTOR_DB=.tok/telemetry.db\n")
     return True
 
 
 def init(
     project_dir: Annotated[
         Path,
-        typer.Argument(
-            help="Project directory to initialize (default: current directory)"
-        ),
-    ] = Path("."),
+        typer.Argument(help="Project directory to initialize (default: current directory)"),
+    ] = Path(),
     gitignore: Annotated[
         bool,
         typer.Option(
@@ -80,9 +71,7 @@ def init(
     root = project_dir.resolve()
     tok_dir = root / ".tok"
     if tok_dir.exists() and not force:
-        console.print(
-            f"[yellow]⚠️ Already initialized:[/yellow] {tok_dir} (use --force to continue)"
-        )
+        console.print(f"[yellow]⚠️ Already initialized:[/yellow] {tok_dir} (use --force to continue)")
         raise typer.Exit(1)
 
     tok_dir.mkdir(parents=True, exist_ok=True)
@@ -102,13 +91,9 @@ def init(
                 ],
             )
             if gitignore_updated:
-                console.print(
-                    f"[green]✅ Updated:[/green] {root / '.gitignore'}"
-                )
+                console.print(f"[green]✅ Updated:[/green] {root / '.gitignore'}")
         else:
-            console.print(
-                "[dim]Skipping .gitignore update (no .git directory found).[/dim]"
-            )
+            console.print("[dim]Skipping .gitignore update (no .git directory found).[/dim]")
 
     env_created = False
     if env:
@@ -116,18 +101,13 @@ def init(
         if env_created:
             console.print(f"[green]✅ Created:[/green] {root / '.env'}")
         else:
-            console.print(
-                f"[dim]Leaving existing .env unchanged:[/dim] {root / '.env'}"
-            )
+            console.print(f"[dim]Leaving existing .env unchanged:[/dim] {root / '.env'}")
 
     console.print(
-        "\n[bold]Next steps:[/bold]\n"
-        "- `tok install`\n"
-        "- `tok bridge start`\n"
-        "- `claude`\n"
-        "- `tok doctor --report`\n"
+        "\n[bold]Next steps:[/bold]\n- `tok install`\n- `tok bridge start`\n- `claude`\n- `tok doctor --report`\n"
     )
 
 
 def register(app: typer.Typer) -> None:
+    """Register init command with the CLI app."""
     app.command()(init)

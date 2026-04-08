@@ -11,11 +11,10 @@ Tests:
 import os
 import sys
 
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 import pytest
+
 from tok.protocol.encoder import TokEncoder
 from tok.protocol.models import TokNode
 from tok.protocol.parser import TokParser
@@ -25,7 +24,7 @@ from tok.utils.transformer import DocumentTransformer
 class TestDocumentTransformerMarkdownToTok:
     """Test Markdown → Tok transformation."""
 
-    def test_simple_markdown_to_tok(self):
+    def test_simple_markdown_to_tok(self) -> None:
         """Simple markdown with headings should transform to Tok."""
         transformer = DocumentTransformer()
         md = "# Heading\n\nSome paragraph text."
@@ -33,7 +32,7 @@ class TestDocumentTransformerMarkdownToTok:
         assert isinstance(result, list)
         assert len(result) > 0
 
-    def test_markdown_headings_preserved(self):
+    def test_markdown_headings_preserved(self) -> None:
         """Markdown headings should survive transformation."""
         transformer = DocumentTransformer()
         md = "# Title\n## Subtitle\n### Detail\n\nContent"
@@ -45,21 +44,21 @@ class TestDocumentTransformerMarkdownToTok:
         # Should have some block types (heading structure)
         assert len(types) > 0
 
-    def test_markdown_code_block_to_tok(self):
+    def test_markdown_code_block_to_tok(self) -> None:
         """Markdown code blocks should transform."""
         transformer = DocumentTransformer()
         md = "# Code Example\n\n```python\ndef hello():\n    return 'world'\n```"
         result = transformer.transform(md)
         assert len(result) > 0
 
-    def test_markdown_list_to_tok(self):
+    def test_markdown_list_to_tok(self) -> None:
         """Markdown lists should transform to Tok."""
         transformer = DocumentTransformer()
         md = "# Items\n\n- Item 1\n- Item 2\n- Item 3"
         result = transformer.transform(md)
         assert len(result) > 0
 
-    def test_markdown_table_to_tok(self):
+    def test_markdown_table_to_tok(self) -> None:
         """Markdown tables should transform to Tok table blocks."""
         transformer = DocumentTransformer()
         md = """# Data
@@ -78,7 +77,7 @@ class TestDocumentTransformerMarkdownToTok:
 class TestDocumentTransformerTokToMarkdown:
     """Test Tok → Markdown transformation."""
 
-    def test_tok_to_markdown_conversion(self):
+    def test_tok_to_markdown_conversion(self) -> None:
         """Tok text should convert back to Markdown."""
         transformer = DocumentTransformer()
         md_original = "# Heading\n\nParagraph text"
@@ -90,23 +89,19 @@ class TestDocumentTransformerTokToMarkdown:
         md_result = transformer.detransform_nodes(nodes)
         assert isinstance(md_result, str)
 
-    def test_markdown_roundtrip_content_preservation(self):
+    def test_markdown_roundtrip_content_preservation(self) -> None:
         """Markdown round-trip should preserve content."""
         transformer = DocumentTransformer()
-        md_original = (
-            "# Title\n\nThis is content\n\n## Subtitle\n\nMore content"
-        )
+        md_original = "# Title\n\nThis is content\n\n## Subtitle\n\nMore content"
 
         nodes = transformer.transform(md_original)
         md_result = transformer.detransform_nodes(nodes)
 
         # Key content should survive
         assert "Title" in md_result or "Title" in str(nodes)
-        assert (
-            "content" in md_result.lower() or "content" in str(nodes).lower()
-        )
+        assert "content" in md_result.lower() or "content" in str(nodes).lower()
 
-    def test_table_roundtrip(self):
+    def test_table_roundtrip(self) -> None:
         """Table structure should survive round-trip."""
         transformer = DocumentTransformer()
         md_table = """| Name | Age |
@@ -120,7 +115,7 @@ class TestDocumentTransformerTokToMarkdown:
         has_headers = any(node.headers for node in nodes)
         assert has_headers, "Table headers should be preserved"
 
-    def test_code_block_roundtrip(self):
+    def test_code_block_roundtrip(self) -> None:
         """Code blocks should survive round-trip."""
         transformer = DocumentTransformer()
         md = r"""# Code
@@ -137,16 +132,14 @@ def func():
 class TestTokEncoderSerialization:
     """Test TokEncoder.encode() for list serialization."""
 
-    def test_encoder_encodes_nodes_to_text(self):
+    def test_encoder_encodes_nodes_to_text(self) -> None:
         """TokEncoder.encode() should convert nodes to Tok text."""
-        node = TokNode(
-            type="msg", label="", text="Hello", attrs={"role": "user"}
-        )
+        node = TokNode(type="msg", label="", text="Hello", attrs={"role": "user"})
         result = TokEncoder.encode([node])
         assert isinstance(result, str)
         assert "@msg" in result
 
-    def test_encoder_handles_single_node(self):
+    def test_encoder_handles_single_node(self) -> None:
         """TokEncoder should handle single node in list."""
         node = TokNode(type="data", label="test", text="Content")
         result = TokEncoder.encode([node])
@@ -154,7 +147,7 @@ class TestTokEncoderSerialization:
         assert "@data" in result
         assert "test" in result
 
-    def test_encoder_handles_multiple_nodes(self):
+    def test_encoder_handles_multiple_nodes(self) -> None:
         """TokEncoder should handle multiple nodes."""
         nodes = [
             TokNode(type="msg", label="", text="First"),
@@ -164,7 +157,7 @@ class TestTokEncoderSerialization:
         assert isinstance(result, str)
         assert result.count("@msg") >= 2
 
-    def test_encoder_compact_mode(self):
+    def test_encoder_compact_mode(self) -> None:
         """TokEncoder should support compact mode."""
         node = TokNode(type="msg", label="", text="Test")
         result = TokEncoder.encode([node], compact=True)
@@ -176,7 +169,7 @@ class TestTokEncoderSerialization:
 class TestTransformerNakedMode:
     """Test transformer naked mode (rich=False)."""
 
-    def test_naked_mode_strips_metadata(self):
+    def test_naked_mode_strips_metadata(self) -> None:
         """Naked mode should produce simpler output without TOC/pool."""
         transformer = DocumentTransformer()
         md = "# Title\n\n## Section\n\nContent"
@@ -188,7 +181,7 @@ class TestTransformerNakedMode:
         assert len(nodes_rich) > 0
         assert len(nodes_naked) > 0
 
-    def test_naked_mode_detransform(self):
+    def test_naked_mode_detransform(self) -> None:
         """Naked mode detransform should be simpler."""
         transformer = DocumentTransformer()
         md = "# Simple\n\nContent"
@@ -202,51 +195,49 @@ class TestTransformerNakedMode:
 class TestTransformerEdgeCases:
     """Test edge cases in transformer."""
 
-    def test_empty_markdown(self):
+    def test_empty_markdown(self) -> None:
         """Empty markdown should transform without error."""
         transformer = DocumentTransformer()
         result = transformer.transform("")
         assert isinstance(result, list)
 
-    def test_whitespace_only_markdown(self):
+    def test_whitespace_only_markdown(self) -> None:
         """Whitespace-only markdown should handle gracefully."""
         transformer = DocumentTransformer()
         result = transformer.transform("   \n\n   ")
         assert isinstance(result, list)
 
-    def test_single_heading(self):
+    def test_single_heading(self) -> None:
         """Single heading should transform."""
         transformer = DocumentTransformer()
         result = transformer.transform("# Just a heading")
         assert len(result) > 0
 
-    def test_nested_headings(self):
+    def test_nested_headings(self) -> None:
         """Nested heading hierarchy should transform."""
         transformer = DocumentTransformer()
         md = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6"
         result = transformer.transform(md)
         assert len(result) > 0
 
-    def test_special_characters_in_content(self):
+    def test_special_characters_in_content(self) -> None:
         """Special characters should be preserved."""
         transformer = DocumentTransformer()
         md = "# Title\n\nContent with special: @, >, |, !, *"
         result = transformer.transform(md)
         assert len(result) > 0
 
-    def test_unicode_content(self):
+    def test_unicode_content(self) -> None:
         """Unicode content should be handled."""
         transformer = DocumentTransformer()
         md = "# 标题 (Title)\n\n世界 Мир مرحبا"
         result = transformer.transform(md)
         assert len(result) > 0
 
-    def test_very_long_markdown(self):
+    def test_very_long_markdown(self) -> None:
         """Long markdown document should transform."""
         transformer = DocumentTransformer()
-        paragraphs = [
-            f"# Section {i}\n\nContent paragraph {i}" for i in range(50)
-        ]
+        paragraphs = [f"# Section {i}\n\nContent paragraph {i}" for i in range(50)]
         md = "\n\n".join(paragraphs)
         result = transformer.transform(md)
         assert len(result) > 0
@@ -255,7 +246,7 @@ class TestTransformerEdgeCases:
 class TestTransformerConsistency:
     """Test transformer behavior is consistent."""
 
-    def test_multiple_transforms_same_input(self):
+    def test_multiple_transforms_same_input(self) -> None:
         """Multiple transforms of same input should be consistent."""
         transformer = DocumentTransformer()
         md = "# Test\n\nContent"
@@ -267,7 +258,7 @@ class TestTransformerConsistency:
         assert len(result1) == len(result2)
         assert [n.type for n in result1] == [n.type for n in result2]
 
-    def test_transformer_isolation(self):
+    def test_transformer_isolation(self) -> None:
         """Multiple transformer instances should be independent."""
         t1 = DocumentTransformer()
         t2 = DocumentTransformer()
@@ -285,17 +276,15 @@ class TestTransformerConsistency:
 class TestDocumentTransformerAdvanced:
     """Advanced transformer assurances (flattening, pointers, round-trip)."""
 
-    def test_flattening_threshold_adds_parent_markers(self):
+    def test_flattening_threshold_adds_parent_markers(self) -> None:
         """Nodes beyond the flattening threshold should carry parent pointers."""
         transformer = DocumentTransformer(flattening_threshold=2)
         md = "# Root\n\n## Level 1\n\n### Level 2\n\n#### Level 3\n\n##### Level 4"
 
         nodes = transformer.transform(md, rich=True)
-        assert any("parent" in getattr(n, "attrs", {}) for n in nodes), (
-            "Flattened nodes should include parent metadata"
-        )
+        assert any("parent" in getattr(n, "attrs", {}) for n in nodes), "Flattened nodes should include parent metadata"
 
-    def test_pointerization_detects_repeated_terms(self):
+    def test_pointerization_detects_repeated_terms(self) -> None:
         """Repeated terms should generate PTR nodes for compression pointers."""
         transformer = DocumentTransformer()
         repeated_term = "verylongtermverylongtermverylongterm"
@@ -303,7 +292,7 @@ class TestDocumentTransformerAdvanced:
         pointers = transformer._compute_profitable_pointers(text_counts)
         assert pointers, "Pointer nodes should exist when text repeats"
 
-    def test_transformer_encoder_parser_roundtrip(self):
+    def test_transformer_encoder_parser_roundtrip(self) -> None:
         """DocumentTransformer + TokEncoder + TokParser should round-trip."""
         transformer = DocumentTransformer()
         md = "# Title\n\n## Section\n\nParagraph content."

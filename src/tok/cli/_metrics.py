@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 """Telemetry and health reporting commands for the Tok CLI."""
+
+from __future__ import annotations
 
 from typing import Annotated
 
 import typer
-
 
 metrics_app = typer.Typer(help="Telemetry and health reporting commands")
 
@@ -20,12 +19,10 @@ def pressure(
             help="Number of recent sessions for trend analysis",
         ),
     ] = 10,
-    export: Annotated[
-        str, typer.Option("--export", "-e", help="Export results to file")
-    ] = "",
+    export: Annotated[str, typer.Option("--export", "-e", help="Export results to file")] = "",
 ) -> None:
     """Show invisible pressure trends and current status."""
-    from ..utils.metrics import pressure_trends
+    from tok.utils.metrics import pressure_trends
 
     pressure_trends(window, export)
 
@@ -42,7 +39,7 @@ def memory(
     ] = 10,
 ) -> None:
     """Show memory lift trends and current status."""
-    from ..utils.metrics import memory_trends
+    from tok.utils.metrics import memory_trends
 
     memory_trends(window)
 
@@ -59,7 +56,7 @@ def savings_trend(
     ] = 10,
 ) -> None:
     """Show savings percentage trends and current status."""
-    from ..utils.metrics import savings_trends
+    from tok.utils.metrics import savings_trends
 
     savings_trends(window)
 
@@ -76,7 +73,7 @@ def fallback(
     ] = 10,
 ) -> None:
     """Show cold-start fallback trends and current status."""
-    from ..utils.metrics import fallback_trends
+    from tok.utils.metrics import fallback_trends
 
     fallback_trends(window)
 
@@ -91,11 +88,9 @@ def health(
             help="Number of recent sessions for trend analysis",
         ),
     ] = 10,
-    export: Annotated[
-        str, typer.Option("--export", "-e", help="Export results to file")
-    ] = "",
+    export: Annotated[str, typer.Option("--export", "-e", help="Export results to file")] = "",
 ) -> None:
     """Show aggregated health metrics summary."""
-    from ..utils.metrics import health_summary
+    from tok.utils.metrics import health_summary
 
     health_summary(window, export)

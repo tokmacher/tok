@@ -1,4 +1,5 @@
-"""Colored event logging for Tok internal feature visibility.
+"""
+Colored event logging for Tok internal feature visibility.
 
 Log messages use Rich markup for color coding, visible via `tok bridge logs`.
 """
@@ -37,11 +38,13 @@ ICONS = {
 
 
 def log_event(event_type: str, message: str) -> None:
-    """Log a colored event message.
+    """
+    Log a colored event message.
 
     Args:
         event_type: One of the keys in COLORS dict
         message: The detail message to log
+
     """
     color = COLORS.get(event_type, "white")
     icon = ICONS.get(event_type, "")
@@ -78,9 +81,7 @@ def log_semantic_dedup(cache_key: str, chars_saved: int) -> None:
     log_event("semantic_dedup", f"{key_display} (saved {chars_saved} chars)")
 
 
-def log_delta_compress(
-    tool_name: str, original_len: int, compressed_len: int
-) -> None:
+def log_delta_compress(tool_name: str, original_len: int, compressed_len: int) -> None:
     """Log when delta compression is applied."""
     pct = (compressed_len / original_len * 100) if original_len > 0 else 100
     log_event("delta_compress", f"{tool_name} ({pct:.0f}% of original)")
@@ -89,16 +90,12 @@ def log_delta_compress(
 def log_rolling_state(turn: int, entries_trimmed: int = 0) -> None:
     """Log rolling state update."""
     if entries_trimmed > 0:
-        log_event(
-            "rolling_state", f"turn {turn}, trimmed {entries_trimmed} entries"
-        )
+        log_event("rolling_state", f"turn {turn}, trimmed {entries_trimmed} entries")
     else:
         log_event("rolling_state", f"turn {turn}")
 
 
-def log_memory_promotion(
-    field: str, value: str, bucket: str = "durable"
-) -> None:
+def log_memory_promotion(field: str, value: str, bucket: str = "durable") -> None:
     """Log when memory is promoted from hot to durable."""
     # Truncate value for readability
     val_display = value[:40] + "..." if len(value) > 40 else value
@@ -124,15 +121,15 @@ def log_drift_healed(heal_type: str) -> None:
 
 
 __all__ = [
+    "log_delta_compress",
+    "log_drift_detected",
+    "log_drift_healed",
     "log_event",
     "log_macro_created",
     "log_macro_registered",
     "log_macro_used",
-    "log_semantic_dedup",
-    "log_delta_compress",
-    "log_rolling_state",
     "log_memory_promotion",
     "log_pointer_created",
-    "log_drift_detected",
-    "log_drift_healed",
+    "log_rolling_state",
+    "log_semantic_dedup",
 ]

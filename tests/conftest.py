@@ -5,7 +5,8 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _disable_short_session_threshold(request):
-    """Disable short session threshold for unit tests.
+    """
+    Disable short session threshold for unit tests.
 
     The short session optimization skips compression for sessions < 8 turns.
     Unit tests need to test compression logic in isolation, so we disable
@@ -33,8 +34,7 @@ def _disable_short_session_threshold(request):
         yield
         return
 
-    from tok.runtime import config
-    from tok.runtime import _request_preparation
+    from tok.runtime import _request_preparation, config
 
     original_config = config._SHORT_SESSION_THRESHOLD
     original_rp = _request_preparation._SHORT_SESSION_THRESHOLD

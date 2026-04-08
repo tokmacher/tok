@@ -1,11 +1,11 @@
 """FastAPI collector for Tok telemetry events."""
 
-import sqlite3
 import json
 import os
+import sqlite3
 from typing import Any
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI
 from pydantic import BaseModel
 
 app = FastAPI(title="Tok Telemetry Collector")
@@ -22,6 +22,7 @@ class TokEvent(BaseModel):
 
 
 def init_db() -> None:
+    """Initialize the SQLite database for telemetry events."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -42,10 +43,12 @@ def init_db() -> None:
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    """Initialize database on application startup."""
     init_db()
 
 
 def save_event(event: TokEvent) -> None:
+    """Save a telemetry event to the database."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -63,21 +66,19 @@ def save_event(event: TokEvent) -> None:
 
 
 @app.post("/ingest")
-async def ingest_event(
-    event: TokEvent, background_tasks: BackgroundTasks
-) -> dict[str, str]:
+async def ingest_event(event: TokEvent, background_tasks: BackgroundTasks) -> dict[str, str]:
+    """Ingest a telemetry event asynchronously."""
     background_tasks.add_task(save_event, event)
     return {"status": "accepted"}
 
 
 @app.get("/events")
 async def get_events(limit: int = 100) -> list[dict[str, Any]]:
+    """Retrieve recent telemetry events from the database."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM events ORDER BY timestamp DESC LIMIT ?", (limit,)
-    )
+    cursor.execute("SELECT * FROM events ORDER BY timestamp DESC LIMIT ?", (limit,))
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]

@@ -1,4 +1,5 @@
-"""Adapter discipline and parity tests.
+"""
+Adapter discipline and parity tests.
 
 Verifies that:
 1. adapters.py contains no direct imports of compression/bridge_memory/stats modules.
@@ -19,19 +20,12 @@ from tok.adapters import (
 )
 from tok.universal_runtime import RuntimeSession
 
-
 # ---------------------------------------------------------------------------
 # 1. Adapter discipline: no forbidden imports
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_MODULES = {"compression", "bridge_memory", "stats"}
-_ADAPTERS_PATH = (
-    Path(__file__).parent.parent.parent
-    / "src"
-    / "tok"
-    / "adapters"
-    / "adapters.py"
-)
+_ADAPTERS_PATH = Path(__file__).parent.parent.parent / "src" / "tok" / "adapters" / "adapters.py"
 
 
 def _direct_imports_in_file(path: Path) -> set[str]:
@@ -43,18 +37,15 @@ def _direct_imports_in_file(path: Path) -> set[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 names.add(alias.name.split(".")[-1])
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                names.add(node.module.split(".")[-1])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module.split(".")[-1])
     return names
 
 
-def test_adapters_module_does_not_import_compression():
+def test_adapters_module_does_not_import_compression() -> None:
     imports = _direct_imports_in_file(_ADAPTERS_PATH)
     forbidden = imports & _FORBIDDEN_MODULES
-    assert not forbidden, (
-        f"adapters.py must not import {_FORBIDDEN_MODULES}, found: {forbidden}"
-    )
+    assert not forbidden, f"adapters.py must not import {_FORBIDDEN_MODULES}, found: {forbidden}"
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +57,9 @@ _MESSAGES = [{"role": "user", "content": "Audit the codebase"}]
 _SYSTEM = "test system prompt"
 
 
-def test_orchestrator_and_bridge_adapters_produce_identical_body(tmp_path):
+def test_orchestrator_and_bridge_adapters_produce_identical_body(
+    tmp_path,
+) -> None:
     orch_session = RuntimeSession(memory_dir=tmp_path / "orch")
     bridge_session = RuntimeSession(memory_dir=tmp_path / "bridge")
 
@@ -88,7 +81,7 @@ def test_orchestrator_and_bridge_adapters_produce_identical_body(tmp_path):
     assert orch_prepared.body == bridge_prepared.body
 
 
-def test_adapter_kind_does_not_affect_prepared_body(tmp_path):
+def test_adapter_kind_does_not_affect_prepared_body(tmp_path) -> None:
     """Two RuntimeAdapters differing only in adapter_kind must produce the same body."""
     session_a = RuntimeSession(memory_dir=tmp_path / "a")
     session_b = RuntimeSession(memory_dir=tmp_path / "b")
@@ -96,17 +89,13 @@ def test_adapter_kind_does_not_affect_prepared_body(tmp_path):
     adapter_a = RuntimeAdapter(adapter_kind="orchestrator", session=session_a)
     adapter_b = RuntimeAdapter(adapter_kind="claude-bridge", session=session_b)
 
-    prepared_a = adapter_a.prepare(
-        model=_MODEL, messages=_MESSAGES, system=_SYSTEM, tool_compatible=False
-    )
-    prepared_b = adapter_b.prepare(
-        model=_MODEL, messages=_MESSAGES, system=_SYSTEM, tool_compatible=False
-    )
+    prepared_a = adapter_a.prepare(model=_MODEL, messages=_MESSAGES, system=_SYSTEM, tool_compatible=False)
+    prepared_b = adapter_b.prepare(model=_MODEL, messages=_MESSAGES, system=_SYSTEM, tool_compatible=False)
 
     assert prepared_a.body == prepared_b.body
 
 
-def test_adapters_finalize_produces_consistent_mode(tmp_path):
+def test_adapters_finalize_produces_consistent_mode(tmp_path) -> None:
     """Both adapter surfaces must classify the same response text the same way."""
     text = ">>> turns:1|goal:audit\n@msg role:assistant\n  |> ok"
 
@@ -123,7 +112,7 @@ def test_adapters_finalize_produces_consistent_mode(tmp_path):
     assert orch_processed.content_blocks == bridge_processed.content_blocks
 
 
-def test_adapter_memory_state_is_independent_per_session(tmp_path):
+def test_adapter_memory_state_is_independent_per_session(tmp_path) -> None:
     """Two adapters with different sessions must not share memory state."""
     orch_session = RuntimeSession(memory_dir=tmp_path / "orch")
     bridge_session = RuntimeSession(memory_dir=tmp_path / "bridge")

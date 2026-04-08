@@ -17,7 +17,7 @@ FORBIDDEN_IMPORTS = {
 }
 
 
-def test_adapters_no_forbidden_imports():
+def test_adapters_no_forbidden_imports() -> None:
     source = ADAPTERS_PATH.read_text()
     tree = ast.parse(source)
     imported_names = set()
@@ -33,27 +33,20 @@ def test_adapters_no_forbidden_imports():
                 imported_names.add(alias.name.split(".")[-1])
     violations = FORBIDDEN_IMPORTS & imported_names
     assert not violations, (
-        f"adapters.py must not import: {violations}. "
-        "Compression/memory/telemetry logic belongs in the runtime."
+        f"adapters.py must not import: {violations}. Compression/memory/telemetry logic belongs in the runtime."
     )
 
 
-def test_adapters_delegates_to_runtime():
+def test_adapters_delegates_to_runtime() -> None:
     source = ADAPTERS_PATH.read_text()
-    assert "UniversalTokRuntime" in source, (
-        "OrchestratorAdapter must use UniversalTokRuntime"
-    )
-    assert "prepare_request" in source or "prepare" in source, (
-        "Adapter must call runtime.prepare_request()"
-    )
-    assert "process_response" in source or "finalize" in source, (
-        "Adapter must call runtime.process_response()"
-    )
+    assert "UniversalTokRuntime" in source, "OrchestratorAdapter must use UniversalTokRuntime"
+    assert "prepare_request" in source or "prepare" in source, "Adapter must call runtime.prepare_request()"
+    assert "process_response" in source or "finalize" in source, "Adapter must call runtime.process_response()"
 
 
-def test_orchestrator_and_bridge_adapter_telemetry_parity():
+def test_orchestrator_and_bridge_adapter_telemetry_parity() -> None:
     """OrchestratorAdapter and ClaudeBridgeAdapter must produce equivalent telemetry signals."""
-    from tok.adapters import OrchestratorAdapter, ClaudeBridgeAdapter
+    from tok.adapters import ClaudeBridgeAdapter, OrchestratorAdapter
 
     orch = OrchestratorAdapter()
     bridge = ClaudeBridgeAdapter()
@@ -61,12 +54,8 @@ def test_orchestrator_and_bridge_adapter_telemetry_parity():
     messages = [{"role": "user", "content": ">>> goal:test|files:foo.py"}]
     system = "You are a test agent."
 
-    orch_prepared = orch.prepare(
-        model="test-model", messages=messages, system=system
-    )
-    bridge_prepared = bridge.prepare(
-        model="test-model", messages=messages, system=system
-    )
+    orch_prepared = orch.prepare(model="test-model", messages=messages, system=system)
+    bridge_prepared = bridge.prepare(model="test-model", messages=messages, system=system)
 
     # Both should report the same input_saved_tokens type (int)
     assert isinstance(orch_prepared.input_saved_tokens, int)
@@ -77,8 +66,9 @@ def test_orchestrator_and_bridge_adapter_telemetry_parity():
     assert isinstance(bridge_prepared.type_breakdown, dict)
 
 
-def test_orchestrator_finalize_does_not_double_consume_signals():
-    """TokOrchestrator.chat() must not re-consume session signals after finalize().
+def test_orchestrator_finalize_does_not_double_consume_signals() -> None:
+    """
+    TokOrchestrator.chat() must not re-consume session signals after finalize().
 
     process_response() (called inside finalize()) already drains
     session.consume_behavior_signals(). A second consume returns {} and was
@@ -98,8 +88,9 @@ def test_orchestrator_finalize_does_not_double_consume_signals():
     )
 
 
-def test_gateway_sse_path_does_not_double_consume_signals():
-    """gateway.py SSE path must not re-consume session signals after process_response().
+def test_gateway_sse_path_does_not_double_consume_signals() -> None:
+    """
+    gateway.py SSE path must not re-consume session signals after process_response().
 
     After the Plan 5 fix, the stale re-consume that followed process_response() in the
     SSE path was removed. This test verifies that process_response() and

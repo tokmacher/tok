@@ -1,4 +1,5 @@
-"""Pure shared helpers for stress harness.
+"""
+Pure shared helpers for stress harness.
 
 Functions here are used across multiple modules (executor, classification, reports, runner)
 and should not introduce circular dependencies between modules.
@@ -9,12 +10,12 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from tok.runtime import RuntimeSession
-from .models import (
-    READ_ONLY_TOOL_NAMES,
-)
+from .models import READ_ONLY_TOOL_NAMES
+
+if TYPE_CHECKING:
+    from tok.runtime import RuntimeSession
 
 
 def _system_to_messages(
@@ -33,7 +34,7 @@ def _system_to_messages(
     return messages
 
 
-def _content_text(content: Any) -> str:
+def _content_text(content: str | dict[str, Any] | list[Any]) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -52,12 +53,8 @@ def _content_text(content: Any) -> str:
                 tool_input = json.dumps(block.get("input", {}), sort_keys=True)
                 parts.append(f"Tool use ({name}): {tool_input}")
             elif block_type == "tool_result":
-                tool_id = (
-                    str(block.get("tool_use_id", "")).strip() or "unknown"
-                )
-                parts.append(
-                    f"Tool result ({tool_id}): {_content_text(block.get('content', ''))}"
-                )
+                tool_id = str(block.get("tool_use_id", "")).strip() or "unknown"
+                parts.append(f"Tool result ({tool_id}): {_content_text(block.get('content', ''))}")
         return "\n".join(part for part in parts if part)
     if isinstance(content, dict):
         if "text" in content:
@@ -97,9 +94,7 @@ def _render_visible_text(content_blocks: list[dict[str, Any]]) -> str:
     ).strip()
 
 
-def _extract_labeled_fields(
-    text: str, session: RuntimeSession | None = None
-) -> dict[str, str]:
+def _extract_labeled_fields(text: str, session: RuntimeSession | None = None) -> dict[str, str]:
     fields: dict[str, str] = {}
     labels = ["file", "verification", "related"]
     for label in labels:
@@ -140,7 +135,9 @@ def _strip_answer_labels(text: str) -> str:
     return cleaned.strip()
 
 
-def _sanitize_tool_input(value: Any) -> Any:
+def _sanitize_tool_input(
+    value: str | dict[str, Any] | list[Any],
+) -> str | dict[str, Any] | list[Any]:
     if isinstance(value, str):
         cleaned = _strip_answer_labels(value)
         cleaned = re.sub(r"Tool use \([^)]+\):\s*", "", cleaned)
@@ -160,20 +157,13 @@ def _sanitize_tool_input(value: Any) -> Any:
 def _sanitize_tool_use_block(block: dict[str, Any]) -> dict[str, Any]:
     sanitized = dict(block)
     tool_input = block.get("input", {})
-    sanitized["input"] = (
-        _sanitize_tool_input(tool_input)
-        if isinstance(tool_input, dict)
-        else {}
-    )
+    sanitized["input"] = _sanitize_tool_input(tool_input) if isinstance(tool_input, dict) else {}
     return sanitized
 
 
 def _normalize_extracted_path(path: str) -> str:
     cleaned = path.strip().replace(".tok/", "/tok/")
-    if (
-        cleaned.startswith("src/tok/")
-        and "/tok/" in cleaned[len("src/tok/") :]
-    ):
+    if cleaned.startswith("src/tok/") and "/tok/" in cleaned[len("src/tok/") :]:
         nested = cleaned[cleaned.find("/tok/", len("src/tok/")) + 1 :]
         if nested.startswith("tok/"):
             cleaned = "src/" + nested
@@ -196,10 +186,7 @@ def _iso_now() -> str:
 
 
 def _fields_key(fields: dict[str, str]) -> str:
-    return (
-        f"{fields.get('file', '').strip().lower()}|"
-        f"{fields.get('verification', '').strip().lower()}"
-    )
+    return f"{fields.get('file', '').strip().lower()}|{fields.get('verification', '').strip().lower()}"
 
 
 def _is_supported_read_only_tool_name(name: str) -> bool:
@@ -211,22 +198,16 @@ def _normalized_target_path(path: str) -> str:
     return _normalize_extracted_path(cleaned) if cleaned else ""
 
 
-def _tool_directly_reopens_expected_target(
-    block: dict[str, Any], expected_fields: dict[str, str]
-) -> bool:
+def _tool_directly_reopens_expected_target(block: dict[str, Any], expected_fields: dict[str, str]) -> bool:
     expected_file = _normalized_target_path(expected_fields.get("file", ""))
-    expected_verification = (
-        str(expected_fields.get("verification", "")).strip().lower()
-    )
+    expected_verification = str(expected_fields.get("verification", "")).strip().lower()
     if not expected_file and not expected_verification:
         return False
     name = str(block.get("name", "")).strip().lower()
     tool_input = block.get("input", {})
     if not isinstance(tool_input, dict):
         tool_input = {}
-    path_text = _normalized_target_path(
-        tool_input.get("path") or tool_input.get("file_path") or ""
-    )
+    path_text = _normalized_target_path(tool_input.get("path") or tool_input.get("file_path") or "")
     searchable = " ".join(
         str(tool_input.get(key, "")).strip().lower()
         for key in (
@@ -241,9 +222,7 @@ def _tool_directly_reopens_expected_target(
         if str(tool_input.get(key, "")).strip()
     )
     if name in {"view_file", "read"}:
-        return bool(
-            expected_file and path_text and path_text.endswith(expected_file)
-        )
+        return bool(expected_file and path_text and path_text.endswith(expected_file))
     if name in {"grep_search", "search", "grep", "rg"}:
         return bool(
             (expected_file and expected_file in searchable)
@@ -257,10 +236,7 @@ def _classify_validated_target_tool_use(
 ) -> dict[str, int]:
     if not tool_uses:
         return {}
-    if any(
-        _tool_directly_reopens_expected_target(block, expected_fields)
-        for block in tool_uses
-    ):
+    if any(_tool_directly_reopens_expected_target(block, expected_fields) for block in tool_uses):
         return {
             "validated_target_reacquired": 1,
             "validated_target_exact_reacquired": 1,

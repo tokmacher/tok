@@ -1,4 +1,5 @@
-"""System prompt bloat analyzer for the Tok runtime.
+"""
+System prompt bloat analyzer for the Tok runtime.
 
 Measures token and character counts of each prompt component across scenarios,
 directive escalation levels, memory profiles, and history compression.
@@ -8,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..utils.token_utils import count_tokens
+from tok.utils.token_utils import count_tokens
 
 
 def count_chars(text: str) -> int:
@@ -31,50 +32,36 @@ def measure(text: str, label: str) -> dict[str, str | int]:
 def measure_base_prompts() -> dict[str, dict[str, str | int]]:
     """Measure token counts of TOK_SYSTEM_PROMPT and all variants."""
     from tok.analysis.prompt import (
-        TOK_SYSTEM_PROMPT,
+        MINIMAL_PULSE_PROMPT,
         NAKED_TOK_SYSTEM_PROMPT,
         TOK_EXPLORE_PROMPT,
-        MINIMAL_PULSE_PROMPT,
+        TOK_SYSTEM_PROMPT,
     )
 
     return {
         "TOK_SYSTEM_PROMPT": measure(TOK_SYSTEM_PROMPT, "TOK_SYSTEM_PROMPT"),
-        "NAKED_TOK_SYSTEM_PROMPT": measure(
-            NAKED_TOK_SYSTEM_PROMPT, "NAKED_TOK_SYSTEM_PROMPT"
-        ),
-        "TOK_EXPLORE_PROMPT": measure(
-            TOK_EXPLORE_PROMPT, "TOK_EXPLORE_PROMPT"
-        ),
-        "MINIMAL_PULSE_PROMPT": measure(
-            MINIMAL_PULSE_PROMPT, "MINIMAL_PULSE_PROMPT"
-        ),
+        "NAKED_TOK_SYSTEM_PROMPT": measure(NAKED_TOK_SYSTEM_PROMPT, "NAKED_TOK_SYSTEM_PROMPT"),
+        "TOK_EXPLORE_PROMPT": measure(TOK_EXPLORE_PROMPT, "TOK_EXPLORE_PROMPT"),
+        "MINIMAL_PULSE_PROMPT": measure(MINIMAL_PULSE_PROMPT, "MINIMAL_PULSE_PROMPT"),
     }
 
 
 def measure_directive_sizes() -> dict[str, dict[str, str | int]]:
     """Measure all TOK_OUTPUT_DIRECTIVE variants and TOK_PROTOCOL_LAW."""
     from tok.compression import (
-        TOK_PROTOCOL_LAW,
         TOK_OUTPUT_DIRECTIVE,
         TOK_OUTPUT_DIRECTIVE_MINIMAL,
         TOK_OUTPUT_DIRECTIVE_REINFORCED,
+        TOK_PROTOCOL_LAW,
         TOK_TOOL_COMPAT_DIRECTIVE,
     )
 
     return {
         "TOK_PROTOCOL_LAW": measure(TOK_PROTOCOL_LAW, "TOK_PROTOCOL_LAW"),
-        "TOK_OUTPUT_DIRECTIVE": measure(
-            TOK_OUTPUT_DIRECTIVE, "TOK_OUTPUT_DIRECTIVE"
-        ),
-        "TOK_OUTPUT_DIRECTIVE_MINIMAL": measure(
-            TOK_OUTPUT_DIRECTIVE_MINIMAL, "TOK_OUTPUT_DIRECTIVE_MINIMAL"
-        ),
-        "TOK_OUTPUT_DIRECTIVE_REINFORCED": measure(
-            TOK_OUTPUT_DIRECTIVE_REINFORCED, "TOK_OUTPUT_DIRECTIVE_REINFORCED"
-        ),
-        "TOK_TOOL_COMPAT_DIRECTIVE": measure(
-            TOK_TOOL_COMPAT_DIRECTIVE, "TOK_TOOL_COMPAT_DIRECTIVE"
-        ),
+        "TOK_OUTPUT_DIRECTIVE": measure(TOK_OUTPUT_DIRECTIVE, "TOK_OUTPUT_DIRECTIVE"),
+        "TOK_OUTPUT_DIRECTIVE_MINIMAL": measure(TOK_OUTPUT_DIRECTIVE_MINIMAL, "TOK_OUTPUT_DIRECTIVE_MINIMAL"),
+        "TOK_OUTPUT_DIRECTIVE_REINFORCED": measure(TOK_OUTPUT_DIRECTIVE_REINFORCED, "TOK_OUTPUT_DIRECTIVE_REINFORCED"),
+        "TOK_TOOL_COMPAT_DIRECTIVE": measure(TOK_TOOL_COMPAT_DIRECTIVE, "TOK_TOOL_COMPAT_DIRECTIVE"),
     }
 
 
@@ -83,10 +70,7 @@ def measure_grammar_snippets() -> dict[str, dict[str, str | int]]:
     from tok.analysis.prompt import get_grammar_snippet
 
     levels = ["essentials", "restricted", "full", "pulse", "explore"]
-    return {
-        lvl: measure(get_grammar_snippet(lvl), f"grammar:{lvl}")
-        for lvl in levels
-    }
+    return {lvl: measure(get_grammar_snippet(lvl), f"grammar:{lvl}") for lvl in levels}
 
 
 # ---------------------------------------------------------------------------
@@ -97,10 +81,10 @@ def measure_grammar_snippets() -> dict[str, dict[str, str | int]]:
 def analyze_directive_overlap() -> dict[str, dict[str, list[str] | int]]:
     """Identify token overlap between directive components using line diffing."""
     from tok.compression import (
-        TOK_PROTOCOL_LAW,
         TOK_OUTPUT_DIRECTIVE,
         TOK_OUTPUT_DIRECTIVE_MINIMAL,
         TOK_OUTPUT_DIRECTIVE_REINFORCED,
+        TOK_PROTOCOL_LAW,
     )
 
     def _lines(s: str) -> set[str]:
@@ -150,16 +134,14 @@ def measure_pressure_impact() -> dict[str, dict[str, str | int]]:
             pressure=pressure,
         )
         injected = body.get("system", "")
-        results[f"pressure_{pressure}"] = measure(
-            injected, f"pressure={pressure}"
-        )
+        results[f"pressure_{pressure}"] = measure(injected, f"pressure={pressure}")
     return results
 
 
 def measure_dynamic_injections() -> dict[str, dict[str, str | int]]:
     """Measure the total injected system additions with grammar at each level."""
-    from tok.compression import inject_system_additions
     from tok.analysis.prompt import get_grammar_snippet
+    from tok.compression import inject_system_additions
 
     results = {}
     # grammar only (no tok_state)
@@ -173,9 +155,7 @@ def measure_dynamic_injections() -> dict[str, dict[str, str | int]]:
             pressure=0,
         )
         injected = body.get("system", "")
-        results[f"grammar_only:{level}"] = measure(
-            injected, f"grammar_only:{level}"
-        )
+        results[f"grammar_only:{level}"] = measure(injected, f"grammar_only:{level}")
 
     # tok_state only (representative wire state, no grammar)
     sample_tok_state = ">>> turns:5|goal:implement feature X|files:src/foo.py,src/bar.py|errs:test_x failed"
@@ -186,9 +166,7 @@ def measure_dynamic_injections() -> dict[str, dict[str, str | int]]:
         grammar=None,
         pressure=0,
     )
-    results["tok_state_only"] = measure(
-        body.get("system", ""), "tok_state_only"
-    )
+    results["tok_state_only"] = measure(body.get("system", ""), "tok_state_only")
 
     # combined: grammar + tok_state + pressure
     grammar = get_grammar_snippet("restricted")
@@ -199,9 +177,7 @@ def measure_dynamic_injections() -> dict[str, dict[str, str | int]]:
         grammar=grammar,
         pressure=75,
     )
-    results["combined_grammar_state_pressure75"] = measure(
-        body.get("system", ""), "combined_grammar_state_pressure75"
-    )
+    results["combined_grammar_state_pressure75"] = measure(body.get("system", ""), "combined_grammar_state_pressure75")
 
     return results
 
@@ -218,7 +194,8 @@ _TYPICAL_TOK_STATE = (
 
 
 def measure_per_turn_actual() -> dict[str, Any]:
-    """Measure what is actually injected each turn by the gateway path.
+    """
+    Measure what is actually injected each turn by the gateway path.
 
     The gateway always passes grammar=None, todo=None, deltas=None.
     Only pressure and tok_state vary turn-to-turn.
@@ -241,7 +218,7 @@ def measure_per_turn_actual() -> dict[str, Any]:
             deltas=None,
             pressure=pressure,
         )
-        return body.get("system", "")
+        return str(body.get("system", ""))
 
     cold = _inject(None, 0)
     warm_no_drift = _inject(_TYPICAL_TOK_STATE, 0)
@@ -252,27 +229,21 @@ def measure_per_turn_actual() -> dict[str, Any]:
         "cold_start": measure(cold, "per_turn:cold_start"),
         "warm_no_drift": measure(warm_no_drift, "per_turn:warm_no_drift"),
         "warm_low_drift": measure(warm_low_drift, "per_turn:warm_low_drift"),
-        "warm_high_drift": measure(
-            warm_high_drift, "per_turn:warm_high_drift"
-        ),
+        "warm_high_drift": measure(warm_high_drift, "per_turn:warm_high_drift"),
     }
 
     # Breakdown: token cost of each additive component
     from tok.compression import (
-        TOK_PROTOCOL_LAW,
         TOK_OUTPUT_DIRECTIVE_MINIMAL,
         TOK_OUTPUT_DIRECTIVE_REINFORCED,
+        TOK_PROTOCOL_LAW,
     )
 
     results["_component_costs"] = {
         "mode_header": measure("=== MODE: TOK-NATIVE ===", "mode_header"),
-        "minimal_directive": measure(
-            TOK_OUTPUT_DIRECTIVE_MINIMAL, "minimal_directive"
-        ),
+        "minimal_directive": measure(TOK_OUTPUT_DIRECTIVE_MINIMAL, "minimal_directive"),
         "protocol_law": measure(TOK_PROTOCOL_LAW, "protocol_law"),
-        "reinforced_directive": measure(
-            TOK_OUTPUT_DIRECTIVE_REINFORCED, "reinforced_directive"
-        ),
+        "reinforced_directive": measure(TOK_OUTPUT_DIRECTIVE_REINFORCED, "reinforced_directive"),
         "typical_tok_state": measure(
             f"[Tok compressed history]\n{_TYPICAL_TOK_STATE}",
             "tok_state_wrapper",
@@ -314,14 +285,10 @@ def simulate_memory_growth(
             )
             state.ingest_wire_state(wire)
         projected = state.wire_state()
-        results[f"turns_{n}"] = measure(
-            projected, f"wire_state after {n} turns"
-        )
+        results[f"turns_{n}"] = measure(projected, f"wire_state after {n} turns")
         # Also capture raw to_tok for comparison (full serialization with scores)
         full_tok = state.to_tok()
-        results[f"turns_{n}_full_tok"] = measure(
-            full_tok, f"full_tok after {n} turns"
-        )
+        results[f"turns_{n}_full_tok"] = measure(full_tok, f"full_tok after {n} turns")
     return results
 
 
@@ -437,8 +404,7 @@ def analyze_history_compression() -> dict[str, Any]:
                 "tok_state": measure(tok_state, f"tok_state:{key}"),
                 "messages_dropped": len(msgs) - len(recent),
                 "compression_ratio": round(
-                    count_tokens(recent_text + tok_state)
-                    / max(1, count_tokens(original_text)),
+                    count_tokens(recent_text + tok_state) / max(1, count_tokens(original_text)),
                     3,
                 ),
             }
@@ -450,9 +416,7 @@ def measure_tool_compression_impact() -> dict[str, Any]:
     from tok.compression import compress_recent_window
 
     # Build messages with large tool results of various types
-    def _make_msg_with_tool_result(
-        content: str, tool_id: str = "t1"
-    ) -> list[dict[str, Any]]:
+    def _make_msg_with_tool_result(content: str, tool_id: str = "t1") -> list[dict[str, Any]]:
         return [
             {
                 "role": "assistant",
@@ -534,16 +498,13 @@ def measure_tool_compression_impact() -> dict[str, Any]:
                 for b in c:
                     if isinstance(b, dict) and b.get("type") == "tool_result":
                         raw = b.get("content", "")
-                        compressed_content = (
-                            raw if isinstance(raw, str) else str(raw)
-                        )
+                        compressed_content = raw if isinstance(raw, str) else str(raw)
         results[name] = {
             "original": measure(content, f"original:{name}"),
             "compressed": measure(compressed_content, f"compressed:{name}"),
             "breakdown": breakdown,
             "ratio": round(
-                count_tokens(compressed_content)
-                / max(1, count_tokens(content)),
+                count_tokens(compressed_content) / max(1, count_tokens(content)),
                 3,
             ),
         }
@@ -592,10 +553,7 @@ def measure_high_pressure() -> dict[str, str | int]:
     """High-pressure scenario: protocol law + reinforced directive."""
     from tok.compression import inject_system_additions
 
-    tok_state = (
-        ">>> turns:15|goal:fix protocol drift|files:src/gateway.py|"
-        "errs:protocol_drift,json_blobs_detected"
-    )
+    tok_state = ">>> turns:15|goal:fix protocol drift|files:src/gateway.py|errs:protocol_drift,json_blobs_detected"
     body = inject_system_additions(
         {"system": ""},
         tok_state=tok_state,
@@ -608,8 +566,8 @@ def measure_high_pressure() -> dict[str, str | int]:
 
 def measure_memory_heavy() -> dict[str, Any]:
     """Memory-heavy scenario: simulate a state loaded with many entries."""
-    from tok.runtime.memory.bridge_memory import BridgeMemoryState
     from tok.compression import inject_system_additions
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
     state = BridgeMemoryState()
     for i in range(50):
@@ -633,9 +591,7 @@ def measure_memory_heavy() -> dict[str, Any]:
     )
     return {
         "wire_state": measure(tok_state, "wire_state_memory_heavy"),
-        "injected_system": measure(
-            body.get("system", ""), "injected_memory_heavy"
-        ),
+        "injected_system": measure(body.get("system", ""), "injected_memory_heavy"),
     }
 
 
@@ -649,15 +605,4 @@ def run_all_baselines() -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    import json
-
-    print("=== Base Prompts ===")
-    print(json.dumps(measure_base_prompts(), indent=2))
-    print("\n=== Directive Sizes ===")
-    print(json.dumps(measure_directive_sizes(), indent=2))
-    print("\n=== Grammar Snippets ===")
-    print(json.dumps(measure_grammar_snippets(), indent=2))
-    print("\n=== Pressure Impact ===")
-    print(json.dumps(measure_pressure_impact(), indent=2))
-    print("\n=== Baselines ===")
-    print(json.dumps(run_all_baselines(), indent=2))
+    pass

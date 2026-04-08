@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ...compression import FILE_LIKE_TOOLS, text_of
-from ..repeat_targets import extract_shell_file_read_path
+from tok.compression import FILE_LIKE_TOOLS, text_of
+from tok.runtime.repeat_targets import extract_shell_file_read_path
+
 from ._tool_context import logical_target_key_from_context
 from ._tool_repeat_detection import (
     _detect_repeated_tool_calls,
@@ -15,6 +15,9 @@ from ._tool_repeat_detection import (
     _track_file_read_repeats,
     _track_search_repeats,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _TRANSIENT_ERROR_PHRASES_SET = frozenset(
     (
@@ -36,32 +39,20 @@ _TRANSIENT_ERROR_PHRASES_SET = frozenset(
 _HARD_BLOCKER_PHRASES_SET = frozenset(("blocked on ", "blocked by "))
 
 
-def _detect_blocker_rediscovery(
-    messages: list[dict[str, Any]], blocker_phrases_seen: dict[str, int]
-) -> None:
+def _detect_blocker_rediscovery(messages: list[dict[str, Any]], blocker_phrases_seen: dict[str, int]) -> None:
     for msg in messages:
         msg_text = text_of(msg.get("content", ""))
         for line in msg_text.splitlines():
             stripped = line.strip()
             lowered = stripped.lower()
-            is_hard = any(
-                phrase in lowered for phrase in _HARD_BLOCKER_PHRASES_SET
-            )
-            is_transient = any(
-                phrase in lowered for phrase in _TRANSIENT_ERROR_PHRASES_SET
-            )
+            is_hard = any(phrase in lowered for phrase in _HARD_BLOCKER_PHRASES_SET)
+            is_transient = any(phrase in lowered for phrase in _TRANSIENT_ERROR_PHRASES_SET)
             if is_hard or is_transient:
-                blocker_phrases_seen[lowered] = (
-                    blocker_phrases_seen.get(lowered, 0) + 1
-                )
+                blocker_phrases_seen[lowered] = blocker_phrases_seen.get(lowered, 0) + 1
 
 
-def _detect_shell_workarounds(
-    tool_name: str, command: str, bump: Callable[[str, int], None]
-) -> None:
-    if not (
-        tool_name in {"bash", "sh", "run_terminal", "computer"} and command
-    ):
+def _detect_shell_workarounds(tool_name: str, command: str, bump: Callable[[str, int], None]) -> None:
+    if not (tool_name in {"bash", "sh", "run_terminal", "computer"} and command):
         return
     lowered = command.lower()
     if "python -c" in lowered or "python3 -c" in lowered:
@@ -70,9 +61,7 @@ def _detect_shell_workarounds(
         bump("stderr_workaround", 1)
 
 
-def _detect_prose_leaks(
-    messages: list[dict[str, Any]], bump: Callable[[str], None]
-) -> None:
+def _detect_prose_leaks(messages: list[dict[str, Any]], bump: Callable[[str], None]) -> None:
     for msg in messages:
         if msg.get("role") != "assistant":
             continue
@@ -89,9 +78,7 @@ def _detect_prose_leaks(
                     bump("semantic_drift")
 
 
-def _detect_error_patterns(
-    messages: list[dict[str, Any]], bump: Callable[[str], None]
-) -> None:
+def _detect_error_patterns(messages: list[dict[str, Any]], bump: Callable[[str], None]) -> None:
     error_patterns = [
         "permission denied",
         "no such file",
@@ -114,10 +101,7 @@ def _track_assistant_tool_usage(
     repeat_search_ids: list[str],
     repeat_command_ids: list[str],
     repeated_tool_targets: set[tuple[str, str]],
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None,
     bump: Callable[[str, int], None],
 ) -> None:
     for msg in messages:
@@ -126,11 +110,7 @@ def _track_assistant_tool_usage(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        tool_uses = [
-            b
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "tool_use"
-        ]
+        tool_uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
@@ -145,14 +125,8 @@ def _track_assistant_tool_usage(
                 query=query or None,
                 command=command or None,
             )
-            shell_file_path = (
-                extract_shell_file_read_path(command) if command else None
-            )
-            is_shell_file_read = bool(
-                shell_file_path
-                and family == "file_read"
-                and tool_name not in FILE_LIKE_TOOLS
-            )
+            shell_file_path = extract_shell_file_read_path(command) if command else None
+            is_shell_file_read = bool(shell_file_path and family == "file_read" and tool_name not in FILE_LIKE_TOOLS)
             effective_path = path or shell_file_path or ""
             _track_file_read_repeats(
                 effective_path,
@@ -186,9 +160,7 @@ def _track_assistant_tool_usage(
                 bump,
             )
             _detect_shell_workarounds(tool_name, command, bump)
-            _detect_repeated_tool_calls(
-                tool_uses, family, logical_target, repeated_tool_targets, bump
-            )
+            _detect_repeated_tool_calls(tool_uses, family, logical_target, repeated_tool_targets, bump)
 
 
 __all__ = [

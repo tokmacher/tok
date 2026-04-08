@@ -1,15 +1,13 @@
-from __future__ import annotations
-
 """Fail-open request helpers for the Tok gateway."""
 
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import json
-from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import httpx
-
-from ..runtime.pipeline.request_validation import (
+from tok.runtime.pipeline.request_validation import (
     has_blocking_outgoing_failures,
     has_provider_sensitive_failures,
     has_recoverable_immediate_pairing_failures,
@@ -18,6 +16,7 @@ from ..runtime.pipeline.request_validation import (
     validate_anthropic_bridge_body,
     validate_anthropic_outgoing_bridge_body,
 )
+
 from . import BridgeSession, _log_bridge_body_structure, logger
 from ._bridge_comparison import _payloads_materially_differ
 from ._bridge_preflight import (
@@ -25,13 +24,19 @@ from ._bridge_preflight import (
     _count_user_tool_result_split_boundaries,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    import httpx
+
 __all__ = ["send_with_tok_fail_open_retry"]
 
 
 def _normalize_provider_safe_retry_payload(
     body: dict[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, bool]:
-    """Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks.
+    """
+    Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks.
 
     This handles the case where an assistant message has interleaved thinking/redacted_thinking
     blocks between tool_use blocks, which can cause upstream pairing failures.
@@ -61,10 +66,7 @@ def _normalize_provider_safe_retry_payload(
             continue
 
         # Check if this assistant message has tool_use blocks with thinking interleaved
-        has_tool_use = any(
-            isinstance(block, dict) and block.get("type") == "tool_use"
-            for block in content
-        )
+        has_tool_use = any(isinstance(block, dict) and block.get("type") == "tool_use" for block in content)
 
         if not has_tool_use:
             normalized_messages.append(msg)
@@ -84,7 +86,7 @@ def _normalize_provider_safe_retry_payload(
             filtered_content.append(block)
 
         if changed:
-            new_msg = {k: v for k, v in msg.items()}
+            new_msg = dict(msg.items())
             new_msg["content"] = filtered_content
             normalized_messages.append(new_msg)
         else:
@@ -93,7 +95,7 @@ def _normalize_provider_safe_retry_payload(
     if not changed:
         return body, False
 
-    new_body = {k: v for k, v in body.items()}
+    new_body = dict(body.items())
     new_body["messages"] = normalized_messages
     return new_body, True
 
@@ -117,9 +119,7 @@ def _validate_outgoing_bridge_body_from_bytes(
     return validate_anthropic_outgoing_bridge_body(body)
 
 
-def _rate_limit_retry_delay_seconds(
-    session: BridgeSession, *, attempt_index: int, retry_after: str | None
-) -> float:
+def _rate_limit_retry_delay_seconds(session: BridgeSession, *, attempt_index: int, retry_after: str | None) -> float:
     retry_after_delay = 0.0
     if retry_after:
         try:
@@ -155,35 +155,25 @@ async def send_with_tok_fail_open_retry(
 ) -> tuple[httpx.Response, bool, dict[str, int]]:
     if sleep_fn is None:
         sleep_fn = asyncio.sleep
-    request_obj = client.build_request(
-        method, url, headers=headers, content=content
-    )
+    request_obj = client.build_request(method, url, headers=headers, content=content)
     response = await client.send(request_obj, stream=stream)
     retried_without_tok = False
     retry_signals: dict[str, int] = {}
     retry_attempts = 0
 
-    while response.status_code == 429 and retry_attempts < max(
-        0, session.rate_limit_retry_max_attempts
-    ):
+    while response.status_code == 429 and retry_attempts < max(0, session.rate_limit_retry_max_attempts):
         retry_after = response.headers.get("retry-after")
-        delay = _rate_limit_retry_delay_seconds(
-            session, attempt_index=retry_attempts, retry_after=retry_after
-        )
+        delay = _rate_limit_retry_delay_seconds(session, attempt_index=retry_attempts, retry_after=retry_after)
         logger.warning(
             "rate_limit_retry_attempt: attempt=%d delay=%.2f retry_after=%s",
             retry_attempts + 1,
             delay,
             retry_after or "unknown",
         )
-        retry_signals["rate_limit_retry_attempt"] = (
-            retry_signals.get("rate_limit_retry_attempt", 0) + 1
-        )
+        retry_signals["rate_limit_retry_attempt"] = retry_signals.get("rate_limit_retry_attempt", 0) + 1
         await response.aclose()
         await sleep_fn(delay)
-        request_obj = client.build_request(
-            method, url, headers=headers, content=content
-        )
+        request_obj = client.build_request(method, url, headers=headers, content=content)
         response = await client.send(request_obj, stream=stream)
         retry_attempts += 1
 
@@ -213,18 +203,12 @@ async def send_with_tok_fail_open_retry(
         )
         retry_signals["rate_limit_429_passed_through"] = 1
 
-    if (
-        response.status_code == 400
-        and compressed_request
-        and session.fail_open
-    ):
-        from ..runtime.smoothness.models import TokMode
+    if response.status_code == 400 and compressed_request and session.fail_open:
+        from tok.runtime.smoothness.models import TokMode
 
         current_mode = None
-        try:
+        with contextlib.suppress(Exception):
             current_mode = session.runtime_session.current_tok_mode
-        except Exception:
-            pass
 
         skip_provider_safe_recanonicalization = current_mode in (
             TokMode.SMOOTH_MODE,
@@ -240,9 +224,7 @@ async def send_with_tok_fail_open_retry(
                     "SMOOTH_MODE active: skipping provider-safe recanonicalization, retrying with original payload"
                 )
                 await response.aclose()
-                request_obj = client.build_request(
-                    method, url, headers=headers, content=original_content
-                )
+                request_obj = client.build_request(method, url, headers=headers, content=original_content)
                 response = await client.send(request_obj, stream=stream)
                 retried_without_tok = True
                 retry_signals["fail_open_smooth_mode_original_retry"] = 1
@@ -273,58 +255,35 @@ async def send_with_tok_fail_open_retry(
         provider_safe_split_boundaries = 0
         prepared_body = _decode_bridge_body(content)
         if isinstance(prepared_body, dict):
-            prepared_summary = summarize_message_structure(
-                prepared_body.get("messages", [])
-            )
-            prepared_pairing = summarize_bridge_pairing(
-                prepared_body.get("messages", [])
-            )
+            prepared_summary = summarize_message_structure(prepared_body.get("messages", []))
+            prepared_pairing = summarize_bridge_pairing(prepared_body.get("messages", []))
             prepared_failures = validate_anthropic_bridge_body(prepared_body)
-            prepared_mixed_user_tool_result_messages = (
-                _count_user_messages_with_mixed_tool_result_content(
-                    prepared_body.get("messages", [])
-                )
+            prepared_mixed_user_tool_result_messages = _count_user_messages_with_mixed_tool_result_content(
+                prepared_body.get("messages", [])
             )
-            prepared_split_boundaries = (
-                _count_user_tool_result_split_boundaries(
-                    prepared_body.get("messages", [])
-                )
-            )
+            prepared_split_boundaries = _count_user_tool_result_split_boundaries(prepared_body.get("messages", []))
         fallback_body = _decode_bridge_body(fallback_content)
         # Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks
         if isinstance(fallback_body, dict) and retry_content is not None:
-            normalized_fallback_body, normalized_changed = (
-                _normalize_provider_safe_retry_payload(fallback_body)
-            )
+            (
+                normalized_fallback_body,
+                normalized_changed,
+            ) = _normalize_provider_safe_retry_payload(fallback_body)
             if normalized_changed:
                 fallback_body = normalized_fallback_body
                 fallback_content = json.dumps(fallback_body).encode()
-                retry_signals[
-                    "provider_safe_removed_assistant_thinking_between_tool_use"
-                ] = 1
+                retry_signals["provider_safe_removed_assistant_thinking_between_tool_use"] = 1
                 logger.warning(
                     "provider_safe_removed_assistant_thinking_between_tool_use: removed thinking/redacted_thinking blocks from provider-safe retry payload"
                 )
         if isinstance(fallback_body, dict):
-            provider_safe_summary = summarize_message_structure(
+            provider_safe_summary = summarize_message_structure(fallback_body.get("messages", []))
+            provider_safe_pairing = summarize_bridge_pairing(fallback_body.get("messages", []))
+            provider_safe_failures = validate_anthropic_bridge_body(fallback_body)
+            provider_safe_mixed_user_tool_result_messages = _count_user_messages_with_mixed_tool_result_content(
                 fallback_body.get("messages", [])
             )
-            provider_safe_pairing = summarize_bridge_pairing(
-                fallback_body.get("messages", [])
-            )
-            provider_safe_failures = validate_anthropic_bridge_body(
-                fallback_body
-            )
-            provider_safe_mixed_user_tool_result_messages = (
-                _count_user_messages_with_mixed_tool_result_content(
-                    fallback_body.get("messages", [])
-                )
-            )
-            provider_safe_split_boundaries = (
-                _count_user_tool_result_split_boundaries(
-                    fallback_body.get("messages", [])
-                )
-            )
+            provider_safe_split_boundaries = _count_user_tool_result_split_boundaries(fallback_body.get("messages", []))
         retry_signals["fail_open_retry_prepared_forensics_logged"] = 1
         logger.warning(
             "bridge_pairing_forensics prepared_failures=%s prepared_pairing=%s prepared_summary=%s prepared_mixed_user_tool_result_messages=%s prepared_split_boundaries=%s provider_safe_failures=%s provider_safe_pairing=%s provider_safe_summary=%s provider_safe_mixed_user_tool_result_messages=%s provider_safe_split_boundaries=%s",
@@ -340,34 +299,25 @@ async def send_with_tok_fail_open_retry(
             provider_safe_split_boundaries,
         )
         retry_candidate_content = fallback_content
-        retry_candidate_kind = (
-            "provider-safe" if retry_content is not None else "original"
-        )
+        retry_candidate_kind = "provider-safe" if retry_content is not None else "original"
         retry_candidate_valid = True
         if (
-            "`tool_use` ids were found without `tool_result` blocks immediately after"
-            in error_text
+            "`tool_use` ids were found without `tool_result` blocks immediately after" in error_text
             and not prepared_failures
         ):
             retry_signals["fail_open_retry_upstream_pairing_disagreement"] = 1
             if prepared_mixed_user_tool_result_messages > 0:
-                retry_signals[
-                    "fail_open_retry_upstream_pairing_disagreement_mixed_user_message_present"
-                ] = 1
+                retry_signals["fail_open_retry_upstream_pairing_disagreement_mixed_user_message_present"] = 1
                 logger.warning(
                     "fail_open_retry_upstream_pairing_disagreement_mixed_user_message_present: prepared payload still contained mixed user tool_result+non-tool blocks"
                 )
             elif prepared_split_boundaries > 0:
-                retry_signals[
-                    "fail_open_retry_upstream_pairing_disagreement_after_user_message_split"
-                ] = 1
+                retry_signals["fail_open_retry_upstream_pairing_disagreement_after_user_message_split"] = 1
                 logger.warning(
                     "fail_open_retry_upstream_pairing_disagreement_after_user_message_split: prepared payload had user tool_result/text split boundaries"
                 )
             else:
-                retry_signals[
-                    "fail_open_retry_upstream_pairing_disagreement_without_mixed_user_message"
-                ] = 1
+                retry_signals["fail_open_retry_upstream_pairing_disagreement_without_mixed_user_message"] = 1
                 logger.warning(
                     "fail_open_retry_upstream_pairing_disagreement_without_mixed_user_message: no mixed user message or split boundary detected in prepared payload"
                 )
@@ -387,31 +337,21 @@ async def send_with_tok_fail_open_retry(
                     "behavior_signals": retry_signals,
                 }
             )
-        if fallback_content is not None and _payloads_materially_differ(
-            content, fallback_content
-        ):
+        if fallback_content is not None and _payloads_materially_differ(content, fallback_content):
             provider_safe_outgoing_failures = (
                 validate_anthropic_outgoing_bridge_body(fallback_body)
                 if isinstance(fallback_body, dict)
                 else ["body_not_dict"]
             )
-            if has_blocking_outgoing_failures(
-                provider_safe_failures + provider_safe_outgoing_failures
-            ):
+            if has_blocking_outgoing_failures(provider_safe_failures + provider_safe_outgoing_failures):
                 retry_signals["fail_open_retry_provider_safe_invalid"] = 1
                 retry_candidate_valid = False
                 if (
                     allow_original_retry
                     and original_content is not None
-                    and _payloads_materially_differ(
-                        fallback_content, original_content
-                    )
+                    and _payloads_materially_differ(fallback_content, original_content)
                 ):
-                    original_outgoing_failures = (
-                        _validate_outgoing_bridge_body_from_bytes(
-                            original_content
-                        )
-                    )
+                    original_outgoing_failures = _validate_outgoing_bridge_body_from_bytes(original_content)
                     original_body = _decode_bridge_body(original_content)
                     original_bridge_failures = (
                         validate_anthropic_bridge_body(original_body)
@@ -420,20 +360,13 @@ async def send_with_tok_fail_open_retry(
                     )
                     original_has_hard_failures = (
                         original_bridge_failures
-                        and not has_recoverable_immediate_pairing_failures(
-                            original_bridge_failures
-                        )
+                        and not has_recoverable_immediate_pairing_failures(original_bridge_failures)
                     )
-                    if (
-                        not original_outgoing_failures
-                        and not original_has_hard_failures
-                    ):
+                    if not original_outgoing_failures and not original_has_hard_failures:
                         retry_candidate_content = original_content
                         retry_candidate_kind = "original"
                         retry_candidate_valid = True
-                        retry_signals[
-                            "fail_open_retry_original_after_provider_safe_invalid"
-                        ] = 1
+                        retry_signals["fail_open_retry_original_after_provider_safe_invalid"] = 1
                         logger.warning(
                             "fail_open_retry_original_after_provider_safe_invalid: provider-safe payload failed final local validation; retrying with raw original payload"
                         )
@@ -461,15 +394,9 @@ async def send_with_tok_fail_open_retry(
                         )
                         if has_provider_sensitive_failures(
                             provider_safe_outgoing_failures
-                        ) or has_provider_sensitive_failures(
-                            original_outgoing_failures
-                        ):
-                            retry_signals[
-                                "fail_open_retry_provider_safe_blocked_local"
-                            ] = 1
-                            retry_signals[
-                                "tok_bridge_provider_pairing_risk_detected"
-                            ] = 1
+                        ) or has_provider_sensitive_failures(original_outgoing_failures):
+                            retry_signals["fail_open_retry_provider_safe_blocked_local"] = 1
+                            retry_signals["tok_bridge_provider_pairing_risk_detected"] = 1
                         session.capture_event(
                             {
                                 "event": "fail_open_retry_provider_safe_invalid",
@@ -491,15 +418,9 @@ async def send_with_tok_fail_open_retry(
                         provider_safe_failures,
                         provider_safe_outgoing_failures,
                     )
-                    if has_provider_sensitive_failures(
-                        provider_safe_outgoing_failures
-                    ):
-                        retry_signals[
-                            "fail_open_retry_provider_safe_blocked_local"
-                        ] = 1
-                        retry_signals[
-                            "tok_bridge_provider_pairing_risk_detected"
-                        ] = 1
+                    if has_provider_sensitive_failures(provider_safe_outgoing_failures):
+                        retry_signals["fail_open_retry_provider_safe_blocked_local"] = 1
+                        retry_signals["tok_bridge_provider_pairing_risk_detected"] = 1
                     session.capture_event(
                         {
                             "event": "fail_open_retry_provider_safe_invalid",
@@ -513,18 +434,13 @@ async def send_with_tok_fail_open_retry(
                         }
                     )
                     return response, retried_without_tok, retry_signals
-            if (
-                retry_candidate_valid
-                and retry_candidate_kind == "provider-safe"
-            ):
+            if retry_candidate_valid and retry_candidate_kind == "provider-safe":
                 retry_signals["fail_open_retry_provider_safe_validated"] = 1
                 logger.info(
                     "fail_open_retry_provider_safe_validated: %s fallback passed local strict validation",
                     retry_candidate_kind,
                 )
-        if retry_candidate_content is not None and _payloads_materially_differ(
-            content, retry_candidate_content
-        ):
+        if retry_candidate_content is not None and _payloads_materially_differ(content, retry_candidate_content):
             retry_kind = retry_candidate_kind
             logger.warning(
                 "Upstream 400 after Tok request preparation: %s; retrying with %s payload",
@@ -532,17 +448,13 @@ async def send_with_tok_fail_open_retry(
                 retry_kind,
             )
             await response.aclose()
-            request_obj = client.build_request(
-                method, url, headers=headers, content=retry_candidate_content
-            )
+            request_obj = client.build_request(method, url, headers=headers, content=retry_candidate_content)
             response = await client.send(request_obj, stream=stream)
             retried_without_tok = True
             if retry_kind == "provider-safe":
                 retry_signals["fail_open_retry_provider_safe"] = 1
             else:
-                retry_signals[
-                    "fail_open_retry_original_after_provider_safe_invalid"
-                ] = retry_signals.get(
+                retry_signals["fail_open_retry_original_after_provider_safe_invalid"] = retry_signals.get(
                     "fail_open_retry_original_after_provider_safe_invalid", 0
                 )
             if not allow_original_retry:

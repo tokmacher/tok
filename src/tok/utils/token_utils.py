@@ -22,4 +22,4 @@ except ImportError:
         return len(text) // 4
 
 
-__all__ = ["count_tokens", "_HAS_TIKTOKEN"]
+__all__ = ["_HAS_TIKTOKEN", "count_tokens"]

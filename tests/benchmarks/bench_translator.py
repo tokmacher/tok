@@ -3,6 +3,7 @@
 import time
 
 import pytest
+
 from tok.runtime.policy.translator import postprocess_response
 
 _TOK_RESPONSE = """\
@@ -41,27 +42,19 @@ The auth module has **three layers**:
 
 @pytest.mark.benchmark
 class TestTranslatorBenchmarks:
-    def test_tok_reduction(self):
+    def test_tok_reduction(self) -> None:
         start = time.perf_counter()
         result, mode = postprocess_response(_TOK_RESPONSE)
-        elapsed = time.perf_counter() - start
+        time.perf_counter() - start
 
         ratio = (1 - len(result) / len(_TOK_RESPONSE)) * 100
-        print(
-            f"\n  Tok: {len(_TOK_RESPONSE)} -> {len(result)} chars | "
-            f"Reduction: {ratio:.1f}% | Mode: {mode} | Time: {elapsed * 1000:.2f}ms"
-        )
         assert mode == "tok-native"
         assert ratio > 20
 
-    def test_markdown_reduction(self):
+    def test_markdown_reduction(self) -> None:
         start = time.perf_counter()
         result, mode = postprocess_response(_MD_RESPONSE)
-        elapsed = time.perf_counter() - start
+        time.perf_counter() - start
 
-        ratio = (1 - len(result) / len(_MD_RESPONSE)) * 100
-        print(
-            f"\n  MD: {len(_MD_RESPONSE)} -> {len(result)} chars | "
-            f"Reduction: {ratio:.1f}% | Mode: {mode} | Time: {elapsed * 1000:.2f}ms"
-        )
+        (1 - len(result) / len(_MD_RESPONSE)) * 100
         assert mode == "markdown"

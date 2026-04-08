@@ -3,200 +3,151 @@
 from __future__ import annotations
 
 __all__ = [
-    "_should_skip_history_rewrite",
-    "RuntimeRequest",
+    "TOOL_COMPAT_MEMORY_PROFILE",
     "NormalizedToolEvent",
     "PreparedRuntimeRequest",
     "ProcessedRuntimeResponse",
+    "RuntimeRequest",
+    "RuntimeSession",
+    "UniversalTokRuntime",
+    "_should_skip_history_rewrite",
+    "apply_schema_adaptations",
+    "calculate_invisible_pressure",
+    "calculate_semantic_regression_score",
+    "collect_transient_error_snippets",
     "compact_structured_answer_memory",
+    "count_tokens",
+    "evaluate_replay_gate",
     "extract_structured_answer_memory",
     "ground_structured_answer_memory",
     "reinforce_structured_answer_memory",
-    "RuntimeSession",
-    "UniversalTokRuntime",
-    "apply_schema_adaptations",
-    "calculate_semantic_regression_score",
-    "evaluate_replay_gate",
-    "calculate_invisible_pressure",
-    "count_tokens",
 ]
 
-import copy
 import logging
-import os
 import threading
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger("tok.runtime")
 
-from .memory.bridge_memory import BridgeMemoryState, clean_system_context
-from .smoothness.models import TokMode
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-from ..compression import (
-    EDIT_LIKE_TOOLS,
-    compress_history,
-    compress_recent_window,
-    compress_tool_results,
-    inject_system_additions,
-    text_of,
+from ._runtime_orchestration import (
+    build_tool_compatible_resend,
+    process_response_impl,
 )
-
-# SEARCH_LIKE_TOOLS is moved to .tool_processing
-from .tools import RuntimeToolExecutor
+from ._runtime_orchestration import pressure_score as runtime_pressure_score
+from ._session_observation import (
+    apply_predictive_cache_warming as apply_predictive_cache_warming_impl,
+)
+from ._session_observation import (
+    evidence_intent_advisories as evidence_intent_advisories_impl,
+)
+from ._session_observation import (
+    hot_recent_runtime_hints as hot_recent_runtime_hints_impl,
+)
+from ._session_observation import (
+    prepared_prompt_tokens as prepared_prompt_tokens_impl,
+)
+from ._session_observation import (
+    record_file_snapshot as record_file_snapshot_impl,
+)
+from ._session_observation import (
+    record_history_snapshot as record_history_snapshot_impl,
+)
+from ._session_observation import (
+    record_metadata_snapshot as record_metadata_snapshot_impl,
+)
+from ._session_observation import (
+    record_search_snapshot as record_search_snapshot_impl,
+)
+from ._session_persistence import (
+    bridge_memory_file,
+    episode_ledger_file,
+    fallback_memory_file,
+    initialize_session_storage,
+    load_bridge_memory,
+    load_episode_ledger,
+    load_fallback_memory,
+    load_result_cache,
+    result_cache_file,
+    save_bridge_memory,
+    save_episode_ledger,
+    save_fallback_memory,
+    save_result_cache,
+)
+from ._session_persistence import record_episode as record_episode_impl
+from .config import (
+    _FALLBACK_THRESHOLD,
+    TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS,
+    TOK_REQUEST_POLICY_STICKY_TURNS,
+    TOOL_COMPAT_MEMORY_PROFILE,
+)
+from .memory.answer_memory import (
+    _should_persist_to_durable,  # noqa: F401
+    compact_structured_answer_memory,
+    extract_structured_answer_memory,
+    ground_structured_answer_memory,
+    reinforce_structured_answer_memory,
+)
+from .memory.bridge_memory import BridgeMemoryState
+from .memory.session_helpers import (
+    calculate_reasoning_depth,
+    get_adaptive_keep_turns,
+    session_write_memory,
+    update_session_family_mode,
+)
+from .memory.tok_state import (
+    _build_tok_state,
+    _delta_tok_state_fields,
+    _prepare_tool_compatible_state,
+    _select_resend_strategy,
+)
+from .pipeline.request_preparation import (
+    apply_schema_adaptations,
+    collect_transient_error_snippets,
+)
+from .pipeline.response_handling import evaluate_replay_gate
+from .pipeline.tool_processing import (
+    _should_skip_history_rewrite,
+    count_tokens,
+)
+from .policy.macro_handling import execute_jit_macro
+from .policy.semantic_validation import (
+    SemanticValidator,
+    calculate_invisible_pressure,
+    calculate_semantic_regression_score,
+)
 from .policy.smart_policy import (
     FamilyAdaptiveState,
     SmartZonePolicy,
     initial_state,
     policy_for_model,
 )
+from .smoothness.models import TokMode
 
-from ..neuro.ir import Instruction
-from .config import (
-    _FALLBACK_THRESHOLD,
-    RESULT_CACHE_TTL_SECONDS,
-    TOOL_DENSITY_THRESHOLD,
-    TOOL_COMPAT_MEMORY_PROFILE,
-    TOK_HOT_COMMAND_MAX_CHARS,
-    TOK_HOT_COMMAND_MAX_LINES,
-    TOK_HOT_FILE_MAX_CHARS,
-    TOK_HOT_FILE_MAX_LINES,
-    TOK_HOT_RECENT_MAX_HINTS,
-    TOK_HOT_SEARCH_MAX_CHARS,
-    TOK_HOT_SEARCH_MAX_LINES,
-    TOK_NEIGHBORHOOD_THRASH_HINT,
-    TOK_NEIGHBORHOOD_TRIGGER_ANCHORS,
-    TOK_NEIGHBORHOOD_WINDOW_TURNS,
-    TOK_NOVELTY_REQUIRED_HINT,
-    TOK_PREDICTIVE_CACHE_TOP_K,
-    TOK_REACQUIRE_STUCK_COUNT,
-    TOK_REACQUIRE_STUCK_WINDOW_TURNS,
-    TOK_REACQUIRE_TRIGGER_COUNT,
-    TOK_REACQUIRE_WINDOW_TURNS,
-    TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS,
-    TOK_REQUEST_POLICY_STICKY_TURNS,
-)
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+# SEARCH_LIKE_TOOLS is moved to .tool_processing
+from .tools import RuntimeToolExecutor
 from .types import (
     EpisodeEntry,
     EpisodeLedger,
     NormalizedToolEvent,
-    RuntimeRequest,
     PreparedRuntimeRequest,
     ProcessedRuntimeResponse,
+    RuntimeRequest,
 )
-from .pipeline.request_validation import (
-    validate_anthropic_request_body,
-    detect_prompt_bloat,
-    canonicalize_anthropic_bridge_body,
-    validate_anthropic_bridge_body,
-    summarize_message_structure,
-)
-from .pipeline.tool_processing import (
-    build_tool_use_id_to_context,
-    count_tokens,
-    logical_target_key_from_context,
-    normalize_tool_events,
-    collect_behavior_signals,
-    _count_tool_density,
-    _should_skip_history_rewrite,
-)
-from .repeat_targets import (
-    HotSummaryRecord,
-    RepeatTargetEvent,
-    build_summary_for_family,
-    resolve_evidence_intent,
-    stable_digest,
-)
-from .memory.tok_state import (
-    _prepare_tool_compatible_state,
-    _select_resend_strategy,
-    _build_tok_state,
-    _delta_tok_state_fields,
-    _select_resend_reason,
-)
-from .policy.semantic_validation import (
-    SemanticValidator,
-    calculate_invisible_pressure,
-    calculate_semantic_regression_score,  # noqa: F401
-)
-from .memory.answer_memory import (
-    compact_structured_answer_memory,  # noqa: F401
-    extract_structured_answer_memory,  # noqa: F401
-    ground_structured_answer_memory,  # noqa: F401
-    reinforce_structured_answer_memory,  # noqa: F401
-    _should_persist_to_durable,  # noqa: F401
-)
-from .pipeline.response_processing import (
-    translate_request_results,
-    response_contract_for_mode,
-)
-from .policy.macro_handling import (
-    _jit_context_matches,
-    execute_jit_macro,
-)
-from .pipeline.request_preparation import (
-    _inject_system,
-    collect_transient_error_snippets,
-    _is_answer_ready_turn,
-    _runtime_hints_for_turn,
-    _annotate_reacquisition_diagnostics,
-    _apply_tool_compatible_resend_diagnostics,
-    _capture_repeat_target_snapshots,
-    apply_schema_adaptations,
-    mutation_signals,
-)
-from .pipeline.response_handling import (
-    sort_cache_control_blocks,
-    evaluate_replay_gate,  # noqa: F401
-)
-from .memory.session_helpers import (
-    calculate_reasoning_depth,
-    update_session_family_mode,
-    session_write_memory,
-    get_adaptive_keep_turns,
-    _discover_project_markers,
-    extract_memory_items,
-)
-from ._runtime_orchestration import (
-    build_tool_compatible_resend,
-    pressure_score as runtime_pressure_score,
-    process_response_impl,
-)
-from ._session_observation import (
-    apply_predictive_cache_warming as apply_predictive_cache_warming_impl,
-    evidence_intent_advisories as evidence_intent_advisories_impl,
-    hot_recent_runtime_hints as hot_recent_runtime_hints_impl,
-    prepared_prompt_tokens as prepared_prompt_tokens_impl,
-    record_file_snapshot as record_file_snapshot_impl,
-    record_history_snapshot as record_history_snapshot_impl,
-    record_metadata_snapshot as record_metadata_snapshot_impl,
-    record_search_snapshot as record_search_snapshot_impl,
-)
-from ._session_persistence import (
-    bridge_memory_file,
-    episode_ledger_file,
-    initialize_session_storage,
-    load_bridge_memory,
-    load_episode_ledger,
-    load_fallback_memory,
-    load_result_cache,
-    record_episode as record_episode_impl,
-    result_cache_file,
-    save_bridge_memory,
-    save_episode_ledger,
-    save_fallback_memory,
-    save_result_cache,
-    fallback_memory_file,
-)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .repeat_targets import HotSummaryRecord, RepeatTargetEvent
 
 
 @dataclass
 class RuntimeSession:
-    """Session state for a Tok runtime.
+    """
+    Session state for a Tok runtime.
 
     Thread Safety:
         This class provides a `lock` field for optional external synchronization.
@@ -233,147 +184,64 @@ class RuntimeSession:
     _current_invisible_pressure: int = field(default=0, repr=False)
     _active_tools: list[str] = field(default_factory=list, repr=False)
     _last_tool_compatible_state: str = field(default="", repr=False)
-    _last_tool_compatible_state_fields: dict[str, list[str]] = field(
-        default_factory=dict, repr=False
-    )
+    _last_tool_compatible_state_fields: dict[str, list[str]] = field(default_factory=dict, repr=False)
     # Automatic session-scoped fallback tracking
     _consecutive_fallback_count: int = field(default=0, init=False, repr=False)
     _baseline_only: bool = field(default=False, init=False, repr=False)
-    _answer_ready_repair_pending: bool = field(
-        default=False, init=False, repr=False
-    )
-    _answer_ready_repair_active: bool = field(
-        default=False, init=False, repr=False
-    )
-    _late_answer_assembly_repair_pending: bool = field(
-        default=False, init=False, repr=False
-    )
-    _late_answer_assembly_repair_active: bool = field(
-        default=False, init=False, repr=False
-    )
-    _late_answer_assembly_repair_mode_pending: str = field(
-        default="", init=False, repr=False
-    )
-    _late_answer_assembly_repair_mode_active: str = field(
-        default="", init=False, repr=False
-    )
-    _late_answer_followthrough_pending: bool = field(
-        default=False, init=False, repr=False
-    )
-    _late_answer_followthrough_active: bool = field(
-        default=False, init=False, repr=False
-    )
+    _answer_ready_repair_pending: bool = field(default=False, init=False, repr=False)
+    _answer_ready_repair_active: bool = field(default=False, init=False, repr=False)
+    _late_answer_assembly_repair_pending: bool = field(default=False, init=False, repr=False)
+    _late_answer_assembly_repair_active: bool = field(default=False, init=False, repr=False)
+    _late_answer_assembly_repair_mode_pending: str = field(default="", init=False, repr=False)
+    _late_answer_assembly_repair_mode_active: str = field(default="", init=False, repr=False)
+    _late_answer_followthrough_pending: bool = field(default=False, init=False, repr=False)
+    _late_answer_followthrough_active: bool = field(default=False, init=False, repr=False)
     _last_mode: str = field(default="", init=False, repr=False)
-    _drift_detected_previous_turn: bool = field(
-        default=False, init=False, repr=False
-    )
-    _stream_recovery_reacquisition_budget: int = field(
-        default=0, init=False, repr=False
-    )
-    _stream_recovery_history_floor_budget: int = field(
-        default=0, init=False, repr=False
-    )
-    _stream_recovery_tool_use_only_signature: str = field(
-        default="", init=False, repr=False
-    )
-    _stream_recovery_tool_use_only_repeat_count: int = field(
-        default=0, init=False, repr=False
-    )
-    _stream_recovery_cooldown_remaining: int = field(
-        default=0, init=False, repr=False
-    )
-    _stream_recovery_cooldown_suppressed: bool = field(
-        default=False, init=False, repr=False
-    )
-    _stream_read_error_consecutive_count: int = field(
-        default=0, init=False, repr=False
-    )
-    _stream_read_error_last_stage: str = field(
-        default="", init=False, repr=False
-    )
-    _request_policy_tool_mode_sticky_turns: int = field(
-        default=0, init=False, repr=False
-    )
-    _request_policy_stream_recovery_watch_turns: int = field(
-        default=0, init=False, repr=False
-    )
-    _request_policy_tool_recovery_watch_turns: int = field(
-        default=0, init=False, repr=False
-    )
+    _drift_detected_previous_turn: bool = field(default=False, init=False, repr=False)
+    _stream_recovery_reacquisition_budget: int = field(default=0, init=False, repr=False)
+    _stream_recovery_history_floor_budget: int = field(default=0, init=False, repr=False)
+    _stream_recovery_tool_use_only_signature: str = field(default="", init=False, repr=False)
+    _stream_recovery_tool_use_only_repeat_count: int = field(default=0, init=False, repr=False)
+    _stream_recovery_cooldown_remaining: int = field(default=0, init=False, repr=False)
+    _stream_recovery_cooldown_suppressed: bool = field(default=False, init=False, repr=False)
+    _stream_read_error_consecutive_count: int = field(default=0, init=False, repr=False)
+    _stream_read_error_last_stage: str = field(default="", init=False, repr=False)
+    _request_policy_tool_mode_sticky_turns: int = field(default=0, init=False, repr=False)
+    _request_policy_stream_recovery_watch_turns: int = field(default=0, init=False, repr=False)
+    _request_policy_tool_recovery_watch_turns: int = field(default=0, init=False, repr=False)
     # Smoothness tracking fields
-    _latest_turn_smoothness_score: int = field(
-        default=100, init=False, repr=False
-    )
+    _latest_turn_smoothness_score: int = field(default=100, init=False, repr=False)
     _latest_turn_labour_index: int = field(default=0, init=False, repr=False)
-    _current_task_smoothness_score: int = field(
-        default=100, init=False, repr=False
-    )
+    _current_task_smoothness_score: int = field(default=100, init=False, repr=False)
     _current_task_labour_index: int = field(default=0, init=False, repr=False)
-    _current_tok_mode: TokMode = field(
-        default=TokMode.FULL_TOK, init=False, repr=False
-    )
-    _smoothness_event_counts: dict[str, int] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _request_policy_last_effective_tool_compatible: bool = field(
-        default=False, init=False, repr=False
-    )
-    _invalid_tool_history_recovery_count: int = field(
-        default=0, init=False, repr=False
-    )
+    _current_tok_mode: TokMode = field(default=TokMode.FULL_TOK, init=False, repr=False)
+    _smoothness_event_counts: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _request_policy_last_effective_tool_compatible: bool = field(default=False, init=False, repr=False)
+    _invalid_tool_history_recovery_count: int = field(default=0, init=False, repr=False)
     # Project-type markers discovered at session init (e.g. 'package.json', 'go.mod').
-    _project_markers: frozenset[str] = field(
-        default_factory=frozenset, init=False, repr=False
-    )
+    _project_markers: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
     _load_global_macros: bool = field(default=True, init=False, repr=False)
     # Name of a macro that was offered via JIT but whose result should be verified
     # for potential healing.  Set when a jit_offer fires; cleared after healing check.
     _pending_macro_heal: str = field(default="", init=False, repr=False)
     _pending_macro_heal_turn: int = field(default=0, init=False, repr=False)
-    _recent_repeat_target_events: list[RepeatTargetEvent] = field(
-        default_factory=list, init=False, repr=False
-    )
-    _hot_summary_records: dict[str, HotSummaryRecord] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _observed_tool_result_ids: dict[str, None] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _prepared_prompt_token_cache: dict[str, int] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _predictive_cache_warm_keys: set[str] = field(
-        default_factory=set, init=False, repr=False
-    )
-    _evidence_neighborhoods: dict[str, set[str]] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _evidence_anchor_novelty_keys: dict[str, set[str]] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _evidence_alias_map: dict[str, str] = field(
-        default_factory=dict, init=False, repr=False
-    )
-    _first_exact_evidence_seen: set[str] = field(
-        default_factory=set, init=False, repr=False
-    )
-    _pending_exact_evidence_keys: set[str] = field(
-        default_factory=set, init=False, repr=False
-    )
-    _files_read_this_session: set[str] = field(
-        default_factory=set, init=False, repr=False
-    )
-    _files_fully_delivered: dict[str, int] = field(
-        default_factory=dict, init=False, repr=False
-    )
+    _recent_repeat_target_events: list[RepeatTargetEvent] = field(default_factory=list, init=False, repr=False)
+    _hot_summary_records: dict[str, HotSummaryRecord] = field(default_factory=dict, init=False, repr=False)
+    _observed_tool_result_ids: dict[str, None] = field(default_factory=dict, init=False, repr=False)
+    _prepared_prompt_token_cache: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _predictive_cache_warm_keys: set[str] = field(default_factory=set, init=False, repr=False)
+    _evidence_neighborhoods: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
+    _evidence_anchor_novelty_keys: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
+    _evidence_alias_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _first_exact_evidence_seen: set[str] = field(default_factory=set, init=False, repr=False)
+    _pending_exact_evidence_keys: set[str] = field(default_factory=set, init=False, repr=False)
+    _files_read_this_session: set[str] = field(default_factory=set, init=False, repr=False)
+    _files_fully_delivered: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     def record_fallback_event(self) -> None:
         """Increment the consecutive fail-open counter and degrade to baseline when threshold is reached."""
         self._consecutive_fallback_count += 1
-        if (
-            self._consecutive_fallback_count >= _FALLBACK_THRESHOLD
-            and not self._baseline_only
-        ):
+        if self._consecutive_fallback_count >= _FALLBACK_THRESHOLD and not self._baseline_only:
             self._baseline_only = True
             logger.warning(
                 "tok_fallback_activated: session degraded to baseline after %d consecutive fallback events",
@@ -384,9 +252,7 @@ class RuntimeSession:
         """Reset the consecutive fallback counter after a successful compressed request."""
         self._consecutive_fallback_count = 0
 
-    def record_invalid_tool_history_recovery(
-        self, *, blocked: bool
-    ) -> dict[str, int]:
+    def record_invalid_tool_history_recovery(self, *, blocked: bool) -> dict[str, int]:
         """Track recovery from broken tool history and clear hot state if it repeats."""
         self._invalid_tool_history_recovery_count += 1
         self.note_request_policy_tool_mode_recovery()
@@ -424,27 +290,15 @@ class RuntimeSession:
         """Clear the repeated invalid-tool-history counter after a clean request."""
         self._invalid_tool_history_recovery_count = 0
 
-    def note_request_policy_stream_recovery(
-        self, turns: int = TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS
-    ) -> None:
+    def note_request_policy_stream_recovery(self, turns: int = TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS) -> None:
         """Keep natural-first in tool-compatible mode briefly after stream recovery."""
-        self._request_policy_stream_recovery_watch_turns = max(
-            self._request_policy_stream_recovery_watch_turns, turns
-        )
-        self._request_policy_tool_mode_sticky_turns = max(
-            self._request_policy_tool_mode_sticky_turns, turns
-        )
+        self._request_policy_stream_recovery_watch_turns = max(self._request_policy_stream_recovery_watch_turns, turns)
+        self._request_policy_tool_mode_sticky_turns = max(self._request_policy_tool_mode_sticky_turns, turns)
 
-    def note_request_policy_tool_mode_recovery(
-        self, turns: int = TOK_REQUEST_POLICY_STICKY_TURNS
-    ) -> None:
+    def note_request_policy_tool_mode_recovery(self, turns: int = TOK_REQUEST_POLICY_STICKY_TURNS) -> None:
         """Keep natural-first in tool-compatible mode briefly after tool-history recovery."""
-        self._request_policy_tool_recovery_watch_turns = max(
-            self._request_policy_tool_recovery_watch_turns, turns
-        )
-        self._request_policy_tool_mode_sticky_turns = max(
-            self._request_policy_tool_mode_sticky_turns, turns
-        )
+        self._request_policy_tool_recovery_watch_turns = max(self._request_policy_tool_recovery_watch_turns, turns)
+        self._request_policy_tool_mode_sticky_turns = max(self._request_policy_tool_mode_sticky_turns, turns)
 
     def adaptive_keep_turns(self) -> int:
         """Dynamically reduce history depth as the session grows."""
@@ -453,51 +307,62 @@ class RuntimeSession:
     def __post_init__(self) -> None:
         """Initialize memory directory and load persisted bridge memory."""
         explicit_memory_dir = self.memory_dir is not None
-        initialize_session_storage(
-            self, explicit_memory_dir=explicit_memory_dir
-        )
+        initialize_session_storage(self, explicit_memory_dir=explicit_memory_dir)
 
     def _bridge_memory_file(self) -> Path:
+        """Return the path to the bridge memory file."""
         return bridge_memory_file(self)
 
     def _load_bridge_memory(self) -> BridgeMemoryState:
+        """Load bridge memory from disk."""
         return load_bridge_memory(self)
 
     def _save_bridge_memory(self) -> None:
+        """Persist bridge memory to disk."""
         save_bridge_memory(self)
 
     def _result_cache_file(self) -> Path:
+        """Return the path to the result cache file."""
         return result_cache_file(self)
 
     def _load_result_cache(self) -> dict[str, Any]:
+        """Load result cache from disk."""
         return load_result_cache(self)
 
     def _save_result_cache(self) -> None:
+        """Persist result cache to disk."""
         save_result_cache(self)
 
     def _fallback_memory_file(self) -> Path:
+        """Return the path to the fallback memory file."""
         return fallback_memory_file(self)
 
     def _load_fallback_memory(self) -> str:
+        """Load fallback memory from disk."""
         return load_fallback_memory(self)
 
     def _save_fallback_memory(self) -> None:
+        """Persist fallback memory to disk."""
         save_fallback_memory(self)
 
     def _episode_ledger_file(self) -> Path:
+        """Return the path to the episode ledger file."""
         return episode_ledger_file(self)
 
     def _load_episode_ledger(self) -> EpisodeLedger:
+        """Load episode ledger from disk."""
         return load_episode_ledger(self)
 
     def _save_episode_ledger(self) -> None:
+        """Persist episode ledger to disk."""
         save_episode_ledger(self)
 
     def record_episode(self, entry: EpisodeEntry) -> None:
         record_episode_impl(self, entry)
 
     def reasoning_depth_per_token(self) -> float:
-        """Dual-axis metric: reasoning diversity per token consumed.
+        """
+        Dual-axis metric: reasoning diversity per token consumed.
 
         Combines step count, tool diversity, and tokens used.
         Higher is better — rewards rich reasoning without token bloat.
@@ -507,16 +372,12 @@ class RuntimeSession:
 
     def policy_snapshot(self, model: str) -> tuple[str, SmartZonePolicy]:
         policy = policy_for_model(model)
-        state = self.family_states.setdefault(
-            policy.family.key, initial_state(policy)
-        )
+        state = self.family_states.setdefault(policy.family.key, initial_state(policy))
         return state.mode, policy
 
     def load_memory(self, model: str = "") -> str:
         mode, policy = self.policy_snapshot(model)
-        projected = self.bridge_memory.wire_state(
-            policy.memory_profiles[mode], markers=self._project_markers
-        )
+        projected = self.bridge_memory.wire_state(policy.memory_profiles[mode], markers=self._project_markers)
         if projected:
             logger.debug("Using structured memory: %s", projected[:100])
             self._bump_signals({"cold_start_structured_memory": 1})
@@ -530,37 +391,35 @@ class RuntimeSession:
 
     def refresh_hot_memory(self, tok_state: str, model: str = "") -> str:
         mode, policy = self.policy_snapshot(model)
-        self._bump_signals(
-            self.bridge_memory.replace_hot_from_wire_state(tok_state)
-        )
-        return self.bridge_memory.wire_state(
-            policy.memory_profiles[mode], markers=self._project_markers
-        )
+        self._bump_signals(self.bridge_memory.replace_hot_from_wire_state(tok_state))
+        return self.bridge_memory.wire_state(policy.memory_profiles[mode], markers=self._project_markers)
 
     def write_memory(self, text: str) -> str:
+        """Write memory state and return the written content."""
         return session_write_memory(self, text)
 
     def record_file_snapshot(self, path: str, snippet: str) -> bool:
+        """Record a file snapshot in bridge memory."""
         return record_file_snapshot_impl(self, path, snippet)
 
     def record_search_snapshot(self, query: str, snippet: str) -> bool:
+        """Record a search snapshot in bridge memory."""
         return record_search_snapshot_impl(self, query, snippet)
 
-    def record_history_snapshot(
-        self, path: str, revision: str, snippet: str
-    ) -> bool:
+    def record_history_snapshot(self, path: str, revision: str, snippet: str) -> bool:
+        """Record a git history snapshot in bridge memory."""
         return record_history_snapshot_impl(self, path, revision, snippet)
 
-    def record_metadata_snapshot(
-        self, path: str, subtype: str, snippet: str
-    ) -> bool:
+    def record_metadata_snapshot(self, path: str, subtype: str, snippet: str) -> bool:
+        """Record a metadata snapshot in bridge memory."""
         return record_metadata_snapshot_impl(self, path, subtype, snippet)
 
     # ---------------------------------------------------------------------------
     # Explorer helpers - available on session for agent exploration
     # ---------------------------------------------------------------------------
     def explore_file(self, filepath: str, mode: str = "overview") -> str:
-        """Explore a Python file and return Tok-formatted overview.
+        """
+        Explore a Python file and return Tok-formatted overview.
 
         Args:
             filepath: Path to Python file
@@ -568,15 +427,17 @@ class RuntimeSession:
 
         Returns:
             Tok-formatted string with file overview
+
         """
-        from ..explorer import explore_file as _explore_file
+        from tok.explorer import explore_file as _explore_file
 
         result = _explore_file(filepath, mode)
         self._bump_signals({"explore_file_invoked": 1})
         return result
 
     def explore_module(self, module_path: str, mode: str = "overview") -> str:
-        """Explore a module/package and return Tok-formatted overview.
+        """
+        Explore a module/package and return Tok-formatted overview.
 
         Args:
             module_path: Path to module directory or file
@@ -584,47 +445,50 @@ class RuntimeSession:
 
         Returns:
             Tok-formatted string with module overview
+
         """
-        from ..explorer import explore_module as _explore_module
+        from tok.explorer import explore_module as _explore_module
 
         result = _explore_module(module_path, mode)
         self._bump_signals({"explore_module_invoked": 1})
         return result
 
     def get_file_overview(self, filepath: str) -> dict[str, Any]:
-        """Get structured overview of a Python file.
+        """
+        Get structured overview of a Python file.
 
         Returns:
             dict with path, line_count, classes, functions, is_large
+
         """
-        from ..explorer import get_file_overview as _get_file_overview
+        from tok.explorer import get_file_overview as _get_file_overview
 
         result = _get_file_overview(filepath)
         self._bump_signals({"file_overview_invoked": 1})
         return result
 
     def list_large_files(self, root: str = "src/tok") -> list[dict[str, Any]]:
-        """Find all Python files > 500 lines in a directory tree.
+        """
+        Find all Python files > 500 lines in a directory tree.
 
         Returns:
             List of dicts with file info sorted by line count
+
         """
-        from ..explorer import list_large_files as _list_large_files
+        from tok.explorer import list_large_files as _list_large_files
 
         result = _list_large_files(root)
         self._bump_signals({"list_large_files_invoked": 1})
         return result
 
     def check_temp_copy_alias(self, path: str, snippet: str) -> str | None:
-        from .repeat_targets import normalize_path_target, _is_temp_path
+        from .repeat_targets import _is_temp_path, normalize_path_target
 
         if not _is_temp_path(path):
             return None
         normalized = normalize_path_target(path)
         existing_digests = self.bridge_memory.get_file_fact_digests()
-        new_digest = self.bridge_memory._extract_file_digest(
-            snippet, normalized
-        )
+        new_digest = self.bridge_memory._extract_file_digest(snippet, normalized)
         if not new_digest:
             new_digest = " ".join(snippet.split())[:160]
         for src_path, src_digest in existing_digests.items():
@@ -634,13 +498,12 @@ class RuntimeSession:
         return None
 
     def prepared_prompt_tokens(self, payload: dict[str, Any]) -> int:
+        """Count and cache tokens for a prepared prompt."""
         return prepared_prompt_tokens_impl(self, payload)
 
     def _trim_repeat_target_state(self) -> None:
         if len(self._recent_repeat_target_events) > 16:
-            self._recent_repeat_target_events = (
-                self._recent_repeat_target_events[-16:]
-            )
+            self._recent_repeat_target_events = self._recent_repeat_target_events[-16:]
         if len(self._hot_summary_records) > 64:
             ranked = sorted(
                 self._hot_summary_records.items(),
@@ -654,7 +517,7 @@ class RuntimeSession:
         if len(self._observed_tool_result_ids) > 64:
             # Preserve recency by keeping the last 64 keys
             keys_to_keep = list(self._observed_tool_result_ids.keys())[-64:]
-            self._observed_tool_result_ids = {k: None for k in keys_to_keep}
+            self._observed_tool_result_ids = dict.fromkeys(keys_to_keep)
 
     def observe_repeat_target_result(
         self,
@@ -685,33 +548,33 @@ class RuntimeSession:
             blocker_rediscovery=blocker_rediscovery,
         )
 
-    def apply_predictive_cache_warming(
-        self, logical_target: str
-    ) -> dict[str, int]:
+    def apply_predictive_cache_warming(self, logical_target: str) -> dict[str, int]:
+        """Apply predictive cache warming for a logical target."""
         return apply_predictive_cache_warming_impl(self, logical_target)
 
     def hot_recent_runtime_hints(self) -> tuple[list[str], dict[str, int]]:
+        """Generate hot recent hints for eligible repeat targets."""
         return hot_recent_runtime_hints_impl(self)
 
     def evidence_intent_advisories(self) -> list[str]:
+        """Generate advisories based on evidence intent patterns."""
         return evidence_intent_advisories_impl(self)
 
-    def is_predictive_cache_hit(
-        self, family: str, logical_target: str
-    ) -> bool:
+    def is_predictive_cache_hit(self, family: str, logical_target: str) -> bool:
+        """Check if a target is in the predictive cache warm set."""
         return f"{family}|{logical_target}" in self._predictive_cache_warm_keys
 
     def update_family_mode(self, model: str, signals: dict[str, int]) -> str:
+        """Update the compression mode for a model family."""
         return update_session_family_mode(self, model, signals)
 
     def consume_behavior_signals(self) -> dict[str, int]:
+        """Consume and clear pending behavior signals."""
         signals = dict(self.pending_behavior_signals)
         self.pending_behavior_signals.clear()
         return signals
 
-    def maybe_suppress_tool_compatible_state(
-        self, state: str
-    ) -> tuple[str, dict[str, int]]:
+    def maybe_suppress_tool_compatible_state(self, state: str) -> tuple[str, dict[str, int]]:
         """Avoid resending unchanged tool-compatible state on every turn."""
         cleaned = state.strip()
         if not cleaned:
@@ -733,9 +596,7 @@ class RuntimeSession:
             and set(parsed.keys()) <= {"turns"}
         ):
             return "", {"state_resend_suppressed_turn": 1}
-        strategy = _select_resend_strategy(
-            comparable, previous_comparable, has_answer_facts
-        )
+        strategy = _select_resend_strategy(comparable, previous_comparable, has_answer_facts)
         if strategy == "suppress":
             return "", {"state_resend_suppressed_turn": 1}
         rendered = _build_tok_state(parsed)
@@ -789,31 +650,30 @@ class RuntimeSession:
         tok_mode: TokMode,
         event_counts: dict[str, int],
     ) -> None:
-        """Update smoothness state after a turn completes.
+        """
+        Update smoothness state after a turn completes.
 
         Args:
             turn_score: Smoothness score for the completed turn (0-100)
             labour_index: Labour index for the completed turn
             tok_mode: Tok mode selected for the next turn
             event_counts: Event counts for the completed turn
+
         """
         self._latest_turn_smoothness_score = turn_score
         self._latest_turn_labour_index = labour_index
         self._current_tok_mode = tok_mode
 
         for event_type, count in event_counts.items():
-            self._smoothness_event_counts[event_type] = (
-                self._smoothness_event_counts.get(event_type, 0) + count
-            )
+            self._smoothness_event_counts[event_type] = self._smoothness_event_counts.get(event_type, 0) + count
 
         self._current_task_smoothness_score = turn_score
         self._current_task_labour_index = labour_index
 
     def _bump_signals(self, signals: dict[str, int]) -> None:
+        """Accumulate behavior signals for the next request."""
         for key, value in signals.items():
-            self.pending_behavior_signals[key] = (
-                self.pending_behavior_signals.get(key, 0) + value
-            )
+            self.pending_behavior_signals[key] = self.pending_behavior_signals.get(key, 0) + value
         if signals.get("tok_memory_snap_triggered"):
             self._tok_memory_snap_triggered = 1
 
@@ -829,9 +689,7 @@ class UniversalTokRuntime:
         """Execute a normalized tool event using the shared runtime tools."""
         return self.tool_executor.execute_normalized_tool(event)
 
-    def execute_tool_events_batch(
-        self, events: list[NormalizedToolEvent]
-    ) -> list[dict[str, Any]]:
+    def execute_tool_events_batch(self, events: list[NormalizedToolEvent]) -> list[dict[str, Any]]:
         """Execute multiple tool events and return results."""
         results: list[dict[str, Any]] = []
         for event in events:

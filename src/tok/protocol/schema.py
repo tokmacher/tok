@@ -31,11 +31,13 @@ class TokSchema:
         self._registry[schema.type.lower()] = schema
 
     def validate(self, node: TokNode) -> tuple[bool, str | None]:
-        """Validate a node against registered schemas.
+        """
+        Validate a node against registered schemas.
 
         Returns:
             Tuple of (is_valid, error_message).
             If valid, error_message is None.
+
         """
         node_type = node.type.lower()
 

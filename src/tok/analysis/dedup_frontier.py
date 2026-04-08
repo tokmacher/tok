@@ -1,8 +1,9 @@
-from __future__ import annotations
-
 """Replay-first investigation tooling for Tok's semantic dedup frontier."""
 
+from __future__ import annotations
+
 import ast
+import contextlib
 import copy
 import json
 import os
@@ -15,12 +16,16 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..compression import (
+from tok.compression import (
     _SEMANTIC_HASH_MIN_CHARS,
     _compute_semantic_hash,
     compress_tool_results,
 )
-from ..runtime.core import RuntimeRequest, RuntimeSession, UniversalTokRuntime
+from tok.runtime.core import (
+    RuntimeRequest,
+    RuntimeSession,
+    UniversalTokRuntime,
+)
 
 MISS_REASON_TAXONOMY = (
     "first_seen",
@@ -32,18 +37,14 @@ MISS_REASON_TAXONOMY = (
     "history_winnowing_blocked",
     "preflight_reverted",
 )
-_STRUCTURAL_MISS_REASONS = frozenset(
-    {"history_winnowing_blocked", "preflight_reverted"}
-)
+_STRUCTURAL_MISS_REASONS = frozenset({"history_winnowing_blocked", "preflight_reverted"})
 _PARITY_SESSION_HINTS = (
     "parity",
     "orchestrator",
     "alternating_adapters",
     "bridge_vs_orchestrator",
 )
-_MIN_BELOW_MIN_CHARS_HEADROOM = int(
-    os.getenv("TOK_DEDUP_FRONTIER_MIN_SMALL_HEADROOM", "256")
-)
+_MIN_BELOW_MIN_CHARS_HEADROOM = int(os.getenv("TOK_DEDUP_FRONTIER_MIN_SMALL_HEADROOM", "256"))
 _FILE_READ_THRESHOLD_EXPERIMENTS = (64, 96, 128)
 _PRIMARY_INCREMENTAL_CLASSES = frozenset(
     {
@@ -57,9 +58,7 @@ _PRIMARY_INCREMENTAL_CLASSES = frozenset(
     }
 )
 
-_FILE_TOOL_ALIASES = frozenset(
-    {"view", "view_file", "read", "read_file", "cat", "open_file", "get_file"}
-)
+_FILE_TOOL_ALIASES = frozenset({"view", "view_file", "read", "read_file", "cat", "open_file", "get_file"})
 _SEARCH_TOOL_ALIASES = frozenset({"grep", "grep_search", "search", "rg"})
 _COMMAND_TOOL_ALIASES = frozenset({"bash", "sh", "run_terminal", "computer"})
 _PATH_ARG_KEYS = (
@@ -74,9 +73,9 @@ _COMMAND_ARG_KEYS = ("command", "cmd")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
-    re.I,
+    re.IGNORECASE,
 )
-_HEX_ID_RE = re.compile(r"\b(?:0x)?[0-9a-f]{16,}\b", re.I)
+_HEX_ID_RE = re.compile(r"\b(?:0x)?[0-9a-f]{16,}\b", re.IGNORECASE)
 _TIMESTAMP_RE = re.compile(
     r"\b\d{4}-\d{2}-\d{2}"
     r"(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)?\b"
@@ -165,7 +164,7 @@ class _AnalysisAccumulator:
     bridge_log_summaries: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _content_text(content: Any) -> str:
+def _content_text(content: str | dict[str, Any] | list[Any]) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -233,9 +232,7 @@ def _normalize_args_identity(
     normalized: dict[str, Any] = {}
     for key, value in args.items():
         if key in _PATH_ARG_KEYS:
-            normalized[key] = _normalize_path(
-                str(value), workspace_root, collapse_aliases=False
-            )
+            normalized[key] = _normalize_path(str(value), workspace_root, collapse_aliases=False)
         elif key in _QUERY_ARG_KEYS or key in _COMMAND_ARG_KEYS:
             normalized[key] = str(value).strip()
         else:
@@ -269,18 +266,18 @@ def _normalize_command_family(command: str) -> str:
         parts = text.split()
     while parts and Path(parts[0]).name.lower() in {"env", "/usr/bin/env"}:
         parts = parts[1:]
-    if (
-        len(parts) >= 2
-        and Path(parts[0]).name.lower() == "uv"
-        and parts[1] == "run"
-    ):
+    if len(parts) >= 2 and Path(parts[0]).name.lower() == "uv" and parts[1] == "run":
         parts = parts[2:]
-    if len(parts) >= 3 and Path(parts[0]).name.lower() in {
-        "python",
-        "python3",
-    }:
-        if parts[1] == "-m":
-            return parts[2].lower()
+    if (
+        len(parts) >= 3
+        and Path(parts[0]).name.lower()
+        in {
+            "python",
+            "python3",
+        }
+        and parts[1] == "-m"
+    ):
+        return parts[2].lower()
     if not parts:
         return text.lower()
     return Path(parts[0]).name.lower()
@@ -295,14 +292,10 @@ def _logical_target_identity(
         return "context-missing"
     if normalized_tool_identity == "file_read":
         path = _extract_first_arg(context, _PATH_ARG_KEYS)
-        return (
-            _normalize_path(path or "", workspace_root, collapse_aliases=True)
-            or "path-missing"
-        )
+        return _normalize_path(path or "", workspace_root, collapse_aliases=True) or "path-missing"
     if normalized_tool_identity == "search":
         search_path = _normalize_path(
-            _extract_first_arg(context, ("search_path", "path", "file_path"))
-            or "",
+            _extract_first_arg(context, ("search_path", "path", "file_path")) or "",
             workspace_root,
             collapse_aliases=True,
         )
@@ -313,12 +306,8 @@ def _logical_target_identity(
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":"))
     if normalized_tool_identity == "command":
-        family = _normalize_command_family(
-            _extract_first_arg(context, _COMMAND_ARG_KEYS) or ""
-        )
-        return json.dumps(
-            {"family": family}, sort_keys=True, separators=(",", ":")
-        )
+        family = _normalize_command_family(_extract_first_arg(context, _COMMAND_ARG_KEYS) or "")
+        return json.dumps({"family": family}, sort_keys=True, separators=(",", ":"))
     return _normalize_args_identity(context, workspace_root)
 
 
@@ -340,26 +329,18 @@ def canonicalize_tool_result_text(
         canonical = canonical.replace(root, "$CWD")
     stripped = canonical.strip()
     if stripped and stripped[0] in "[{":
-        try:
-            canonical = json.dumps(
-                json.loads(stripped), sort_keys=True, separators=(",", ":")
-            )
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            canonical = json.dumps(json.loads(stripped), sort_keys=True, separators=(",", ":"))
     else:
         canonical = _INLINE_JSON_RE.sub(_normalize_inline_json, canonical)
-    lines = []
-    for line in canonical.splitlines():
-        lines.append(_WS_RE.sub(" ", line.rstrip()))
+    lines = [_WS_RE.sub(" ", line.rstrip()) for line in canonical.splitlines()]
     return "\n".join(lines).strip()
 
 
 def _normalize_inline_json(match: re.Match[str]) -> str:
     snippet = match.group(1)
     try:
-        return json.dumps(
-            json.loads(snippet), sort_keys=True, separators=(",", ":")
-        )
+        return json.dumps(json.loads(snippet), sort_keys=True, separators=(",", ":"))
     except Exception:
         return snippet
 
@@ -437,14 +418,8 @@ def _candidate_experiment_savings(
     ):
         for threshold in _FILE_READ_THRESHOLD_EXPERIMENTS:
             if raw_content_length >= threshold:
-                candidates[f"experiment_a_file_read_threshold_{threshold}"] = (
-                    stable_saved
-                )
-    if (
-        normalized_tool_identity in {"file_read", "search"}
-        and repeat_class == "alias_repeat"
-        and exact_repeat_match
-    ):
+                candidates[f"experiment_a_file_read_threshold_{threshold}"] = stable_saved
+    if normalized_tool_identity in {"file_read", "search"} and repeat_class == "alias_repeat" and exact_repeat_match:
         candidates["experiment_b_alias_normalized_key"] = stable_saved
     if (
         normalized_tool_identity in {"file_read", "search", "command"}
@@ -470,17 +445,13 @@ def _is_user_authored_message(message: dict[str, Any]) -> bool:
     content = message.get("content")
     if isinstance(content, list):
         tool_result_blocks = [
-            block
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "tool_result"
+            block for block in content if isinstance(block, dict) and block.get("type") == "tool_result"
         ]
         return len(tool_result_blocks) != len(content)
     return True
 
 
-def _is_benign_history_cliff(
-    turn_index: int, history_winnowing_blocked: bool
-) -> bool:
+def _is_benign_history_cliff(turn_index: int, history_winnowing_blocked: bool) -> bool:
     return bool(history_winnowing_blocked and turn_index <= 1)
 
 
@@ -500,11 +471,7 @@ def _classify_source(
         if any(hint in lowered_id for hint in _PARITY_SESSION_HINTS):
             noisy_reasons.append("parity_fixture")
         return _SourceClassification(
-            source_class=(
-                "clean_replay_fixture"
-                if not noisy_reasons
-                else "malformed_or_parity_fixture"
-            ),
+            source_class=("clean_replay_fixture" if not noisy_reasons else "malformed_or_parity_fixture"),
             trusted_source=not noisy_reasons,
             noisy_reasons=tuple(sorted(set(noisy_reasons))),
         )
@@ -542,9 +509,7 @@ def _load_fixture_sessions(
     if all(isinstance(record.get("messages"), list) for record in records):
         sessions: list[tuple[str, list[dict[str, Any]]]] = []
         for idx, record in enumerate(records, start=1):
-            session_id = (
-                path.stem if len(records) == 1 else f"{path.stem}#{idx}"
-            )
+            session_id = path.stem if len(records) == 1 else f"{path.stem}#{idx}"
             sessions.append((session_id, list(record.get("messages") or [])))
         return sessions
     if all("role" in record and "content" in record for record in records):
@@ -571,29 +536,18 @@ def _iter_tool_result_events(
             content = message.get("content")
             if isinstance(content, list):
                 for block in content:
-                    if (
-                        not isinstance(block, dict)
-                        or block.get("type") != "tool_use"
-                    ):
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
                         continue
                     tool_id = str(block.get("id", "")).strip()
                     tool_input = block.get("input", {})
                     if not tool_id or not isinstance(tool_input, dict):
                         continue
                     path = next(
-                        (
-                            tool_input.get(key)
-                            for key in _PATH_ARG_KEYS
-                            if tool_input.get(key)
-                        ),
+                        (tool_input.get(key) for key in _PATH_ARG_KEYS if tool_input.get(key)),
                         None,
                     )
                     query = next(
-                        (
-                            tool_input.get(key)
-                            for key in _QUERY_ARG_KEYS
-                            if tool_input.get(key)
-                        ),
+                        (tool_input.get(key) for key in _QUERY_ARG_KEYS if tool_input.get(key)),
                         None,
                     )
                     contexts[tool_id] = {
@@ -617,10 +571,7 @@ def _iter_tool_result_events(
         if not isinstance(content, list):
             continue
         for block in content:
-            if (
-                not isinstance(block, dict)
-                or block.get("type") != "tool_result"
-            ):
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
             tool_id = str(block.get("tool_use_id", "")).strip()
             events.append(
@@ -658,9 +609,7 @@ def _build_replay_turn_summaries(
                 session,
             )
             behavior = dict(prepared.behavior_signals)
-            history_winnowing_blocked = bool(
-                behavior.get("tok_history_cut_point_missing", 0)
-            )
+            history_winnowing_blocked = bool(behavior.get("tok_history_cut_point_missing", 0))
             summaries.append(
                 DedupTurnSummary(
                     session_id=session_id,
@@ -672,28 +621,21 @@ def _build_replay_turn_summaries(
                     type_breakdown=dict(prepared.type_breakdown),
                     history_winnowing_blocked=history_winnowing_blocked,
                     preflight_reverted=bool(
-                        behavior.get("tok_preflight_rejected", 0)
-                        or behavior.get("tok_bridge_preflight_rejected", 0)
+                        behavior.get("tok_preflight_rejected", 0) or behavior.get("tok_bridge_preflight_rejected", 0)
                     ),
                     behavior_signals=behavior,
-                    benign_history_cliff=_is_benign_history_cliff(
-                        len(summaries) + 1, history_winnowing_blocked
-                    ),
+                    benign_history_cliff=_is_benign_history_cliff(len(summaries) + 1, history_winnowing_blocked),
                 )
             )
     return summaries
 
 
-def _build_stress_turn_summaries(
-    session_id: str, turns: list[dict[str, Any]]
-) -> list[DedupTurnSummary]:
+def _build_stress_turn_summaries(session_id: str, turns: list[dict[str, Any]]) -> list[DedupTurnSummary]:
     summaries: list[DedupTurnSummary] = []
     for turn in turns:
         behavior = dict(turn.get("input_behavior_signals") or {})
         turn_index = int(turn.get("turn_index", len(summaries) + 1))
-        history_winnowing_blocked = bool(
-            behavior.get("tok_history_cut_point_missing", 0)
-        )
+        history_winnowing_blocked = bool(behavior.get("tok_history_cut_point_missing", 0))
         summaries.append(
             DedupTurnSummary(
                 session_id=session_id,
@@ -705,13 +647,10 @@ def _build_stress_turn_summaries(
                 type_breakdown={},
                 history_winnowing_blocked=history_winnowing_blocked,
                 preflight_reverted=bool(
-                    behavior.get("tok_preflight_rejected", 0)
-                    or behavior.get("tok_bridge_preflight_rejected", 0)
+                    behavior.get("tok_preflight_rejected", 0) or behavior.get("tok_bridge_preflight_rejected", 0)
                 ),
                 behavior_signals=behavior,
-                benign_history_cliff=_is_benign_history_cliff(
-                    turn_index, history_winnowing_blocked
-                ),
+                benign_history_cliff=_is_benign_history_cliff(turn_index, history_winnowing_blocked),
             )
         )
     return summaries
@@ -727,9 +666,7 @@ def _stress_turns_to_messages(
             messages.append({"role": "user", "content": prompt})
         tool_uses = turn.get("tool_uses") or []
         if tool_uses:
-            messages.append(
-                {"role": "assistant", "content": copy.deepcopy(tool_uses)}
-            )
+            messages.append({"role": "assistant", "content": copy.deepcopy(tool_uses)})
         tool_results = turn.get("tool_results") or []
         if tool_results:
             content_blocks: list[dict[str, Any]] = []
@@ -757,38 +694,24 @@ def _analyze_events(
     workspace_root: Path,
     source_classification: _SourceClassification,
 ) -> list[DedupOpportunity]:
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ] = {}
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
     semantic_hash_cache: dict[str, str] = {}
     last_by_identity: dict[str, dict[str, Any]] = {}
     last_by_logical_target: dict[str, dict[str, Any]] = {}
     last_by_raw_hash: dict[str, dict[str, Any]] = {}
-    canonical_identities_by_tool_hash: dict[tuple[str, str], set[str]] = (
-        defaultdict(set)
-    )
-    turn_index_to_summary = {
-        summary.turn_index: summary for summary in turn_summaries
-    }
+    canonical_identities_by_tool_hash: dict[tuple[str, str], set[str]] = defaultdict(set)
+    turn_index_to_summary = {summary.turn_index: summary for summary in turn_summaries}
     opportunities: list[DedupOpportunity] = []
 
     for event in events:
         raw = event.raw_content
         context = copy.deepcopy(event.context)
-        normalized_tool_identity = _normalize_tool_identity(
-            context.get("name", "") if context else ""
-        )
-        normalized_args_identity = _normalize_args_identity(
-            context, workspace_root
-        )
-        logical_target_identity = _logical_target_identity(
-            context, normalized_tool_identity, workspace_root
-        )
+        normalized_tool_identity = _normalize_tool_identity(context.get("name", "") if context else "")
+        normalized_args_identity = _normalize_args_identity(context, workspace_root)
+        logical_target_identity = _logical_target_identity(context, normalized_tool_identity, workspace_root)
         identity_key = f"{normalized_tool_identity}|{normalized_args_identity}"
         logical_key = f"{normalized_tool_identity}|{logical_target_identity}"
-        canonical_text = canonicalize_tool_result_text(
-            raw, workspace_root=workspace_root
-        )
+        canonical_text = canonicalize_tool_result_text(raw, workspace_root=workspace_root)
         raw_hash = _compute_semantic_hash(raw)
         canonical_hash = _compute_semantic_hash(canonical_text)
         previous = last_by_identity.get(identity_key)
@@ -828,53 +751,31 @@ def _analyze_events(
         )
         actual_chars_saved = int(sum(breakdown.values()))
         compressed_content = _extract_compressed_content(compressed_messages)
-        current_outcome = _classify_outcome(
-            compressed_content, actual_chars_saved
-        )
+        current_outcome = _classify_outcome(compressed_content, actual_chars_saved)
         current_strategy_saved_chars = actual_chars_saved
 
         miss_reason: str | None = None
         canonical_headroom = 0
         canonicalization_would_dedup = False
         stable_savings = _stable_result_saved_chars(len(raw))
-        history_winnowing_blocked = bool(
-            turn_summary and turn_summary.history_winnowing_blocked
-        )
-        preflight_reverted = bool(
-            turn_summary and turn_summary.preflight_reverted
-        )
-        benign_history_cliff = bool(
-            turn_summary and turn_summary.benign_history_cliff
-        )
+        history_winnowing_blocked = bool(turn_summary and turn_summary.history_winnowing_blocked)
+        preflight_reverted = bool(turn_summary and turn_summary.preflight_reverted)
+        benign_history_cliff = bool(turn_summary and turn_summary.benign_history_cliff)
         exact_repeat_match = bool(
             (previous is not None and previous.get("raw_hash") == raw_hash)
-            or (
-                previous_same_logical is not None
-                and previous_same_logical.get("raw_hash") == raw_hash
-            )
+            or (previous_same_logical is not None and previous_same_logical.get("raw_hash") == raw_hash)
             or (
                 previous_cross_tool is not None
-                and previous_cross_tool.get("normalized_tool_identity")
-                != normalized_tool_identity
+                and previous_cross_tool.get("normalized_tool_identity") != normalized_tool_identity
                 and previous_cross_tool.get("raw_hash") == raw_hash
             )
         )
         canonical_repeat_match = bool(
-            (
-                previous is not None
-                and previous.get("canonical_hash") == canonical_hash
-            )
-            or (
-                previous_same_logical is not None
-                and previous_same_logical.get("canonical_hash")
-                == canonical_hash
-            )
+            (previous is not None and previous.get("canonical_hash") == canonical_hash)
+            or (previous_same_logical is not None and previous_same_logical.get("canonical_hash") == canonical_hash)
         )
         if previous is not None:
-            if (
-                previous["canonical_hash"] == canonical_hash
-                and previous["raw_hash"] != raw_hash
-            ):
+            if previous["canonical_hash"] == canonical_hash and previous["raw_hash"] != raw_hash:
                 repeat_class = "canonical_repeat"
             else:
                 repeat_class = "same_identity_repeat"
@@ -888,8 +789,7 @@ def _analyze_events(
                 repeat_class = "alias_repeat"
         elif (
             previous_cross_tool is not None
-            and previous_cross_tool.get("normalized_tool_identity")
-            != normalized_tool_identity
+            and previous_cross_tool.get("normalized_tool_identity") != normalized_tool_identity
         ):
             repeat_class = "cross_tool_same_output"
         else:
@@ -914,16 +814,10 @@ def _analyze_events(
         elif context_missing:
             miss_reason = "context_missing"
             context_missing_cause = (
-                "source_missing_context"
-                if source_kind == "replay_fixture"
-                else "runtime_missing_context"
+                "source_missing_context" if source_kind == "replay_fixture" else "runtime_missing_context"
             )
         elif repeat_class == "first_seen":
-            miss_reason = (
-                "identity_changed"
-                if prior_same_canonical_other_identity
-                else "first_seen"
-            )
+            miss_reason = "identity_changed" if prior_same_canonical_other_identity else "first_seen"
             if miss_reason == "identity_changed":
                 canonical_headroom = stable_savings
                 canonicalization_would_dedup = True
@@ -958,9 +852,7 @@ def _analyze_events(
             if candidate_saved > candidate_strategy_saved_chars:
                 candidate_strategy = name
                 candidate_strategy_saved_chars = candidate_saved
-        incremental_headroom_chars = max(
-            0, candidate_strategy_saved_chars - current_strategy_saved_chars
-        )
+        incremental_headroom_chars = max(0, candidate_strategy_saved_chars - current_strategy_saved_chars)
         opportunity_class = _opportunity_class_for(
             normalized_tool_identity=normalized_tool_identity,
             raw_content_length=len(raw),
@@ -974,10 +866,7 @@ def _analyze_events(
             and repeat_opportunity_exists
             and miss_reason is not None
             and miss_reason != "first_seen"
-            and (
-                incremental_headroom_chars > 0
-                or miss_reason in _STRUCTURAL_MISS_REASONS
-            )
+            and (incremental_headroom_chars > 0 or miss_reason in _STRUCTURAL_MISS_REASONS)
         )
 
         opportunities.append(
@@ -1028,9 +917,7 @@ def _analyze_events(
             **previous_record,
             "logical_target_identity": logical_target_identity,
         }
-        canonical_identities_by_tool_hash[
-            (normalized_tool_identity, canonical_hash)
-        ].add(identity_key)
+        canonical_identities_by_tool_hash[(normalized_tool_identity, canonical_hash)].add(identity_key)
 
     return opportunities
 
@@ -1044,9 +931,7 @@ def _summarize_source(
     source_classification: _SourceClassification,
 ) -> dict[str, Any]:
     miss_counts = Counter(
-        opportunity.miss_reason
-        for opportunity in opportunities
-        if opportunity.miss_reason is not None
+        opportunity.miss_reason for opportunity in opportunities if opportunity.miss_reason is not None
     )
     return {
         "session_id": session_id,
@@ -1057,16 +942,9 @@ def _summarize_source(
         "turns": len(turn_summaries),
         "dedup_opportunities": len(opportunities),
         "trusted_dedup_opportunities": sum(
-            1
-            for opportunity in opportunities
-            if opportunity.trusted_source
-            and opportunity.repeat_opportunity_exists
+            1 for opportunity in opportunities if opportunity.trusted_source and opportunity.repeat_opportunity_exists
         ),
-        "dedup_hits": sum(
-            1
-            for opportunity in opportunities
-            if opportunity.current_outcome == "exact_dedup_hit"
-        ),
+        "dedup_hits": sum(1 for opportunity in opportunities if opportunity.current_outcome == "exact_dedup_hit"),
         "trusted_dedup_hits": sum(
             1
             for opportunity in opportunities
@@ -1074,51 +952,28 @@ def _summarize_source(
             and opportunity.repeat_opportunity_exists
             and opportunity.current_outcome == "exact_dedup_hit"
         ),
-        "cache_hits": sum(
-            1
-            for opportunity in opportunities
-            if opportunity.current_outcome == "cache_hit"
-        ),
+        "cache_hits": sum(1 for opportunity in opportunities if opportunity.current_outcome == "cache_hit"),
         "diff_compressions": sum(
-            1
-            for opportunity in opportunities
-            if opportunity.current_outcome == "diff_compression"
+            1 for opportunity in opportunities if opportunity.current_outcome == "diff_compression"
         ),
         "canonicalization_headroom_chars": sum(
-            opportunity.estimated_canonicalization_headroom_chars
-            for opportunity in opportunities
+            opportunity.estimated_canonicalization_headroom_chars for opportunity in opportunities
         ),
-        "incremental_headroom_chars": sum(
-            opportunity.incremental_headroom_chars
-            for opportunity in opportunities
-        ),
+        "incremental_headroom_chars": sum(opportunity.incremental_headroom_chars for opportunity in opportunities),
         "trusted_incremental_headroom_chars": sum(
             opportunity.incremental_headroom_chars
             for opportunity in opportunities
-            if opportunity.trusted_source
-            and opportunity.repeat_opportunity_exists
+            if opportunity.trusted_source and opportunity.repeat_opportunity_exists
         ),
         "actionable_headroom_chars": sum(
-            opportunity.incremental_headroom_chars
-            for opportunity in opportunities
-            if opportunity.actionable_miss
+            opportunity.incremental_headroom_chars for opportunity in opportunities if opportunity.actionable_miss
         ),
-        "benign_first_turn_cut_failures": sum(
-            1 for summary in turn_summaries if summary.benign_history_cliff
-        ),
+        "benign_first_turn_cut_failures": sum(1 for summary in turn_summaries if summary.benign_history_cliff),
         "history_cliff_events": sum(
-            1
-            for summary in turn_summaries
-            if summary.history_winnowing_blocked
-            and not summary.benign_history_cliff
+            1 for summary in turn_summaries if summary.history_winnowing_blocked and not summary.benign_history_cliff
         ),
-        "preflight_revert_events": sum(
-            1 for summary in turn_summaries if summary.preflight_reverted
-        ),
-        "dedup_misses_by_reason": {
-            reason: int(miss_counts.get(reason, 0))
-            for reason in MISS_REASON_TAXONOMY
-        },
+        "preflight_revert_events": sum(1 for summary in turn_summaries if summary.preflight_reverted),
+        "dedup_misses_by_reason": {reason: int(miss_counts.get(reason, 0)) for reason in MISS_REASON_TAXONOMY},
         "opportunity_classes": dict(
             Counter(
                 opportunity.opportunity_class
@@ -1162,36 +1017,20 @@ def _parse_bridge_log(path: Path) -> dict[str, Any]:
     }
 
 
-def _bucket_from_opportunities(
-    opportunities: list[DedupOpportunity], opportunity_class: str
-) -> dict[str, Any]:
-    affected = [
-        item
-        for item in opportunities
-        if item.opportunity_class == opportunity_class
-    ]
-    trusted = [
-        item
-        for item in affected
-        if item.trusted_source and item.repeat_opportunity_exists
-    ]
+def _bucket_from_opportunities(opportunities: list[DedupOpportunity], opportunity_class: str) -> dict[str, Any]:
+    affected = [item for item in opportunities if item.opportunity_class == opportunity_class]
+    trusted = [item for item in affected if item.trusted_source and item.repeat_opportunity_exists]
     actionable = [item for item in affected if item.actionable_miss]
     structural_evidence = sum(
-        1
-        for item in actionable
-        if item.miss_reason in _STRUCTURAL_MISS_REASONS and item.turn_index > 1
+        1 for item in actionable if item.miss_reason in _STRUCTURAL_MISS_REASONS and item.turn_index > 1
     )
     return {
         "opportunity_class": opportunity_class,
         "count": len(affected),
         "trusted_count": len(trusted),
         "actionable_count": len(actionable),
-        "gross_headroom_chars": sum(
-            item.estimated_canonicalization_headroom_chars for item in affected
-        ),
-        "incremental_headroom_chars": sum(
-            item.incremental_headroom_chars for item in actionable
-        ),
+        "gross_headroom_chars": sum(item.estimated_canonicalization_headroom_chars for item in affected),
+        "incremental_headroom_chars": sum(item.incremental_headroom_chars for item in actionable),
         "structural_evidence_count": structural_evidence,
     }
 
@@ -1205,16 +1044,11 @@ def _rank_incremental_buckets(
         if bucket["count"] <= 0 or bucket["trusted_count"] <= 0:
             continue
         if (
-            opportunity_class
-            in {"small_search_repeat", "small_command_repeat"}
-            and bucket["incremental_headroom_chars"]
-            < _MIN_BELOW_MIN_CHARS_HEADROOM
+            opportunity_class in {"small_search_repeat", "small_command_repeat"}
+            and bucket["incremental_headroom_chars"] < _MIN_BELOW_MIN_CHARS_HEADROOM
         ):
             continue
-        if (
-            bucket["incremental_headroom_chars"] <= 0
-            and bucket["structural_evidence_count"] <= 0
-        ):
+        if bucket["incremental_headroom_chars"] <= 0 and bucket["structural_evidence_count"] <= 0:
             continue
         buckets.append(bucket)
     buckets.sort(
@@ -1234,19 +1068,12 @@ def _tool_family_incremental_headroom(
 ) -> dict[str, dict[str, int]]:
     buckets: dict[str, dict[str, int]] = {}
     for opportunity in opportunities:
-        if not (
-            opportunity.trusted_source
-            and opportunity.repeat_opportunity_exists
-        ):
+        if not (opportunity.trusted_source and opportunity.repeat_opportunity_exists):
             continue
         family = opportunity.normalized_tool_identity
-        entry = buckets.setdefault(
-            family, {"count": 0, "incremental_headroom_chars": 0}
-        )
+        entry = buckets.setdefault(family, {"count": 0, "incremental_headroom_chars": 0})
         entry["count"] += 1
-        entry["incremental_headroom_chars"] += (
-            opportunity.incremental_headroom_chars
-        )
+        entry["incremental_headroom_chars"] += opportunity.incremental_headroom_chars
     return dict(
         sorted(
             buckets.items(),
@@ -1261,10 +1088,7 @@ def _hot_targets(
 ) -> list[dict[str, Any]]:
     targets: dict[str, dict[str, Any]] = {}
     for opportunity in opportunities:
-        if not (
-            opportunity.trusted_source
-            and opportunity.repeat_opportunity_exists
-        ):
+        if not (opportunity.trusted_source and opportunity.repeat_opportunity_exists):
             continue
         target = opportunity.logical_target_identity
         if target in {"context-missing", "path-missing"}:
@@ -1280,9 +1104,7 @@ def _hot_targets(
         )
         entry["tool_families"].add(opportunity.normalized_tool_identity)
         entry["count"] += 1
-        entry["incremental_headroom_chars"] += (
-            opportunity.incremental_headroom_chars
-        )
+        entry["incremental_headroom_chars"] += opportunity.incremental_headroom_chars
     ranked = sorted(
         targets.values(),
         key=lambda item: (item["incremental_headroom_chars"], item["count"]),
@@ -1347,15 +1169,11 @@ def _experiment_matrix(
             if candidate_savings == opportunity.current_strategy_saved_chars:
                 continue
             eligible += 1
-            if (
-                opportunity.trusted_source
-                and opportunity.repeat_opportunity_exists
-            ):
+            if opportunity.trusted_source and opportunity.repeat_opportunity_exists:
                 trusted += 1
                 incremental_headroom += max(
                     0,
-                    candidate_savings
-                    - opportunity.current_strategy_saved_chars,
+                    candidate_savings - opportunity.current_strategy_saved_chars,
                 )
         rows.append(
             {
@@ -1373,9 +1191,7 @@ def _live_confirmation_candidates(
     incremental_buckets: list[dict[str, Any]],
 ) -> list[str]:
     return [
-        item["opportunity_class"]
-        for item in incremental_buckets
-        if item["opportunity_class"] != "structural_cliff"
+        item["opportunity_class"] for item in incremental_buckets if item["opportunity_class"] != "structural_cliff"
     ][:2]
 
 
@@ -1385,69 +1201,40 @@ def _build_summary(accumulator: _AnalysisAccumulator) -> dict[str, Any]:
     outcome_counts: Counter[str] = Counter()
     trusted_outcome_counts: Counter[str] = Counter()
     trusted_opportunities = [
-        item
-        for item in accumulator.opportunities
-        if item.trusted_source and item.repeat_opportunity_exists
+        item for item in accumulator.opportunities if item.trusted_source and item.repeat_opportunity_exists
     ]
-    actionable_opportunities = [
-        item for item in accumulator.opportunities if item.actionable_miss
-    ]
+    actionable_opportunities = [item for item in accumulator.opportunities if item.actionable_miss]
 
     for opportunity in accumulator.opportunities:
         outcome_counts[opportunity.current_outcome] += 1
         if opportunity.miss_reason is not None:
             miss_counts[opportunity.miss_reason] += 1
-            if (
-                opportunity.trusted_source
-                and opportunity.repeat_opportunity_exists
-            ):
+            if opportunity.trusted_source and opportunity.repeat_opportunity_exists:
                 trusted_miss_counts[opportunity.miss_reason] += 1
-        if (
-            opportunity.trusted_source
-            and opportunity.repeat_opportunity_exists
-        ):
+        if opportunity.trusted_source and opportunity.repeat_opportunity_exists:
             trusted_outcome_counts[opportunity.current_outcome] += 1
 
     benign_first_turn_cut_failures = sum(
-        1
-        for summary in accumulator.turn_summaries
-        if summary.benign_history_cliff
-    ) + sum(
-        int(item.get("benign_first_turn_cut_failures", 0))
-        for item in accumulator.bridge_log_summaries
-    )
+        1 for summary in accumulator.turn_summaries if summary.benign_history_cliff
+    ) + sum(int(item.get("benign_first_turn_cut_failures", 0)) for item in accumulator.bridge_log_summaries)
     history_cliff_events = sum(
         1
         for summary in accumulator.turn_summaries
-        if summary.history_winnowing_blocked
-        and not summary.benign_history_cliff
-    ) + sum(
-        item.get("history_cliff_events", 0)
-        for item in accumulator.bridge_log_summaries
-    )
-    preflight_revert_events = sum(
-        1
-        for summary in accumulator.turn_summaries
-        if summary.preflight_reverted
-    ) + sum(
-        item.get("preflight_revert_events", 0)
-        for item in accumulator.bridge_log_summaries
+        if summary.history_winnowing_blocked and not summary.benign_history_cliff
+    ) + sum(item.get("history_cliff_events", 0) for item in accumulator.bridge_log_summaries)
+    preflight_revert_events = sum(1 for summary in accumulator.turn_summaries if summary.preflight_reverted) + sum(
+        item.get("preflight_revert_events", 0) for item in accumulator.bridge_log_summaries
     )
     noisy_sources = [
         item
         for item in accumulator.source_summaries
-        if item["source_kind"] == "replay_fixture"
-        and not item["trusted_source"]
+        if item["source_kind"] == "replay_fixture" and not item["trusted_source"]
     ]
     incremental_buckets = _rank_incremental_buckets(accumulator.opportunities)
-    tool_family_incremental = _tool_family_incremental_headroom(
-        accumulator.opportunities
-    )
+    tool_family_incremental = _tool_family_incremental_headroom(accumulator.opportunities)
     hot_targets = _hot_targets(accumulator.opportunities)
     experiment_matrix = _experiment_matrix(accumulator.opportunities)
-    live_confirmation_candidates = _live_confirmation_candidates(
-        incremental_buckets
-    )
+    live_confirmation_candidates = _live_confirmation_candidates(incremental_buckets)
 
     patch_queue: list[dict[str, Any]] = []
     suggestion_map = {
@@ -1464,9 +1251,7 @@ def _build_summary(accumulator: _AnalysisAccumulator) -> dict[str, Any]:
                 {
                     "opportunity_class": bucket["opportunity_class"],
                     "gross_headroom_chars": bucket["gross_headroom_chars"],
-                    "incremental_headroom_chars": bucket[
-                        "incremental_headroom_chars"
-                    ],
+                    "incremental_headroom_chars": bucket["incremental_headroom_chars"],
                     "actionable_count": bucket["actionable_count"],
                     "suggested_fix": suggestion,
                 }
@@ -1478,42 +1263,25 @@ def _build_summary(accumulator: _AnalysisAccumulator) -> dict[str, Any]:
         "dedup_opportunities": len(accumulator.opportunities),
         "trusted_dedup_opportunities": len(trusted_opportunities),
         "dedup_hits": int(outcome_counts.get("exact_dedup_hit", 0)),
-        "trusted_dedup_hits": int(
-            trusted_outcome_counts.get("exact_dedup_hit", 0)
-        ),
+        "trusted_dedup_hits": int(trusted_outcome_counts.get("exact_dedup_hit", 0)),
         "outcome_counts": dict(outcome_counts),
         "trusted_outcome_counts": dict(trusted_outcome_counts),
-        "dedup_misses_by_reason": {
-            reason: int(miss_counts.get(reason, 0))
-            for reason in MISS_REASON_TAXONOMY
-        },
+        "dedup_misses_by_reason": {reason: int(miss_counts.get(reason, 0)) for reason in MISS_REASON_TAXONOMY},
         "trusted_dedup_misses_by_reason": {
-            reason: int(trusted_miss_counts.get(reason, 0))
-            for reason in MISS_REASON_TAXONOMY
+            reason: int(trusted_miss_counts.get(reason, 0)) for reason in MISS_REASON_TAXONOMY
         },
         "canonicalization_headroom_chars": sum(
-            item.estimated_canonicalization_headroom_chars
-            for item in accumulator.opportunities
+            item.estimated_canonicalization_headroom_chars for item in accumulator.opportunities
         ),
-        "incremental_headroom_chars": sum(
-            item.incremental_headroom_chars
-            for item in accumulator.opportunities
-        ),
-        "trusted_incremental_headroom_chars": sum(
-            item.incremental_headroom_chars for item in trusted_opportunities
-        ),
-        "actionable_headroom_chars": sum(
-            item.incremental_headroom_chars
-            for item in actionable_opportunities
-        ),
+        "incremental_headroom_chars": sum(item.incremental_headroom_chars for item in accumulator.opportunities),
+        "trusted_incremental_headroom_chars": sum(item.incremental_headroom_chars for item in trusted_opportunities),
+        "actionable_headroom_chars": sum(item.incremental_headroom_chars for item in actionable_opportunities),
         "benign_first_turn_cut_failures": benign_first_turn_cut_failures,
         "history_cliff_events": history_cliff_events,
         "preflight_revert_events": preflight_revert_events,
         "noisy_fixture_count": len(noisy_sources),
         "noisy_sources": noisy_sources,
-        "turn_summaries": [
-            item.to_dict() for item in accumulator.turn_summaries
-        ],
+        "turn_summaries": [item.to_dict() for item in accumulator.turn_summaries],
         "source_summaries": accumulator.source_summaries,
         "bridge_log_summaries": accumulator.bridge_log_summaries,
         "incremental_top_buckets": incremental_buckets[:5],
@@ -1555,9 +1323,7 @@ def _render_report(summary: dict[str, Any]) -> str:
         lines.append(f"- `{outcome}`: `{count}`")
 
     lines.extend(["", "## Trusted Outcome Counts", ""])
-    for outcome, count in sorted(
-        summary.get("trusted_outcome_counts", {}).items()
-    ):
+    for outcome, count in sorted(summary.get("trusted_outcome_counts", {}).items()):
         lines.append(f"- `{outcome}`: `{count}`")
 
     lines.extend(["", "## Incremental Top Buckets (Trusted Rows)", ""])
@@ -1677,26 +1443,18 @@ def run_dedup_frontier(
     selected_fixtures: list[Path] = []
     if fixtures_dir and fixtures_dir.exists():
         selected_fixtures.extend(
-            path
-            for path in sorted(fixtures_dir.rglob("*.jsonl"))
-            if not path.name.endswith(".meta.json")
+            path for path in sorted(fixtures_dir.rglob("*.jsonl")) if not path.name.endswith(".meta.json")
         )
     if fixture_paths:
-        selected_fixtures.extend(
-            path for path in fixture_paths if path.exists()
-        )
+        selected_fixtures.extend(path for path in fixture_paths if path.exists())
 
     for fixture_path in sorted({path.resolve() for path in selected_fixtures}):
         for session_id, messages in _load_fixture_sessions(fixture_path):
             if not messages:
                 continue
-            turn_summaries = _build_replay_turn_summaries(
-                session_id, messages, workspace_root=workspace_root
-            )
+            turn_summaries = _build_replay_turn_summaries(session_id, messages, workspace_root=workspace_root)
             events = _iter_tool_result_events(messages)
-            source_classification = _classify_source(
-                session_id, "replay_fixture", events, turn_summaries
-            )
+            source_classification = _classify_source(session_id, "replay_fixture", events, turn_summaries)
             opportunities = _analyze_events(
                 session_id=session_id,
                 source_kind="replay_fixture",
@@ -1719,19 +1477,13 @@ def run_dedup_frontier(
 
     selected_stress_runs: list[Path] = []
     if stress_run_paths:
-        selected_stress_runs.extend(
-            path for path in stress_run_paths if path.exists()
-        )
+        selected_stress_runs.extend(path for path in stress_run_paths if path.exists())
     else:
         default_stress_dir = workspace_root / "tests/fixtures/stress"
         if default_stress_dir.exists():
-            selected_stress_runs.extend(
-                sorted(default_stress_dir.rglob("*.json"))
-            )
+            selected_stress_runs.extend(sorted(default_stress_dir.rglob("*.json")))
 
-    for stress_path in sorted(
-        {path.resolve() for path in selected_stress_runs}
-    ):
+    for stress_path in sorted({path.resolve() for path in selected_stress_runs}):
         if not stress_path.exists():
             continue
         data = json.loads(stress_path.read_text())
@@ -1740,9 +1492,7 @@ def run_dedup_frontier(
         turn_summaries = _build_stress_turn_summaries(session_id, turns)
         messages = _stress_turns_to_messages(turns)
         events = _iter_tool_result_events(messages)
-        source_classification = _classify_source(
-            session_id, "stress_run", events, turn_summaries
-        )
+        source_classification = _classify_source(session_id, "stress_run", events, turn_summaries)
         opportunities = _analyze_events(
             session_id=session_id,
             source_kind="stress_run",

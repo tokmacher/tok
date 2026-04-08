@@ -1,22 +1,28 @@
+"""Tok-Sentinel diagnostic dashboard for monitoring system health."""
+
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import streamlit as st
 
+TokRegistry: Any = None
+Sifter: Any = None
+REGISTRY_AVAILABLE = False
+
 try:
+    from tok.utils.sifter import Sifter as _Sifter
     from tok.utils.tok_registry import TokRegistry as _TokRegistry
-    from tok.utils.sifter import Sifter
 
     TokRegistry = _TokRegistry
+    Sifter = _Sifter
     REGISTRY_AVAILABLE = True
 except ImportError:
-    TokRegistry = None  # type: ignore
-    Sifter = None  # type: ignore
-    REGISTRY_AVAILABLE = False
+    pass
 
 
 # Core checks (existing)
 def tok_health_check() -> dict[str, str]:
+    """Return the core health status of the Tok system."""
     return {
         "status": "🟢 OPERATIONAL",
         "integrity": "🟢 VERIFIED",
@@ -27,14 +33,16 @@ def tok_health_check() -> dict[str, str]:
 
 
 def global_integrity_report() -> str:
+    """Generate a global integrity report from TokRegistry."""
     if REGISTRY_AVAILABLE and TokRegistry is not None:
-        return TokRegistry.global_integrity_report()
+        return cast(str, TokRegistry.global_integrity_report())
     return "⚠️ TokRegistry unavailable"
 
 
 # Dashboard data loaders
 @st.cache_data(ttl=5)  # Auto-refresh every 5s
 def load_territory() -> str:
+    """Load the territory map from disk with caching."""
     territory_path = Path("territory.tok")
     if territory_path.exists():
         with open(territory_path) as f:
@@ -44,18 +52,18 @@ def load_territory() -> str:
 
 @st.cache_data(ttl=5)
 def load_todo_memory() -> dict[str, str]:
+    """Load TODO and memory state from disk."""
     todo = Path("todo.tok")
     memory = Path("memory.tok")
     data: dict[str, str] = {}
     data["todo"] = todo.read_text() if todo.exists() else "No TODO."
-    data["memory"] = (
-        memory.read_text() if memory.exists() else "No persistent memory."
-    )
+    data["memory"] = memory.read_text() if memory.exists() else "No persistent memory."
     return data
 
 
 @st.cache_data(ttl=5)
 def load_stats() -> dict[str, Any]:
+    """Load live agent statistics from the testing module."""
     stats = {"turns": 0, "tokens": 0, "cost": 0.0}
     try:
         from tok.testing.live_runner import LiveAgent
@@ -69,6 +77,7 @@ def load_stats() -> dict[str, Any]:
 
 # Streamlit UI
 def main() -> None:
+    """Run the Streamlit diagnostic dashboard."""
     st.set_page_config(page_title="Tok-Sentinel", layout="wide")
     st.title("🚀 Tok-Sentinel Diagnostic Dashboard")
     st.markdown("**Protocol v5.8 | Territory-Aware Autonomy**")
@@ -109,9 +118,7 @@ def main() -> None:
     with tab3:
         st.subheader("Codebase Territory Map")
         territory = load_territory()
-        st.text(
-            territory[:2000] + "..." if len(territory) > 2000 else territory
-        )
+        st.text(territory[:2000] + "..." if len(territory) > 2000 else territory)
         if st.button("🔄 Refresh Territory"):
             if Sifter is not None:
                 Sifter.from_dir("src/tok", naked=False, minify=True)
@@ -136,16 +143,10 @@ def main() -> None:
             "Last Latency",
             f"{stats.get('last_usage', {}).get('latency_ms', 0):.0f}ms",
         )
-        col4.metric(
-            "Cost", f"${stats.get('last_usage', {}).get('cost_usd', 0):.4f}"
-        )
+        col4.metric("Cost", f"${stats.get('last_usage', {}).get('cost_usd', 0):.4f}")
 
 
 if __name__ == "__main__":
     main()
 if __name__ == "__main__":
     tok_health_check()
-    print(global_integrity_report())
-    print(
-        "\nTok-Sentinel Streamlit Dashboard ready. Run: `streamlit run src/tok/sentinel_dashboard.py`"
-    )

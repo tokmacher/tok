@@ -1,6 +1,7 @@
 # Architecture Diagrams
 
-This page is the visual companion to [architecture.md](./architecture.md). It shows the post-refactor system as it exists after the universal runtime consolidation.
+This page is the visual companion to [architecture.md](./architecture.md). It shows the
+post-refactor system as it exists after the universal runtime consolidation.
 
 ## 1. Runtime Topology
 
@@ -151,8 +152,8 @@ flowchart LR
     LEGACY["Legacy-owned today<br/>multi-system prompt assembly<br/>large turn loop<br/>truncation policy"] -. still deferred .-> LOOP
 ```
 
-The release-surface manifest in `src/tok/release_surface.py` defines which exports
-and commands are supported versus experimental for the first public release.
+The release-surface manifest in `src/tok/release_surface.py` defines which exports and
+commands are supported versus experimental for the first public release.
 
 ## 8. Adoption Story
 

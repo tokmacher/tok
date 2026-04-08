@@ -2,13 +2,18 @@
 
 ## Executive Summary
 
-Comprehensive benchmark testing across multiple models (Claude Sonnet 4.6, GPT-4.1, DeepSeek v3.2) reveals that Tok's compression modes achieve **60-70% token savings** while maintaining task success rates for sessions ≥ 8 turns. Short sessions (< 8 turns) should default to baseline to avoid compression overhead. The research-loop-15 fixture has been fixed and now properly validates 15-turn research sessions.
+Comprehensive benchmark testing across multiple models (Claude Sonnet 4.6, GPT-4.1,
+DeepSeek v3.2) reveals that Tok's compression modes achieve **60-70% token savings**
+while maintaining task success rates for sessions ≥ 8 turns. Short sessions (< 8 turns)
+should default to baseline to avoid compression overhead. The research-loop-15 fixture
+has been fixed and now properly validates 15-turn research sessions.
 
 ## Benchmark Task Definitions
 
 ### Coding Loop Benchmarks
 
-**Task**: Fix a bug in `gateway.py` where a function returns incorrect results. The assistant must:
+**Task**: Fix a bug in `gateway.py` where a function returns incorrect results. The
+assistant must:
 
 1. Locate the buggy code in `gateway.py`
 1. Identify the root cause
@@ -27,7 +32,8 @@ Comprehensive benchmark testing across multiple models (Claude Sonnet 4.6, GPT-4
 
 ### Research Loop Benchmarks
 
-**Task**: Explore the codebase to find where history compression is implemented. The assistant must:
+**Task**: Explore the codebase to find where history compression is implemented. The
+assistant must:
 
 1. Search for `compress_history` function
 1. Discover related memory structures (`BridgeMemoryState`, `RuntimeSession`)
@@ -35,7 +41,8 @@ Comprehensive benchmark testing across multiple models (Claude Sonnet 4.6, GPT-4
 1. Identify key classes: `MemoryProjectionProfile`, `FamilyAdaptiveState`
 1. Synthesize findings into a summary
 
-**Fixture**: `tests/fixtures/replay/research_loop.jsonl` (5/8 turns), `tests/fixtures/replay/research_loop_extended.jsonl` (15/25 turns)
+**Fixture**: `tests/fixtures/replay/research_loop.jsonl` (5/8 turns),
+`tests/fixtures/replay/research_loop_extended.jsonl` (15/25 turns)
 
 | Benchmark        | Turns | Success Criteria                                                                                                                                |
 | ---------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -160,11 +167,14 @@ ______________________________________________________________________
 **✅ Implemented and Verified:**
 
 1. **Short session detection** - Auto-switch to baseline for < 8 turns
-1. **tool-compatible (natural_first) as default** - Best overall balance of safety and savings
+1. **tool-compatible (natural_first) as default** - Best overall balance of safety and
+   savings
 1. **Flexible response parsing** - Handles format variations
 1. **Mode selection guidelines** - Documented in README
-1. **Model-family detection** - Automatic identification of Claude, GPT, Gemini, DeepSeek
-1. **Task type detection** - Automatic classification of coding vs research from tool patterns
+1. **Model-family detection** - Automatic identification of Claude, GPT, Gemini,
+   DeepSeek
+1. **Task type detection** - Automatic classification of coding vs research from tool
+   patterns
 
 **✅ Benchmark Infrastructure:**
 
@@ -194,30 +204,31 @@ ______________________________________________________________________
 
 ### 1. tok-minimal Task Success (Partially Resolved)
 
-**Issue**: tok-minimal frequently fails at research tasks (lost_on_task_success)
-**Root Cause**: Aggressive compression may lose critical context for research synthesis
+**Issue**: tok-minimal frequently fails at research tasks (lost_on_task_success) **Root
+Cause**: Aggressive compression may lose critical context for research synthesis
 **Mitigation**:
 
 - Increased files limit (3→4) and errs limit (2→3) in profile
-- tok-minimal still loses task success in some research scenarios
-  **Status**: Improved but still experimental - use tok-native or tok-neuro for research
+- tok-minimal still loses task success in some research scenarios **Status**: Improved
+  but still experimental - use tok-native or tok-neuro for research
 
 ### 2. Model-Specific Optimal Modes (Resolved)
 
-**Issue**: No automatic model-family detection for optimal mode selection
-**Solution**: Implemented in `smart_policy.py`:
+**Issue**: No automatic model-family detection for optimal mode selection **Solution**:
+Implemented in `smart_policy.py`:
 
 - `identify_model_family()` detects Claude, GPT, Gemini, DeepSeek
 - `detect_task_type()` classifies coding vs research from tool patterns
 - `select_optimal_mode()` returns optimal mode based on family + task type
-- `OPTIMAL_MODES_BY_FAMILY_AND_TASK` mapping encodes benchmark findings
-  **Status**: ✅ Implemented
+- `OPTIMAL_MODES_BY_FAMILY_AND_TASK` mapping encodes benchmark findings **Status**: ✅
+  Implemented
 
 ### 3. Research-Loop-15 Fixture (Resolved)
 
-**Issue**: Fixture was truncated/incomplete, causing all modes to fail
-**Solution**: Created proper 15-turn research fixture exploring compression → bridge_memory → runtime → smart_policy
-**Status**: ✅ Fixed - fixture now has 15 user turns with realistic tool-use patterns
+**Issue**: Fixture was truncated/incomplete, causing all modes to fail **Solution**:
+Created proper 15-turn research fixture exploring compression → bridge_memory → runtime
+→ smart_policy **Status**: ✅ Fixed - fixture now has 15 user turns with realistic
+tool-use patterns
 
 ______________________________________________________________________
 
@@ -246,13 +257,15 @@ ______________________________________________________________________
 
 **Research Loop (15/25 turns):**
 
-- **Success terms**: 3+ of: compression.py, bridge_memory.py, core.py, smart_policy.py, compress_history, BridgeMemoryState, RuntimeSession, MemoryProjectionProfile
+- **Success terms**: 3+ of: compression.py, bridge_memory.py, core.py, smart_policy.py,
+  compress_history, BridgeMemoryState, RuntimeSession, MemoryProjectionProfile
 - **Min success terms**: 3
 
 ### Fixture Design
 
 - **Coding loop**: Bug fix workflow with test verification (`claude_coding_loop.jsonl`)
-- **Research loop**: Codebase exploration with synthesis question (`research_loop.jsonl`, `research_loop_extended.jsonl`)
+- **Research loop**: Codebase exploration with synthesis question
+  (`research_loop.jsonl`, `research_loop_extended.jsonl`)
 
 ______________________________________________________________________
 
@@ -274,7 +287,9 @@ ______________________________________________________________________
 
 ## Conclusion
 
-Tok 0.1.0 demonstrates significant token savings (60-70%) across all tested models, with strong performance on longer sessions (15+ turns). The research-loop-15 fixture has been fixed and all benchmarks now pass successfully.
+Tok 0.1.0 demonstrates significant token savings (60-70%) across all tested models, with
+strong performance on longer sessions (15+ turns). The research-loop-15 fixture has been
+fixed and all benchmarks now pass successfully.
 
 **Key Recommendations:**
 
@@ -283,4 +298,8 @@ Tok 0.1.0 demonstrates significant token savings (60-70%) across all tested mode
 1. **Use tok-native for coding** tasks across all models
 1. **Use tok-neuro for research** at 15+ turns
 
-**Claude Sonnet 4.6** users see best results with tok-native for coding and tok-neuro for research. **GPT-4.1** users benefit from tok-native for coding and tok-minimal for long research sessions. **DeepSeek** users have unique advantages with tok-tool-compatible for coding and tok-neuro for research, including success where baseline fails.
+**Claude Sonnet 4.6** users see best results with tok-native for coding and tok-neuro
+for research. **GPT-4.1** users benefit from tok-native for coding and tok-minimal for
+long research sessions. **DeepSeek** users have unique advantages with
+tok-tool-compatible for coding and tok-neuro for research, including success where
+baseline fails.

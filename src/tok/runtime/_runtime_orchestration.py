@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from .config import RUNTIME_HINTS_MAX_PER_TURN
 from .memory.answer_memory import (
     _process_answer_memory,
     _should_persist_to_durable,
@@ -14,6 +14,7 @@ from .memory.tok_state import (
     _prepare_tool_compatible_state,
     _select_resend_reason,
 )
+from .metrics import report_protocol_drift
 from .pipeline.request_preparation import (
     _annotate_reacquisition_diagnostics,
     _apply_tool_compatible_resend_diagnostics,
@@ -28,16 +29,16 @@ from .pipeline.response_processing import (
     response_behavior_signals,
     response_contract_for_mode,
 )
+from .pipeline.tool_processing import count_tokens
 from .policy.answer_repair import _mark_late_answer_assembly_mode_signal
 from .policy.macro_handling import _attribute_macro_savings, execute_jit_macro
 from .policy.semantic_validation import (
     semantic_pressure_score as _semantic_pressure_score,
 )
-from .metrics import report_protocol_drift
-from .pipeline.tool_processing import count_tokens
-from .config import RUNTIME_HINTS_MAX_PER_TURN
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .core import RuntimeSession, UniversalTokRuntime
     from .types import ProcessedRuntimeResponse, RuntimeRequest
 
@@ -64,30 +65,25 @@ def build_tool_compatible_resend(
     dict[str, Any],
     bool,
 ]:
+    """Build a tool-compatible resend payload with state compression and hints."""
     del runtime
     if request.tool_compatible:
         pre_resend_memory = memory
         previous_comparable = dict(session._last_tool_compatible_state_fields)
-        (_, comparable_state, has_answer_anchor) = (
-            _prepare_tool_compatible_state(
-                pre_resend_memory, previous_comparable
-            )
-        )
+        (
+            _,
+            comparable_state,
+            has_answer_anchor,
+        ) = _prepare_tool_compatible_state(pre_resend_memory, previous_comparable)
         if has_answer_anchor_param is not None:
             has_answer_anchor = has_answer_anchor_param
 
-        resend_reason = _select_resend_reason(
-            comparable_state, previous_comparable, has_answer_anchor
-        )
-        processed_memory, resend_signals = (
-            session.maybe_suppress_tool_compatible_state(memory)
-        )
-        behavior_signals.update(
-            {
-                key: behavior_signals.get(key, 0) + value
-                for key, value in resend_signals.items()
-            }
-        )
+        resend_reason = _select_resend_reason(comparable_state, previous_comparable, has_answer_anchor)
+        (
+            processed_memory,
+            resend_signals,
+        ) = session.maybe_suppress_tool_compatible_state(memory)
+        behavior_signals.update({key: behavior_signals.get(key, 0) + value for key, value in resend_signals.items()})
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
             processed_memory,
@@ -95,12 +91,8 @@ def build_tool_compatible_resend(
             has_answer_anchor=has_answer_anchor,
             resend_reason=resend_reason,
             skip_reason_hint=skip_reason if should_skip_history else None,
-            tok_history_compression_skipped=bool(
-                behavior_signals.get("tok_history_compression_skipped", 0)
-            ),
-            tool_compatible_compression=bool(
-                behavior_signals.get("tool_compatible_compression", 0)
-            ),
+            tok_history_compression_skipped=bool(behavior_signals.get("tok_history_compression_skipped", 0)),
+            tool_compatible_compression=bool(behavior_signals.get("tool_compatible_compression", 0)),
         )
         if translated_messages is None:
             answer_ready = False
@@ -108,10 +100,7 @@ def build_tool_compatible_resend(
             answer_ready = _is_answer_ready_turn(
                 translated_messages,
                 tool_compatible=request.tool_compatible,
-                has_answer_anchor=behavior_signals.get(
-                    "answer_anchor_present", 0
-                )
-                > 0,
+                has_answer_anchor=behavior_signals.get("answer_anchor_present", 0) > 0,
                 baseline_only=session._baseline_only,
             )
         if answer_ready:
@@ -204,17 +193,12 @@ def process_response_impl(
     tool_compatible: bool = False,
     jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,
 ) -> ProcessedRuntimeResponse:
+    """Process a raw LLM response into structured content with drift handling."""
     from .types import ProcessedRuntimeResponse
 
-    contract = response_contract_for_mode(
-        text, tool_compatible=tool_compatible, session=session
-    )
+    contract = response_contract_for_mode(text, tool_compatible=tool_compatible, session=session)
     drift_signals = (
-        runtime.semantic_validator.validate_drift(
-            text, contract.behavior_signals
-        )
-        if not tool_compatible
-        else {}
+        runtime.semantic_validator.validate_drift(text, contract.behavior_signals) if not tool_compatible else {}
     )
     merged_signals: dict[str, int] = {
         **session.consume_behavior_signals(),
@@ -224,23 +208,17 @@ def process_response_impl(
         **drift_signals,
     }
 
-    healed_text = heal_drift(
-        text, merged_signals, tool_compatible=tool_compatible
-    )
+    healed_text = heal_drift(text, merged_signals, tool_compatible=tool_compatible)
     if healed_text != text:
         merged_signals["tok_drift_healed"] = 1
-        contract = response_contract_for_mode(
-            healed_text, tool_compatible=tool_compatible, session=session
-        )
+        contract = response_contract_for_mode(healed_text, tool_compatible=tool_compatible, session=session)
 
     visible_text = "\n".join(
-        cast(str, block.get("text", ""))
+        cast("str", block.get("text", ""))
         for block in contract.content_blocks
         if block.get("type") == "text" and str(block.get("text", "")).strip()
     ).strip()
-    has_tool = any(
-        block.get("type") == "tool_use" for block in contract.content_blocks
-    )
+    has_tool = any(block.get("type") == "tool_use" for block in contract.content_blocks)
     has_answer_text = _is_answer_like_visible_text(visible_text)
     handle_answer_repair(
         session,
@@ -268,12 +246,8 @@ def process_response_impl(
                     )
         session._save_bridge_memory()
 
-    should_write_healed_memory = not (
-        tool_compatible and merged_signals.get("tok_drift_healed")
-    )
-    updated_memory = (
-        session.write_memory(healed_text) if should_write_healed_memory else ""
-    )
+    should_write_healed_memory = not (tool_compatible and merged_signals.get("tok_drift_healed"))
+    updated_memory = session.write_memory(healed_text) if should_write_healed_memory else ""
     if updated_memory:
         _attribute_macro_savings(session, updated_memory)
     family_mode = session.update_family_mode(model, merged_signals)
@@ -290,7 +264,7 @@ def process_response_impl(
     session._token_count += count_tokens(text)
     for block in contract.content_blocks:
         if block.get("type") == "tool_use" and block.get("name"):
-            session._tool_names_seen.add(cast(str, block["name"]))
+            session._tool_names_seen.add(cast("str", block["name"]))
 
     if os.getenv("TOK_NEURO_REACTOR", "0") == "1" and "EXECUTE_JIT(@" in text:
         import re
@@ -311,8 +285,7 @@ def process_response_impl(
             merged_signals[f"jit_macro_executed_{m_name}"] = 1
 
     session._drift_detected_previous_turn = bool(
-        merged_signals.get("semantic_drift_detected")
-        or merged_signals.get("non_tok_response")
+        merged_signals.get("semantic_drift_detected") or merged_signals.get("non_tok_response")
     )
 
     return ProcessedRuntimeResponse(
@@ -326,4 +299,5 @@ def process_response_impl(
 
 
 def pressure_score(signals: dict[str, int]) -> int:
+    """Calculate semantic pressure score from behavior signals."""
     return _semantic_pressure_score(signals)

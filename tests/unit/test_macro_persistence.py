@@ -1,32 +1,30 @@
-import unittest
-import os
 import datetime
+import os
 import shutil
 import sys
+import unittest
 from pathlib import Path
 
 # Ensure project root is importable
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from tok.neuro.ir import Instruction, Macro, MacroRegistry, MacroProvenance
+from tok.neuro.ir import Instruction, Macro, MacroProvenance, MacroRegistry
 from tok.neuro.miner import IRPatternMiner
 
 
 class TestMacroPersistence(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.test_dir = Path("/tmp/tok_test_macros")
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
         self.test_dir.mkdir(parents=True)
         self.test_path = self.test_dir / "macros.tok"
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
 
-    def test_serialization_round_trip(self):
+    def test_serialization_round_trip(self) -> None:
         instruction = Instruction(op="add", args=("$p0", "$p1"), target="res")
         macro = Macro(
             name="test_macro",
@@ -41,16 +39,16 @@ class TestMacroPersistence(unittest.TestCase):
         data = macro.to_dict()
         restored = Macro.from_dict(data)
 
-        self.assertEqual(restored.name, "test_macro")
-        self.assertEqual(len(restored.instructions), 1)
-        self.assertEqual(restored.instructions[0].op, "add")
-        self.assertEqual(restored.hit_count, 5)
-        self.assertTrue(restored.is_durable)
-        self.assertIsNotNone(restored.provenance)
+        assert restored.name == "test_macro"
+        assert len(restored.instructions) == 1
+        assert restored.instructions[0].op == "add"
+        assert restored.hit_count == 5
+        assert restored.is_durable
+        assert restored.provenance is not None
         if restored.provenance is not None:
-            self.assertEqual(restored.provenance.source_code, "add($p0, $p1)")
+            assert restored.provenance.source_code == "add($p0, $p1)"
 
-    def test_registry_persistence(self):
+    def test_registry_persistence(self) -> None:
         registry = MacroRegistry()
         m1 = Macro(
             name="m1",
@@ -69,23 +67,21 @@ class TestMacroPersistence(unittest.TestCase):
         registry.register(m2)
 
         registry.save_global(str(self.test_path))
-        self.assertTrue(self.test_path.exists())
+        assert self.test_path.exists()
 
         new_registry = MacroRegistry()
         new_registry.load_global(str(self.test_path))
 
-        self.assertIn("m1", new_registry.macros)
-        self.assertIn("m2", new_registry.macros)
+        assert "m1" in new_registry.macros
+        assert "m2" in new_registry.macros
         m1_macro = new_registry.get("m1")
-        self.assertIsNotNone(m1_macro)
+        assert m1_macro is not None
         if m1_macro is not None:
-            self.assertEqual(m1_macro.hit_count, 10)
+            assert m1_macro.hit_count == 10
 
-    def test_decay_logic(self):
+    def test_decay_logic(self) -> None:
         registry = MacroRegistry()
-        old_date = (
-            datetime.datetime.now() - datetime.timedelta(days=10)
-        ).isoformat()
+        old_date = (datetime.datetime.now() - datetime.timedelta(days=10)).isoformat()
         recent_date = datetime.datetime.now().isoformat()
 
         # 1. Old and low hits -> should be pruned
@@ -132,17 +128,15 @@ class TestMacroPersistence(unittest.TestCase):
 
         registry.apply_decay(max_age_days=7, min_hits=3)
 
-        self.assertNotIn("old_low", registry.macros)
-        self.assertIn("old_high", registry.macros)
-        self.assertIn("old_durable", registry.macros)
-        self.assertIn("recent_low", registry.macros)
+        assert "old_low" not in registry.macros
+        assert "old_high" in registry.macros
+        assert "old_durable" in registry.macros
+        assert "recent_low" in registry.macros
 
-    def test_hierarchical_mining_naming(self):
+    def test_hierarchical_mining_naming(self) -> None:
         miner = IRPatternMiner(min_frequency=2)
         existing_registry = MacroRegistry()
-        existing_registry.register(
-            Macro(name="auto_macro_0", instructions=(), inputs=())
-        )
+        existing_registry.register(Macro(name="auto_macro_0", instructions=(), inputs=()))
 
         from tok.neuro.ir import TokIR
 
@@ -157,17 +151,15 @@ class TestMacroPersistence(unittest.TestCase):
 
         discovered = miner.mine([history], registry=existing_registry)
 
-        self.assertEqual(len(discovered), 1)
+        assert len(discovered) == 1
         new_macro = discovered[0]
-        self.assertEqual(new_macro.name, "auto_macro_1")
-        self.assertIsNotNone(new_macro.provenance)
+        assert new_macro.name == "auto_macro_1"
+        assert new_macro.provenance is not None
         if new_macro.provenance is not None:
-            self.assertIn("auto_macro_0", new_macro.provenance.composed_of)
-            self.assertIsNotNone(new_macro.provenance.source_code)
+            assert "auto_macro_0" in new_macro.provenance.composed_of
+            assert new_macro.provenance.source_code is not None
             if new_macro.provenance.source_code is not None:
-                self.assertIn(
-                    "@auto_macro_0 -> pytest", new_macro.provenance.source_code
-                )
+                assert "@auto_macro_0 -> pytest" in new_macro.provenance.source_code
 
 
 if __name__ == "__main__":

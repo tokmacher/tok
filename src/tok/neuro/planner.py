@@ -1,17 +1,28 @@
+"""
+Planning and execution for neural components.
+
+This module provides planning functionality for the neural components,
+including instruction generation, execution planning, and growth strategies.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from tok import verify
 
 from .coding_grow import tokify_code
-from .coding_tasks import CodingTask
-from .llm_clients import ChatLLM
 from .growth_modes import GrowthMode
-from .memory import TokMemory, EpisodeMemory, LessonMemory, RepairMemory
-from collections.abc import Sequence
 from .ir import MacroRegistry, TokIR, execute_ir
-from .. import verify
+from .memory import EpisodeMemory, LessonMemory, RepairMemory, TokMemory
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from .coding_tasks import CodingTask
+    from .llm_clients import ChatLLM
 
 CODE_BLOCK_RE = re.compile(r"```python\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -25,6 +36,7 @@ class Attempt:
 
 
 def extract_code(text: str) -> str:
+    """Extract Python code from markdown or return raw text."""
     match = CODE_BLOCK_RE.search(text)
     if match:
         return match.group(1).strip() + "\n"
@@ -36,27 +48,23 @@ def extract_code(text: str) -> str:
 
 
 def memory_key(prompt: str) -> tuple[str, ...]:
+    """Extract structure tokens from prompt for memory retrieval."""
     tok = tokify_code(prompt)
     # Keep structure-heavy tokens for retrieval
-    keep = [
-        t
-        for t in tok.tokens
-        if t.startswith(
-            ("cue:", "type:", "out:", "schema:", "meta:order:", "ex:")
-        )
-    ]
+    keep = [t for t in tok.tokens if t.startswith(("cue:", "type:", "out:", "schema:", "meta:order:", "ex:"))]
     return tuple(sorted(set(keep)))[:12]
 
 
 class TokLLMGrowEngine:
-    def __init__(
-        self, llm: ChatLLM, registry: MacroRegistry | None = None
-    ) -> None:
+    """LLM-based growth engine for coding task solving."""
+
+    def __init__(self, llm: ChatLLM, registry: MacroRegistry | None = None) -> None:
         self.llm = llm
         self.registry = registry or MacroRegistry()
         self.memory: list[TokMemory] = []
 
     def _retrieve(self, key: tuple[str, ...], k: int = 3) -> list[str]:
+        """Retrieve k most relevant past solutions by token overlap."""
         query = frozenset(key)
         scored: list[tuple[int, str]] = []
         for m in self.memory:
@@ -66,6 +74,7 @@ class TokLLMGrowEngine:
         return [code for score, code in scored[:k] if score > 0]
 
     def _hint(self, key: tuple[str, ...]) -> str:
+        """Generate a hint based on learned lessons and repairs."""
         key_set = frozenset(key)
         # Check if we have a learned hint in memory
         for m in self.memory:
@@ -76,11 +85,7 @@ class TokLLMGrowEngine:
         key_set = frozenset(key)
 
         # Check for past repair lessons
-        repairs = [
-            m
-            for m in self.memory
-            if isinstance(m, RepairMemory) and m.tokens == key_set
-        ]
+        repairs = [m for m in self.memory if isinstance(m, RepairMemory) and m.tokens == key_set]
         if repairs:
             # Show the most recent success story if possible
             for r in reversed(repairs):
@@ -95,9 +100,8 @@ class TokLLMGrowEngine:
             return "If the spec mentions even numbers, apply an even filter before aggregating."
         return "Keep it simple and directly follow the signature and examples."
 
-    def propose(
-        self, task: CodingTask, retrieved: list[str], hint: str, failure: str
-    ) -> str:
+    def propose(self, task: CodingTask, retrieved: list[str], hint: str, failure: str) -> str:
+        """Propose code solution given task context and hint."""
         system = (
             "You are a careful Python programmer. Output ONLY a single Python code block.\n"
             "Do not import anything. Do not access files or network. Use pure Python.\n"
@@ -131,6 +135,7 @@ class TokLLMGrowEngine:
         memory_k: int = 3,
         growth_mode: GrowthMode = GrowthMode.EPISODE,
     ) -> Attempt:
+        """Solve a coding task with retries and memory growth."""
         key = memory_key(task.prompt)
         hint = self._hint(key)
         history: list[tuple[str, str]] = []
@@ -143,9 +148,7 @@ class TokLLMGrowEngine:
             # 2. Execute (Symbolic or Python)
             if code.strip().startswith("@"):
                 # Symbolic Macro execution
-                macro_invocation = code.strip()[
-                    1:
-                ]  # e.g. "auto_macro_0($data)"
+                macro_invocation = code.strip()[1:]  # e.g. "auto_macro_0($data)"
                 # Simple parser for @macro($var)
                 match = re.search(r"(\w+)\((.*)\)", macro_invocation)
                 if match:
@@ -164,11 +167,7 @@ class TokLLMGrowEngine:
                             )
                             expected = task.tests[0][1]
                             ok = result == expected
-                            err = (
-                                ""
-                                if ok
-                                else f"Macro {m_name} returned {result}, expected {expected}"
-                            )
+                            err = "" if ok else f"Macro {m_name} returned {result}, expected {expected}"
                         except Exception as e:
                             ok = False
                             err = str(e)
@@ -182,11 +181,7 @@ class TokLLMGrowEngine:
                 # Normal Python execution
                 v_res = verify.verify_coding_task(task, code)
                 ok = v_res.ok
-                err = (
-                    v_res.diagnostics
-                    if v_res.diagnostics
-                    else v_res.failure_type or ""
-                )
+                err = v_res.diagnostics or v_res.failure_type or ""
 
             trace.append(f"attempt{attempt_idx}:{'ok' if ok else 'fail'}")
             history.append((code, err))
@@ -211,9 +206,7 @@ class TokLLMGrowEngine:
                                     final_ok=True,
                                 )
                             )
-                        self.memory.append(
-                            LessonMemory(tokens=frozenset(key), lesson=hint)
-                        )
+                        self.memory.append(LessonMemory(tokens=frozenset(key), lesson=hint))
                 return Attempt(True, code, "", tuple(trace))
             failure = err
 
@@ -239,10 +232,9 @@ def save_tok(
             f.write("# Macros\n")
             for name, m in registry.macros.items():
                 f.write(f"@{name}({', '.join(m.inputs)}):\n")
-                for inst in m.instructions:
-                    f.write(
-                        f"  {inst.target} = {inst.op}({', '.join(str(a) for a in inst.args)})\n"
-                    )
+                f.writelines(
+                    f"  {inst.target} = {inst.op}({', '.join(str(a) for a in inst.args)})\n" for inst in m.instructions
+                )
                 f.write("\n")
 
         f.write("# Rules & Lessons\n")

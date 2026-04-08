@@ -6,7 +6,7 @@ from tok.compression import truncate_large_result
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 
 
-def test_truncate_large_result_chooses_a_safe_line_boundary():
+def test_truncate_large_result_chooses_a_safe_line_boundary() -> None:
     lines = [
         "class Example:",
         "    def build(self):",
@@ -24,16 +24,13 @@ def test_truncate_large_result_chooses_a_safe_line_boundary():
     assert "continue at line" in truncated
     assert "\n... [TRUNCATED" in truncated
     assert (
-        'call_very_long_function("alpha", "beta", "gamma", "delta", "epsilon")'
-        in truncated
+        'call_very_long_function("alpha", "beta", "gamma", "delta", "epsilon")' in truncated
         or "call_very_long_function(" not in truncated
     )
 
 
-def test_truncate_large_result_reports_clear_continuation_metadata():
-    large_text = "\n".join(
-        f"line {idx}: value {idx * 11}" for idx in range(1, 160)
-    )
+def test_truncate_large_result_reports_clear_continuation_metadata() -> None:
+    large_text = "\n".join(f"line {idx}: value {idx * 11}" for idx in range(1, 160))
 
     truncated = truncate_large_result(large_text, limit=500)
 
@@ -43,20 +40,8 @@ def test_truncate_large_result_reports_clear_continuation_metadata():
     assert "line 159:" in truncated
 
 
-def test_build_file_summary_anchors_to_decisive_assignment_over_boilerplate():
-    text = "\n".join(
-        [
-            "class Example:",
-            "    def resolve(self):",
-            "        logger.debug('noise')",
-            "        intermediate = compute_noise()",
-            "        value = compute_value()",
-            "        return value",
-            "",
-            "# repeated boilerplate",
-            "pass",
-        ]
-    )
+def test_build_file_summary_anchors_to_decisive_assignment_over_boilerplate() -> None:
+    text = "class Example:\n    def resolve(self):\n        logger.debug('noise')\n        intermediate = compute_noise()\n        value = compute_value()\n        return value\n\n# repeated boilerplate\npass"
 
     summary = build_file_summary(text, max_chars=280, max_lines=6)
 
@@ -67,16 +52,8 @@ def test_build_file_summary_anchors_to_decisive_assignment_over_boilerplate():
     assert "repeated boilerplate" not in summary
 
 
-def test_build_search_summary_anchors_to_decisive_match_line_over_boilerplate():
-    text = "\n".join(
-        [
-            "src/example.py:3:        logger.debug('noise')",
-            "src/example.py:4:        intermediate = compute_noise()",
-            "src/example.py:5:        result = compute_value()",
-            "src/example.py:6:        return result",
-            "src/example.py:7:        pass",
-        ]
-    )
+def test_build_search_summary_anchors_to_decisive_match_line_over_boilerplate() -> None:
+    text = "src/example.py:3:        logger.debug('noise')\nsrc/example.py:4:        intermediate = compute_noise()\nsrc/example.py:5:        result = compute_value()\nsrc/example.py:6:        return result\nsrc/example.py:7:        pass"
 
     summary = build_search_summary(text, max_chars=280, max_lines=4)
 

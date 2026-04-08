@@ -22,9 +22,9 @@ def load_results(results_file: str) -> dict[str, Any]:
                 return {"results": data}
             if isinstance(data, dict):
                 return data
-            raise TypeError("Unsupported gate results shape")
-    except Exception as e:
-        print(f"Error loading results: {e}", file=sys.stderr)
+            msg = "Unsupported gate results shape"
+            raise TypeError(msg)
+    except Exception:
         sys.exit(1)
 
 
@@ -41,16 +41,8 @@ def generate_summary(
     avg_savings = 0.0
     avg_pressure = 0.0
     if results:
-        savings_values = [
-            r.get("savings_pct", 0)
-            for r in results
-            if r.get("savings_pct") is not None
-        ]
-        pressure_values = [
-            r.get("pressure", 0)
-            for r in results
-            if r.get("pressure") is not None
-        ]
+        savings_values = [r.get("savings_pct", 0) for r in results if r.get("savings_pct") is not None]
+        pressure_values = [r.get("pressure", 0) for r in results if r.get("pressure") is not None]
 
         if savings_values:
             avg_savings = sum(savings_values) / len(savings_values)
@@ -66,15 +58,9 @@ def generate_summary(
         "avg_pressure": round(avg_pressure, 1),
     }
     if release_summary:
-        summary["fallback_fixture_rate"] = release_summary.get(
-            "fallback_fixture_rate", 0.0
-        )
-        summary["billing_delta_usd"] = release_summary.get(
-            "billing_delta_usd", 0.0
-        )
-        summary["billing_delta_pct"] = release_summary.get(
-            "billing_delta_pct", 0.0
-        )
+        summary["fallback_fixture_rate"] = release_summary.get("fallback_fixture_rate", 0.0)
+        summary["billing_delta_usd"] = release_summary.get("billing_delta_usd", 0.0)
+        summary["billing_delta_pct"] = release_summary.get("billing_delta_pct", 0.0)
     return summary
 
 
@@ -95,9 +81,7 @@ def _format_failed_fixtures(
             lines.append(f"- Issues: {', '.join(failures)}")
         lines.append("")
     if len(failed_results) > 10:
-        lines.append(
-            f"... and {len(failed_results) - 10} more failed fixtures"
-        )
+        lines.append(f"... and {len(failed_results) - 10} more failed fixtures")
         lines.append("")
     return lines
 
@@ -113,24 +97,13 @@ def _build_recommendations(
         ]
     recommendations = []
     if summary["avg_savings_pct"] < 15:
-        recommendations.append(
-            "💰 Consider improving compression strategies to increase token savings"
-        )
+        recommendations.append("💰 Consider improving compression strategies to increase token savings")
     if summary["avg_pressure"] > 5:
-        recommendations.append(
-            "🔍 Investigate invisible pressure sources "
-            "and optimize tool usage patterns"
-        )
-    if any(
-        "trend_regressing" in r.get("failures", []) for r in failed_results
-    ):
-        recommendations.append(
-            "📈 Analyze recent performance trends and address regression patterns"
-        )
+        recommendations.append("🔍 Investigate invisible pressure sources and optimize tool usage patterns")
+    if any("trend_regressing" in r.get("failures", []) for r in failed_results):
+        recommendations.append("📈 Analyze recent performance trends and address regression patterns")
     if any("min_savings_pct" in r.get("failures", []) for r in failed_results):
-        recommendations.append(
-            "🎯 Review minimum savings thresholds and adjust compression targets"
-        )
+        recommendations.append("🎯 Review minimum savings thresholds and adjust compression targets")
     if recommendations:
         recommendations.append("")
         return recommendations
@@ -153,8 +126,7 @@ def generate_comment(payload: dict[str, Any], fixture_set: str) -> str:
         "",
         f"**Fixture Set:** `{fixture_set}`",
         f"**Status:** {'✅ PASSED' if summary['failed'] == 0 else '❌ FAILED'}",
-        f"**Results:** {summary['passed']}/{summary['total']} passed "
-        f"({summary['pass_rate']:.1f}%)",
+        f"**Results:** {summary['passed']}/{summary['total']} passed ({summary['pass_rate']:.1f}%)",
         "",
         "### 📊 Metrics Summary",
         "",
@@ -182,24 +154,18 @@ def generate_comment(payload: dict[str, Any], fixture_set: str) -> str:
     return "\n".join(comment_lines)
 
 
-def post_to_github(comment: str) -> int:
+def post_to_github(_comment: str) -> int:
+    _ = _comment
     """Post comment to GitHub (placeholder for future implementation)."""
     # For now, just print the comment (actual GitHub API integration would need
     # more setup)
-    print("=== PR COMMENT ===")
-    print(comment)
-    print("\n(Note: Actual GitHub API posting would require additional setup)")
     return 0
 
 
 def main() -> None:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Generate PR comments from Tok gate check results"
-    )
-    parser.add_argument(
-        "--results", required=True, help="JSON file with gate check results"
-    )
+    parser = argparse.ArgumentParser(description="Generate PR comments from Tok gate check results")
+    parser.add_argument("--results", required=True, help="JSON file with gate check results")
     parser.add_argument(
         "--fixture-set",
         required=True,
@@ -218,29 +184,22 @@ def main() -> None:
     results = payload.get("results", [])
 
     if not results:
-        print("No results found in file", file=sys.stderr)
         sys.exit(1)
 
     # Generate comment
-    comment = generate_comment(payload, args.fixture_set)
+    generate_comment(payload, args.fixture_set)
 
     # Output comment
     if args.dry_run:
-        print(comment)
+        pass
     else:
         # Post to GitHub (placeholder)
         token = os.environ.get("GITHUB_TOKEN")
         if not token:
-            print("Error: GITHUB_TOKEN not found")
             sys.exit(1)
 
         # For now, just print the comment (actual GitHub API integration would need
         # more setup)
-        print("=== PR COMMENT ===")
-        print(comment)
-        print(
-            "\n(Note: Actual GitHub API posting would require additional setup)"
-        )
 
     return 0
 

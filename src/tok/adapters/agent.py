@@ -1,10 +1,10 @@
 """
 Tok agent runner — live proof of concept.
 
-Inverted design: Tok tool calls live IN the text stream, not in a special API
-field. Any model that can generate text can call tools — no JSON function-calling
-support needed. The parser detects @UpperCase blocks and dispatches them
-immediately as they stream.
+Inverted design: Tok tool calls live IN the text stream, not in a special
+API field. Any model that can generate text can call tools — no JSON
+function-calling support needed. The parser detects @UpperCase blocks and
+dispatches them immediately as they stream.
 
 Usage:
     Add OPENROUTER_API_KEY=... to a .env file in this directory, then:
@@ -12,23 +12,36 @@ Usage:
     python agent.py "What's the weather in Tokyo and London?"
 """
 
+from __future__ import annotations
+
 import argparse
 import json
+import logging
 import os
 import sys
 import time
-from typing import Any, cast
-from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from tok.analysis.prompt import TOK_SYSTEM_PROMPT
+from tok.protocol.models import TokNode
+from tok.protocol.parser import TokParser, serialize
+from tok.protocol.schema import DEFAULT_SCHEMA
+from tok.utils.token_utils import count_tokens
+
 from .adapters import TextLoopAdapter
-from ..protocol.models import TokNode
-from ..protocol.parser import TokParser, serialize
-from ..analysis.prompt import TOK_SYSTEM_PROMPT
-from ..protocol.schema import DEFAULT_SCHEMA
-from ..utils.token_utils import count_tokens
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+    from tok.runtime.types import PreparedRuntimeRequest
+
+# Constants
+SHORT_RESPONSE_LIMIT = 100
+
+logger = logging.getLogger(__name__)
 
 
 class Agent:
@@ -38,12 +51,13 @@ class Agent:
         self.name = name
 
     def respond(self, message: str) -> str:
+        """Generate a response to the given message."""
         raise NotImplementedError
 
 
 load_dotenv()
 
-# ── Client ────────────────────────────────────────────────────────────────────
+# ── Client ───────────────────────────────────────────────────────────
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -57,10 +71,10 @@ MODEL = "openai/gpt-4.1-mini"
 TEXT_LOOP_ADAPTER = TextLoopAdapter()
 
 
-# ── Mock tools ────────────────────────────────────────────────────────────────
+# ── Mock tools ──────────────────────────────────────────────────────
 
 
-def get_weather(location: str, days: int = 3, **kwargs: Any) -> list[TokNode]:
+def get_weather(location: str, days: int = 3, **kwargs: object) -> list[TokNode]:
     """Mock weather tool."""
     mock = {
         "San Francisco": [
@@ -88,10 +102,7 @@ def get_weather(location: str, days: int = 3, **kwargs: Any) -> list[TokNode]:
     result = TokNode(
         type="result",
         headers=["city", "high", "low", "condition"],
-        rows=[
-            [city or location, high, low, cond]
-            for high, low, cond in rows_data
-        ],
+        rows=[[city or location, high, low, cond] for high, low, cond in rows_data],
     )
     return [result]
 
@@ -110,7 +121,8 @@ def dispatch(node: TokNode) -> TokNode | None:
         return None
     try:
         result = fn(**node.attrs)
-    except Exception:
+    except (TypeError, ValueError, KeyError, AttributeError) as e:
+        logger.debug("Tool dispatch failed: %s", e, exc_info=True)
         return None
     return cast("TokNode | None", result)
 
@@ -131,7 +143,6 @@ def run_legacy_turn(prompt: str, format_name: str) -> int:
         ),
     }
 
-    print(f"\n[Comparison] Fetching {format_name} response...")
     try:
         completion = client.chat.completions.create(
             model=MODEL,
@@ -144,24 +155,17 @@ def run_legacy_turn(prompt: str, format_name: str) -> int:
         text = completion.choices[0].message.content
         if text is None:
             return 0
-        toks = count_tokens(text)
-        print(f"[{format_name}] Tokens: {toks}")
-        return toks
-    except Exception as e:
-        print(f"[{format_name}] Failed: {e}")
+        return count_tokens(text)
+    except Exception:
+        logger.debug("Legacy turn failed", exc_info=True)
         return 0
 
 
 # ── Agent loop ────────────────────────────────────────────────────────────────
 
 
-def run(user_input: str, compare: bool = False) -> None:
+def run(user_input: str, *, compare: bool = False) -> None:
     """Multi-turn agent loop with Tok's 'Active Interruption' logic."""
-
-    print(f"\n{'═' * 60}")
-    print(f"  User: {user_input}")
-    print(f"{'═' * 60}\n")
-
     legacy_toks = {}
     if compare:
         for fmt in ["JSON", "XML"]:
@@ -173,7 +177,6 @@ def run(user_input: str, compare: bool = False) -> None:
     conversation_messages = [{"role": "user", "content": user_tok}]
 
     while True:
-        print("\n── Tok response (streaming) ──")
         parser = TokParser()
         messages, prepared = TEXT_LOOP_ADAPTER.prepare_messages(
             model=MODEL,
@@ -185,7 +188,7 @@ def run(user_input: str, compare: bool = False) -> None:
         try:
             stream = client.chat.completions.create(
                 model=MODEL,
-                messages=cast(Any, messages),
+                messages=cast("Any", messages),
                 stream=True,
                 extra_headers={
                     "HTTP-Referer": "https://github.com/tok-lang/tok",
@@ -199,43 +202,33 @@ def run(user_input: str, compare: bool = False) -> None:
                 interrupted,
                 tta,
             ) = _collect_tok_stream(stream, parser, start_time)
-        except Exception as e:
-            print(f"\n[error] LLM call failed: {e}")
+        except Exception:
+            logger.debug("Agent run failed", exc_info=True)
             break
 
-        tok_count = _finalize_tok_turn(
-            response_text, prepared, start_time, tta
-        )
+        tok_count = _finalize_tok_turn(response_text, prepared, start_time, tta)
         _print_comparison(compare, legacy_toks, tok_count)
         if _should_exit_turn(tool_results, interrupted, response_text):
             break
-        _append_turn_messages(
-            conversation_messages, response_text, tool_results
-        )
-
-    print("\n── Task Complete ──\n")
+        _append_turn_messages(conversation_messages, response_text, tool_results)
 
 
 def _finalize_tok_turn(
     response_text: str,
-    prepared: Any,
+    prepared: object,
     start_time: float,
     tta: float | None,
 ) -> int:
     end_time = time.time()
-    print()
+    typed_prepared = cast("PreparedRuntimeRequest", prepared)
     if response_text:
         TEXT_LOOP_ADAPTER.finalize(
             text=response_text,
             model=MODEL,
-            behavior_signals=prepared.behavior_signals,
+            behavior_signals=typed_prepared.behavior_signals,
         )
     tok_count = count_tokens(response_text)
-    duration = end_time - start_time
-    tta_str = f"{tta:.2f}s" if tta else "N/A"
-    print(
-        f"\n[Tok] Tokens: {tok_count} | Time: {duration:.2f}s | TTA: {tta_str}"
-    )
+    end_time - start_time
     return tok_count
 
 
@@ -246,17 +239,11 @@ def _print_comparison(
 ) -> None:
     if not compare:
         return
-    print("\nLIVE COMPARISON (This Turn):")
-    for fmt, t in legacy_toks.items():
-        savings = (t - tok_count) / t * 100 if t > 0 else 0
-        print(
-            f" {fmt}: {t} tokens vs Tok: {tok_count} ({savings:.1f}% savings)"
-        )
+    for t in legacy_toks.values():
+        (t - tok_count) / t * 100 if t > 0 else 0
 
 
-def _should_exit_turn(
-    tool_results: list[TokNode], interrupted: bool, response_text: str
-) -> bool:
+def _should_exit_turn(tool_results: list[TokNode], interrupted: bool, response_text: str) -> bool:
     return not tool_results and (not interrupted or "@msg" in response_text)
 
 
@@ -265,18 +252,13 @@ def _append_turn_messages(
     response_text: str,
     tool_results: list[TokNode],
 ) -> None:
-    conversation_messages.append(
-        {"role": "assistant", "content": response_text}
-    )
+    conversation_messages.append({"role": "assistant", "content": response_text})
     if tool_results:
         error_nodes = [n for n in tool_results if n.type == "error"]
         actual_results = [n for n in tool_results if n.type != "error"]
         if error_nodes:
             errs = json.dumps([n.text for n in error_nodes])
-            msg = (
-                f"SYNTAX ERROR(S) detected in your last response:\n"
-                f"{errs}\n\nPlease fix the attributes and try again."
-            )
+            msg = f"SYNTAX ERROR(S) detected in your last response:\n{errs}\n\nPlease fix the attributes and try again."
             conversation_messages.append({"role": "user", "content": msg})
         elif actual_results:
             results_tok = serialize(actual_results)
@@ -287,15 +269,13 @@ def _append_turn_messages(
                 }
             )
     else:
-        conversation_messages.append(
-            {"role": "user", "content": "Please continue."}
-        )
+        conversation_messages.append({"role": "user", "content": "Please continue."})
 
 
-def _extract_chunk_delta(chunk: Any) -> str:
-    if not hasattr(chunk, "choices") or not cast(Any, chunk).choices:
+def _extract_chunk_delta(chunk: object) -> str:
+    if not hasattr(chunk, "choices") or not cast("Any", chunk).choices:
         return ""
-    return cast(Any, chunk).choices[0].delta.content or ""
+    return cast("Any", chunk).choices[0].delta.content or ""
 
 
 def _record_tta(tta: float | None, start_time: float) -> float:
@@ -316,17 +296,13 @@ def _handle_stream_node(
         if (
             err_msg is not None
             and "Missing required attribute" in err_msg
-            and len(response_text) < 100
+            and len(response_text) < SHORT_RESPONSE_LIMIT
         ):
             return tool_results, tta, False
 
         tta = _record_tta(tta, start_time)
-        msg = f"\n  [agent] [tok-interrupt] syntax error: {err_msg}"
-        print(msg)
         response_text += f"\n[SYNTAX ERROR] {err_msg}"
-        tool_results.append(
-            TokNode(type="error", text=err_msg or "unknown error")
-        )
+        tool_results.append(TokNode(type="error", text=err_msg or "unknown error"))
         return tool_results, tta, True
 
     if node.type.lower() == "result":
@@ -339,7 +315,6 @@ def _handle_stream_node(
 
     if node.type[0].isupper():
         tta = _record_tta(tta, start_time)
-        print("\n  [agent] [tok-interrupt] interrupting stream...")
         return tool_results, tta, True
 
     return tool_results, tta, False
@@ -359,8 +334,6 @@ def _handle_active_node_validation(
     is_valid, err_msg = DEFAULT_SCHEMA.validate(active_node)
     if not is_valid and err_msg and "Unknown attribute" in err_msg:
         tta = _record_tta(tta, start_time)
-        msg = f"\n  [agent] [tok-interrupt] instant error: {err_msg}"
-        print(msg)
         response_text += f"\n[SYNTAX ERROR] {err_msg}"
         tool_results.append(TokNode(type="error", text=err_msg))
 
@@ -377,7 +350,6 @@ def _process_flushed_nodes(
     for node in parser.flush():
         is_valid, err_msg = DEFAULT_SCHEMA.validate(node)
         if not is_valid:
-            print(f"\n  [agent] syntax error: {err_msg}")
             tool_results.append(
                 TokNode(
                     type="error",
@@ -397,18 +369,17 @@ def _process_flushed_nodes(
 
 
 def _collect_tok_stream(
-    stream: Any, parser: TokParser, start_time: float
+    stream: object, parser: TokParser, start_time: float
 ) -> tuple[str, list[TokNode], bool, float | None]:
     response_text = ""
     tool_results: list[TokNode] = []
     interrupted = False
     tta: float | None = None
 
-    for chunk in stream:
+    for chunk in cast("Iterator[object]", stream):
         delta = _extract_chunk_delta(chunk)
         if not delta:
             continue
-        print(delta, end="", flush=True)
         response_text += delta
 
         for node in parser.feed(delta):
@@ -428,9 +399,7 @@ def _collect_tok_stream(
         if interrupted:
             break
 
-        tool_results, tta = _process_flushed_nodes(
-            parser, response_text, tool_results, start_time, tta
-        )
+        tool_results, tta = _process_flushed_nodes(parser, response_text, tool_results, start_time, tta)
 
     return response_text, tool_results, interrupted, tta
 
@@ -439,17 +408,12 @@ def _collect_tok_stream(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "prompt", nargs="?", default="What's the weather forecast for Tokyo?"
-    )
-    parser.add_argument(
-        "--compare", action="store_true", help="Compare with JSON/XML"
-    )
+    parser.add_argument("prompt", nargs="?", default="What's the weather forecast for Tokyo?")
+    parser.add_argument("--compare", action="store_true", help="Compare with JSON/XML")
     args = parser.parse_args()
 
     api_key = os.getenv("OPENROUTER_API_KEY", "")
     if not api_key:
-        print("OPENROUTER_API_KEY missing.")
         sys.exit(1)
 
     run(args.prompt, compare=args.compare)

@@ -67,20 +67,13 @@ class FamilyAdaptiveState:
 
 
 def identify_model_family(model: str) -> ModelFamily:
+    """Identify the model family from a model identifier string."""
     lowered = model.strip().lower()
     if lowered.startswith("google/") or "gemini" in lowered:
         return ModelFamily(provider="google", family="gemini")
-    if (
-        lowered.startswith("openai/")
-        or lowered.startswith("gpt-")
-        or "/gpt-" in lowered
-    ):
+    if lowered.startswith(("openai/", "gpt-")) or "/gpt-" in lowered:
         return ModelFamily(provider="openai", family="gpt")
-    if (
-        lowered.startswith("anthropic/")
-        or lowered.startswith("claude-")
-        or "/claude-" in lowered
-    ):
+    if lowered.startswith(("anthropic/", "claude-")) or "/claude-" in lowered:
         return ModelFamily(provider="anthropic", family="claude")
     if "deepseek" in lowered:
         return ModelFamily(provider="deepseek", family="deepseek")
@@ -92,6 +85,7 @@ def identify_model_family(model: str) -> ModelFamily:
 
 
 def policy_for_model(model: str) -> SmartZonePolicy:
+    """Return the smart zone policy for a given model."""
     family = ModelFamily(provider="universal", family="universal")
     return _make_policy(
         family,
@@ -102,10 +96,12 @@ def policy_for_model(model: str) -> SmartZonePolicy:
 
 
 def initial_state(policy: SmartZonePolicy) -> FamilyAdaptiveState:
+    """Create initial adaptive state for a policy."""
     return FamilyAdaptiveState(mode=policy.default_mode)
 
 
 def pressure_score(signals: dict[str, int]) -> int:
+    """Calculate pressure score from behavior signals."""
     weights = {
         "repeat_file_read": 2,
         "repeat_search": 2,
@@ -125,7 +121,8 @@ def detect_task_type(
     tool_names: list[str],
     content_patterns: dict[str, int] | None = None,
 ) -> tuple[str, float]:
-    """Detect task type (coding/research/mixed) from tool usage patterns.
+    """
+    Detect task type (coding/research/mixed) from tool usage patterns.
 
     Returns (task_type, confidence) tuple.
 
@@ -156,15 +153,9 @@ def detect_task_type(
         "code_search",
     }
 
-    tool_set = set(
-        t.lower().replace("_", "").replace("-", "") for t in tool_names
-    )
-    coding_set = set(
-        t.lower().replace("_", "").replace("-", "") for t in coding_tools
-    )
-    research_set = set(
-        t.lower().replace("_", "").replace("-", "") for t in research_tools
-    )
+    tool_set = {t.lower().replace("_", "").replace("-", "") for t in tool_names}
+    coding_set = {t.lower().replace("_", "").replace("-", "") for t in coding_tools}
+    research_set = {t.lower().replace("_", "").replace("-", "") for t in research_tools}
 
     coding_matches = len(tool_set & coding_set)
     research_matches = len(tool_set & research_set)
@@ -180,7 +171,7 @@ def detect_task_type(
     if coding_matches > research_matches * 1.5:
         confidence = min(1.0, coding_matches / max(total, 1))
         return "coding", confidence
-    elif research_matches > coding_matches * 1.5:
+    if research_matches > coding_matches * 1.5:
         confidence = min(1.0, research_matches / max(total, 1))
         return "research", confidence
 
@@ -202,17 +193,13 @@ def advance_state(
 ) -> FamilyAdaptiveState:
     """Advance state while keeping the runtime on the universal profile."""
     pressure = pressure_score(signals)
-    clean_streak = (
-        state.clean_streak + 1 if pressure <= policy.relax_threshold else 0
-    )
+    clean_streak = state.clean_streak + 1 if pressure <= policy.relax_threshold else 0
 
     # Update task type detection if tool names provided
     task_type = state.task_type
     task_confidence = state.task_confidence
     if tool_names:
-        detected_type, detected_conf = detect_task_type(
-            tool_names, content_patterns
-        )
+        detected_type, detected_conf = detect_task_type(tool_names, content_patterns)
         # Only update if confidence is higher than current
         if detected_conf > task_confidence:
             task_type = detected_type
@@ -234,6 +221,7 @@ def _make_policy(
     balanced_threshold: int,
     recovery_threshold: int,
 ) -> SmartZonePolicy:
+    """Create a smart zone policy for a model family."""
     universal_memory_profile = MemoryProjectionProfile(
         field_limits={
             "files": 3,

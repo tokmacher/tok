@@ -2,8 +2,8 @@ import ast
 import os
 from pathlib import Path
 
-from ..utils.delta import TokDelta
-from ..utils.sifter import DirectoryWalker
+from tok.utils.delta import TokDelta
+from tok.utils.sifter import DirectoryWalker
 
 
 class ImpactEngine:
@@ -12,17 +12,13 @@ class ImpactEngine:
     Detects affected callers and identifies broken call sites.
     """
 
-    def __init__(self, project_root: str):
+    def __init__(self, project_root: str) -> None:
         self.project_root = Path(project_root)
         self.walker = DirectoryWalker()
-        self.index: dict[
-            str, set[str]
-        ] = {}  # {qualified_name: {files_that_use_it}}
-        self.signatures: dict[
-            str, list[str]
-        ] = {}  # {qualified_name: [arg_names]}
+        self.index: dict[str, set[str]] = {}  # {qualified_name: {files_that_use_it}}
+        self.signatures: dict[str, list[str]] = {}  # {qualified_name: [arg_names]}
 
-    def build_project_index(self):
+    def build_project_index(self) -> None:
         """Scan all python files and build a usage index."""
         py_files = self.walker.walk(str(self.project_root))
 
@@ -33,18 +29,14 @@ class ImpactEngine:
                 tree = ast.parse(source)
 
                 # Relativize path for module name
-                rel_parts = (
-                    path.relative_to(self.project_root).with_suffix("").parts
-                )
+                rel_parts = path.relative_to(self.project_root).with_suffix("").parts
                 module_name = ".".join(rel_parts)
 
                 self._index_file_contents(module_name, tree, str(path))
             except Exception:
                 continue
 
-    def _index_file_contents(
-        self, _module_name: str, tree: ast.AST, file_path: str
-    ) -> None:
+    def _index_file_contents(self, _module_name: str, tree: ast.AST, file_path: str) -> None:
         """Extract imports and calls to build the index."""
         # This is a simplified version for demonstration
         for node in ast.walk(tree):
@@ -73,14 +65,10 @@ class ImpactEngine:
             if name in self.index:
                 for caller_file in self.index[name]:
                     # Check if actually 'broken'
-                    status = self._check_if_broken(
-                        caller_file, name, delta.new_attrs.get("params", "")
-                    )
+                    status = self._check_if_broken(caller_file, name, delta.new_attrs.get("params", ""))
                     impacted.append(
                         {
-                            "file": os.path.relpath(
-                                caller_file, self.project_root
-                            ),
+                            "file": os.path.relpath(caller_file, self.project_root),
                             "target": name,
                             "status": status,
                         }
@@ -88,9 +76,7 @@ class ImpactEngine:
 
         return impacted
 
-    def _check_if_broken(
-        self, file_path: str, func_name: str, new_params_str: str
-    ) -> str:
+    def _check_if_broken(self, file_path: str, func_name: str, new_params_str: str) -> str:
         """Heuristic check if a call site is broken by new signature."""
         try:
             with open(file_path) as f:
@@ -98,9 +84,7 @@ class ImpactEngine:
             tree = ast.parse(source)
 
             # Simple check: parse params count
-            new_params = [
-                p.strip() for p in new_params_str.split(",") if p.strip()
-            ]
+            new_params = [p.strip() for p in new_params_str.split(",") if p.strip()]
             required_count = len([p for p in new_params if "=" not in p])
 
             broken = False
@@ -131,8 +115,8 @@ def format_impact_tok(impacted: list[dict[str, str]]) -> str:
 
     if len(impacted) > 5:
         # High Impact Event Summarization
-        targets = set(i["target"] for i in impacted)
-        files = set(i["file"] for i in impacted)
+        targets = {i["target"] for i in impacted}
+        files = {i["file"] for i in impacted}
         return (
             f"\n@impact_context\n"
             f"  @alert HighImpactEvent: {len(files)}_files_affected\n"

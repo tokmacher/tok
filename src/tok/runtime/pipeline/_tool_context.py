@@ -7,13 +7,13 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from ...compression import FILE_LIKE_TOOLS
-from ..repeat_targets import (
+from tok.compression import FILE_LIKE_TOOLS
+from tok.runtime.repeat_targets import (
     display_target_label,
     logical_target_identity,
     normalize_tool_family,
 )
-from ..types import NormalizedToolEvent
+from tok.runtime.types import NormalizedToolEvent
 
 logger = logging.getLogger("tok.runtime.tool_processing")
 
@@ -31,7 +31,8 @@ class ToolContextModel(BaseModel):
     def _name_must_not_be_blank(cls, value: str) -> str:
         normalized = str(value or "").strip()
         if not normalized:
-            raise ValueError("blank tool name")
+            msg = "blank tool name"
+            raise ValueError(msg)
         return normalized
 
     @field_validator("path", "query")
@@ -43,16 +44,11 @@ class ToolContextModel(BaseModel):
         return cleaned or None
 
 
-def _is_supported_bypass_target(
-    tool_name: str, tool_input: dict[str, Any]
-) -> bool:
+def _is_supported_bypass_target(tool_name: str, tool_input: dict[str, Any]) -> bool:
     lowered = str(tool_name or "").lower()
     if lowered not in FILE_LIKE_TOOLS:
         return False
-    return any(
-        tool_input.get(key)
-        for key in ("path", "file_path", "AbsolutePath", "TargetFile")
-    )
+    return any(tool_input.get(key) for key in ("path", "file_path", "AbsolutePath", "TargetFile"))
 
 
 def logical_target_key_from_context(
@@ -62,9 +58,7 @@ def logical_target_key_from_context(
     query: str | None = None,
     command: str | None = None,
 ) -> tuple[str, str, str]:
-    family, logical_target = logical_target_identity(
-        tool_name, path=path, query=query, command=command
-    )
+    family, logical_target = logical_target_identity(tool_name, path=path, query=query, command=command)
     return (
         family,
         logical_target,
@@ -97,12 +91,7 @@ def _extract_tool_input_fields(
         or tool_input.get("AbsolutePath")
         or tool_input.get("TargetFile")
     )
-    query = (
-        tool_input.get("query")
-        or tool_input.get("pattern")
-        or tool_input.get("search")
-        or tool_input.get("text")
-    )
+    query = tool_input.get("query") or tool_input.get("pattern") or tool_input.get("search") or tool_input.get("text")
     return path, query
 
 
@@ -110,9 +99,10 @@ def _apply_bypass_marker(
     tool_input: dict[str, Any],
     tool_name: str,
     path: str | None,
-    tool_id: Any,
+    tool_id: str | None,
 ) -> tuple[dict[str, Any], bool]:
-    """Apply bypass marker to tool_input if target is supported.
+    """
+    Apply bypass marker to tool_input if target is supported.
 
     Returns updated tool_input and invalid_bypass_marker flag.
     """
@@ -127,8 +117,7 @@ def _apply_bypass_marker(
         )
         return tool_input, False
     logger.warning(
-        "TOK_BYPASS_NEXT_READ_CONSUMED_BY_NON_READ_TOOL | "
-        "marker ignored for unsupported tool | tool_id=%s tool=%s",
+        "TOK_BYPASS_NEXT_READ_CONSUMED_BY_NON_READ_TOOL | marker ignored for unsupported tool | tool_id=%s tool=%s",
         tool_id,
         tool_name,
     )
@@ -136,7 +125,7 @@ def _apply_bypass_marker(
 
 
 def _build_context_dict(
-    tool_name: Any,
+    tool_name: str | None,
     tool_input: dict[str, Any],
     path: str | None,
     query: str | None,
@@ -160,10 +149,7 @@ def _build_context_dict(
             "query": str(query).strip() if query else None,
             "tool_context_validation_failed": True,
         }
-    if (
-        invalid_bypass_marker
-        and "tool_context_validation_failed" not in context_dict
-    ):
+    if invalid_bypass_marker and "tool_context_validation_failed" not in context_dict:
         context_dict["invalid_bypass_marker"] = True
     return context_dict
 
@@ -178,9 +164,7 @@ def _process_message_blocks(
     for block in content:
         if _should_bypass_next_tool_use(block):
             bypass_next_tool_use = True
-            logger.info(
-                "tok_bypass_next_read marker observed in assistant text"
-            )
+            logger.info("tok_bypass_next_read marker observed in assistant text")
         if not isinstance(block, dict) or block.get("type") != "tool_use":
             continue
         invalid_bypass_index, bypass_consumed = _process_single_tool_use(
@@ -196,7 +180,8 @@ def _process_single_tool_use(
     bypass_next_tool_use: bool,
     invalid_bypass_index: int,
 ) -> tuple[int, bool]:
-    """Process a single tool_use block and update result.
+    """
+    Process a single tool_use block and update result.
 
     Returns updated invalid_bypass_index and whether bypass marker was consumed.
     """
@@ -206,24 +191,16 @@ def _process_single_tool_use(
     if not tool_id or not isinstance(tool_input, dict):
         if bypass_next_tool_use:
             invalid_bypass_index += 1
-            result[f"__invalid_bypass_marker__:{invalid_bypass_index}"] = {
-                "invalid_bypass_marker": True
-            }
+            result[f"__invalid_bypass_marker__:{invalid_bypass_index}"] = {"invalid_bypass_marker": True}
         return invalid_bypass_index, False
 
     path, query = _extract_tool_input_fields(tool_input)
     invalid_bypass_marker = False
     bypass_consumed = False
     if bypass_next_tool_use:
-        bypass_consumed = _is_supported_bypass_target(
-            str(tool_name), tool_input
-        )
-        tool_input, invalid_bypass_marker = _apply_bypass_marker(
-            tool_input, str(tool_name), path, tool_id
-        )
-    result[tool_id] = _build_context_dict(
-        tool_name, tool_input, path, query, invalid_bypass_marker
-    )
+        bypass_consumed = _is_supported_bypass_target(str(tool_name), tool_input)
+        tool_input, invalid_bypass_marker = _apply_bypass_marker(tool_input, str(tool_name), path, tool_id)
+    result[tool_id] = _build_context_dict(tool_name, tool_input, path, query, invalid_bypass_marker)
     return invalid_bypass_index, bypass_consumed
 
 
@@ -251,13 +228,9 @@ def collect_tool_context_validation_signals(
         if not isinstance(context, dict):
             continue
         if context.get("invalid_bypass_marker"):
-            signals["invalid_bypass_marker_application"] = (
-                signals.get("invalid_bypass_marker_application", 0) + 1
-            )
+            signals["invalid_bypass_marker_application"] = signals.get("invalid_bypass_marker_application", 0) + 1
         if context.get("tool_context_validation_failed"):
-            signals["tool_context_validation_failed"] = (
-                signals.get("tool_context_validation_failed", 0) + 1
-            )
+            signals["tool_context_validation_failed"] = signals.get("tool_context_validation_failed", 0) + 1
     return signals
 
 
@@ -275,10 +248,7 @@ def _extract_path(tool_input: dict[str, Any]) -> str | None:
 
 
 def _extract_command(tool_input: dict[str, Any]) -> str | None:
-    return (
-        str(tool_input.get("command") or tool_input.get("cmd") or "").strip()
-        or None
-    )
+    return str(tool_input.get("command") or tool_input.get("cmd") or "").strip() or None
 
 
 def _extract_query(tool_input: dict[str, Any]) -> str | None:
@@ -294,10 +264,11 @@ def _extract_query(tool_input: dict[str, Any]) -> str | None:
     )
 
 
-def _extract_tok_mode_from_block(block: dict[str, Any]) -> Any | None:
+def _extract_tok_mode_from_block(block: dict[str, Any]) -> object | None:
     """Extract TokMode from a text block containing runtime_session JSON."""
-    from ..smoothness.models import TokMode
     import re
+
+    from tok.runtime.smoothness.models import TokMode
 
     text = block.get("text", "")
     if "runtime_session" not in text:
@@ -311,7 +282,7 @@ def _extract_tok_mode_from_block(block: dict[str, Any]) -> Any | None:
     return None
 
 
-def _find_current_mode(messages: list[dict[str, Any]]) -> Any | None:
+def _find_current_mode(messages: list[dict[str, Any]]) -> object | None:
     for msg in messages:
         if msg.get("role") != "system":
             continue
@@ -327,8 +298,8 @@ def _find_current_mode(messages: list[dict[str, Any]]) -> Any | None:
     return None
 
 
-def _is_raw_mode(current_mode: Any, path: str | None) -> bool:
-    from ..smoothness.models import TokMode
+def _is_raw_mode(current_mode: object | None, path: str | None) -> bool:
+    from tok.runtime.smoothness.models import TokMode
 
     return bool(
         current_mode
@@ -341,18 +312,16 @@ def _is_raw_mode(current_mode: Any, path: str | None) -> bool:
 
 
 def _build_normalized_event(
-    block: dict[str, Any],
-    tool_input: dict[str, Any],
+    block_id: str,
     tool_name: str,
+    tool_input: dict[str, Any],
     path: str | None,
     command: str | None,
     query: str | None,
-    current_mode: Any | None,
+    current_mode: object | None,
 ) -> NormalizedToolEvent:
-    compressibility_class: Literal[
-        "raw", "file_read", "search", "command", "tool_result"
-    ] = cast(
-        Literal["raw", "file_read", "search", "command", "tool_result"],
+    compressibility_class: Literal["raw", "file_read", "search", "command", "tool_result"] = cast(
+        "Literal['raw', 'file_read', 'search', 'command', 'tool_result']",
         normalize_tool_family(tool_name, query=query, command=command),
     )
     if compressibility_class not in {"file_read", "search", "command"}:
@@ -361,7 +330,7 @@ def _build_normalized_event(
         compressibility_class = "raw"
     fidelity_requirement = "high" if path or command else "default"
     return NormalizedToolEvent(
-        id=str(block.get("id", "")),
+        id=block_id,
         name=tool_name,
         args=tool_input,
         path=path,
@@ -397,9 +366,9 @@ def normalize_tool_events(
             query = _extract_query(tool_input)
             events.append(
                 _build_normalized_event(
-                    block,
-                    tool_input,
+                    str(block.get("id", "")),
                     tool_name,
+                    tool_input,
                     path,
                     command,
                     query,

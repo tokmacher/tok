@@ -1,3 +1,5 @@
+"""CLI commands for release management and diagnostics."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,9 +25,7 @@ def stats(
     ] = False,
     breakdown: Annotated[
         bool,
-        typer.Option(
-            "--breakdown", help="Show per-type compression breakdown"
-        ),
+        typer.Option("--breakdown", help="Show per-type compression breakdown"),
     ] = False,
     trends: Annotated[
         bool,
@@ -62,9 +62,7 @@ def stats(
     ] = 5,
     reset: Annotated[
         bool,
-        typer.Option(
-            "--reset", help="Reset lifetime stats (clear global ledger)"
-        ),
+        typer.Option("--reset", help="Reset lifetime stats (clear global ledger)"),
     ] = False,
 ) -> None:
     """Show token savings and fallback state."""
@@ -84,9 +82,7 @@ def stats(
 
 
 def replay(
-    session_file: Annotated[
-        str, typer.Argument(help="Path to .jsonl capture file")
-    ],
+    session_file: Annotated[str, typer.Argument(help="Path to .jsonl capture file")],
     cost_per_mtok: Annotated[
         float,
         typer.Option(
@@ -113,9 +109,7 @@ def replay(
 
 
 def doctor(
-    verbose: Annotated[
-        bool, typer.Option("--verbose", "-v", help="Show all behavior signals")
-    ] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show all behavior signals")] = False,
     report: Annotated[
         bool,
         typer.Option(
@@ -131,9 +125,7 @@ def doctor(
 
 
 def gate_check(
-    fixtures_dir: Annotated[
-        Path, typer.Argument(help="Directory containing replay fixtures")
-    ],
+    fixtures_dir: Annotated[Path, typer.Argument(help="Directory containing replay fixtures")],
     fixtures: Annotated[
         Path | None,
         typer.Option(
@@ -144,9 +136,7 @@ def gate_check(
     ] = None,
     export: Annotated[
         Path | None,
-        typer.Option(
-            "--export", "-e", help="Path to export gate results JSON"
-        ),
+        typer.Option("--export", "-e", help="Path to export gate results JSON"),
     ] = None,
     config: Annotated[
         Path | None,
@@ -165,15 +155,11 @@ def gate_check(
     ] = False,
     fixture_set: Annotated[
         str | None,
-        typer.Option(
-            "--set", help="Fixture set to use (feature, full, or redteam)"
-        ),
+        typer.Option("--set", help="Fixture set to use (feature, full, or redteam)"),
     ] = None,
     emit_metrics: Annotated[
         Path | None,
-        typer.Option(
-            "--emit-metrics", help="Alias for --export (baseline_metrics.json)"
-        ),
+        typer.Option("--emit-metrics", help="Alias for --export (baseline_metrics.json)"),
     ] = None,
     stability_dir: Annotated[
         Path | None,
@@ -215,6 +201,7 @@ def gate_check(
 
 
 def register(app: typer.Typer) -> None:
+    """Register release commands with the CLI app."""
     app.command("stats")(stats)
     app.command("savings")(stats)
     app.command(hidden=True)(replay)

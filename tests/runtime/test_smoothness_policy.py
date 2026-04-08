@@ -1,14 +1,12 @@
-"""Tests for smoothness policy behavior in runtime context.
+"""
+Tests for smoothness policy behavior in runtime context.
 
 These tests verify the policy.py functions work correctly in a runtime
 context, including integration with session state and streaming behavior.
 """
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.smoothness.models import (
-    SmoothnessEventType,
-    TokMode,
-)
+from tok.runtime.smoothness.models import SmoothnessEventType, TokMode
 from tok.runtime.smoothness.policy import choose_tok_mode
 from tok.runtime.smoothness.scoring import score_turn
 
@@ -16,37 +14,31 @@ from tok.runtime.smoothness.scoring import score_turn
 class TestThresholdBands:
     """Tests for each score threshold band."""
 
-    def test_full_tok_threshold(self):
+    def test_full_tok_threshold(self) -> None:
         """Score >= 70 should select FULL_TOK mode."""
         report = score_turn("turn_1", "task_1", [])
         mode = choose_tok_mode(report, None)
         assert mode == TokMode.FULL_TOK
 
-    def test_guarded_tok_threshold(self):
+    def test_guarded_tok_threshold(self) -> None:
         """Score 55-69 should select GUARDED_TOK mode."""
-        events = [
-            make_event(SmoothnessEventType.STREAM_READ_ERROR) for _ in range(3)
-        ]
+        events = [make_event(SmoothnessEventType.STREAM_READ_ERROR) for _ in range(3)]
         report = score_turn("turn_1", "task_1", events)
         mode = choose_tok_mode(report, None)
         assert report.score == 64
         assert mode == TokMode.GUARDED_TOK
 
-    def test_smooth_mode_threshold(self):
+    def test_smooth_mode_threshold(self) -> None:
         """Score 40-54 should select SMOOTH_MODE."""
-        events = [
-            make_event(SmoothnessEventType.STREAM_READ_ERROR) for _ in range(4)
-        ]
+        events = [make_event(SmoothnessEventType.STREAM_READ_ERROR) for _ in range(4)]
         report = score_turn("turn_1", "task_1", events)
         mode = choose_tok_mode(report, None)
         assert report.score == 52
         assert mode == TokMode.SMOOTH_MODE
 
-    def test_lossless_task_mode_threshold(self):
+    def test_lossless_task_mode_threshold(self) -> None:
         """Score < 40 should select LOSSLESS_TASK_MODE."""
-        events = [
-            make_event(SmoothnessEventType.STREAM_READ_ERROR) for _ in range(6)
-        ]
+        events = [make_event(SmoothnessEventType.STREAM_READ_ERROR) for _ in range(6)]
         report = score_turn("turn_1", "task_1", events)
         mode = choose_tok_mode(report, None)
         assert report.score == 28
@@ -56,7 +48,7 @@ class TestThresholdBands:
 class TestModeOverrides:
     """Tests for event-based mode overrides."""
 
-    def test_thinking_block_mutation_override(self):
+    def test_thinking_block_mutation_override(self) -> None:
         """THINKING_BLOCK_MUTATION should force SMOOTH_MODE regardless of score."""
         events = [make_event(SmoothnessEventType.THINKING_BLOCK_MUTATION)]
         report = score_turn("turn_1", "task_1", events)
@@ -64,7 +56,7 @@ class TestModeOverrides:
         assert report.score == 65
         assert mode == TokMode.SMOOTH_MODE
 
-    def test_repeated_stream_recovery_in_turn(self):
+    def test_repeated_stream_recovery_in_turn(self) -> None:
         """Two STREAM_RECOVERY_STARTED in one turn should force SMOOTH_MODE."""
         events = [
             make_event(SmoothnessEventType.STREAM_RECOVERY_STARTED),
@@ -79,7 +71,7 @@ class TestModeOverrides:
 class TestSmoothModeStreamingIntegration:
     """Integration test confirming SMOOTH_MODE affects streaming behavior."""
 
-    def test_smooth_mode_disables_streaming_in_session(self):
+    def test_smooth_mode_disables_streaming_in_session(self) -> None:
         """SMOOTH_MODE should update session to disable streaming."""
         session = RuntimeSession()
 
@@ -95,7 +87,7 @@ class TestSmoothModeStreamingIntegration:
         should_stream = _should_enable_streaming(session)
         assert should_stream is False
 
-    def test_full_tok_enables_streaming(self):
+    def test_full_tok_enables_streaming(self) -> None:
         """FULL_TOK mode should allow streaming."""
         session = RuntimeSession()
 

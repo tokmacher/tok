@@ -20,9 +20,7 @@ def test_release_surface_gate_passes_for_supported_bridge_story() -> None:
     assert failures == []
 
 
-def test_experimental_root_helpers_are_not_in_the_supported_root_exports() -> (
-    None
-):
+def test_experimental_root_helpers_are_not_in_the_supported_root_exports() -> None:
     assert "wrap" not in tok.__all__
     assert "process" not in tok.__all__
     assert "OrchestratorAdapter" not in tok.__all__

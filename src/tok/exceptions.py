@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-
 __all__ = [
-    "TokError",
-    "CompressionError",
-    "SessionError",
     "BridgeUnavailableError",
-    "ReplayGateError",
+    "CompressionError",
     "InvalidSessionStateError",
+    "ReplayGateError",
+    "SessionError",
+    "TokError",
 ]
 
 

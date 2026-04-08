@@ -18,6 +18,7 @@ PROMPT_METRIC_KEYS = (
 def _get_worst_smoothness_event_type(
     smoothness_event_counts: dict[str, int],
 ) -> str | None:
+    """Return the worst smoothness event type based on priority."""
     if not smoothness_event_counts:
         return None
 
@@ -51,6 +52,7 @@ def degradation_reason(
     baseline_only: bool,
     smoothness_event_counts: dict[str, int] | None = None,
 ) -> str:
+    """Determine the degradation reason from session signals."""
     stream_transport_count = (
         int(signals.get("stream_recovery_read_error", 0))
         + int(signals.get("stream_recovery_empty_success", 0))
@@ -69,9 +71,9 @@ def degradation_reason(
         )
         + int(signals.get("fail_open_retry_upstream_pairing_disagreement", 0))
     )
-    recovery_holdover_count = int(
-        signals.get("request_policy_held_by_recovery", 0)
-    ) + int(signals.get("request_policy_recovery_sticky_continuations", 0))
+    recovery_holdover_count = int(signals.get("request_policy_held_by_recovery", 0)) + int(
+        signals.get("request_policy_recovery_sticky_continuations", 0)
+    )
     tool_history_recovery_count = (
         int(signals.get("tok_bridge_tool_history_repaired", 0))
         + int(signals.get("tok_bridge_tool_history_pairing_repaired", 0))
@@ -86,22 +88,15 @@ def degradation_reason(
         and request_shape_count > 0
     ):
         return "request-shape incompatibility"
-    if (
-        stream_transport_count >= recovery_holdover_count
-        and stream_transport_count > 0
-    ):
+    if stream_transport_count >= recovery_holdover_count and stream_transport_count > 0:
         return "stream transport instability"
     if recovery_holdover_count > 0:
         return "recovery holdover"
     if tool_history_recovery_count > 0:
         return "heavy tool-mode recovery"
-    if signals.get("fail_open_compat_response", 0) or signals.get(
-        "processing_error", 0
-    ):
+    if signals.get("fail_open_compat_response", 0) or signals.get("processing_error", 0):
         return "fail-open compatibility"
-    if signals.get("semantic_drift_detected", 0) or signals.get(
-        "non_tok_response", 0
-    ):
+    if signals.get("semantic_drift_detected", 0) or signals.get("non_tok_response", 0):
         return "response contract drift"
     if signals.get("repeat_file_read", 0) or signals.get("repeat_search", 0):
         return "context reacquisition"
@@ -129,6 +124,7 @@ def session_quality(
     tokens_saved: int = 0,
     smoothness_score: int = 100,
 ) -> str:
+    """Calculate the session quality rating from signals."""
     if baseline_only:
         return "degraded"
     if smoothness_score < 55:
@@ -143,9 +139,7 @@ def session_quality(
         or signals.get("fail_open_compat_response", 0)
         or signals.get("fail_open_retry_upstream_pairing_disagreement", 0)
         or signals.get("tok_bridge_provider_pairing_risk_detected", 0)
-        or signals.get(
-            "tok_bridge_assistant_tool_use_text_interleaving_blocked", 0
-        )
+        or signals.get("tok_bridge_assistant_tool_use_text_interleaving_blocked", 0)
         or signals.get("tok_bridge_tool_history_repaired", 0)
         or signals.get("tok_bridge_tool_history_pairing_repaired", 0)
         or signals.get("stream_recovery_retry", 0)

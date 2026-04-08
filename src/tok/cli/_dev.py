@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Fixture generation and benchmarking commands for the Tok CLI."""
+
+from __future__ import annotations
 
 import json
 import os
@@ -16,28 +16,20 @@ dev_app = typer.Typer(help="Fixture generation and benchmarking commands")
 
 @dev_app.command("generate-fixture")
 def generate_fixture(
-    type: Annotated[
-        str, typer.Argument(help="Fixture type: coding, search, pressure")
-    ],
+    type: Annotated[str, typer.Argument(help="Fixture type: coding, search, pressure")],
     name: Annotated[str, typer.Argument(help="Fixture name")],
-    template: Annotated[
-        str, typer.Option("--template", "-t", help="Metadata template")
-    ] = "standard_claude",
+    template: Annotated[str, typer.Option("--template", "-t", help="Metadata template")] = "standard_claude",
     turns: Annotated[
         int,
         typer.Option("--turns", help="Number of turns for coding fixtures"),
     ] = 5,
     searches: Annotated[
         int,
-        typer.Option(
-            "--searches", help="Number of searches for search fixtures"
-        ),
+        typer.Option("--searches", help="Number of searches for search fixtures"),
     ] = 8,
     repeats: Annotated[
         int,
-        typer.Option(
-            "--repeats", help="Number of repeats for pressure fixtures"
-        ),
+        typer.Option("--repeats", help="Number of repeats for pressure fixtures"),
     ] = 6,
     complexity: Annotated[
         str,
@@ -47,27 +39,19 @@ def generate_fixture(
             help="Complexity level: simple, medium, complex",
         ),
     ] = "medium",
-    output: Annotated[
-        str, typer.Option("--output", "-o", help="Output directory")
-    ] = "tests/fixtures/replay",
+    output: Annotated[str, typer.Option("--output", "-o", help="Output directory")] = "tests/fixtures/replay",
 ) -> None:
     """Generate replay fixtures for testing."""
-    from ..testing.fixture_generator import FixtureGenerator
+    from tok.testing.fixture_generator import FixtureGenerator
 
     generator = FixtureGenerator()
 
     if type == "coding":
-        fixture, metadata = generator.generate_coding_session(
-            name, turns, template, complexity
-        )
+        fixture, metadata = generator.generate_coding_session(name, turns, template, complexity)
     elif type == "search":
-        fixture, metadata = generator.generate_search_session(
-            name, searches, template
-        )
+        fixture, metadata = generator.generate_search_session(name, searches, template)
     elif type == "pressure":
-        fixture, metadata = generator.generate_high_pressure_session(
-            name, repeats, template
-        )
+        fixture, metadata = generator.generate_high_pressure_session(name, repeats, template)
     else:
         console.print(f"[red]Unknown fixture type: {type}[/red]")
         console.print("Valid types: coding, search, pressure")
@@ -79,9 +63,7 @@ def generate_fixture(
 
 @dev_app.command("live-benchmark")
 def live_benchmark(
-    benchmark: Annotated[
-        str, typer.Option("--benchmark", help="Benchmark definition to run")
-    ] = "coding-loop",
+    benchmark: Annotated[str, typer.Option("--benchmark", help="Benchmark definition to run")] = "coding-loop",
     mode: Annotated[
         str,
         typer.Option(
@@ -89,37 +71,25 @@ def live_benchmark(
             help="Run baseline, tok-minimal, tok-native, tok-tool-compatible, or compare",
         ),
     ] = "compare",
-    model: Annotated[
-        str, typer.Option("--model", help="Model identifier to use")
-    ] = "deepseek/deepseek-v3.2",
+    model: Annotated[str, typer.Option("--model", help="Model identifier to use")] = "deepseek/deepseek-v3.2",
     output: Annotated[
         Path | None,
         typer.Option("--output", "-o", help="Output directory for artifacts"),
     ] = None,
-    temperature: Annotated[
-        float, typer.Option("--temperature", help="Sampling temperature")
-    ] = 0.0,
-    max_tokens: Annotated[
-        int, typer.Option("--max-tokens", help="Completion token cap")
-    ] = 300,
-    timeout: Annotated[
-        float, typer.Option("--timeout", help="Request timeout in seconds")
-    ] = 120.0,
+    temperature: Annotated[float, typer.Option("--temperature", help="Sampling temperature")] = 0.0,
+    max_tokens: Annotated[int, typer.Option("--max-tokens", help="Completion token cap")] = 300,
+    timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds")] = 120.0,
     turns: Annotated[
         int | None,
         typer.Option("--turns", help="Number of benchmark turns to run"),
     ] = None,
     repeats: Annotated[
         int,
-        typer.Option(
-            "--repeats", help="Repeat compare mode N times for stability"
-        ),
+        typer.Option("--repeats", help="Repeat compare mode N times for stability"),
     ] = 1,
     pricing_prompt: Annotated[
         float | None,
-        typer.Option(
-            "--pricing-prompt", help="Prompt token price per 1M tokens (USD)"
-        ),
+        typer.Option("--pricing-prompt", help="Prompt token price per 1M tokens (USD)"),
     ] = None,
     pricing_completion: Annotated[
         float | None,
@@ -137,7 +107,7 @@ def live_benchmark(
     ] = None,
 ) -> None:
     """Run a controlled live benchmark in baseline, Tok, or compare mode."""
-    from ..testing.live_benchmark import (
+    from tok.testing.live_benchmark import (
         LiveBenchmarkRunner,
         compare_results,
         load_benchmark_definition,
@@ -163,9 +133,8 @@ def live_benchmark(
         try:
             parsed_provider_options = _json.loads(provider_options)
         except Exception as exc:
-            raise typer.BadParameter(
-                f"--provider-options must be valid JSON: {exc}"
-            ) from exc
+            msg = f"--provider-options must be valid JSON: {exc}"
+            raise typer.BadParameter(msg) from exc
     runner = LiveBenchmarkRunner(
         model=model,
         temperature=temperature,
@@ -182,36 +151,16 @@ def live_benchmark(
     if mode == "compare":
         repeated_results: list[dict[str, Any]] = []
         for _ in range(max(1, repeats)):
-            console.print(
-                f"[dim]Running mode: baseline (repeat {_ + 1})...[/dim]"
-            )
-            baseline = runner.run(
-                definition, mode="baseline", turns=effective_turns
-            )
-            console.print(
-                f"[dim]Running mode: tok-minimal (repeat {_ + 1})...[/dim]"
-            )
-            tok_minimal = runner.run(
-                definition, mode="tok-minimal", turns=effective_turns
-            )
-            console.print(
-                f"[dim]Running mode: tok-native (repeat {_ + 1})...[/dim]"
-            )
-            tok_native = runner.run(
-                definition, mode="tok-native", turns=effective_turns
-            )
-            console.print(
-                f"[dim]Running mode: tok-tool-compatible (repeat {_ + 1})...[/dim]"
-            )
-            tok_tool_compatible = runner.run(
-                definition, mode="tok-tool-compatible", turns=effective_turns
-            )
-            console.print(
-                f"[dim]Running mode: tok-neuro (repeat {_ + 1})...[/dim]"
-            )
-            tok_neuro = runner.run(
-                definition, mode="tok-neuro", turns=effective_turns
-            )
+            console.print(f"[dim]Running mode: baseline (repeat {_ + 1})...[/dim]")
+            baseline = runner.run(definition, mode="baseline", turns=effective_turns)
+            console.print(f"[dim]Running mode: tok-minimal (repeat {_ + 1})...[/dim]")
+            tok_minimal = runner.run(definition, mode="tok-minimal", turns=effective_turns)
+            console.print(f"[dim]Running mode: tok-native (repeat {_ + 1})...[/dim]")
+            tok_native = runner.run(definition, mode="tok-native", turns=effective_turns)
+            console.print(f"[dim]Running mode: tok-tool-compatible (repeat {_ + 1})...[/dim]")
+            tok_tool_compatible = runner.run(definition, mode="tok-tool-compatible", turns=effective_turns)
+            console.print(f"[dim]Running mode: tok-neuro (repeat {_ + 1})...[/dim]")
+            tok_neuro = runner.run(definition, mode="tok-neuro", turns=effective_turns)
             repeated_results.append(
                 {
                     "baseline": baseline,
@@ -230,9 +179,7 @@ def live_benchmark(
         tok_neuro = last_run["tok-neuro"]
         minimal_comparison = compare_results(baseline, tok_minimal)
         native_comparison = compare_results(baseline, tok_native)
-        tool_compatible_comparison = compare_results(
-            baseline, tok_tool_compatible
-        )
+        tool_compatible_comparison = compare_results(baseline, tok_tool_compatible)
         neuro_comparison = compare_results(baseline, tok_neuro)
         preferred_mode = select_preferred_mode(
             baseline,
@@ -280,9 +227,7 @@ def live_benchmark(
         )
         if repeats > 1:
             stability_summary = summarize_compare_runs(repeated_results)
-            (output / f"{benchmark}_stability.json").write_text(
-                json.dumps(stability_summary, indent=2)
-            )
+            (output / f"{benchmark}_stability.json").write_text(json.dumps(stability_summary, indent=2))
             (output / f"{benchmark}_stability.md").write_text(
                 render_stability_markdown(benchmark, model, stability_summary)
             )
@@ -293,32 +238,15 @@ def live_benchmark(
             f"tok_native_tokens={tok_native.provider_usage.total_tokens} "
             f"tok_tool_compatible_tokens={tok_tool_compatible.provider_usage.total_tokens}"
         )
-        console.print(
-            f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_baseline.json'}"
-        )
-        console.print(
-            f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-minimal.json'}"
-        )
-        console.print(
-            f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-native.json'}"
-        )
-        console.print(
-            "[cyan]Artifacts:[/cyan] "
-            f"{output / f'{benchmark}_tok-tool-compatible.json'}"
-        )
-        console.print(
-            f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-neuro.json'}"
-        )
-        console.print(
-            f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_compare.md'}"
-        )
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_baseline.json'}")
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-minimal.json'}")
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-native.json'}")
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-tool-compatible.json'}")
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-neuro.json'}")
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_compare.md'}")
         if repeats > 1:
-            console.print(
-                f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.json'}"
-            )
-            console.print(
-                f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.md'}"
-            )
+            console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.json'}")
+            console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.md'}")
         console.print(f"[cyan]Best mode:[/cyan] {preferred_mode}")
         return
 
@@ -339,16 +267,12 @@ def live_benchmark(
         f"tokens={result.provider_usage.total_tokens} turns={result.turn_count} "
         f"success={result.task_success}"
     )
-    console.print(
-        f"[cyan]Artifact:[/cyan] {output / f'{benchmark}_{mode}.json'}"
-    )
+    console.print(f"[cyan]Artifact:[/cyan] {output / f'{benchmark}_{mode}.json'}")
 
 
 @dev_app.command("compression-frontier")
 def compression_frontier(
-    model: Annotated[
-        str, typer.Option("--model", help="Model identifier to use")
-    ] = "deepseek/deepseek-v3.2",
+    model: Annotated[str, typer.Option("--model", help="Model identifier to use")] = "deepseek/deepseek-v3.2",
     benchmarks: Annotated[
         str,
         typer.Option(
@@ -358,28 +282,18 @@ def compression_frontier(
     ] = "coding-loop-5,research-loop-5,research-loop-8",
     repeats: Annotated[
         int,
-        typer.Option(
-            "--repeats", help="How many repeated runs to execute per rung"
-        ),
+        typer.Option("--repeats", help="How many repeated runs to execute per rung"),
     ] = 1,
     output: Annotated[
         Path | None,
         typer.Option("--output", "-o", help="Output directory for artifacts"),
     ] = None,
-    temperature: Annotated[
-        float, typer.Option("--temperature", help="Sampling temperature")
-    ] = 0.0,
-    max_tokens: Annotated[
-        int, typer.Option("--max-tokens", help="Completion token cap")
-    ] = 300,
-    timeout: Annotated[
-        float, typer.Option("--timeout", help="Request timeout in seconds")
-    ] = 120.0,
+    temperature: Annotated[float, typer.Option("--temperature", help="Sampling temperature")] = 0.0,
+    max_tokens: Annotated[int, typer.Option("--max-tokens", help="Completion token cap")] = 300,
+    timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds")] = 120.0,
     pricing_prompt: Annotated[
         float | None,
-        typer.Option(
-            "--pricing-prompt", help="Prompt token price per 1M tokens (USD)"
-        ),
+        typer.Option("--pricing-prompt", help="Prompt token price per 1M tokens (USD)"),
     ] = None,
     pricing_completion: Annotated[
         float | None,
@@ -432,7 +346,7 @@ def compression_frontier(
     ] = False,
 ) -> None:
     """Find the highest compression rung that still stays calm."""
-    from ..testing.frontier import (
+    from tok.testing.frontier import (
         DEFAULT_FRONTIER_PROFILES,
         FrontierCheckpoint,
         render_frontier_markdown,
@@ -445,9 +359,8 @@ def compression_frontier(
         try:
             parsed_provider_options = json.loads(provider_options)
         except Exception as exc:
-            raise typer.BadParameter(
-                f"--provider-options must be valid JSON: {exc}"
-            ) from exc
+            msg = f"--provider-options must be valid JSON: {exc}"
+            raise typer.BadParameter(msg) from exc
 
     pricing: dict[str, float] | None = None
     if pricing_prompt is not None or pricing_completion is not None:
@@ -462,14 +375,8 @@ def compression_frontier(
         if current_only
         else select_frontier_checkpoints(repo_root, baseline_ref=baseline_ref)
     )
-    benchmark_list = [
-        value.strip() for value in benchmarks.split(",") if value.strip()
-    ]
-    openrouter_turn_list = [
-        int(value.strip())
-        for value in openrouter_turns.split(",")
-        if value.strip()
-    ]
+    benchmark_list = [value.strip() for value in benchmarks.split(",") if value.strip()]
+    openrouter_turn_list = [int(value.strip()) for value in openrouter_turns.split(",") if value.strip()]
 
     if output is None:
         output = repo_root / "tmp" / "compression_frontier"
@@ -491,9 +398,7 @@ def compression_frontier(
         openrouter_turn_sets=openrouter_turn_list,
         openrouter_delay_seconds=openrouter_delay,
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
-        openrouter_api_base=os.getenv(
-            "OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"
-        ),
+        openrouter_api_base=os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
     )
 
     json_path = output / "compression_frontier_report.json"
@@ -501,17 +406,13 @@ def compression_frontier(
     json_path.write_text(json.dumps(report.to_dict(), indent=2))
     md_path.write_text(render_frontier_markdown(report))
 
-    console.print(
-        f"[green]✅ Compression frontier complete:[/green] {json_path}"
-    )
+    console.print(f"[green]✅ Compression frontier complete:[/green] {json_path}")
     console.print(f"[cyan]Markdown:[/cyan] {md_path}")
 
 
 @dev_app.command("stress-language")
 def stress_language(
-    model: Annotated[
-        str, typer.Option("--model", help="Model identifier to use")
-    ] = "qwen/qwen3-coder-next",
+    model: Annotated[str, typer.Option("--model", help="Model identifier to use")] = "qwen/qwen3-coder-next",
     output: Annotated[
         Path | None,
         typer.Option("--output", "-o", help="Output directory for artifacts"),
@@ -523,14 +424,10 @@ def stress_language(
             help="Stop after N distinct breakpoint classes",
         ),
     ] = 5,
-    max_tasks: Annotated[
-        int, typer.Option("--max-tasks", help="Hard cap on task count")
-    ] = 24,
+    max_tasks: Annotated[int, typer.Option("--max-tasks", help="Hard cap on task count")] = 24,
     max_tool_rounds: Annotated[
         int,
-        typer.Option(
-            "--max-tool-rounds", help="Hard cap on tool rounds per task"
-        ),
+        typer.Option("--max-tool-rounds", help="Hard cap on tool rounds per task"),
     ] = 8,
     max_retries_per_task: Annotated[
         int,
@@ -546,17 +443,11 @@ def stress_language(
             help="Evidence volume required before payload pressure is considered reached",
         ),
     ] = 12000,
-    temperature: Annotated[
-        float, typer.Option("--temperature", help="Sampling temperature")
-    ] = 0.0,
-    max_tokens: Annotated[
-        int, typer.Option("--max-tokens", help="Completion token cap")
-    ] = 450,
+    temperature: Annotated[float, typer.Option("--temperature", help="Sampling temperature")] = 0.0,
+    max_tokens: Annotated[int, typer.Option("--max-tokens", help="Completion token cap")] = 450,
     progress: Annotated[
         bool,
-        typer.Option(
-            "--progress/--no-progress", help="Show live progress logs"
-        ),
+        typer.Option("--progress/--no-progress", help="Show live progress logs"),
     ] = True,
     provider_options: Annotated[
         str | None,
@@ -574,7 +465,7 @@ def stress_language(
     ] = None,
 ) -> None:
     """Run a long-lived Tok language stress harness against the OpenRouter path."""
-    from ..testing.stress import (
+    from tok.testing.stress import (
         StressHarness,
         StressHarnessConfig,
         default_output_dir,
@@ -588,19 +479,12 @@ def stress_language(
         try:
             parsed_provider_options = json.loads(provider_options)
         except Exception as exc:
-            raise typer.BadParameter(
-                f"--provider-options must be valid JSON: {exc}"
-            ) from exc
+            msg = f"--provider-options must be valid JSON: {exc}"
+            raise typer.BadParameter(msg) from exc
 
     output_dir = output or default_output_dir()
     parsed_required_classes = (
-        tuple(
-            item.strip()
-            for item in required_classes.split(",")
-            if item.strip()
-        )
-        if required_classes
-        else None
+        tuple(item.strip() for item in required_classes.split(",") if item.strip()) if required_classes else None
     )
     config = StressHarnessConfig(
         model=model,
@@ -614,8 +498,7 @@ def stress_language(
         provider_options=parsed_provider_options,
         output_dir=output_dir,
         progress=progress,
-        required_classes=parsed_required_classes
-        or StressHarnessConfig().required_classes,
+        required_classes=parsed_required_classes or StressHarnessConfig().required_classes,
     )
     harness = StressHarness(config)
     result = harness.run()
@@ -627,8 +510,7 @@ def stress_language(
     classes_seen = sorted({bp.breakpoint_class for bp in result.breakpoints})
     coverage = required_class_coverage(classes_seen, config.required_classes)
     early_retention_probe_ran = any(
-        getattr(turn, "phase_name", "") == "retention-probe"
-        and "retention_probe_early" in getattr(turn, "task_id", "")
+        getattr(turn, "phase_name", "") == "retention-probe" and "retention_probe_early" in getattr(turn, "task_id", "")
         for turn in result.turns
     )
     late_retention_probe_ran = any(
@@ -641,9 +523,7 @@ def stress_language(
         f"tasks={result.tasks_completed} breakpoints={len(result.breakpoints)} "
         f"baseline_only={result.baseline_only}"
     )
-    console.print(
-        f"[cyan]Breakpoint classes:[/cyan] {', '.join(classes_seen) if classes_seen else 'none'}"
-    )
+    console.print(f"[cyan]Breakpoint classes:[/cyan] {', '.join(classes_seen) if classes_seen else 'none'}")
     console.print(
         f"[cyan]Coverage:[/cyan] complete={coverage['complete']} "
         f"covered={', '.join(coverage['covered']) or 'none'} "
@@ -661,8 +541,7 @@ def stress_language(
         f"evidence-sufficient={result.seed_evidence_sufficient}"
     )
     console.print(
-        f"[cyan]Memory checks:[/cyan] reuse={result.reuse_checks_run} "
-        f"checkpoint={result.checkpoint_checks_run}"
+        f"[cyan]Memory checks:[/cyan] reuse={result.reuse_checks_run} checkpoint={result.checkpoint_checks_run}"
     )
     console.print(
         f"[cyan]Reuse probes:[/cyan] attempts={result.reuse_probe_attempts} "
@@ -688,32 +567,22 @@ def stress_language(
         f"[cyan]Late retention probes:[/cyan] attempts={result.late_retention_probe_attempts} "
         f"successes={result.late_retention_probe_successes}"
     )
-    console.print(
-        f"[cyan]Early retention probe:[/cyan] {early_retention_probe_ran}"
-    )
-    console.print(
-        f"[cyan]Late retention probe:[/cyan] {late_retention_probe_ran}"
-    )
+    console.print(f"[cyan]Early retention probe:[/cyan] {early_retention_probe_ran}")
+    console.print(f"[cyan]Late retention probe:[/cyan] {late_retention_probe_ran}")
     console.print(
         f"[cyan]Resend modes:[/cyan] {', '.join(result.resend_modes_seen) or 'none'} "
         f"payload_pressure={result.payload_pressure_reached}"
     )
-    console.print(
-        f"[cyan]Compaction eligibility:[/cyan] {result.compaction_eligible}"
-    )
+    console.print(f"[cyan]Compaction eligibility:[/cyan] {result.compaction_eligible}")
     console.print(
         f"[cyan]Run diagnosis:[/cyan] {result.run_diagnosis} "
         f"weak_reasons={', '.join(result.weak_run_reasons) or 'none'}"
     )
-    console.print(
-        f"[cyan]First-anchor failure mode:[/cyan] {result.first_anchor_failure_mode}"
-    )
+    console.print(f"[cyan]First-anchor failure mode:[/cyan] {result.first_anchor_failure_mode}")
     console.print(f"[cyan]Artifacts:[/cyan] {artifacts['stress_run']}")
     console.print(f"[cyan]Artifacts:[/cyan] {artifacts['breakpoints']}")
     console.print(f"[cyan]Artifacts:[/cyan] {artifacts['stress_report']}")
-    console.print(
-        f"[cyan]Artifacts:[/cyan] {artifacts['language_refactor_plan']}"
-    )
+    console.print(f"[cyan]Artifacts:[/cyan] {artifacts['language_refactor_plan']}")
     implicated = summarize_implicated_files(result.breakpoints)
     if implicated:
         console.print("[cyan]Implicated files:[/cyan]")
@@ -761,7 +630,7 @@ def dedup_frontier(
     ] = None,
 ) -> None:
     """Run the replay-first dedup frontier investigation."""
-    from ..analysis import run_dedup_frontier
+    from tok.analysis import run_dedup_frontier
 
     artifacts = run_dedup_frontier(
         output_dir=output,

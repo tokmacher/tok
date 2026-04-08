@@ -1,6 +1,4 @@
-"""
-TokProfiler: Utility for tracking token usage and API costs.
-"""
+"""TokProfiler: Utility for tracking token usage and API costs."""
 
 import time
 from dataclasses import dataclass, field
@@ -17,14 +15,12 @@ class UsageRecord:
 
 
 class TokProfiler:
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str) -> None:
         self.model_name = model_name
         self.history: list[UsageRecord] = []
         self.start_time = time.time()
 
-    def log_turn(
-        self, turn: int, input_tokens: int, output_tokens: int, cost_usd: float
-    ) -> None:
+    def log_turn(self, turn: int, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
         """Record usage for a specific turn."""
         record = UsageRecord(
             turn=turn,
@@ -66,8 +62,6 @@ class TokProfiler:
         ]
 
         for r in self.history:
-            report.append(
-                f"| {r.turn} | {r.input_tokens} | {r.output_tokens} | ${r.cost_usd:.6f} |"
-            )
+            report.append(f"| {r.turn} | {r.input_tokens} | {r.output_tokens} | ${r.cost_usd:.6f} |")
 
         return "\n".join(report)

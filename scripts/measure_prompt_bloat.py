@@ -1,4 +1,5 @@
-"""Baseline measurement script for system prompt bloat in the Tok runtime.
+"""
+Baseline measurement script for system prompt bloat in the Tok runtime.
 
 Runs all scenario measurements and saves results to tmp/prompt_bloat_baseline.json.
 """
@@ -13,23 +14,21 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from tok.analysis.prompt_analyzer import (
+    analyze_directive_overlap,
+    analyze_history_compression,
     measure_base_prompts,
     measure_directive_sizes,
-    measure_grammar_snippets,
-    measure_pressure_impact,
     measure_dynamic_injections,
-    measure_per_turn_actual,
-    simulate_memory_growth,
+    measure_grammar_snippets,
     measure_memory_profiles,
-    analyze_history_compression,
+    measure_per_turn_actual,
+    measure_pressure_impact,
     measure_tool_compression_impact,
-    analyze_directive_overlap,
     run_all_baselines,
+    simulate_memory_growth,
 )
 
-OUTPUT_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "tmp", "prompt_bloat_baseline.json"
-)
+OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "..", "tmp", "prompt_bloat_baseline.json")
 
 
 def _collect_results() -> dict:
@@ -86,32 +85,28 @@ def _collect_results() -> dict:
             measure_tool_compression_impact,
         ),
     ]
-    for msg, key, fn in steps:
-        print(msg)
+    for _msg, key, fn in steps:
         results[key] = fn()
 
-    print("[+] Per-turn actual injection (gateway path)...")
     results["per_turn_actual"] = measure_per_turn_actual()
     results["scenario_baselines"] = run_all_baselines()
     results["directive_overlap"] = analyze_directive_overlap()
     return results
 
 
-def _row(label: str, data: dict) -> None:
-    tokens = data.get("tokens", "?")
-    chars = data.get("chars", "?")
-    print(f"  {label:<43} {tokens:>7} {chars:>7}")
+def _row(_label: str, data: dict) -> None:
+    _ = _label
+    data.get("tokens", "?")
+    data.get("chars", "?")
 
 
-def _print_section(label: str, items: dict) -> None:
-    print()
+def _print_section(_label: str, items: dict) -> None:
+    _ = _label
     for k, v in items.items():
         _row(k, v)
 
 
 def _print_scenario_baselines(results: dict) -> None:
-    print()
-    print("Scenario baselines:")
     for k, v in results["scenario_baselines"].items():
         if isinstance(v, dict) and "tokens" in v:
             _row(k, v)
@@ -122,25 +117,18 @@ def _print_scenario_baselines(results: dict) -> None:
 
 
 def _print_per_turn_actual(results: dict) -> None:
-    print()
-    print("Per-turn actual (gateway path, grammar=None):")
     for k, v in results["per_turn_actual"].items():
         if k != "_component_costs" and isinstance(v, dict) and "tokens" in v:
             _row(k, v)
 
 
 def _print_memory_growth(results: dict) -> None:
-    print()
-    print("Memory growth (wire_state tokens):")
     for k, v in results["memory_growth"].items():
         if "_full_tok" not in k:
             _row(k, v)
 
 
 def _print_summary(results: dict) -> None:
-    print("\n--- Quick Summary ---")
-    print(f"{'Component':<45} {'Tokens':>7} {'Chars':>7}")
-    print("-" * 62)
     _print_section("", results["base_prompts"])
     _print_section("", results["directive_sizes"])
     _print_section("", results["grammar_snippets"])
@@ -149,8 +137,6 @@ def _print_summary(results: dict) -> None:
     _print_per_turn_actual(results)
     _print_memory_growth(results)
 
-    print()
-    print("Scenario baselines:")
     for k, v in results["scenario_baselines"].items():
         if isinstance(v, dict) and "tokens" in v:
             _row(k, v)
@@ -159,30 +145,22 @@ def _print_summary(results: dict) -> None:
                 if isinstance(sv, dict) and "tokens" in sv:
                     _row(f"  {k}/{sk}", sv)
 
-    print()
-    print("Per-turn actual (gateway path, grammar=None):")
     for k, v in results["per_turn_actual"].items():
         if k != "_component_costs" and isinstance(v, dict) and "tokens" in v:
             _row(k, v)
 
-    print()
-    print("Memory growth (wire_state tokens):")
     for k, v in results["memory_growth"].items():
         if "_full_tok" not in k:
             _row(k, v)
 
 
 def main() -> None:
-    print("Tok System Prompt Bloat — Baseline Measurements")
-    print("=" * 60)
-
     results = _collect_results()
 
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     with open(OUTPUT_PATH, "w") as f:
         json.dump(results, f, indent=2)
 
-    print(f"\nBaseline saved to: {OUTPUT_PATH}")
     _print_summary(results)
 
 

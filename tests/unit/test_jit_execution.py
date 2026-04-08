@@ -1,25 +1,20 @@
-import unittest
 import os
 import sys
+import unittest
 from unittest.mock import patch
 
 # Ensure project root is importable
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from tok.neuro.ir import Instruction, Macro, MacroRegistry
-from tok.runtime.core import (
-    RuntimeSession,
-    UniversalTokRuntime,
-)
-from tok.runtime.types import RuntimeRequest
-from tok.runtime.policy.macro_handling import execute_jit_macro
+from tok.runtime.core import RuntimeSession, UniversalTokRuntime
 from tok.runtime.memory.bridge_memory import MemoryEntry
+from tok.runtime.policy.macro_handling import execute_jit_macro
+from tok.runtime.types import RuntimeRequest
 
 
 class TestJitExecution(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.registry = MacroRegistry()
         # Define a test macro: grep -> view
         self.macro = Macro(
@@ -38,18 +33,14 @@ class TestJitExecution(unittest.TestCase):
         # Simulate some recent commands that match the macro
         self.session.bridge_memory.rolling_cmds = [
             MemoryEntry(value="grep reactor", score=1, last_seen_turn=1),
-            MemoryEntry(
-                value="view src/tok/neuro/ir.py", score=1, last_seen_turn=2
-            ),
+            MemoryEntry(value="view src/tok/neuro/ir.py", score=1, last_seen_turn=2),
         ]
 
-    def test_jit_matching_in_prepare_request(self):
+    def test_jit_matching_in_prepare_request(self) -> None:
         # Create a dummy request
         request = RuntimeRequest(
             model="claude-3-opus-20240229",
-            messages=[
-                {"role": "user", "content": "What was the result of the grep?"}
-            ],
+            messages=[{"role": "user", "content": "What was the result of the grep?"}],
             tool_compatible=True,
         )
 
@@ -57,14 +48,10 @@ class TestJitExecution(unittest.TestCase):
         prepared = runtime.prepare_request(request, self.session)
 
         # Check if jit signals are present in the returned prepared request
-        self.assertEqual(
-            prepared.behavior_signals.get("jit_offer_available"), 1
-        )
-        self.assertEqual(
-            prepared.behavior_signals.get("jit_offer_grep_view"), 1
-        )
+        assert prepared.behavior_signals.get("jit_offer_available") == 1
+        assert prepared.behavior_signals.get("jit_offer_grep_view") == 1
 
-    def test_jit_matching_threshold_enforced(self):
+    def test_jit_matching_threshold_enforced(self) -> None:
         # Set hit_count to 1 (below default threshold of 3)
         self.macro.hit_count = 1
         request = RuntimeRequest(
@@ -76,9 +63,9 @@ class TestJitExecution(unittest.TestCase):
         prepared = runtime.prepare_request(request, self.session)
 
         # Should NOT have jit signals
-        self.assertIsNone(prepared.behavior_signals.get("jit_offer_available"))
+        assert prepared.behavior_signals.get("jit_offer_available") is None
 
-    def test_jit_execution_runner(self):
+    def test_jit_execution_runner(self) -> None:
         # Test the symbolic runner directly
         with patch("tok.neuro.ir.execute_ir") as mock_exec:
             mock_exec.return_value = "Found 3 matches."
@@ -89,19 +76,17 @@ class TestJitExecution(unittest.TestCase):
                 "pattern='reactor', file='src/tok/neuro/ir.py'",
             )
 
-            self.assertEqual(result, "Found 3 matches.")
+            assert result == "Found 3 matches."
             # Verify macro use was recorded (3 initial + 1)
-            self.assertEqual(self.macro.hit_count, 4)
+            assert self.macro.hit_count == 4
 
-    def test_jit_arg_parsing(self):
+    def test_jit_arg_parsing(self) -> None:
         from tok.runtime.policy.macro_handling import _parse_jit_args
 
-        args = _parse_jit_args(
-            "pattern='test', file=\"path/to/file.py\", count=5"
-        )
-        self.assertEqual(args["pattern"], "test")
-        self.assertEqual(args["file"], "path/to/file.py")
-        self.assertEqual(args["count"], "5")
+        args = _parse_jit_args("pattern='test', file=\"path/to/file.py\", count=5")
+        assert args["pattern"] == "test"
+        assert args["file"] == "path/to/file.py"
+        assert args["count"] == "5"
 
 
 if __name__ == "__main__":

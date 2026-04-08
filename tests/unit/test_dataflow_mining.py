@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import pytest
 
 from tok.neuro.ir import Instruction, Macro, MacroRegistry, TokIR
@@ -12,13 +11,9 @@ from tok.universal_runtime import RuntimeSession, _jit_context_matches
 
 
 @pytest.fixture(autouse=True)
-def isolate_macro_registry(monkeypatch):
-    monkeypatch.setattr(
-        MacroRegistry, "load_global", lambda self, *a, **kw: None
-    )
-    monkeypatch.setattr(
-        MacroRegistry, "save_global", lambda self, *a, **kw: None
-    )
+def isolate_macro_registry(monkeypatch) -> None:
+    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **kw: None)
+    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +21,7 @@ def isolate_macro_registry(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_context_requirements_defaults_to_empty_dict():
+def test_context_requirements_defaults_to_empty_dict() -> None:
     macro = Macro(
         name="m0",
         instructions=(Instruction(op="view", args=()),),
@@ -35,7 +30,7 @@ def test_context_requirements_defaults_to_empty_dict():
     assert macro.context_requirements == {}
 
 
-def test_context_requirements_round_trips_through_dict():
+def test_context_requirements_round_trips_through_dict() -> None:
     macro = Macro(
         name="m0",
         instructions=(Instruction(op="view", args=()),),
@@ -46,7 +41,7 @@ def test_context_requirements_round_trips_through_dict():
     assert restored.context_requirements == {"file": "src/tok/cli.py"}
 
 
-def test_context_requirements_loads_from_legacy_dict_without_key():
+def test_context_requirements_loads_from_legacy_dict_without_key() -> None:
     """Macros persisted before context_requirements was added load cleanly."""
     data = {
         "name": "m1",
@@ -76,13 +71,11 @@ def _ir(
             target = None
         else:
             op, args, target = item
-        instructions.append(
-            Instruction(op=op, args=tuple(args), target=target)
-        )
+        instructions.append(Instruction(op=op, args=tuple(args), target=target))
     return TokIR(instructions=tuple(instructions))
 
 
-def test_dependency_fingerprint_empty_when_no_targets():
+def test_dependency_fingerprint_empty_when_no_targets() -> None:
     ins = [
         Instruction(op="grep", args=("pattern",)),
         Instruction(op="view", args=("src/foo.py",)),
@@ -91,10 +84,8 @@ def test_dependency_fingerprint_empty_when_no_targets():
     assert fp == ()
 
 
-def test_dependency_fingerprint_captures_target_to_arg_edge():
-    """
-    grep result:=$result → view(path=$result) should produce edge (0, 1).
-    """
+def test_dependency_fingerprint_captures_target_to_arg_edge() -> None:
+    """Grep result:=$result → view(path=$result) should produce edge (0, 1)."""
     ins = [
         Instruction(op="grep", args=("pattern",), target="result"),
         Instruction(op="view", args=("$result",)),
@@ -103,7 +94,7 @@ def test_dependency_fingerprint_captures_target_to_arg_edge():
     assert (0, 1) in fp
 
 
-def test_dependency_fingerprint_no_edge_when_target_not_consumed():
+def test_dependency_fingerprint_no_edge_when_target_not_consumed() -> None:
     ins = [
         Instruction(op="grep", args=("pattern",), target="result"),
         Instruction(op="view", args=("src/other.py",)),  # doesn't use $result
@@ -112,9 +103,11 @@ def test_dependency_fingerprint_no_edge_when_target_not_consumed():
     assert fp == ()
 
 
-def test_miner_distinguishes_patterns_by_dependency():
-    """Two histories with the same op-sequence but different data-flow should
-    not be collapsed into one pattern."""
+def test_miner_distinguishes_patterns_by_dependency() -> None:
+    """
+    Two histories with the same op-sequence but different data-flow should
+    not be collapsed into one pattern.
+    """
     miner = IRPatternMiner(min_frequency=2)
 
     # Pattern A: grep→view, where view consumes grep's result (3 times)
@@ -150,12 +143,10 @@ def test_miner_distinguishes_patterns_by_dependency():
     ins_un = list(unchained.instructions)
     fp_ch = IRPatternMiner._get_dependency_fingerprint(ins_ch, 0, 2)
     fp_un = IRPatternMiner._get_dependency_fingerprint(ins_un, 0, 2)
-    assert fp_ch != fp_un, (
-        "Chained and unchained patterns must have different fingerprints"
-    )
+    assert fp_ch != fp_un, "Chained and unchained patterns must have different fingerprints"
 
 
-def test_miner_embeds_dep_fingerprint_in_provenance():
+def test_miner_embeds_dep_fingerprint_in_provenance() -> None:
     """Mined macros should record the dep fingerprint in provenance.source_code."""
     miner = IRPatternMiner(min_frequency=3)
 
@@ -191,7 +182,7 @@ def _make_session_with_files(*files: str) -> RuntimeSession:
     return session
 
 
-def test_jit_context_matches_when_no_requirements():
+def test_jit_context_matches_when_no_requirements() -> None:
     macro = Macro(
         name="m0",
         instructions=(Instruction(op="view", args=()),),
@@ -202,7 +193,7 @@ def test_jit_context_matches_when_no_requirements():
     assert _jit_context_matches(macro, session) is True
 
 
-def test_jit_context_matches_when_file_is_hot():
+def test_jit_context_matches_when_file_is_hot() -> None:
     macro = Macro(
         name="m0",
         instructions=(Instruction(op="view", args=()),),
@@ -213,20 +204,18 @@ def test_jit_context_matches_when_file_is_hot():
     assert _jit_context_matches(macro, session) is True
 
 
-def test_jit_context_blocked_when_file_not_hot():
+def test_jit_context_blocked_when_file_not_hot() -> None:
     macro = Macro(
         name="m0",
         instructions=(Instruction(op="view", args=()),),
         inputs=(),
         context_requirements={"file": "src/tok/cli.py"},
     )
-    session = _make_session_with_files(
-        "src/tok/gateway.py"
-    )  # cli.py not present
+    session = _make_session_with_files("src/tok/gateway.py")  # cli.py not present
     assert _jit_context_matches(macro, session) is False
 
 
-def test_jit_context_blocked_when_no_active_files():
+def test_jit_context_blocked_when_no_active_files() -> None:
     macro = Macro(
         name="m0",
         instructions=(Instruction(op="view", args=()),),
@@ -237,9 +226,11 @@ def test_jit_context_blocked_when_no_active_files():
     assert _jit_context_matches(macro, session) is False
 
 
-def test_context_requirements_set_during_mining():
-    """When miner finds a pattern with path-like args, context_requirements['file']
-    should be set to the first concrete path."""
+def test_context_requirements_set_during_mining() -> None:
+    """
+    When miner finds a pattern with path-like args, context_requirements['file']
+    should be set to the first concrete path.
+    """
     miner = IRPatternMiner(min_frequency=3)
 
     state = BridgeMemoryState()

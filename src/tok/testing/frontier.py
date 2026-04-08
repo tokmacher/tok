@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Compression frontier harness for checkpoint and profile comparisons."""
+
+from __future__ import annotations
 
 import contextlib
 import json
@@ -9,9 +9,13 @@ import statistics
 import subprocess
 import sys
 import tempfile
+from collections.abc import Generator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 from .live_benchmark import (
     BenchmarkDefinition,
@@ -93,9 +97,7 @@ class FrontierProfileSummary:
     def to_dict(self) -> dict[str, Any]:
         return {
             "profile": self.profile.to_dict(),
-            "benchmark_summaries": [
-                benchmark.to_dict() for benchmark in self.benchmark_summaries
-            ],
+            "benchmark_summaries": [benchmark.to_dict() for benchmark in self.benchmark_summaries],
             "verdict": self.verdict,
             "stop_after": self.stop_after,
             "notes": list(self.notes),
@@ -176,12 +178,8 @@ class FrontierCheckpointReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "checkpoint": self.checkpoint.to_dict(),
-            "benchmark_profiles": [
-                profile.to_dict() for profile in self.benchmark_profiles
-            ],
-            "openrouter_profiles": [
-                profile.to_dict() for profile in self.openrouter_profiles
-            ],
+            "benchmark_profiles": [profile.to_dict() for profile in self.benchmark_profiles],
+            "openrouter_profiles": [profile.to_dict() for profile in self.openrouter_profiles],
             "default_release_profile": self.default_release_profile,
             "experimental_profiles": list(self.experimental_profiles),
             "notes": list(self.notes),
@@ -201,9 +199,7 @@ class CompressionFrontierReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
-            "checkpoints": [
-                checkpoint.to_dict() for checkpoint in self.checkpoints
-            ],
+            "checkpoints": [checkpoint.to_dict() for checkpoint in self.checkpoints],
             "profiles": [profile.to_dict() for profile in self.profiles],
             "benchmarks": list(self.benchmarks),
             "repeats": self.repeats,
@@ -307,10 +303,10 @@ def _savings_pct(total_saved_tokens: int, provider_total_tokens: int) -> float:
 
 
 @contextlib.contextmanager
-def apply_frontier_env(overrides: dict[str, str]) -> Any:
-    previous: dict[str, str | None] = {
-        key: os.environ.get(key) for key in overrides
-    }
+def apply_frontier_env(
+    overrides: dict[str, str],
+) -> Generator[None, None, None]:
+    previous: dict[str, str | None] = {key: os.environ.get(key) for key in overrides}
     os.environ.update(overrides)
     try:
         yield
@@ -359,11 +355,7 @@ def _git_stdout(repo_root: Path, cmd: list[str]) -> str:
 
 
 def _worker_script_path() -> Path:
-    return (
-        Path(__file__).resolve().parents[3]
-        / "scripts"
-        / "frontier_checkpoint_runner.py"
-    )
+    return Path(__file__).resolve().parents[3] / "scripts" / "frontier_checkpoint_runner.py"
 
 
 def _run_checkpoint_worker(
@@ -384,16 +376,14 @@ def _run_checkpoint_worker(
     api_base: str | None,
 ) -> list[dict[str, Any]]:
     worker = _worker_script_path()
-    with tempfile.TemporaryDirectory(
-        prefix="tok_frontier_checkpoint_"
-    ) as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="tok_frontier_checkpoint_") as tmpdir:
         export_dir = Path(tmpdir) / "repo"
         export_dir.mkdir(parents=True, exist_ok=True)
-        archive_cmd = f"git archive {checkpoint.ref} | tar -x -C {export_dir}"
+        archive_cmd = f"git archive {checkpoint.ref} | tar -x -C {export_dir}"  # nosec B602
         subprocess.run(
             archive_cmd,
             cwd=repo_root,
-            shell=True,
+            shell=True,  # nosec B602
             check=True,
             text=True,
         )
@@ -418,15 +408,12 @@ def _run_checkpoint_worker(
             text=True,
             capture_output=True,
             cwd=repo_root,
+            check=False,
         )
         if proc.returncode != 0:
-            detail = (
-                proc.stderr.strip() or proc.stdout.strip() or "worker failed"
-            )
-            raise RuntimeError(
-                f"checkpoint worker failed for {checkpoint.ref} "
-                f"{benchmark}/{profile.name}: {detail}"
-            )
+            detail = proc.stderr.strip() or proc.stdout.strip() or "worker failed"
+            msg = f"checkpoint worker failed for {checkpoint.ref} {benchmark}/{profile.name}: {detail}"
+            raise RuntimeError(msg)
         data = json.loads(proc.stdout)
         return list(data.get("runs", []))
 
@@ -512,50 +499,31 @@ def _aggregate_benchmark_runs(
     for run in runs:
         result = run["candidate"]
         comparison = run["comparison"]
-        total_saved = int(
-            result["compression_metrics"].get("total_saved_tokens", 0)
-        )
+        total_saved = int(result["compression_metrics"].get("total_saved_tokens", 0))
         provider_total = int(result["provider_usage"].get("total_tokens", 0))
         savings_values.append(_savings_pct(total_saved, provider_total))
-        latency_values.append(
-            float(result["provider_usage"].get("latency_ms", 0.0))
-        )
+        latency_values.append(float(result["provider_usage"].get("latency_ms", 0.0)))
         pressure = int(result["response_metrics"].get("invisible_pressure", 0))
         pressure_values.append(pressure)
         if bool(result.get("task_success")):
             success_count += 1
-        response_signals = result["response_metrics"].get(
-            "response_behavior_signals", {}
-        )
+        response_signals = result["response_metrics"].get("response_behavior_signals", {})
         diagnostics = result.get("diagnostics", {})
         recovery_attempt_count += int(
-            response_signals.get("stream_recovery_started", 0)
-            or response_signals.get("stream_recovery_retry", 0)
+            response_signals.get("stream_recovery_started", 0) or response_signals.get("stream_recovery_retry", 0)
         )
-        recovery_success_count += int(
-            response_signals.get("stream_recovery_success_text", 0)
-        ) + int(response_signals.get("stream_recovery_success_tool_use", 0))
-        recovery_fallback_count += int(
-            response_signals.get("stream_recovery_fallback", 0)
+        recovery_success_count += int(response_signals.get("stream_recovery_success_text", 0)) + int(
+            response_signals.get("stream_recovery_success_tool_use", 0)
         )
+        recovery_fallback_count += int(response_signals.get("stream_recovery_fallback", 0))
         recovery_holdover_count += int(
-            result["compression_metrics"]["input_behavior_signals"].get(
-                "request_policy_held_by_recovery", 0
-            )
+            result["compression_metrics"]["input_behavior_signals"].get("request_policy_held_by_recovery", 0)
         )
-        fail_open_count += int(
-            response_signals.get("fail_open_compat_response", 0)
-        )
-        malformed_count += int(
-            response_signals.get("malformed_tok_response", 0)
-        )
+        fail_open_count += int(response_signals.get("fail_open_compat_response", 0))
+        malformed_count += int(response_signals.get("malformed_tok_response", 0))
         non_tok_count += int(response_signals.get("non_tok_response", 0))
-        warning_signal_count += int(
-            diagnostics.get("response_warning_signal_count", 0)
-        )
-        local_failure_count += _count_local_failures(
-            list(result.get("notes", []))
-        )
+        warning_signal_count += int(diagnostics.get("response_warning_signal_count", 0))
+        local_failure_count += _count_local_failures(list(result.get("notes", [])))
         if comparison.get("diagnosis"):
             notes.append(str(comparison["diagnosis"]))
 
@@ -659,23 +627,11 @@ def _frontier_release_profile(
     benchmark_profiles: list[FrontierProfileSummary],
     openrouter_profiles: list[FrontierOpenRouterSummary],
 ) -> tuple[str, list[str]]:
-    stable_profiles = {
-        profile.profile.name
-        for profile in benchmark_profiles
-        if profile.verdict == "stable"
-    }
+    stable_profiles = {profile.profile.name for profile in benchmark_profiles if profile.verdict == "stable"}
     if stable_profiles:
-        ordered = [
-            profile.name
-            for profile in DEFAULT_FRONTIER_PROFILES
-            if profile.name in stable_profiles
-        ]
+        ordered = [profile.name for profile in DEFAULT_FRONTIER_PROFILES if profile.name in stable_profiles]
         default_release = ordered[-1]
-        experimental = [
-            profile.name
-            for profile in DEFAULT_FRONTIER_PROFILES
-            if profile.name not in ordered
-        ]
+        experimental = [profile.name for profile in DEFAULT_FRONTIER_PROFILES if profile.name not in ordered]
         return default_release, experimental
     return "baseline", [profile.name for profile in DEFAULT_FRONTIER_PROFILES]
 
@@ -791,9 +747,7 @@ def _run_current_checkpoint_benchmark(
             api_key=api_key,
             api_base=api_base,
         )
-        baseline = runner.run(
-            definition, mode="baseline", turns=definition.default_turns
-        )
+        baseline = runner.run(definition, mode="baseline", turns=definition.default_turns)
         with apply_frontier_env(profile.env):
             candidate = runner.run(
                 definition,
@@ -811,7 +765,7 @@ def _run_current_checkpoint_benchmark(
     return runs
 
 
-def _load_openai_client(base_url: str, api_key: str) -> Any:
+def _load_openai_client(base_url: str, api_key: str) -> object:
     import openai
 
     return openai.OpenAI(base_url=base_url, api_key=api_key)
@@ -851,11 +805,9 @@ def run_openrouter_probe(
                     tool_compatible=profile.mode != "tok-native",
                 )
                 body_messages = (
-                    [{"role": "system", "content": prepared.body["system"]}]
-                    if prepared.body.get("system")
-                    else []
+                    [{"role": "system", "content": prepared.body["system"]}] if prepared.body.get("system") else []
                 ) + prepared.body["messages"]
-                response = client.chat.completions.create(
+                response = cast("OpenAI", client).chat.completions.create(
                     model=model,
                     messages=body_messages,
                     temperature=0.2,
@@ -871,15 +823,9 @@ def run_openrouter_probe(
                 turn_behavior = dict(prepared.behavior_signals)
                 for key, value in processed.behavior_signals.items():
                     turn_behavior[key] = turn_behavior.get(key, 0) + int(value)
-                total_saved = int(prepared.input_saved_tokens) + int(
-                    processed.output_saved_tokens
-                )
-                provider_total = int(
-                    getattr(response.usage, "total_tokens", 0)
-                )
-                savings_values.append(
-                    _savings_pct(total_saved, provider_total)
-                )
+                total_saved = int(prepared.input_saved_tokens) + int(processed.output_saved_tokens)
+                provider_total = int(getattr(response.usage, "total_tokens", 0))
+                savings_values.append(_savings_pct(total_saved, provider_total))
                 turn_rows.append(
                     FrontierOpenRouterTurn(
                         turn=index,
@@ -905,33 +851,22 @@ def run_openrouter_probe(
                     )
                 )
             for key, value in turn_behavior.items():
-                if (
-                    key.startswith("stream_")
-                    or key.startswith("non_tok")
-                    or key.startswith("malformed")
-                    or key.startswith("fail_open")
-                ):
-                    response_signals[key] = response_signals.get(key, 0) + int(
-                        value
-                    )
+                if key.startswith(("stream_", "non_tok", "malformed", "fail_open")):
+                    response_signals[key] = response_signals.get(key, 0) + int(value)
                 else:
                     input_signals[key] = input_signals.get(key, 0) + int(value)
             if delay_seconds > 0 and index + 1 < turns:
                 time.sleep(delay_seconds)
 
     success_rate = round((turns - total_failures) / max(1, turns), 3)
-    recovery_attempt_count = int(
-        response_signals.get("stream_recovery_started", 0)
-    ) + int(response_signals.get("stream_recovery_retry", 0))
-    recovery_success_count = int(
-        response_signals.get("stream_recovery_success_text", 0)
-    ) + int(response_signals.get("stream_recovery_success_tool_use", 0))
-    recovery_fallback_count = int(
-        response_signals.get("stream_recovery_fallback", 0)
+    recovery_attempt_count = int(response_signals.get("stream_recovery_started", 0)) + int(
+        response_signals.get("stream_recovery_retry", 0)
     )
-    recovery_holdover_count = int(
-        input_signals.get("request_policy_held_by_recovery", 0)
+    recovery_success_count = int(response_signals.get("stream_recovery_success_text", 0)) + int(
+        response_signals.get("stream_recovery_success_tool_use", 0)
     )
+    recovery_fallback_count = int(response_signals.get("stream_recovery_fallback", 0))
+    recovery_holdover_count = int(input_signals.get("request_policy_held_by_recovery", 0))
     fail_open_count = int(response_signals.get("fail_open_compat_response", 0))
     malformed_count = int(response_signals.get("malformed_tok_response", 0))
     non_tok_count = int(response_signals.get("non_tok_response", 0))
@@ -954,9 +889,7 @@ def run_openrouter_probe(
         turns_requested=turns,
         turns_completed=turns - total_failures,
         success_rate=success_rate,
-        avg_savings_pct=round(sum(savings_values) / len(savings_values), 1)
-        if savings_values
-        else 0.0,
+        avg_savings_pct=round(sum(savings_values) / len(savings_values), 1) if savings_values else 0.0,
         p95_savings_pct=_percentile(savings_values, 95),
         recovery_attempt_count=recovery_attempt_count,
         recovery_success_count=recovery_success_count,
@@ -1006,36 +939,18 @@ def render_frontier_markdown(report: CompressionFrontierReport) -> str:
             local_failures = 0
             if profile.benchmark_summaries:
                 avg_savings = round(
-                    statistics.mean(
-                        summary.avg_savings_pct
-                        for summary in profile.benchmark_summaries
-                    ),
+                    statistics.mean(summary.avg_savings_pct for summary in profile.benchmark_summaries),
                     1,
                 )
                 avg_pressure = round(
-                    statistics.mean(
-                        summary.avg_pressure
-                        for summary in profile.benchmark_summaries
-                    ),
+                    statistics.mean(summary.avg_pressure for summary in profile.benchmark_summaries),
                     2,
                 )
-                recovery_attempts = sum(
-                    summary.recovery_attempt_count
-                    for summary in profile.benchmark_summaries
-                )
-                fail_open = sum(
-                    summary.fail_open_count
-                    for summary in profile.benchmark_summaries
-                )
-                local_failures = sum(
-                    summary.local_failure_count
-                    for summary in profile.benchmark_summaries
-                )
+                recovery_attempts = sum(summary.recovery_attempt_count for summary in profile.benchmark_summaries)
+                fail_open = sum(summary.fail_open_count for summary in profile.benchmark_summaries)
+                local_failures = sum(summary.local_failure_count for summary in profile.benchmark_summaries)
             p95 = max(
-                (
-                    summary.p95_savings_pct
-                    for summary in profile.benchmark_summaries
-                ),
+                (summary.p95_savings_pct for summary in profile.benchmark_summaries),
                 default=0.0,
             )
             lines.append(
@@ -1059,7 +974,7 @@ def render_frontier_markdown(report: CompressionFrontierReport) -> str:
 
 
 def load_frontier_report(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    return cast("dict[str, Any]", json.loads(path.read_text()))
 
 
 def check_frontier_report(path: Path) -> dict[str, Any]:
@@ -1080,11 +995,7 @@ def check_frontier_report(path: Path) -> dict[str, Any]:
 
     checkpoints = payload.get("checkpoints", [])
     current = next(
-        (
-            checkpoint
-            for checkpoint in checkpoints
-            if checkpoint.get("checkpoint", {}).get("label") == "current-head"
-        ),
+        (checkpoint for checkpoint in checkpoints if checkpoint.get("checkpoint", {}).get("label") == "current-head"),
         None,
     )
     if current is None:
@@ -1100,18 +1011,10 @@ def check_frontier_report(path: Path) -> dict[str, Any]:
     ]
     openrouter_profiles = current.get("openrouter_profiles", [])
     release_probe = next(
-        (
-            probe
-            for probe in openrouter_profiles
-            if str(probe.get("profile", "")) == release_profile
-        ),
+        (probe for probe in openrouter_profiles if str(probe.get("profile", "")) == release_profile),
         None,
     )
-    release_probe_verdict = (
-        str(release_probe.get("verdict", ""))
-        if isinstance(release_probe, dict)
-        else ""
-    )
+    release_probe_verdict = str(release_probe.get("verdict", "")) if isinstance(release_probe, dict) else ""
 
     passed = bool(stable_benchmarks) and release_profile != "baseline"
     if openrouter_profiles:
@@ -1122,9 +1025,7 @@ def check_frontier_report(path: Path) -> dict[str, Any]:
             "checkpoint_ref": current.get("checkpoint", {}).get("ref", ""),
             "release_profile": release_profile,
             "stable_profiles": stable_benchmarks,
-            "experimental_profiles": list(
-                current.get("experimental_profiles", [])
-            ),
+            "experimental_profiles": list(current.get("experimental_profiles", [])),
             "openrouter_probe_present": bool(openrouter_profiles),
             "release_probe_verdict": release_probe_verdict,
             "passed": passed,
@@ -1183,9 +1084,7 @@ def run_checkpoint_frontier(
     openrouter_profiles: list[FrontierOpenRouterSummary] = []
     if openrouter_api_key:
         for profile in profiles[: len(benchmark_profiles)]:
-            profile_turns = (
-                max(openrouter_turn_sets) if openrouter_turn_sets else 0
-            )
+            profile_turns = max(openrouter_turn_sets) if openrouter_turn_sets else 0
             if profile_turns <= 0:
                 continue
             if checkpoint.label != "current-head":
@@ -1204,22 +1103,12 @@ def run_checkpoint_frontier(
                 )
             )
 
-    default_release_profile, experimental_profiles = _frontier_release_profile(
-        benchmark_profiles, openrouter_profiles
-    )
+    default_release_profile, experimental_profiles = _frontier_release_profile(benchmark_profiles, openrouter_profiles)
     notes: list[str] = []
     if openrouter_profiles:
-        notes.append(
-            "OpenRouter probes are advisory only; benchmark stability selects the release lane."
-        )
-    if (
-        benchmark_profiles
-        and benchmark_profiles[0].verdict == "degraded"
-        and checkpoint.label == "current-head"
-    ):
-        notes.append(
-            "Current head degrades on the first rung; simplify before pushing compression further."
-        )
+        notes.append("OpenRouter probes are advisory only; benchmark stability selects the release lane.")
+    if benchmark_profiles and benchmark_profiles[0].verdict == "degraded" and checkpoint.label == "current-head":
+        notes.append("Current head degrades on the first rung; simplify before pushing compression further.")
 
     return FrontierCheckpointReport(
         checkpoint=checkpoint,
@@ -1251,14 +1140,9 @@ def run_frontier_report(
     openrouter_api_base: str = "https://openrouter.ai/api/v1",
 ) -> CompressionFrontierReport:
     if not openrouter_api_key:
-        raise RuntimeError(
-            "compression frontier requires OPENROUTER_API_KEY so the live benchmark and probe runs can execute"
-        )
-    effective_turns = (
-        list(openrouter_turn_sets)
-        if openrouter_turn_sets is not None
-        else list(DEFAULT_OPENROUTER_TURNS)
-    )
+        msg = "compression frontier requires OPENROUTER_API_KEY so the live benchmark and probe runs can execute"
+        raise RuntimeError(msg)
+    effective_turns = list(openrouter_turn_sets) if openrouter_turn_sets is not None else list(DEFAULT_OPENROUTER_TURNS)
     checkpoint_reports = [
         run_checkpoint_frontier(
             repo_root=repo_root,

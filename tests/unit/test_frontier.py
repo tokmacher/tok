@@ -3,30 +3,29 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import NoReturn
 
 from tok.testing.frontier import (
+    CompressionFrontierReport,
     CompressionProfile,
+    FrontierCheckpoint,
+    FrontierCheckpointReport,
     FrontierOpenRouterSummary,
     FrontierOpenRouterTurn,
     FrontierProfileSummary,
     _aggregate_benchmark_runs,
     _frontier_release_profile,
     apply_frontier_env,
+    check_frontier_report,
     classify_frontier_verdict,
     render_frontier_markdown,
-    CompressionFrontierReport,
-    FrontierCheckpoint,
-    FrontierCheckpointReport,
-    check_frontier_report,
     run_benchmark_frontier_for_checkpoint,
 )
 
 
 def test_apply_frontier_env_restores_original_values() -> None:
     os.environ["TOK_KEEP_TURNS"] = "9"
-    with apply_frontier_env(
-        {"TOK_KEEP_TURNS": "1", "TOK_MODE": "tool-compatible"}
-    ):
+    with apply_frontier_env({"TOK_KEEP_TURNS": "1", "TOK_MODE": "tool-compatible"}):
         assert os.environ["TOK_KEEP_TURNS"] == "1"
         assert os.environ["TOK_MODE"] == "tool-compatible"
     assert os.environ["TOK_KEEP_TURNS"] == "9"
@@ -86,9 +85,7 @@ def test_aggregate_benchmark_runs_marks_watch_for_recovery_noise() -> None:
 
 
 def test_frontier_release_profile_uses_benchmark_stability_only() -> None:
-    conservative = CompressionProfile(
-        "conservative", "tok-tool-compatible", ""
-    )
+    conservative = CompressionProfile("conservative", "tok-tool-compatible", "")
     aggressive = CompressionProfile("aggressive", "tok-native", "")
     benchmark_profiles = [
         FrontierProfileSummary(
@@ -136,9 +133,7 @@ def test_frontier_release_profile_uses_benchmark_stability_only() -> None:
             ],
         )
     ]
-    release_profile, experimental = _frontier_release_profile(
-        benchmark_profiles, openrouter_profiles
-    )
+    release_profile, experimental = _frontier_release_profile(benchmark_profiles, openrouter_profiles)
     assert release_profile == "aggressive"
     assert "conservative" not in experimental
 
@@ -150,9 +145,7 @@ def test_render_frontier_markdown_includes_release_lane() -> None:
         openrouter_profiles=[],
         default_release_profile="balanced",
         experimental_profiles=["aggressive"],
-        notes=[
-            "OpenRouter probes are advisory only; benchmark stability selects the release lane."
-        ],
+        notes=["OpenRouter probes are advisory only; benchmark stability selects the release lane."],
     )
     report = CompressionFrontierReport(
         model="m",
@@ -201,18 +194,21 @@ def test_check_frontier_report_requires_non_baseline_release_lane(
     assert row["release_profile"] == "balanced"
 
 
-def test_select_frontier_checkpoints_marks_current_head_as_current(tmp_path):
+def test_select_frontier_checkpoints_marks_current_head_as_current(
+    tmp_path,
+) -> None:
     from tok.testing.frontier import select_frontier_checkpoints
 
-    checkpoints = select_frontier_checkpoints(Path("."))
+    checkpoints = select_frontier_checkpoints(Path())
     assert checkpoints[0].ref == "CURRENT"
 
 
 def test_incompatible_historical_checkpoint_degrades_instead_of_raising(
     monkeypatch,
 ) -> None:
-    def _boom(**_kwargs):
-        raise RuntimeError("older checkpoint API mismatch")
+    def _boom(**_kwargs) -> NoReturn:
+        msg = "older checkpoint API mismatch"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(
         "tok.testing.frontier._run_checkpoint_worker",
@@ -220,7 +216,7 @@ def test_incompatible_historical_checkpoint_degrades_instead_of_raising(
     )
     profile = CompressionProfile("conservative", "tok-tool-compatible", "")
     summaries = run_benchmark_frontier_for_checkpoint(
-        repo_root=Path("."),
+        repo_root=Path(),
         checkpoint=FrontierCheckpoint(
             label="pre-runtime-shaping",
             ref="deadbeef",

@@ -5,8 +5,8 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
-from ..protocol.format_bridge import Bridge
-from ..protocol.parser import TokParser
+from tok.protocol.format_bridge import Bridge
+from tok.protocol.parser import TokParser
 
 console = Console()
 
@@ -54,6 +54,6 @@ def parse(payload: str, file: bool = False) -> None:
 
     parser = TokParser()
     nodes = parser.parse(payload)
-    from ..protocol.parser import tok_to_dict
+    from tok.protocol.parser import tok_to_dict
 
     console.print(json.dumps([tok_to_dict(node) for node in nodes], indent=2))

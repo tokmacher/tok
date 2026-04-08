@@ -9,7 +9,9 @@ from tok.analysis.evidence_review import (
 )
 
 
-def test_summarize_capture_file_reads_response_quality_and_savings(tmp_path):
+def test_summarize_capture_file_reads_response_quality_and_savings(
+    tmp_path,
+) -> None:
     session = tmp_path / "session.jsonl"
     session.write_text(
         "\n".join(
@@ -45,7 +47,7 @@ def test_summarize_capture_file_reads_response_quality_and_savings(tmp_path):
     assert summary["candidate_label"] == "context reacquisition"
 
 
-def test_review_capture_dir_filters_and_aggregates(tmp_path):
+def test_review_capture_dir_filters_and_aggregates(tmp_path) -> None:
     first = tmp_path / "a.jsonl"
     second = tmp_path / "b.jsonl"
     first.write_text(
@@ -82,7 +84,7 @@ def test_review_capture_dir_filters_and_aggregates(tmp_path):
     assert review["sessions"][0]["name"] == "b.jsonl"
 
 
-def test_rank_candidates_boosts_cross_model_and_investigate_sessions():
+def test_rank_candidates_boosts_cross_model_and_investigate_sessions() -> None:
     sessions = [
         {
             "name": "a.jsonl",
@@ -113,7 +115,7 @@ def test_rank_candidates_boosts_cross_model_and_investigate_sessions():
     assert "gpt-4.1-mini" in ranked[0]["affected_models"]
 
 
-def test_load_stress_evidence_maps_breakpoint_classes(tmp_path):
+def test_load_stress_evidence_maps_breakpoint_classes(tmp_path) -> None:
     stress_dir = tmp_path / "stress"
     stress_dir.mkdir()
     (stress_dir / "breakpoints.json").write_text(
@@ -134,7 +136,7 @@ def test_load_stress_evidence_maps_breakpoint_classes(tmp_path):
 
 def test_build_coverage_report_marks_required_exploratory_and_uncovered(
     tmp_path,
-):
+) -> None:
     replay_dir = tmp_path / "replay"
     replay_dir.mkdir()
     for name in (
@@ -171,16 +173,7 @@ def test_build_coverage_report_marks_required_exploratory_and_uncovered(
     )
     by_name = {item["candidate"]: item for item in coverage}
 
-    assert (
-        by_name["response contract drift"]["coverage_status"]
-        == "already covered by release fixture"
-    )
-    assert (
-        by_name["context reacquisition"]["coverage_status"]
-        == "already covered by release fixture"
-    )
-    assert (
-        by_name["answer anchor retention"]["coverage_status"]
-        == "already covered by exploratory fixture"
-    )
+    assert by_name["response contract drift"]["coverage_status"] == "already covered by release fixture"
+    assert by_name["context reacquisition"]["coverage_status"] == "already covered by release fixture"
+    assert by_name["answer anchor retention"]["coverage_status"] == "already covered by exploratory fixture"
     assert by_name["baseline fallback"]["coverage_status"] == "not yet covered"

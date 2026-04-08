@@ -6,15 +6,13 @@ from tok.adapters.orchestrator import TokOrchestrator
 
 def test_orchestrator_adapter_prepare_turn_delegates_to_base_prepare(
     monkeypatch,
-):
+) -> None:
     adapter = OrchestratorAdapter()
     captured = {}
 
     def fake_prepare(self, **kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(
-            body={"system": "sys", "messages": kwargs["messages"]}
-        )
+        return SimpleNamespace(body={"system": "sys", "messages": kwargs["messages"]})
 
     monkeypatch.setattr(type(adapter), "prepare", fake_prepare)
 
@@ -29,9 +27,7 @@ def test_orchestrator_adapter_prepare_turn_delegates_to_base_prepare(
 
     assert captured["model"] == "google/gemini-2.0-flash-lite-001"
     assert captured["system"] == "orchestrator system"
-    assert captured["messages"] == [
-        {"role": "user", "content": "audit the codebase"}
-    ]
+    assert captured["messages"] == [{"role": "user", "content": "audit the codebase"}]
     assert captured["grammar"] == "grammar"
     assert captured["todo"] == "[ ] audit"
     assert captured["deltas"] == ">>> turns:1|goal:audit"
@@ -41,32 +37,22 @@ def test_orchestrator_adapter_prepare_turn_delegates_to_base_prepare(
 
 def test_orchestrator_chat_passes_prepared_behavior_signals_to_finalize(
     monkeypatch,
-):
+) -> None:
     class FakeClient:
         class _Chat:
             class _Completions:
                 @staticmethod
                 def create(**_kwargs):
                     return SimpleNamespace(
-                        choices=[
-                            SimpleNamespace(
-                                message=SimpleNamespace(
-                                    content="plain assistant reply"
-                                )
-                            )
-                        ]
+                        choices=[SimpleNamespace(message=SimpleNamespace(content="plain assistant reply"))]
                     )
 
             completions = _Completions()
 
         chat = _Chat()
 
-    monkeypatch.setattr(
-        "tok.adapters.orchestrator.fetch_model_pricing", lambda *_: (0.1, 0.2)
-    )
-    monkeypatch.setattr(
-        "tok.adapters.orchestrator.OpenAI", lambda **_kwargs: FakeClient()
-    )
+    monkeypatch.setattr("tok.adapters.orchestrator.fetch_model_pricing", lambda *_: (0.1, 0.2))
+    monkeypatch.setattr("tok.adapters.orchestrator.OpenAI", lambda **_kwargs: FakeClient())
 
     orchestrator = TokOrchestrator(model="openai/gpt-4.1-mini")
     finalize_calls = {}
@@ -103,21 +89,15 @@ def test_orchestrator_chat_passes_prepared_behavior_signals_to_finalize(
             return []
 
         @staticmethod
-        def clear_pending_deltas():
+        def clear_pending_deltas() -> None:
             return None
 
     monkeypatch.setattr(orchestrator, "_load_grammar", lambda: "")
-    monkeypatch.setattr(
-        orchestrator, "_get_pulse_prompt", lambda: "tok system"
-    )
-    monkeypatch.setattr(
-        orchestrator.adapter, "prepare_turn", fake_prepare_turn
-    )
+    monkeypatch.setattr(orchestrator, "_get_pulse_prompt", lambda: "tok system")
+    monkeypatch.setattr(orchestrator.adapter, "prepare_turn", fake_prepare_turn)
     monkeypatch.setattr(orchestrator.adapter, "finalize", fake_finalize)
     orchestrator.tracker = SimpleNamespace(record_call=lambda **_kwargs: None)  # type: ignore[assignment]
-    monkeypatch.setattr(
-        "tok.runtime.tools.get_default_executor", lambda: FakeExecutor()
-    )
+    monkeypatch.setattr("tok.runtime.tools.get_default_executor", FakeExecutor)
 
     result = orchestrator.chat("audit the codebase", verbose=False)
 
@@ -127,9 +107,7 @@ def test_orchestrator_chat_passes_prepared_behavior_signals_to_finalize(
     assert finalize_calls["behavior_signals"] == {"repeat_file_read": 1}
 
 
-def test_orchestrator_chat_updates_savings_tracker_session(
-    monkeypatch, tmp_path
-):
+def test_orchestrator_chat_updates_savings_tracker_session(monkeypatch, tmp_path) -> None:
     class FakeClient:
         class _Chat:
             class _Completions:
@@ -140,13 +118,7 @@ def test_orchestrator_chat_updates_savings_tracker_session(
                             prompt_tokens=180,
                             completion_tokens=20,
                         ),
-                        choices=[
-                            SimpleNamespace(
-                                message=SimpleNamespace(
-                                    content="plain assistant reply"
-                                )
-                            )
-                        ],
+                        choices=[SimpleNamespace(message=SimpleNamespace(content="plain assistant reply"))],
                     )
 
             completions = _Completions()
@@ -155,12 +127,8 @@ def test_orchestrator_chat_updates_savings_tracker_session(
 
     monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
-    monkeypatch.setattr(
-        "tok.adapters.orchestrator.fetch_model_pricing", lambda *_: (0.1, 0.2)
-    )
-    monkeypatch.setattr(
-        "tok.adapters.orchestrator.OpenAI", lambda **_kwargs: FakeClient()
-    )
+    monkeypatch.setattr("tok.adapters.orchestrator.fetch_model_pricing", lambda *_: (0.1, 0.2))
+    monkeypatch.setattr("tok.adapters.orchestrator.OpenAI", lambda **_kwargs: FakeClient())
 
     orchestrator = TokOrchestrator(model="openai/gpt-4.1-mini")
 
@@ -198,21 +166,15 @@ def test_orchestrator_chat_updates_savings_tracker_session(
             return []
 
         @staticmethod
-        def clear_pending_deltas():
+        def clear_pending_deltas() -> None:
             return None
 
     orchestrator.adapter.session = FakeSession()  # type: ignore[assignment]
     monkeypatch.setattr(orchestrator, "_load_grammar", lambda: "")
-    monkeypatch.setattr(
-        orchestrator, "_get_pulse_prompt", lambda: "tok system"
-    )
-    monkeypatch.setattr(
-        orchestrator.adapter, "prepare_turn", fake_prepare_turn
-    )
+    monkeypatch.setattr(orchestrator, "_get_pulse_prompt", lambda: "tok system")
+    monkeypatch.setattr(orchestrator.adapter, "prepare_turn", fake_prepare_turn)
     monkeypatch.setattr(orchestrator.adapter, "finalize", fake_finalize)
-    monkeypatch.setattr(
-        "tok.runtime.tools.get_default_executor", lambda: FakeExecutor()
-    )
+    monkeypatch.setattr("tok.runtime.tools.get_default_executor", FakeExecutor)
 
     orchestrator.chat("audit the codebase", verbose=False)
 
@@ -224,7 +186,9 @@ def test_orchestrator_chat_updates_savings_tracker_session(
     assert int(summary["tokens_saved"]) == 69
 
 
-def test_orchestrator_chat_records_savings_tracker_metrics(monkeypatch):
+def test_orchestrator_chat_records_savings_tracker_metrics(
+    monkeypatch,
+) -> None:
     class FakeClient:
         class _Chat:
             class _Completions:
@@ -235,25 +199,15 @@ def test_orchestrator_chat_records_savings_tracker_metrics(monkeypatch):
                             prompt_tokens=220,
                             completion_tokens=40,
                         ),
-                        choices=[
-                            SimpleNamespace(
-                                message=SimpleNamespace(
-                                    content="plain assistant reply"
-                                )
-                            )
-                        ],
+                        choices=[SimpleNamespace(message=SimpleNamespace(content="plain assistant reply"))],
                     )
 
             completions = _Completions()
 
         chat = _Chat()
 
-    monkeypatch.setattr(
-        "tok.adapters.orchestrator.fetch_model_pricing", lambda *_: (0.1, 0.2)
-    )
-    monkeypatch.setattr(
-        "tok.adapters.orchestrator.OpenAI", lambda **_kwargs: FakeClient()
-    )
+    monkeypatch.setattr("tok.adapters.orchestrator.fetch_model_pricing", lambda *_: (0.1, 0.2))
+    monkeypatch.setattr("tok.adapters.orchestrator.OpenAI", lambda **_kwargs: FakeClient())
 
     orchestrator = TokOrchestrator(model="openai/gpt-4.1-mini")
     tracker_calls = {}
@@ -297,7 +251,7 @@ def test_orchestrator_chat_records_savings_tracker_metrics(monkeypatch):
             return []
 
         @staticmethod
-        def clear_pending_deltas():
+        def clear_pending_deltas() -> None:
             return None
 
     orchestrator.adapter.session = FakeSession()  # type: ignore[assignment]
@@ -305,16 +259,10 @@ def test_orchestrator_chat_records_savings_tracker_metrics(monkeypatch):
         record_call=lambda **kwargs: tracker_calls.update(kwargs)
     )
     monkeypatch.setattr(orchestrator, "_load_grammar", lambda: "")
-    monkeypatch.setattr(
-        orchestrator, "_get_pulse_prompt", lambda: "tok system"
-    )
-    monkeypatch.setattr(
-        orchestrator.adapter, "prepare_turn", fake_prepare_turn
-    )
+    monkeypatch.setattr(orchestrator, "_get_pulse_prompt", lambda: "tok system")
+    monkeypatch.setattr(orchestrator.adapter, "prepare_turn", fake_prepare_turn)
     monkeypatch.setattr(orchestrator.adapter, "finalize", fake_finalize)
-    monkeypatch.setattr(
-        "tok.runtime.tools.get_default_executor", lambda: FakeExecutor()
-    )
+    monkeypatch.setattr("tok.runtime.tools.get_default_executor", FakeExecutor)
 
     result = orchestrator.chat("audit the codebase", verbose=False)
 
@@ -329,12 +277,12 @@ def test_orchestrator_chat_records_savings_tracker_metrics(monkeypatch):
     assert tracker_calls["behavior_signals"]["answer_anchor_present"] == 1
 
 
-def test_orchestrator_handshake_routes_response_through_finalize(monkeypatch):
+def test_orchestrator_handshake_routes_response_through_finalize(
+    monkeypatch,
+) -> None:
     class FakeChunk:
-        def __init__(self, content):
-            self.choices = [
-                SimpleNamespace(delta=SimpleNamespace(content=content))
-            ]
+        def __init__(self, content) -> None:
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=content))]
 
     class FakeStream:
         usage = None
@@ -353,12 +301,8 @@ def test_orchestrator_handshake_routes_response_through_finalize(monkeypatch):
 
         chat = _Chat()
 
-    monkeypatch.setattr(
-        "tok.adapters.orchestrator.fetch_model_pricing", lambda *_: (0.1, 0.2)
-    )
-    monkeypatch.setattr(
-        "tok.adapters.orchestrator.OpenAI", lambda **_kwargs: FakeClient()
-    )
+    monkeypatch.setattr("tok.adapters.orchestrator.fetch_model_pricing", lambda *_: (0.1, 0.2))
+    monkeypatch.setattr("tok.adapters.orchestrator.OpenAI", lambda **_kwargs: FakeClient())
 
     orchestrator = TokOrchestrator(model="openai/gpt-4.1-mini")
     finalize_calls = {}
@@ -379,8 +323,6 @@ def test_orchestrator_handshake_routes_response_through_finalize(monkeypatch):
 
     orchestrator.handshake()
 
-    assert "text" in finalize_calls, (
-        "adapter.finalize() was never called during handshake()"
-    )
+    assert "text" in finalize_calls, "adapter.finalize() was never called during handshake()"
     assert "t:1|agt:handshake" in finalize_calls["text"]
     assert finalize_calls["model"] == "openai/gpt-4.1-mini"

@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Run live benchmark frontier comparisons against an exported checkpoint."""
+
+from __future__ import annotations
 
 import json
 import sys
@@ -12,7 +12,8 @@ from typing import Any
 def _load_payload() -> dict[str, Any]:
     raw = sys.stdin.read().strip()
     if not raw:
-        raise SystemExit("frontier checkpoint runner requires JSON on stdin")
+        msg = "frontier checkpoint runner requires JSON on stdin"
+        raise SystemExit(msg)
     return json.loads(raw)
 
 
@@ -21,7 +22,7 @@ def main() -> None:
     repo_root = Path(payload["repo_root"])
     sys.path.insert(0, str(repo_root / "src"))
 
-    from tok.testing.live_benchmark import (  # type: ignore
+    from tok.testing.live_benchmark import (  # type: ignore[import-not-found]
         LiveBenchmarkRunner,
         compare_results,
         load_benchmark_definition,
@@ -29,7 +30,7 @@ def main() -> None:
 
     profile = dict(payload["profile"])
     env = dict(profile.get("env", {}))
-    previous = {key: None for key in env}
+    previous = dict.fromkeys(env)
     import os
 
     for key in env:

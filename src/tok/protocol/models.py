@@ -54,9 +54,7 @@ class EntropyTracker(BaseModel):
     last_seen: dict[str, int] = Field(default_factory=dict)
     primacy_locked: list[str] = Field(default_factory=list)
     stages: dict[str, int] = Field(default_factory=dict)  # Stage 0-3
-    next_refresh: dict[str, int] = Field(
-        default_factory=dict
-    )  # Turn to re-inject
+    next_refresh: dict[str, int] = Field(default_factory=dict)  # Turn to re-inject
 
     threshold_permanent: int = 20  # Turn frequency to promote to Stage 3
     threshold_archive: int = 10  # Turns of inactivity to archive (Stage 1+)
@@ -71,9 +69,7 @@ class EntropyTracker(BaseModel):
 
     def cleanup_primacy_locked(self, valid_keys: set[str]) -> None:
         """Remove invalid keys from primacy_locked that don't exist in memory."""
-        self.primacy_locked = [
-            k for k in self.primacy_locked if k in valid_keys
-        ]
+        self.primacy_locked = [k for k in self.primacy_locked if k in valid_keys]
         if len(self.primacy_locked) > 0:
             logger.debug(
                 "Primacy lock cleanup: %d keys protected",
@@ -117,12 +113,8 @@ class TokMemory(BaseModel):
         return cls(
             meta=cls._parse_kv(sections.get("meta", "")),
             agent=cls._parse_kv(sections.get("agent", "")),
-            tools=cls._parse_multiline_kv(
-                sections.get("tools", ""), separator=" -> "
-            ),
-            grammar=cls._parse_multiline_kv(
-                sections.get("grammar", ""), separator=": "
-            ),
+            tools=cls._parse_multiline_kv(sections.get("tools", ""), separator=" -> "),
+            grammar=cls._parse_multiline_kv(sections.get("grammar", ""), separator=": "),
             state=sections.get("state", "").strip(),
             hot_state=sections.get("hot_state", "").strip(),
             cold_state=sections.get("cold_state", "").strip(),
@@ -194,9 +186,7 @@ class TokMemory(BaseModel):
         return results
 
     @staticmethod
-    def _parse_multiline_kv(
-        text: str, separator: str = ": "
-    ) -> dict[str, str]:
+    def _parse_multiline_kv(text: str, separator: str = ": ") -> dict[str, str]:
         """Parse indented or multi-line key/value pairs with a custom separator."""
         results = {}
         lines = text.splitlines()
@@ -236,7 +226,6 @@ class TokMemory(BaseModel):
 
     def rebalance_states(self, turn_count: int) -> None:
         """Physically move facts between tiers based on entropy heatmap."""
-
         # PHASE 0: INVALIDATION PASS - Detect & demote contradictions
         # (Reactive Demotion: User's new assertion invalidates stale permanent facts)
         hot_facts = self._parse_facts(self.hot_state)
@@ -249,20 +238,14 @@ class TokMemory(BaseModel):
                     # Safe to demote (not identity-locked)
                     # STAGE INHERITANCE: Preserve trust level from old value
                     old_heat = self.entropy.heatmap.get(key, 0)
-                    logger.debug(
-                        "UPDATE: %s:%s → %s", key, perm_facts[key], new_val
-                    )
-                    logger.debug(
-                        "HEAT INHERITED: %s (State Continuity)", old_heat
-                    )
+                    logger.debug("UPDATE: %s:%s → %s", key, perm_facts[key], new_val)
+                    logger.debug("HEAT INHERITED: %s (State Continuity)", old_heat)
                     del perm_facts[key]
                     # Transfer the heat from old value to new value
                     # This prevents the "Amnesia Trap" for software agents
                     self.entropy.heatmap[key] = old_heat
                     self.entropy.stages[key] = (
-                        3
-                        if old_heat >= self.entropy.threshold_permanent
-                        else self.entropy.stages.get(key, 0)
+                        3 if old_heat >= self.entropy.threshold_permanent else self.entropy.stages.get(key, 0)
                     )
                 else:
                     logger.debug(
@@ -271,9 +254,7 @@ class TokMemory(BaseModel):
                     )
 
         # Rebuild permanent_state without demoted facts
-        self.permanent_state = "; ".join(
-            f"{k}:{v}" for k, v in perm_facts.items()
-        )
+        self.permanent_state = "; ".join(f"{k}:{v}" for k, v in perm_facts.items())
 
         # Aggregate all facts
         all_facts = {}
@@ -324,30 +305,20 @@ class TokMemory(BaseModel):
             # (Checks source_states specifically for permanent)
             is_currently_perm = k in self._parse_facts(self.permanent_state)
 
-            if (
-                k in self.entropy.primacy_locked
-                or heat >= self.entropy.threshold_permanent
-                or is_currently_perm
-            ):
+            if k in self.entropy.primacy_locked or heat >= self.entropy.threshold_permanent or is_currently_perm:
                 stage = 3
                 self.entropy.next_refresh[k] = 0
-                logger.debug(
-                    "Memory Promotion: %s reached Stage 3 (Permanent)", k
-                )
+                logger.debug("Memory Promotion: %s reached Stage 3 (Permanent)", k)
             elif stage == 0 and age >= self.entropy.threshold_archive:
                 # First Decay: Move Stage 0 -> 1
                 stage = 1
-                self.entropy.next_refresh[k] = (
-                    turn_count + self.entropy.INTERVALS[stage]
-                )
+                self.entropy.next_refresh[k] = turn_count + self.entropy.INTERVALS[stage]
             elif stage > 0 and stage < 3:
                 # Already cold - Check if we need to refresh
-                if turn_count >= next_ref and next_ref > 0:
+                if turn_count >= next_ref > 0:
                     scheduled.append(f"{k}:{v}")
                     # Push next refresh back
-                    self.entropy.next_refresh[k] = (
-                        turn_count + self.entropy.INTERVALS[stage]
-                    )
+                    self.entropy.next_refresh[k] = turn_count + self.entropy.INTERVALS[stage]
                     # Slow decay: After a refresh, if it's still not mentioned,
                     # eventually move to Stage 2
                     if stage == 1 and age > self.entropy.INTERVALS[2]:
@@ -374,13 +345,9 @@ class TokMemory(BaseModel):
         """Serialize the model back to Tok protocol format."""
         lines = []
         if self.meta:
-            lines.append(
-                f"@meta {' '.join(f'{k}:{v}' for k, v in self.meta.items())}"
-            )
+            lines.append(f"@meta {' '.join(f'{k}:{v}' for k, v in self.meta.items())}")
         if self.agent:
-            lines.append(
-                f"@agent {' '.join(f'{k}:{v}' for k, v in self.agent.items())}"
-            )
+            lines.append(f"@agent {' '.join(f'{k}:{v}' for k, v in self.agent.items())}")
 
         if self.tools:
             lines.append("\n@tools")
@@ -404,14 +371,10 @@ class TokMemory(BaseModel):
             lines.append(f"\n@cold_state\n  {self.cold_state.strip()}")
 
         if self.permanent_state:
-            lines.append(
-                f"\n@permanent_state\n  {self.permanent_state.strip()}"
-            )
+            lines.append(f"\n@permanent_state\n  {self.permanent_state.strip()}")
 
         if self.scheduled_state:
-            lines.append(
-                f"\n@scheduled_state\n  {self.scheduled_state.strip()}"
-            )
+            lines.append(f"\n@scheduled_state\n  {self.scheduled_state.strip()}")
 
         if self.entropy.heatmap:
             lines.append("\n@entropy")
@@ -419,12 +382,8 @@ class TokMemory(BaseModel):
                 last = self.entropy.last_seen.get(key, 0)
                 stage = self.entropy.stages.get(key, 0)
                 nr = self.entropy.next_refresh.get(key, 0)
-                locked = (
-                    "|locked" if key in self.entropy.primacy_locked else ""
-                )
-                lines.append(
-                    f"  {key}|heat:{heat}|last:{last}|stage:{stage}|next:{nr}{locked}"
-                )
+                locked = "|locked" if key in self.entropy.primacy_locked else ""
+                lines.append(f"  {key}|heat:{heat}|last:{last}|stage:{stage}|next:{nr}{locked}")
 
         return "\n".join(lines).strip()
 
@@ -452,19 +411,19 @@ class TokToolCall(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_tool_call(_cls, data):
+    def validate_tool_call(cls, data: dict[str, Any]) -> dict[str, Any]:
         if not data.get("tool"):
-            raise ValueError("Missing tool name")
+            msg = "Missing tool name"
+            raise ValueError(msg)
         # Validate path characters
         if data.get("path"):
             if not re.match(r"^[\w\.\-\/]+$", data["path"]):
-                raise ValueError(f"Invalid path: {data['path']}")
+                msg = f"Invalid path: {data['path']}"
+                raise ValueError(msg)
         # Validate content doesn't have literal \n
-        if data.get("content"):
-            if "\\n" in data["content"]:
-                raise ValueError(
-                    "Content contains literal \\n - use real newlines"
-                )
+        if data.get("content") and "\\n" in data["content"]:
+            msg = "Content contains literal \\n - use real newlines"
+            raise ValueError(msg)
         return data
 
 
@@ -476,10 +435,11 @@ class ReadToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_read(_cls, data):
+    def validate_read(cls, data: dict[str, Any]) -> dict[str, Any]:
         path = (data.get("path") or "").strip()
         if not path:
-            raise ValueError("path is required")
+            msg = "path is required"
+            raise ValueError(msg)
         return data
 
 
@@ -489,10 +449,11 @@ class WriteToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_write(_cls, data):
+    def validate_write(cls, data: dict[str, Any]) -> dict[str, Any]:
         path = (data.get("path") or "").strip()
         if not path:
-            raise ValueError("path is required")
+            msg = "path is required"
+            raise ValueError(msg)
         return data
 
 
@@ -503,15 +464,16 @@ class EditToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_edit(_cls, data):
+    def validate_edit(cls, data: dict[str, Any]) -> dict[str, Any]:
         if not (data.get("path") or "").strip():
-            raise ValueError("path is required")
+            msg = "path is required"
+            raise ValueError(msg)
         if not (data.get("search") or "").strip():
-            raise ValueError("search field is required and must not be empty")
+            msg = "search field is required and must not be empty"
+            raise ValueError(msg)
         if "replace" not in data or data["replace"] is None:
-            raise ValueError(
-                "replace field is required (use empty string for deletion)"
-            )
+            msg = "replace field is required (use empty string for deletion)"
+            raise ValueError(msg)
         return data
 
 
@@ -523,10 +485,11 @@ class RunToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_run(_cls, data):
+    def validate_run(cls, data: dict[str, Any]) -> dict[str, Any]:
         raw_cmd = (data.get("cmd") or "").strip()
         if not raw_cmd:
-            raise ValueError("cmd is required")
+            msg = "cmd is required"
+            raise ValueError(msg)
         return data
 
 
@@ -535,10 +498,11 @@ class SearchToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_search(_cls, data):
+    def validate_search(cls, data: dict[str, Any]) -> dict[str, Any]:
         query = (data.get("query") or data.get("path") or "").strip()
         if not query:
-            raise ValueError("search query must not be empty")
+            msg = "search query must not be empty"
+            raise ValueError(msg)
         return data
 
 
@@ -548,23 +512,18 @@ class DeltaToolSchema(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_delta(_cls, data):
+    def validate_delta(cls, data: dict[str, Any]) -> dict[str, Any]:
         path = (data.get("path") or "").strip()
         if not path:
-            raise ValueError("path is required")
+            msg = "path is required"
+            raise ValueError(msg)
         return data
 
 
-def build_tok_traceback(
-    _tool_name: str, raw_input: str, exc: ValidationError
-) -> str:
+def build_tok_traceback(_tool_name: str, raw_input: str, exc: ValidationError) -> str:
     """Convert a pydantic ValidationError into a dense @error Tok block."""
     first_err = exc.errors()[0]
-    loc = (
-        ".".join(str(x) for x in first_err["loc"])
-        if first_err["loc"]
-        else "input"
-    )
+    loc = ".".join(str(x) for x in first_err["loc"]) if first_err["loc"] else "input"
     msg = first_err["msg"].replace(" ", "_")
     raw_preview = raw_input[:50].replace("\n", "\\n")
     if len(raw_input) > 50:

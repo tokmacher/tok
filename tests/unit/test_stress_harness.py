@@ -9,18 +9,18 @@ from tok.testing.stress import (
     StressObservation,
     StressTask,
     StressTurnRecord,
+    _followthrough_evidence_sufficient,
     _late_tool_contract_grace_kind,
     _preprocess_runtime_contract_signals,
     _runtime_retry_context_signals,
     _runtime_turn_context_signals,
-    _followthrough_evidence_sufficient,
     _sanitize_tool_use_block,
     _strip_answer_labels,
     classify_breakpoints,
     extract_breakpoint_paths,
-    required_class_coverage,
     render_language_refactor_plan,
     render_stress_report,
+    required_class_coverage,
     should_stop_run,
     summarize_implicated_files,
 )
@@ -28,7 +28,7 @@ from tok.universal_runtime import RuntimeSession
 
 
 class _FakeCompletions:
-    def __init__(self, responses):
+    def __init__(self, responses) -> None:
         self._responses = list(responses)
         self.calls = []
 
@@ -36,17 +36,13 @@ class _FakeCompletions:
         self.calls.append(kwargs)
         content = self._responses.pop(0)
         return SimpleNamespace(
-            choices=[
-                SimpleNamespace(message=SimpleNamespace(content=content))
-            ],
-            usage=SimpleNamespace(
-                prompt_tokens=100, completion_tokens=20, total_tokens=120
-            ),
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+            usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20, total_tokens=120),
         )
 
 
 class _FakeClient:
-    def __init__(self, responses):
+    def __init__(self, responses) -> None:
         self.chat = SimpleNamespace(completions=_FakeCompletions(responses))
 
 
@@ -68,7 +64,7 @@ def _observation(**overrides):
     return StressObservation(**data)
 
 
-def test_classify_breakpoints_detects_each_class():
+def test_classify_breakpoints_detects_each_class() -> None:
     seen = set()
     drift = classify_breakpoints(
         _observation(output_behavior_signals={"semantic_drift_detected": 1}),
@@ -105,9 +101,7 @@ def test_classify_breakpoints_detects_each_class():
         ),
         seen,
     )
-    tool_failure = classify_breakpoints(
-        _observation(tool_contract_failure=True), seen
-    )
+    tool_failure = classify_breakpoints(_observation(tool_contract_failure=True), seen)
     fallback = classify_breakpoints(_observation(baseline_only=True), seen)
 
     classes = [
@@ -128,7 +122,7 @@ def test_classify_breakpoints_detects_each_class():
     ]
 
 
-def test_classify_breakpoints_deduplicates_classes():
+def test_classify_breakpoints_deduplicates_classes() -> None:
     seen = set()
     first = classify_breakpoints(
         _observation(output_behavior_signals={"semantic_drift_detected": 1}),
@@ -143,10 +137,8 @@ def test_classify_breakpoints_deduplicates_classes():
     assert second == []
 
 
-def test_should_stop_run_covers_all_exit_conditions():
-    config = StressHarnessConfig(
-        max_tasks=5, required_classes=("protocol_drift",)
-    )
+def test_should_stop_run_covers_all_exit_conditions() -> None:
+    config = StressHarnessConfig(max_tasks=5, required_classes=("protocol_drift",))
     assert should_stop_run(
         breakpoint_count=1,
         baseline_only=False,
@@ -177,7 +169,7 @@ def test_should_stop_run_covers_all_exit_conditions():
     )
 
 
-def test_required_class_coverage_supports_alternative_classes():
+def test_required_class_coverage_supports_alternative_classes() -> None:
     coverage = required_class_coverage(
         {"tool_contract_failure", "baseline_fallback"},
         DEFAULT_REQUIRED_CLASSES,
@@ -188,22 +180,18 @@ def test_required_class_coverage_supports_alternative_classes():
     assert "retention_loss" in coverage["missing"]
 
 
-def test_runtime_turn_context_signals_marks_payload_pressure():
-    assert _runtime_turn_context_signals(payload_pressure_ready=True) == {
-        "payload_pressure_ready": 1
-    }
+def test_runtime_turn_context_signals_marks_payload_pressure() -> None:
+    assert _runtime_turn_context_signals(payload_pressure_ready=True) == {"payload_pressure_ready": 1}
 
 
-def test_runtime_retry_context_signals_marks_late_staged_retry():
-    assert _runtime_retry_context_signals(
-        {"late_retry_contract_stage_tool_only": 1}
-    ) == {
+def test_runtime_retry_context_signals_marks_late_staged_retry() -> None:
+    assert _runtime_retry_context_signals({"late_retry_contract_stage_tool_only": 1}) == {
         "late_retry_contract_stage_tool_only": 1,
         "late_staged_retry_context": 1,
     }
 
 
-def test_preprocess_runtime_contract_signals_promotes_late_theless_fresh_signal():
+def test_preprocess_runtime_contract_signals_promotes_late_theless_fresh_signal() -> None:
     task = StressTask(
         id="tool_contract_toolless_fresh_answer",
         phase_name="tool-contract",
@@ -234,7 +222,7 @@ def test_preprocess_runtime_contract_signals_promotes_late_theless_fresh_signal(
     }
 
 
-def test_preprocess_runtime_contract_signals_promotes_late_mixed_signal_without_freshness():
+def test_preprocess_runtime_contract_signals_promotes_late_mixed_signal_without_freshness() -> None:
     task = StressTask(
         id="fresh_anchor_runtime",
         phase_name="fresh-grounding",
@@ -259,7 +247,7 @@ def test_preprocess_runtime_contract_signals_promotes_late_mixed_signal_without_
     }
 
 
-def test_preprocess_runtime_contract_signals_does_not_promote_mixed_without_late_context():
+def test_preprocess_runtime_contract_signals_does_not_promote_mixed_without_late_context() -> None:
     task = StressTask(
         id="fresh_anchor_runtime",
         phase_name="fresh-grounding",
@@ -280,14 +268,9 @@ def test_preprocess_runtime_contract_signals_does_not_promote_mixed_without_late
     assert signals == {}
 
 
-def test_followthrough_evidence_sufficient_threshold():
+def test_followthrough_evidence_sufficient_threshold() -> None:
     # Pre-payload: threshold 500
-    assert (
-        _followthrough_evidence_sufficient(
-            evidence_chars=0, payload_pressure_ready=False, tool_results=[]
-        )
-        is False
-    )
+    assert _followthrough_evidence_sufficient(evidence_chars=0, payload_pressure_ready=False, tool_results=[]) is False
     assert (
         _followthrough_evidence_sufficient(
             evidence_chars=499,
@@ -333,10 +316,7 @@ def test_followthrough_evidence_sufficient_threshold():
 
     # Require successful tools
     assert (
-        _followthrough_evidence_sufficient(
-            evidence_chars=1000, payload_pressure_ready=False, tool_results=[]
-        )
-        is False
+        _followthrough_evidence_sufficient(evidence_chars=1000, payload_pressure_ready=False, tool_results=[]) is False
     )
     assert (
         _followthrough_evidence_sufficient(
@@ -364,28 +344,24 @@ def test_followthrough_evidence_sufficient_threshold():
     )
 
 
-def test_read_only_tool_executor_blocks_mutating_tools(tmp_path):
+def test_read_only_tool_executor_blocks_mutating_tools(tmp_path) -> None:
     executor = ReadOnlyToolExecutor(tmp_path)
-    result, blocked = executor.execute(
-        {"id": "x1", "name": "write", "input": {"path": "a.txt", "text": "x"}}
-    )
+    result, blocked = executor.execute({"id": "x1", "name": "write", "input": {"path": "a.txt", "text": "x"}})
 
     assert blocked is True
     assert result["is_error"] is True
     assert "disabled" in result["content"]
 
 
-def test_read_only_tool_executor_accepts_text_fallback_inputs(tmp_path):
+def test_read_only_tool_executor_accepts_text_fallback_inputs(
+    tmp_path,
+) -> None:
     file_path = tmp_path / "sample.py"
     file_path.write_text("def demo():\n    return 1\n")
     executor = ReadOnlyToolExecutor(tmp_path)
 
-    read_result, read_blocked = executor.execute(
-        {"id": "x2", "name": "view_file", "input": {"text": "sample.py"}}
-    )
-    list_result, list_blocked = executor.execute(
-        {"id": "x3", "name": "list_dir", "input": {"text": "."}}
-    )
+    read_result, read_blocked = executor.execute({"id": "x2", "name": "view_file", "input": {"text": "sample.py"}})
+    list_result, list_blocked = executor.execute({"id": "x3", "name": "list_dir", "input": {"text": "."}})
 
     assert read_blocked is False
     assert "sample.py" in read_result["content"]
@@ -393,7 +369,7 @@ def test_read_only_tool_executor_accepts_text_fallback_inputs(tmp_path):
     assert "sample.py" in list_result["content"]
 
 
-def test_renderers_include_evidence_and_targets():
+def test_renderers_include_evidence_and_targets() -> None:
     seen = set()
     breakpoint = classify_breakpoints(
         _observation(output_behavior_signals={"semantic_drift_detected": 1}),
@@ -584,7 +560,7 @@ def test_renderers_include_evidence_and_targets():
     assert "validated_target_reconfirmation" in report
 
 
-def test_implicated_file_summary_extracts_and_counts_paths():
+def test_implicated_file_summary_extracts_and_counts_paths() -> None:
     seen = set()
     first = classify_breakpoints(
         _observation(
@@ -615,7 +591,7 @@ def test_implicated_file_summary_extracts_and_counts_paths():
     assert summary[0] == {"path": "src/tok/universal_runtime.py", "count": 2}
 
 
-def test_implicated_file_summary_ignores_harness_and_generated_paths():
+def test_implicated_file_summary_ignores_harness_and_generated_paths() -> None:
     item = SimpleNamespace(
         prompt="inspect src/tok/stress_harness.py and src/tok/gateway.py",
         visible_response="File=src/tok/stress_harness.py\nVerification=helper",
@@ -630,7 +606,7 @@ def test_implicated_file_summary_ignores_harness_and_generated_paths():
     assert extract_breakpoint_paths(item) == ["src/tok/gateway.py"]
 
 
-def test_extract_breakpoint_paths_normalizes_stitched_tok_path():
+def test_extract_breakpoint_paths_normalizes_stitched_tok_path() -> None:
     item = SimpleNamespace(
         prompt="inspect src/tok/g.tok/gateway.py",
         visible_response="File=src/tok/g.tok/gateway.py\nVerification=health",
@@ -640,7 +616,7 @@ def test_extract_breakpoint_paths_normalizes_stitched_tok_path():
     assert extract_breakpoint_paths(item) == ["src/tok/gateway.py"]
 
 
-def test_classify_breakpoints_does_not_treat_initial_oracle_miss_as_retention():
+def test_classify_breakpoints_does_not_treat_initial_oracle_miss_as_retention() -> None:
     seen = set()
     breakpoints = classify_breakpoints(
         _observation(
@@ -652,12 +628,10 @@ def test_classify_breakpoints_does_not_treat_initial_oracle_miss_as_retention():
         seen,
     )
 
-    assert [item.breakpoint_class for item in breakpoints] == [
-        "tool_contract_failure"
-    ]
+    assert [item.breakpoint_class for item in breakpoints] == ["tool_contract_failure"]
 
 
-def test_classify_breakpoints_includes_tool_contract_failure_for_mixed_answer_tool():
+def test_classify_breakpoints_includes_tool_contract_failure_for_mixed_answer_tool() -> None:
     seen = set()
     breakpoints = classify_breakpoints(
         _observation(
@@ -671,18 +645,16 @@ def test_classify_breakpoints_includes_tool_contract_failure_for_mixed_answer_to
         seen,
     )
 
-    assert [item.breakpoint_class for item in breakpoints] == [
-        "tool_contract_failure"
-    ]
+    assert [item.breakpoint_class for item in breakpoints] == ["tool_contract_failure"]
 
 
-def test_read_only_tool_executor_filters_excluded_paths_from_search(tmp_path):
+def test_read_only_tool_executor_filters_excluded_paths_from_search(
+    tmp_path,
+) -> None:
     src_dir = tmp_path / "src" / "tok"
     src_dir.mkdir(parents=True)
     (src_dir / "gateway.py").write_text("def bridge():\n    return 'ok'\n")
-    (src_dir / "stress_harness.py").write_text(
-        "def bridge():\n    return 'no'\n"
-    )
+    (src_dir / "stress_harness.py").write_text("def bridge():\n    return 'no'\n")
     executor = ReadOnlyToolExecutor(tmp_path)
 
     result, blocked = executor.execute(
@@ -698,16 +670,13 @@ def test_read_only_tool_executor_filters_excluded_paths_from_search(tmp_path):
     assert "stress_harness.py" not in result["content"]
 
 
-def test_strip_answer_labels_removes_file_and_verification_suffixes():
+def test_strip_answer_labels_removes_file_and_verification_suffixes() -> None:
     assert (
-        _strip_answer_labels(
-            "src/tok/gateway.pyFile=src/tok/gateway.py\nVerification=bridge"
-        )
-        == "src/tok/gateway.py"
+        _strip_answer_labels("src/tok/gateway.pyFile=src/tok/gateway.py\nVerification=bridge") == "src/tok/gateway.py"
     )
 
 
-def test_sanitize_tool_use_block_removes_recursive_tool_noise():
+def test_sanitize_tool_use_block_removes_recursive_tool_noise() -> None:
     block = {
         "type": "tool_use",
         "name": "grep_search",
@@ -723,7 +692,7 @@ def test_sanitize_tool_use_block_removes_recursive_tool_noise():
     assert sanitized["input"]["text"] == "src/tok/gateway.py fallback"
 
 
-def test_stress_harness_run_records_distinct_failures(tmp_path, monkeypatch):
+def test_stress_harness_run_records_distinct_failures(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "1")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/cli.py"',
@@ -762,36 +731,22 @@ def test_stress_harness_run_records_distinct_failures(tmp_path, monkeypatch):
     assert "late_freshness_signal_consumed_by_tok_count" in result_dict
     assert "late_mixed_signal_promoted_count" in result_dict
     assert "late_mixed_signal_consumed_by_tok_count" in result_dict
-    assert (
-        "late_answer_assembly_repair_answer_only_requested_count"
-        in result_dict
-    )
-    assert (
-        "late_answer_assembly_repair_answer_only_resolved_count" in result_dict
-    )
-    assert (
-        "late_answer_assembly_repair_answer_only_failed_count" in result_dict
-    )
+    assert "late_answer_assembly_repair_answer_only_requested_count" in result_dict
+    assert "late_answer_assembly_repair_answer_only_resolved_count" in result_dict
+    assert "late_answer_assembly_repair_answer_only_failed_count" in result_dict
     assert "late_answer_followthrough_requested_count" in result_dict
     assert "late_answer_followthrough_active_count" in result_dict
     assert "late_answer_followthrough_resolved_count" in result_dict
     assert "late_answer_followthrough_failed_count" in result_dict
-    assert (
-        "late_answer_followthrough_after_tool_only_repair_count" in result_dict
-    )
-    assert (
-        "late_answer_followthrough_blocked_insufficient_evidence_count"
-        in result_dict
-    )
+    assert "late_answer_followthrough_after_tool_only_repair_count" in result_dict
+    assert "late_answer_followthrough_blocked_insufficient_evidence_count" in result_dict
     assert "fallback_after_payload_pressure" in result_dict
     assert "validated_target_exact_reacquisition_events_seen" in result_dict
     assert "validated_target_reconfirmation_events_seen" in result_dict
     assert "late_tool_contract_reconfirmation_grace_count" in result_dict
     assert "late_tool_contract_mixed_grace_count" in result_dict
     assert "late_tool_contract_toolless_grace_count" in result_dict
-    assert (
-        "late_tool_contract_reconfirmation_retry_failure_count" in result_dict
-    )
+    assert "late_tool_contract_reconfirmation_retry_failure_count" in result_dict
     assert "late_tool_contract_mixed_retry_failure_count" in result_dict
     assert "late_tool_contract_toolless_retry_failure_count" in result_dict
     assert "fallback_pressure_incremented_count" in result_dict
@@ -827,10 +782,7 @@ def test_stress_harness_run_records_distinct_failures(tmp_path, monkeypatch):
     assert "late_retry_answer_only_satisfied_count" in result_dict
     assert "late_retry_answer_only_failed_tool_count" in result_dict
     assert "late_retry_no_exact_target_count" in result_dict
-    assert (
-        "exact_target_reread_after_late_retry_no_exact_target_count"
-        in result_dict
-    )
+    assert "exact_target_reread_after_late_retry_no_exact_target_count" in result_dict
     assert "exact_target_reread_after_no_exact_retry_count" in result_dict
     assert "failed_tasks_before_any_retry_contract_count" in result_dict
     assert "failed_tasks_after_generic_retry_only_count" in result_dict
@@ -843,9 +795,7 @@ def test_stress_harness_run_records_distinct_failures(tmp_path, monkeypatch):
     assert "dominant_failure_locus" in result_dict
 
 
-def test_strict_gate_retries_until_fresh_evidence_and_creates_checkpoint(
-    tmp_path, monkeypatch
-):
+def test_strict_gate_retries_until_fresh_evidence_and_creates_checkpoint(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         "File=src/tok/gateway.py\nVerification=health",
@@ -900,9 +850,7 @@ def test_strict_gate_retries_until_fresh_evidence_and_creates_checkpoint(
     assert result.turns[-1].phase_name == "checkpoint"
 
 
-def test_reuse_task_flags_validated_target_reacquisition(
-    tmp_path, monkeypatch
-):
+def test_reuse_task_flags_validated_target_reacquisition(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/universal_runtime.py"',
@@ -955,9 +903,7 @@ def test_reuse_task_flags_validated_target_reacquisition(
     assert result.validated_target_reconfirmation_events_seen == 0
 
 
-def test_validated_target_reconfirmation_is_tracked_without_reacquisition_loop(
-    tmp_path, monkeypatch
-):
+def test_validated_target_reconfirmation_is_tracked_without_reacquisition_loop(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -1008,14 +954,10 @@ def test_validated_target_reconfirmation_is_tracked_without_reacquisition_loop(
     assert result.validated_target_reconfirmation_events_seen == 1
     assert result.reacquisition_events_seen == 0
     assert "reacquisition_loop" not in classes
-    assert any(
-        turn.validated_target_reconfirmation_attempt for turn in result.turns
-    )
+    assert any(turn.validated_target_reconfirmation_attempt for turn in result.turns)
 
 
-def test_exact_target_reread_still_increments_fallback_pressure(
-    tmp_path, monkeypatch
-):
+def test_exact_target_reread_still_increments_fallback_pressure(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "1")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -1067,8 +1009,7 @@ def test_exact_target_reread_still_increments_fallback_pressure(
     contract_turn = next(
         turn
         for turn in result.turns
-        if turn.task_id == "reopen_health"
-        and turn.output_behavior_signals.get("fallback_pressure_incremented")
+        if turn.task_id == "reopen_health" and turn.output_behavior_signals.get("fallback_pressure_incremented")
     )
 
     assert result.baseline_only is True
@@ -1077,27 +1018,14 @@ def test_exact_target_reread_still_increments_fallback_pressure(
     assert result.fallback_pressure_incremented_count == 1
     assert result.fallback_pressure_suppressed_count == 0
     assert result.fallback_pressure_cause_exact_reacquisition_count == 1
-    assert (
-        contract_turn.output_behavior_signals.get(
-            "fallback_pressure_incremented"
-        )
-        == 1
-    )
-    assert (
-        contract_turn.output_behavior_signals.get(
-            "fallback_pressure_cause_exact_reacquisition"
-        )
-        == 1
-    )
-    assert (
-        "late_tool_contract_reconfirmation_grace"
-        not in contract_turn.output_behavior_signals
-    )
+    assert contract_turn.output_behavior_signals.get("fallback_pressure_incremented") == 1
+    assert contract_turn.output_behavior_signals.get("fallback_pressure_cause_exact_reacquisition") == 1
+    assert "late_tool_contract_reconfirmation_grace" not in contract_turn.output_behavior_signals
 
 
 def test_late_reconfirmation_failure_shape_can_be_graced_without_incrementing_fallback(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="reconfirm_health",
         phase_name="tool-contract",
@@ -1145,7 +1073,7 @@ def test_late_reconfirmation_failure_shape_can_be_graced_without_incrementing_fa
     assert harness.session._baseline_only is True
 
 
-def test_late_mixed_failure_shape_is_classified_without_reconfirmation():
+def test_late_mixed_failure_shape_is_classified_without_reconfirmation() -> None:
     task = StressTask(
         id="mixed_reconfirm_health",
         phase_name="tool-contract",
@@ -1171,7 +1099,7 @@ def test_late_mixed_failure_shape_is_classified_without_reconfirmation():
     )
 
 
-def test_late_toolless_failure_shape_is_classified():
+def test_late_toolless_failure_shape_is_classified() -> None:
     task = StressTask(
         id="toolless_reconfirm_health",
         phase_name="tool-contract",
@@ -1197,7 +1125,7 @@ def test_late_toolless_failure_shape_is_classified():
     )
 
 
-def test_late_grace_does_not_apply_to_unsupported_or_exact_reread():
+def test_late_grace_does_not_apply_to_unsupported_or_exact_reread() -> None:
     task = StressTask(
         id="unsupported_reconfirm_health",
         phase_name="tool-contract",
@@ -1237,7 +1165,7 @@ def test_late_grace_does_not_apply_to_unsupported_or_exact_reread():
 
 def test_retry_prompt_uses_mixed_turn_template_for_late_validated_target(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="mixed_reconfirm_health",
         phase_name="tool-contract",
@@ -1280,10 +1208,7 @@ def test_retry_prompt_uses_mixed_turn_template_for_late_validated_target(
 
     assert "your previous turn mixed tool use with a final answer" in prompt
     assert "Do not reopen the exact target again on this retry" in prompt
-    assert (
-        "You must use exactly one supported read-only tool before answering"
-        in prompt
-    )
+    assert "You must use exactly one supported read-only tool before answering" in prompt
     assert signals == {
         "retry_prompt_shape_mixed_turn": 1,
         "retry_prompt_no_exact_reread": 1,
@@ -1293,7 +1218,7 @@ def test_retry_prompt_uses_mixed_turn_template_for_late_validated_target(
 
 def test_retry_prompt_uses_toolless_template_for_late_validated_target(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="toolless_reconfirm_health",
         phase_name="tool-contract",
@@ -1334,15 +1259,9 @@ def test_retry_prompt_uses_toolless_template_for_late_validated_target(
         retry_index=1,
     )
 
-    assert (
-        "you answered without satisfying the fresh-evidence requirement"
-        in prompt
-    )
+    assert "you answered without satisfying the fresh-evidence requirement" in prompt
     assert "Do not reopen the exact validated target on this retry" in prompt
-    assert (
-        "You must use exactly one supported read-only tool before answering"
-        in prompt
-    )
+    assert "You must use exactly one supported read-only tool before answering" in prompt
     assert signals == {
         "retry_prompt_shape_toolless_fresh": 1,
         "retry_prompt_no_exact_reread": 1,
@@ -1350,7 +1269,7 @@ def test_retry_prompt_uses_toolless_template_for_late_validated_target(
     }
 
 
-def test_retry_prompt_uses_exact_target_reread_template(tmp_path):
+def test_retry_prompt_uses_exact_target_reread_template(tmp_path) -> None:
     task = StressTask(
         id="reopen_health",
         phase_name="tool-contract",
@@ -1392,10 +1311,7 @@ def test_retry_prompt_uses_exact_target_reread_template(tmp_path):
     )
 
     assert "you reopened an already validated exact target" in prompt
-    assert (
-        "Do not read or search the exact validated target again on this retry"
-        in prompt
-    )
+    assert "Do not read or search the exact validated target again on this retry" in prompt
     assert signals == {
         "retry_prompt_shape_exact_target_reread": 1,
         "retry_prompt_no_exact_reread": 1,
@@ -1404,7 +1320,7 @@ def test_retry_prompt_uses_exact_target_reread_template(tmp_path):
 
 def test_retry_prompt_preserves_late_validated_bad_args_guidance(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="bad_args_health",
         phase_name="tool-contract",
@@ -1445,20 +1361,15 @@ def test_retry_prompt_preserves_late_validated_bad_args_guidance(
         retry_index=1,
     )
 
-    assert (
-        "If fresh evidence is required, use the read-only tools first."
-        in prompt
-    )
+    assert "If fresh evidence is required, use the read-only tools first." in prompt
     assert "Do not reopen the exact validated target" not in prompt
-    assert (
-        "Do not read or search the exact validated target again" not in prompt
-    )
+    assert "Do not read or search the exact validated target again" not in prompt
     assert signals == {"retry_prompt_shape_bad_args": 1}
 
 
 def test_retry_prompt_mixed_turn_keeps_direct_answer_option_when_fresh_evidence_not_required(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="mixed_reconfirm_health",
         phase_name="tool-contract",
@@ -1500,10 +1411,7 @@ def test_retry_prompt_mixed_turn_keeps_direct_answer_option_when_fresh_evidence_
     )
 
     assert "Either use already validated evidence to answer directly" in prompt
-    assert (
-        "You must use exactly one supported read-only tool before answering"
-        not in prompt
-    )
+    assert "You must use exactly one supported read-only tool before answering" not in prompt
     assert signals == {
         "retry_prompt_shape_mixed_turn": 1,
         "retry_prompt_no_exact_reread": 1,
@@ -1512,7 +1420,7 @@ def test_retry_prompt_mixed_turn_keeps_direct_answer_option_when_fresh_evidence_
 
 def test_retry_prompt_uses_early_answer_only_for_mixed_when_fresh_evidence_not_required(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="mixed_contract_early",
         phase_name="tool-contract",
@@ -1564,7 +1472,7 @@ def test_retry_prompt_uses_early_answer_only_for_mixed_when_fresh_evidence_not_r
 
 def test_retry_prompt_preserves_generic_prompt_for_non_late_or_non_validated_retry(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="generic_health",
         phase_name="reuse-probe",
@@ -1612,7 +1520,7 @@ def test_retry_prompt_preserves_generic_prompt_for_non_late_or_non_validated_ret
 
 def test_retry_prompt_uses_early_tool_only_for_mixed_when_fresh_evidence_required(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="mixed_contract",
         phase_name="tool-contract",
@@ -1654,10 +1562,7 @@ def test_retry_prompt_uses_early_tool_only_for_mixed_when_fresh_evidence_require
     )
 
     assert "Do not answer yet" in prompt
-    assert (
-        "Use exactly one supported read-only tool in this turn and nothing else"
-        in prompt
-    )
+    assert "Use exactly one supported read-only tool in this turn and nothing else" in prompt
     assert "Do not include File= or Verification=" in prompt
     assert signals == {
         "retry_prompt_shape_generic_retry": 1,
@@ -1665,7 +1570,9 @@ def test_retry_prompt_uses_early_tool_only_for_mixed_when_fresh_evidence_require
     }
 
 
-def test_retry_prompt_uses_tool_only_stage_for_late_generic_retry(tmp_path):
+def test_retry_prompt_uses_tool_only_stage_for_late_generic_retry(
+    tmp_path,
+) -> None:
     task = StressTask(
         id="payload_pressure_collect",
         phase_name="payload-pressure",
@@ -1707,10 +1614,7 @@ def test_retry_prompt_uses_tool_only_stage_for_late_generic_retry(tmp_path):
     )
 
     assert "do not answer yet" in prompt.lower()
-    assert (
-        "Use exactly one supported read-only tool in this turn and nothing else"
-        in prompt
-    )
+    assert "Use exactly one supported read-only tool in this turn and nothing else" in prompt
     assert "Do not include File= or Verification=" in prompt
     assert signals == {
         "retry_prompt_shape_generic_retry": 1,
@@ -1720,7 +1624,7 @@ def test_retry_prompt_uses_tool_only_stage_for_late_generic_retry(tmp_path):
 
 def test_retry_prompt_uses_answer_only_stage_when_supporting_tool_backing_exists(
     tmp_path,
-):
+) -> None:
     task = StressTask(
         id="payload_pressure_collect",
         phase_name="payload-pressure",
@@ -1773,7 +1677,9 @@ def test_retry_prompt_uses_answer_only_stage_when_supporting_tool_backing_exists
     }
 
 
-def test_retry_prompt_transitions_tool_only_retry_to_answer_only(tmp_path):
+def test_retry_prompt_transitions_tool_only_retry_to_answer_only(
+    tmp_path,
+) -> None:
     task = StressTask(
         id="payload_pressure_collect",
         phase_name="payload-pressure",
@@ -1823,7 +1729,7 @@ def test_retry_prompt_transitions_tool_only_retry_to_answer_only(tmp_path):
 
 def test_tool_only_retry_stage_satisfaction_requires_one_clean_read_only_tool(
     tmp_path,
-):
+) -> None:
     harness = StressHarness(
         StressHarnessConfig(),
         client=_FakeClient([]),
@@ -1832,17 +1738,13 @@ def test_tool_only_retry_stage_satisfaction_requires_one_clean_read_only_tool(
     )
 
     satisfied_turn = SimpleNamespace(
-        tool_uses=[
-            {"name": "view_file", "input": {"path": "src/tok/gateway.py"}}
-        ],
+        tool_uses=[{"name": "view_file", "input": {"path": "src/tok/gateway.py"}}],
         validated_target_exact_reacquired=False,
         output_behavior_signals={},
         visible_response="",
     )
     mixed_turn = SimpleNamespace(
-        tool_uses=[
-            {"name": "view_file", "input": {"path": "src/tok/gateway.py"}}
-        ],
+        tool_uses=[{"name": "view_file", "input": {"path": "src/tok/gateway.py"}}],
         validated_target_exact_reacquired=False,
         output_behavior_signals={"mixed_answer_tool_event": 1},
         visible_response="File=src/tok/gateway.py\nVerification=health",
@@ -1865,7 +1767,7 @@ def test_tool_only_retry_stage_satisfaction_requires_one_clean_read_only_tool(
 
 def test_answer_only_retry_stage_requires_two_line_answer_without_tools(
     tmp_path,
-):
+) -> None:
     harness = StressHarness(
         StressHarnessConfig(),
         client=_FakeClient([]),
@@ -1879,9 +1781,7 @@ def test_answer_only_retry_stage_requires_two_line_answer_without_tools(
         visible_response="File=src/tok/gateway.py\nVerification=health",
     )
     tool_violation_turn = SimpleNamespace(
-        tool_uses=[
-            {"name": "view_file", "input": {"path": "src/tok/gateway.py"}}
-        ],
+        tool_uses=[{"name": "view_file", "input": {"path": "src/tok/gateway.py"}}],
         output_behavior_signals={},
         visible_response="",
     )
@@ -1895,7 +1795,9 @@ def test_answer_only_retry_stage_requires_two_line_answer_without_tools(
     )
 
 
-def test_first_irreversible_miss_kind_classifies_failure_shapes(tmp_path):
+def test_first_irreversible_miss_kind_classifies_failure_shapes(
+    tmp_path,
+) -> None:
     harness = StressHarness(
         StressHarnessConfig(),
         client=_FakeClient([]),
@@ -1904,58 +1806,48 @@ def test_first_irreversible_miss_kind_classifies_failure_shapes(tmp_path):
     )
 
     def turn(**kwargs):
-        base = dict(
-            task_id="test_task",
-            phase_name="test_phase",
-            turn_index=0,
-            phase="test",
-            prompt="test prompt",
-            raw_response="test response",
-            visible_response="",
-            tool_uses=[],
-            tool_results=[],
-            evidence_chars=0,
-            retry_index=0,
-            validated=False,
-            input_behavior_signals={},
-            output_behavior_signals={},
-            input_saved_tokens=0,
-            output_saved_tokens=0,
-            tool_contract_failure=False,
-            state_payload_chars=0,
-            resend_mode="none",
-        )
+        base = {
+            "task_id": "test_task",
+            "phase_name": "test_phase",
+            "turn_index": 0,
+            "phase": "test",
+            "prompt": "test prompt",
+            "raw_response": "test response",
+            "visible_response": "",
+            "tool_uses": [],
+            "tool_results": [],
+            "evidence_chars": 0,
+            "retry_index": 0,
+            "validated": False,
+            "input_behavior_signals": {},
+            "output_behavior_signals": {},
+            "input_saved_tokens": 0,
+            "output_saved_tokens": 0,
+            "tool_contract_failure": False,
+            "state_payload_chars": 0,
+            "resend_mode": "none",
+        }
         base.update(kwargs)
         return StressTurnRecord(**base)
 
     assert (
-        harness._first_irreversible_miss_kind(
-            [turn(output_behavior_signals={"bad_tool_args_event": 1})]
-        )
+        harness._first_irreversible_miss_kind([turn(output_behavior_signals={"bad_tool_args_event": 1})])
         == "first_miss_bad_args"
     )
     assert (
-        harness._first_irreversible_miss_kind(
-            [turn(output_behavior_signals={"unsupported_tool_event": 1})]
-        )
+        harness._first_irreversible_miss_kind([turn(output_behavior_signals={"unsupported_tool_event": 1})])
         == "first_miss_unsupported_tool"
     )
     assert (
-        harness._first_irreversible_miss_kind(
-            [turn(output_behavior_signals={"mixed_answer_tool_event": 1})]
-        )
+        harness._first_irreversible_miss_kind([turn(output_behavior_signals={"mixed_answer_tool_event": 1})])
         == "first_miss_mixed_answer_tool"
     )
     assert (
-        harness._first_irreversible_miss_kind(
-            [turn(output_behavior_signals={"toolless_fresh_answer_event": 1})]
-        )
+        harness._first_irreversible_miss_kind([turn(output_behavior_signals={"toolless_fresh_answer_event": 1})])
         == "first_miss_toolless_fresh"
     )
     assert (
-        harness._first_irreversible_miss_kind(
-            [turn(tool_uses=[{"name": "delta", "input": {}}])]
-        )
+        harness._first_irreversible_miss_kind([turn(tool_uses=[{"name": "delta", "input": {}}])])
         == "first_miss_tool_only_insufficient"
     )
     assert (
@@ -1987,14 +1879,13 @@ def test_first_irreversible_miss_kind_classifies_failure_shapes(tmp_path):
         == "first_miss_answer_after_grounding"
     )
     assert (
-        harness._first_irreversible_miss_kind(
-            [turn(visible_response="just prose reply")]
-        )
-        == "first_miss_prose_no_tool"
+        harness._first_irreversible_miss_kind([turn(visible_response="just prose reply")]) == "first_miss_prose_no_tool"
     )
 
 
-def test_failed_task_summaries_and_locus_capture_retry_families(tmp_path):
+def test_failed_task_summaries_and_locus_capture_retry_families(
+    tmp_path,
+) -> None:
     harness = StressHarness(
         StressHarnessConfig(),
         client=_FakeClient([]),
@@ -2028,9 +1919,7 @@ def test_failed_task_summaries_and_locus_capture_retry_families(tmp_path):
     failed = harness._failed_task_summaries(turns)  # type: ignore[arg-type]
 
     assert failed[0]["retry_family"] == "none"
-    assert (
-        failed[0]["first_irreversible_miss_kind"] == "first_miss_prose_no_tool"
-    )
+    assert failed[0]["first_irreversible_miss_kind"] == "first_miss_prose_no_tool"
     assert failed[1]["retry_family"] == "late_staged"
     assert (
         harness._dominant_failure_locus(
@@ -2045,9 +1934,7 @@ def test_failed_task_summaries_and_locus_capture_retry_families(tmp_path):
     )
 
 
-def test_repeat_tool_use_before_validation_does_not_count_as_reacquisition(
-    tmp_path, monkeypatch
-):
+def test_repeat_tool_use_before_validation_does_not_count_as_reacquisition(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2085,9 +1972,7 @@ def test_repeat_tool_use_before_validation_does_not_count_as_reacquisition(
     assert "reacquisition_loop" not in classes
 
 
-def test_anchor_seed_requires_direct_file_read_not_only_search(
-    tmp_path, monkeypatch
-):
+def test_anchor_seed_requires_direct_file_read_not_only_search(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool grep_search id:"s1"\n  query:"health"\n  search_path:"src/tok"',
@@ -2123,9 +2008,7 @@ def test_anchor_seed_requires_direct_file_read_not_only_search(
     assert result.validated_anchor_count == 0
 
 
-def test_anchor_seed_succeeds_after_narrow_search_then_direct_read(
-    tmp_path, monkeypatch
-):
+def test_anchor_seed_succeeds_after_narrow_search_then_direct_read(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool grep_search id:"s1"\n  query:"health"\n  search_path:"src/tok/gateway.py"',
@@ -2163,15 +2046,10 @@ def test_anchor_seed_succeeds_after_narrow_search_then_direct_read(
     assert result.seed_searches == 1
     assert result.seed_direct_reads == 1
     assert result.seed_evidence_sufficient is True
-    assert any(
-        "Use the evidence you just retrieved." in turn.prompt
-        for turn in result.turns[1:]
-    )
+    assert any("Use the evidence you just retrieved." in turn.prompt for turn in result.turns[1:])
 
 
-def test_repeated_seed_tool_use_after_evidence_counts_as_failure_pressure(
-    tmp_path, monkeypatch
-):
+def test_repeated_seed_tool_use_after_evidence_counts_as_failure_pressure(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2210,9 +2088,7 @@ def test_repeated_seed_tool_use_after_evidence_counts_as_failure_pressure(
     assert "tool_contract_failure" in classes
 
 
-def test_later_tasks_wait_until_reuse_and_checkpoint_run(
-    tmp_path, monkeypatch
-):
+def test_later_tasks_wait_until_reuse_and_checkpoint_run(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2284,9 +2160,7 @@ def test_later_tasks_wait_until_reuse_and_checkpoint_run(
     assert "payload-pressure" not in phase_names
 
 
-def test_reuse_probe_from_memory_increments_success_without_reacquisition(
-    tmp_path, monkeypatch
-):
+def test_reuse_probe_from_memory_increments_success_without_reacquisition(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2349,9 +2223,7 @@ def test_reuse_probe_from_memory_increments_success_without_reacquisition(
     assert "reacquisition_loop" not in classes
 
 
-def test_reuse_probe_tool_use_triggers_reacquisition_loop(
-    tmp_path, monkeypatch
-):
+def test_reuse_probe_tool_use_triggers_reacquisition_loop(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2415,9 +2287,7 @@ def test_reuse_probe_tool_use_triggers_reacquisition_loop(
     assert "reacquisition_loop" in classes
 
 
-def test_retention_probe_can_trigger_latest_anchor_substitution(
-    tmp_path, monkeypatch
-):
+def test_retention_probe_can_trigger_latest_anchor_substitution(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2511,9 +2381,7 @@ def test_retention_probe_can_trigger_latest_anchor_substitution(
     assert "retention_loss" in classes
 
 
-def test_early_retention_probe_runs_before_payload_pressure(
-    tmp_path, monkeypatch
-):
+def test_early_retention_probe_runs_before_payload_pressure(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "5")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2615,23 +2483,13 @@ def test_early_retention_probe_runs_before_payload_pressure(
 
     result = harness.run()
     phase_order = [(turn.task_id, turn.phase_name) for turn in result.turns]
-    retention_index = next(
-        i
-        for i, (task_id, _) in enumerate(phase_order)
-        if task_id == "retention_probe_early"
-    )
-    payload_index = next(
-        i
-        for i, (_, phase_name) in enumerate(phase_order)
-        if phase_name == "payload-pressure"
-    )
+    retention_index = next(i for i, (task_id, _) in enumerate(phase_order) if task_id == "retention_probe_early")
+    payload_index = next(i for i, (_, phase_name) in enumerate(phase_order) if phase_name == "payload-pressure")
 
     assert retention_index < payload_index
 
 
-def test_tool_contract_probe_runs_before_fresh_anchor_runtime(
-    tmp_path, monkeypatch
-):
+def test_tool_contract_probe_runs_before_fresh_anchor_runtime(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "5")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2749,24 +2607,14 @@ def test_tool_contract_probe_runs_before_fresh_anchor_runtime(
 
     result = harness.run()
     phase_order = [(turn.task_id, turn.phase_name) for turn in result.turns]
-    first_contract_index = next(
-        i
-        for i, (_, phase_name) in enumerate(phase_order)
-        if phase_name == "tool-contract"
-    )
-    fresh_index = next(
-        i
-        for i, (task_id, _) in enumerate(phase_order)
-        if task_id == "fresh_anchor_runtime"
-    )
+    first_contract_index = next(i for i, (_, phase_name) in enumerate(phase_order) if phase_name == "tool-contract")
+    fresh_index = next(i for i, (task_id, _) in enumerate(phase_order) if task_id == "fresh_anchor_runtime")
 
     assert first_contract_index < fresh_index
     assert result.tool_contract_probe_attempts >= 1
 
 
-def test_early_retention_probe_can_hold_and_set_retention_surface_held(
-    tmp_path, monkeypatch
-):
+def test_early_retention_probe_can_hold_and_set_retention_surface_held(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "5")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2864,9 +2712,7 @@ def test_early_retention_probe_can_hold_and_set_retention_surface_held(
     assert result.run_diagnosis == "retention_surface_held_early_only"
 
 
-def test_late_retention_probe_runs_before_fallback_and_can_hold(
-    tmp_path, monkeypatch
-):
+def test_late_retention_probe_runs_before_fallback_and_can_hold(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "5")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -2981,16 +2827,8 @@ def test_late_retention_probe_runs_before_fallback_and_can_hold(
 
     result = harness.run()
     phase_order = [(turn.task_id, turn.phase_name) for turn in result.turns]
-    late_retention_index = next(
-        i
-        for i, (task_id, _) in enumerate(phase_order)
-        if task_id == "retention_probe_late"
-    )
-    fallback_index = next(
-        i
-        for i, (task_id, _) in enumerate(phase_order)
-        if task_id == "fallback_anchor"
-    )
+    late_retention_index = next(i for i, (task_id, _) in enumerate(phase_order) if task_id == "retention_probe_late")
+    fallback_index = next(i for i, (task_id, _) in enumerate(phase_order) if task_id == "fallback_anchor")
 
     assert late_retention_index < fallback_index
     assert result.late_retention_probe_attempts >= 1
@@ -2998,9 +2836,7 @@ def test_late_retention_probe_runs_before_fallback_and_can_hold(
     assert result.run_diagnosis == "retention_surface_held"
 
 
-def test_late_retention_probe_tool_use_does_not_count_as_success(
-    tmp_path, monkeypatch
-):
+def test_late_retention_probe_tool_use_does_not_count_as_success(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "5")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -3106,9 +2942,7 @@ def test_late_retention_probe_tool_use_does_not_count_as_success(
     assert result.late_retention_probe_successes == 0
 
 
-def test_missing_memory_classes_without_probes_are_diagnosed_as_unexercised(
-    tmp_path, monkeypatch
-):
+def test_missing_memory_classes_without_probes_are_diagnosed_as_unexercised(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "5")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -3159,9 +2993,7 @@ def test_missing_memory_classes_without_probes_are_diagnosed_as_unexercised(
     assert result.run_diagnosis == "reuse_surface_unexercised"
 
 
-def test_payload_eligibility_distinguishes_high_bytes_from_compaction_ready(
-    tmp_path, monkeypatch
-):
+def test_payload_eligibility_distinguishes_high_bytes_from_compaction_ready(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "5")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -3237,9 +3069,7 @@ def test_payload_eligibility_distinguishes_high_bytes_from_compaction_ready(
     assert result.compaction_eligible is True
 
 
-def test_early_baseline_is_diagnosed_as_early_contract_collapse(
-    tmp_path, monkeypatch
-):
+def test_early_baseline_is_diagnosed_as_early_contract_collapse(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "1")
     responses = [
         "File=src/tok/gateway.py\nVerification=_persist_answer_anchor",
@@ -3278,9 +3108,7 @@ def test_early_baseline_is_diagnosed_as_early_contract_collapse(
     assert result.anchors_before_baseline == 0
 
 
-def test_early_baseline_can_identify_answer_assembly_failure(
-    tmp_path, monkeypatch
-):
+def test_early_baseline_can_identify_answer_assembly_failure(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "1")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',
@@ -3320,7 +3148,7 @@ def test_early_baseline_can_identify_answer_assembly_failure(
     assert result.seed_evidence_sufficient is True
 
 
-def test_first_checkpoint_can_trigger_retention_loss(tmp_path, monkeypatch):
+def test_first_checkpoint_can_trigger_retention_loss(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_FALLBACK_THRESHOLD", "3")
     responses = [
         '@Tool view_file id:"s1"\n  path:"src/tok/gateway.py"',

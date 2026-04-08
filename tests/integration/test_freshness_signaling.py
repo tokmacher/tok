@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
+from tok.compression import inject_system_additions
 from tok.runtime.memory.bridge_memory import BridgeMemoryState
 from tok.runtime.memory.tok_state import (
+    _prepare_tool_compatible_state,
     _select_resend_reason,
     _select_resend_strategy,
-    _prepare_tool_compatible_state,
 )
-from tok.compression import inject_system_additions
 from tok.universal_runtime import (
     RuntimeRequest,
     RuntimeSession,
@@ -23,7 +23,7 @@ from tok.universal_runtime import (
 class TestFreshnessSignalingIntegration:
     """Integration tests for freshness signaling end-to-end flow."""
 
-    def test_file_read_to_fact_format(self):
+    def test_file_read_to_fact_format(self) -> None:
         """Verify file facts are stored with new format: LINE_COUNT|digest|~TOKENS."""
         state = BridgeMemoryState()
         content = """def foo():
@@ -43,14 +43,13 @@ class Bar:
 
         # Format: file[path]:LINE_COUNT|digest|~TOKENS
         assert "file[/test/sample.py]:" in fact_value
-        assert "|~" in fact_value and "t" in fact_value  # token savings
+        assert "|~" in fact_value
+        assert "t" in fact_value
 
         # Verify line count is present (NUMBER| pattern)
         import re
 
-        assert re.search(r":\d+\|", fact_value), (
-            f"Line count missing: {fact_value}"
-        )
+        assert re.search(r":\d+\|", fact_value), f"Line count missing: {fact_value}"
 
         # Verify get_file_fact_digests parses correctly
         digests = state.get_file_fact_digests()
@@ -59,7 +58,7 @@ class Bar:
         assert "def foo():" in digests["/test/sample.py"]
         assert "class Bar:" in digests["/test/sample.py"]
 
-    def test_wire_state_includes_freshness_data(self):
+    def test_wire_state_includes_freshness_data(self) -> None:
         """Verify wire state now includes freshness indicators for AI visibility."""
         state = BridgeMemoryState()
         content = "def foo():\n    pass\n\nclass Bar:\n    pass\n"
@@ -72,11 +71,9 @@ class Bar:
         # Check for line count pattern (e.g., :6|)
         import re
 
-        assert re.search(r":\d+\|~\d+t", wire), (
-            f"Freshness data not in wire state: {wire}"
-        )
+        assert re.search(r":\d+\|~\d+t", wire), f"Freshness data not in wire state: {wire}"
 
-    def test_wire_state_to_system_prompt(self):
+    def test_wire_state_to_system_prompt(self) -> None:
         """Verify wire state includes file facts with freshness indicators."""
         state = BridgeMemoryState()
         content = "line1\nline2\nline3\n"
@@ -89,16 +86,14 @@ class Bar:
         # Check for token savings indicator format (~<number>t) rather than exact value
         import re
 
-        assert re.search(r"\|\~\d+t", facts[0].value), (
-            f"Token savings format missing: {facts[0].value}"
-        )
+        assert re.search(r"\|\~\d+t", facts[0].value), f"Token savings format missing: {facts[0].value}"
 
         # Wire state includes files list (may not include full facts due to dedup)
         wire = state.wire_state()
         assert ">>>" in wire
         assert "f:/test/file.py" in wire or "f:test/file.py" in wire
 
-    def test_resend_reason_with_verified_current(self):
+    def test_resend_reason_with_verified_current(self) -> None:
         """Verify resend reason is 'verified_current_state' when unchanged."""
         # First state
         state1 = {"files": ["a.py"], "goal": ["test"]}
@@ -110,18 +105,16 @@ class Bar:
         assert reason == "verified_current_state"
         assert reason != "unchanged_state"  # old terminology gone
 
-    def test_resend_strategy_suppress_when_unchanged(self):
+    def test_resend_strategy_suppress_when_unchanged(self) -> None:
         """Verify suppress strategy when state verified current."""
         state1 = {"files": ["a.py"], "goal": ["test"]}
         state2 = {"files": ["a.py"], "goal": ["test"]}
 
-        strategy = _select_resend_strategy(
-            state2, state1, has_answer_facts=False
-        )
+        strategy = _select_resend_strategy(state2, state1, has_answer_facts=False)
 
         assert strategy == "suppress"
 
-    def test_behavior_signals_with_verified_current(self):
+    def test_behavior_signals_with_verified_current(self) -> None:
         """Verify behavior signals use new terminology in full flow."""
         state = BridgeMemoryState()
         state.record_file_snapshot("/test/file.py", "def foo(): pass\n")
@@ -146,16 +139,16 @@ class Bar:
         assert "state_suppressed" not in system
         assert "unchanged" not in system.lower()
 
-    def test_tool_compatible_state_preparation(self):
+    def test_tool_compatible_state_preparation(self) -> None:
         """Verify tool compatible state includes file facts."""
-        raw_state = (
-            ">>> turns:5|goal:test|facts:file[/test/a.py]:3|def foo|~12t"
-        )
+        raw_state = ">>> turns:5|goal:test|facts:file[/test/a.py]:3|def foo|~12t"
         previous: dict[str, list[str]] = {"files": [], "goal": []}
 
-        parsed, comparable, has_answer_facts = _prepare_tool_compatible_state(
-            raw_state, previous
-        )
+        (
+            parsed,
+            _comparable,
+            _has_answer_facts,
+        ) = _prepare_tool_compatible_state(raw_state, previous)
 
         assert "turns" in parsed
         assert "facts" in parsed
@@ -163,7 +156,7 @@ class Bar:
         facts = parsed.get("facts", [])
         assert any("file[/test/a.py]" in f for f in facts)
 
-    def test_large_file_token_savings_visible(self):
+    def test_large_file_token_savings_visible(self) -> None:
         """Verify large file shows significant token savings in storage."""
         state = BridgeMemoryState()
         # Simulate 1000 line file
@@ -178,12 +171,11 @@ class Bar:
 
         # Should show ~1000 lines and ~4000 tokens in the fact
         assert "file[/test/large.py]:" in fact_value
-        assert ":1000|" in fact_value or ":999|" in fact_value, (
-            f"Expected ~1000 lines, got: {fact_value}"
-        )
-        assert "|~" in fact_value and "t" in fact_value  # token savings
+        assert ":1000|" in fact_value or ":999|" in fact_value, f"Expected ~1000 lines, got: {fact_value}"
+        assert "|~" in fact_value
+        assert "t" in fact_value
 
-    def test_multiple_files_all_with_savings(self):
+    def test_multiple_files_all_with_savings(self) -> None:
         """Verify multiple files each show token savings in storage."""
         state = BridgeMemoryState()
 
@@ -192,9 +184,7 @@ class Bar:
 
         # Verify both files have facts with savings indicator
         facts = state.hot.get("facts", [])
-        paths = [
-            f.value.split(":")[0] for f in facts if f.value.startswith("file[")
-        ]
+        paths = [f.value.split(":")[0] for f in facts if f.value.startswith("file[")]
 
         assert "file[/test/a.py]" in paths
         assert "file[/test/b.py]" in paths
@@ -202,11 +192,9 @@ class Bar:
         # Both should have token savings
         for fact in facts:
             if fact.value.startswith("file["):
-                assert "|~" in fact.value and "t" in fact.value, (
-                    f"Missing savings: {fact.value}"
-                )
+                assert "|~" in fact.value and "t" in fact.value, f"Missing savings: {fact.value}"
 
-    def test_legacy_format_backward_compatibility(self):
+    def test_legacy_format_backward_compatibility(self) -> None:
         """Verify system handles legacy format (no line count)."""
         state = BridgeMemoryState()
         # Manually insert legacy format
@@ -229,7 +217,7 @@ class Bar:
 class TestAIFreshnessSignalUnderstanding:
     """Tests that verify the AI would understand freshness signals."""
 
-    def test_line_count_makes_freshness_obvious(self):
+    def test_line_count_makes_freshness_obvious(self) -> None:
         """Line count in stored facts makes freshness obvious."""
         state = BridgeMemoryState()
         content = "def foo():\n    # 100 lines of code\n    pass\n" * 100
@@ -245,10 +233,11 @@ class TestAIFreshnessSignalUnderstanding:
         # (100 iterations × 3 lines each = 300 lines)
         assert "file[/test/current.py]:" in fact_value
         assert ":300|" in fact_value or ":299|" in fact_value  # ~300 lines
-        assert "|~" in fact_value and "t" in fact_value  # token savings
+        assert "|~" in fact_value
+        assert "t" in fact_value
 
-    def test_token_savings_indicator_format(self):
-        """Token savings format is unambiguous: ~TOKENS_SAVEDt"""
+    def test_token_savings_indicator_format(self) -> None:
+        """Token savings format is unambiguous: ~TOKENS_SAVEDt."""
         state = BridgeMemoryState()
         state.record_file_snapshot("/test/file.py", "line\n" * 250)
 
@@ -259,11 +248,9 @@ class TestAIFreshnessSignalUnderstanding:
         import re
 
         pattern = r"~\d+t"
-        assert re.search(pattern, fact_value), (
-            f"Expected ~<token-count>t format in: {fact_value}"
-        )
+        assert re.search(pattern, fact_value), f"Expected ~<token-count>t format in: {fact_value}"
 
-    def test_verified_current_vs_changed_delta(self):
+    def test_verified_current_vs_changed_delta(self) -> None:
         """AI can distinguish verified current from changed state."""
         # Current state
         state1 = {"files": ["a.py:100|def foo|~400t"], "goal": ["test"]}
@@ -281,24 +268,19 @@ if __name__ == "__main__":
 
 
 class TestStableResultPayloadIntegration:
-    def _extract_first_tool_result(
-        self, messages: list[dict[str, Any]]
-    ) -> str:
+    def _extract_first_tool_result(self, messages: list[dict[str, Any]]) -> str:
         for msg in messages:
             content = msg.get("content")
             if not isinstance(content, list):
                 continue
             for block in content:
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") == "tool_result"
-                ):
+                if isinstance(block, dict) and block.get("type") == "tool_result":
                     block_content = block.get("content")
                     if isinstance(block_content, str):
                         return block_content
         return ""
 
-    def test_stable_payload_emitted_on_repeat(self):
+    def test_stable_payload_emitted_on_repeat(self) -> None:
         runtime = UniversalTokRuntime()
         session = RuntimeSession()
 
@@ -347,21 +329,17 @@ class TestStableResultPayloadIntegration:
         runtime.prepare_request(_req(bypass=False), session)
         prepared2 = runtime.prepare_request(_req(bypass=False), session)
 
-        tool_result2 = self._extract_first_tool_result(
-            prepared2.body.get("messages", [])
-        )
+        tool_result2 = self._extract_first_tool_result(prepared2.body.get("messages", []))
         assert tool_result2.startswith("@stable_result(hash:")
         assert "\n@stable_summary |>" in tool_result2
         assert "\n@stable_skeleton |>" in tool_result2
 
         prepared3 = runtime.prepare_request(_req(bypass=True), session)
-        tool_result3 = self._extract_first_tool_result(
-            prepared3.body.get("messages", [])
-        )
+        tool_result3 = self._extract_first_tool_result(prepared3.body.get("messages", []))
         assert tool_result3 == raw
         assert "@stable_result" not in tool_result3
 
-    def test_host_unchanged_stub_replays_cached_precision_bytes(self):
+    def test_host_unchanged_stub_replays_cached_precision_bytes(self) -> None:
         runtime = UniversalTokRuntime()
         session = RuntimeSession()
 
@@ -405,12 +383,10 @@ class TestStableResultPayloadIntegration:
 
         # Host returns an empty/stub payload; Tok should replay cached bytes for precision reads.
         prepared2 = runtime.prepare_request(_req(""), session)
-        tool_result2 = self._extract_first_tool_result(
-            prepared2.body.get("messages", [])
-        )
+        tool_result2 = self._extract_first_tool_result(prepared2.body.get("messages", []))
         assert tool_result2 == raw
 
-    def test_precision_read_recent_window_preserves_raw_on_stub(self):
+    def test_precision_read_recent_window_preserves_raw_on_stub(self) -> None:
         runtime = UniversalTokRuntime()
         session = RuntimeSession()
 
@@ -452,10 +428,6 @@ class TestStableResultPayloadIntegration:
 
         runtime.prepare_request(_req(raw), session)
 
-        prepared2 = runtime.prepare_request(
-            _req("Unchanged since last read"), session
-        )
-        tool_result2 = self._extract_first_tool_result(
-            prepared2.body.get("messages", [])
-        )
+        prepared2 = runtime.prepare_request(_req("Unchanged since last read"), session)
+        tool_result2 = self._extract_first_tool_result(prepared2.body.get("messages", []))
         assert tool_result2 == raw

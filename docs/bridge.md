@@ -13,8 +13,8 @@ Tok's first open-source release is intentionally narrow and Claude-first:
 - use Claude normally
 - diagnose with `status`, `doctor`, `stats`, and logs
 
-The bridge is the supported product path. Broader platform and SDK work come later.
-The default CLI help intentionally centers that bridge-first path for `0.1.0`.
+The bridge is the supported product path. Broader platform and SDK work come later. The
+default CLI help intentionally centers that bridge-first path for `0.1.0`.
 
 ## What The Bridge Does
 
@@ -55,8 +55,8 @@ tok bridge stop
 tok stats
 ```
 
-`tok install` adds a `claude()` shell wrapper. It does **not** replace the real `tok` CLI.
-If `claude` is still missing after install, reload your shell before digging into
+`tok install` adds a `claude()` shell wrapper. It does **not** replace the real `tok`
+CLI. If `claude` is still missing after install, reload your shell before digging into
 bridge logs or runtime health.
 
 ## What Success Looks Like
@@ -144,8 +144,8 @@ tok bridge start --port 8080
 tok bridge start --no-fail-open
 ```
 
-Use `--foreground` for the fastest debugging loop when setup is not behaving the way
-you expect.
+Use `--foreground` for the fastest debugging loop when setup is not behaving the way you
+expect.
 
 ### Status
 
@@ -159,8 +159,8 @@ you expect.
 
 ### Doctor
 
-`tok doctor` is the fastest “is Tok helping right now?” command.
-It now ends with a concrete recommendation:
+`tok doctor` is the fastest “is Tok helping right now?” command. It now ends with a
+concrete recommendation:
 
 - `Recommendation: keep Tok on`
 - `Recommendation: keep Tok on, but watch this session`
@@ -168,7 +168,8 @@ It now ends with a concrete recommendation:
 
 ### Stop
 
-`tok bridge stop` prints a compact session summary, which makes it the easiest end-of-session checkpoint.
+`tok bridge stop` prints a compact session summary, which makes it the easiest
+end-of-session checkpoint.
 
 ### Logs
 
@@ -249,6 +250,8 @@ Keep Tok on, but inspect the degradation reason before deciding the bridge is at
 ## Next Docs
 
 - [`docs/cli-reference.md`](./cli-reference.md) for the command surface
-- [`docs/troubleshooting.md`](./troubleshooting.md) for fallback and degraded-session diagnosis
-- [`docs/production-readiness.md`](./production-readiness.md) for advanced runtime defaults and release posture
+- [`docs/troubleshooting.md`](./troubleshooting.md) for fallback and degraded-session
+  diagnosis
+- [`docs/production-readiness.md`](./production-readiness.md) for advanced runtime
+  defaults and release posture
 - [`docs/architecture.md`](./architecture.md) for deep runtime details

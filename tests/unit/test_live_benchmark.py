@@ -1,6 +1,6 @@
 import json
-from typing import Any
 from types import SimpleNamespace
+from typing import Any
 
 from tok.testing.live_benchmark import (
     BenchmarkDefinition,
@@ -20,13 +20,9 @@ from tok.testing.live_benchmark import (
 
 
 class _FakeCompletions:
-    def __init__(
-        self, content: str, prompt_tokens: int, completion_tokens: int
-    ):
+    def __init__(self, content: str, prompt_tokens: int, completion_tokens: int) -> None:
         self._response = SimpleNamespace(
-            choices=[
-                SimpleNamespace(message=SimpleNamespace(content=content))
-            ],
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
             usage=SimpleNamespace(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
@@ -44,12 +40,8 @@ class _FakeClient:
         content: str,
         prompt_tokens: int = 100,
         completion_tokens: int = 20,
-    ):
-        self.chat = SimpleNamespace(
-            completions=_FakeCompletions(
-                content, prompt_tokens, completion_tokens
-            )
-        )
+    ) -> None:
+        self.chat = SimpleNamespace(completions=_FakeCompletions(content, prompt_tokens, completion_tokens))
 
 
 def _result(
@@ -104,9 +96,7 @@ def _result(
             "request_messages_before": 3,
             "request_messages_after": 2,
             "session_turns": 3,
-            "response_warning_signal_count": sum(
-                (response_signals or {}).values()
-            ),
+            "response_warning_signal_count": sum((response_signals or {}).values()),
         },
         task_success=success,
         matched_success_terms=["gateway.py", "passed"] if success else [],
@@ -118,7 +108,7 @@ def _result(
     )
 
 
-def test_normalize_fixture_messages_converts_tools_and_appends_followup():
+def test_normalize_fixture_messages_converts_tools_and_appends_followup() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Read the file"},
         {
@@ -138,14 +128,12 @@ def test_normalize_fixture_messages_converts_tools_and_appends_followup():
     normalized = normalize_fixture_messages(messages, "What changed?")
 
     assert normalized[0] == {"role": "user", "content": "Read the file"}
-    assert any(
-        "Tool use (view_file)" in str(b) for b in normalized[1]["content"]
-    )
+    assert any("Tool use (view_file)" in str(b) for b in normalized[1]["content"])
     assert "Tool result (a1)" in normalized[2]["content"]
     assert normalized[-1]["content"] == "What changed?"
 
 
-def test_chunk_messages_respects_replay_turn_boundaries():
+def test_chunk_messages_respects_replay_turn_boundaries() -> None:
     fixture: list[dict[str, Any]] = [
         {
             "role": "user",
@@ -226,12 +214,10 @@ def test_chunk_messages_respects_replay_turn_boundaries():
     assert chunks[1][-1]["content"].startswith("Tool result (r2)")
     assert chunks[2] == []
     assert chunks[3][-1]["content"].startswith("Tool result (r3)")
-    assert chunks[4] == [
-        {"role": "user", "content": "Please summarize the answer."}
-    ]
+    assert chunks[4] == [{"role": "user", "content": "Please summarize the answer."}]
 
 
-def test_compare_results_emits_bootstrap_diagnosis():
+def test_compare_results_emits_bootstrap_diagnosis() -> None:
     baseline = _result(mode="baseline", total_tokens=120, prompt_tokens=100)
     candidate = _result(
         mode="tok-native",
@@ -249,7 +235,7 @@ def test_compare_results_emits_bootstrap_diagnosis():
     assert comparison.tok_improved is False
 
 
-def test_compare_results_emits_response_drift_diagnosis():
+def test_compare_results_emits_response_drift_diagnosis() -> None:
     baseline = _result(mode="baseline", total_tokens=120, prompt_tokens=100)
     candidate = _result(
         mode="tok-native",
@@ -264,13 +250,9 @@ def test_compare_results_emits_response_drift_diagnosis():
     assert comparison.diagnosis == "lost_on_response_drift"
 
 
-def test_select_preferred_mode_ignores_failing_candidate():
-    baseline = _result(
-        mode="baseline", total_tokens=120, prompt_tokens=100, success=True
-    )
-    failing = _result(
-        mode="tok-minimal", total_tokens=50, prompt_tokens=40, success=False
-    )
+def test_select_preferred_mode_ignores_failing_candidate() -> None:
+    baseline = _result(mode="baseline", total_tokens=120, prompt_tokens=100, success=True)
+    failing = _result(mode="tok-minimal", total_tokens=50, prompt_tokens=40, success=False)
     winning = _result(
         mode="tok-tool-compatible",
         total_tokens=90,
@@ -289,13 +271,9 @@ def test_select_preferred_mode_ignores_failing_candidate():
     assert preferred == "tok-tool-compatible"
 
 
-def test_render_comparison_markdown_includes_success_and_turns():
-    baseline = _result(
-        mode="baseline", total_tokens=120, prompt_tokens=100, success=True
-    )
-    candidate = _result(
-        mode="tok-minimal", total_tokens=90, prompt_tokens=70, success=False
-    )
+def test_render_comparison_markdown_includes_success_and_turns() -> None:
+    baseline = _result(mode="baseline", total_tokens=120, prompt_tokens=100, success=True)
+    candidate = _result(mode="tok-minimal", total_tokens=90, prompt_tokens=70, success=False)
     comparison = compare_results(baseline, candidate)
 
     markdown = render_comparison_markdown(baseline, [comparison])
@@ -308,14 +286,14 @@ def test_render_comparison_markdown_includes_success_and_turns():
     assert "State payload tokens estimate" in markdown
 
 
-def test_load_benchmark_definition_supports_five_turn_variant():
+def test_load_benchmark_definition_supports_five_turn_variant() -> None:
     definition = load_benchmark_definition("coding-loop-5")
 
     assert definition.default_turns == 5
     assert definition.fixture_path.name == "claude_coding_loop.jsonl"
 
 
-def test_load_benchmark_definition_supports_research_variant():
+def test_load_benchmark_definition_supports_research_variant() -> None:
     definition = load_benchmark_definition("research-loop-5")
 
     assert definition.default_turns == 5
@@ -331,46 +309,31 @@ def test_load_benchmark_definition_supports_research_variant():
     )
     prompts = _turn_prompts(definition, 5)
     assert "primary file that answered the original question" in prompts[0]
-    assert (
-        "Related=<the related file or class mentioned during the investigation>"
-        in prompts[3]
-    )
+    assert "Related=<the related file or class mentioned during the investigation>" in prompts[3]
 
 
-def test_summarize_compare_runs_reports_preferred_counts_and_medians():
+def test_summarize_compare_runs_reports_preferred_counts_and_medians() -> None:
     run_one = {
-        "baseline": _result(
-            mode="baseline", total_tokens=120, prompt_tokens=100
-        ),
+        "baseline": _result(mode="baseline", total_tokens=120, prompt_tokens=100),
         "tok-minimal": _result(
             mode="tok-minimal",
             total_tokens=90,
             prompt_tokens=70,
             success=False,
         ),
-        "tok-native": _result(
-            mode="tok-native", total_tokens=110, prompt_tokens=90
-        ),
-        "tok-tool-compatible": _result(
-            mode="tok-tool-compatible", total_tokens=80, prompt_tokens=60
-        ),
+        "tok-native": _result(mode="tok-native", total_tokens=110, prompt_tokens=90),
+        "tok-tool-compatible": _result(mode="tok-tool-compatible", total_tokens=80, prompt_tokens=60),
     }
     run_two = {
-        "baseline": _result(
-            mode="baseline", total_tokens=140, prompt_tokens=115
-        ),
+        "baseline": _result(mode="baseline", total_tokens=140, prompt_tokens=115),
         "tok-minimal": _result(
             mode="tok-minimal",
             total_tokens=95,
             prompt_tokens=75,
             success=False,
         ),
-        "tok-native": _result(
-            mode="tok-native", total_tokens=100, prompt_tokens=80
-        ),
-        "tok-tool-compatible": _result(
-            mode="tok-tool-compatible", total_tokens=85, prompt_tokens=65
-        ),
+        "tok-native": _result(mode="tok-native", total_tokens=100, prompt_tokens=80),
+        "tok-tool-compatible": _result(mode="tok-tool-compatible", total_tokens=85, prompt_tokens=65),
     }
 
     summary = summarize_compare_runs([run_one, run_two])
@@ -378,15 +341,14 @@ def test_summarize_compare_runs_reports_preferred_counts_and_medians():
 
     assert summary["runs"] == 2
     assert summary["preferred_mode_counts"]["tok-tool-compatible"] == 2
-    assert (
-        summary["mode_summaries"]["tok-tool-compatible"]["median_total_tokens"]
-        == 82
-    )
+    assert summary["mode_summaries"]["tok-tool-compatible"]["median_total_tokens"] == 82
     assert "Preferred Mode Counts" in markdown
     assert "tok-tool-compatible" in markdown
 
 
-def test_live_benchmark_runner_reports_prompt_and_response_metrics(tmp_path):
+def test_live_benchmark_runner_reports_prompt_and_response_metrics(
+    tmp_path,
+) -> None:
     fixture = tmp_path / "fixture.jsonl"
     fixture.write_text(
         json.dumps(
@@ -398,9 +360,7 @@ def test_live_benchmark_runner_reports_prompt_and_response_metrics(tmp_path):
                     },
                     {
                         "role": "assistant",
-                        "content": [
-                            {"type": "text", "text": "Investigation complete."}
-                        ],
+                        "content": [{"type": "text", "text": "Investigation complete."}],
                     },
                 ]
             }
@@ -421,9 +381,7 @@ def test_live_benchmark_runner_reports_prompt_and_response_metrics(tmp_path):
     baseline = runner.run(definition, mode="baseline", turns=3)
     minimal = runner.run(definition, mode="tok-minimal", turns=3)
     native = runner.run(definition, mode="tok-native", turns=3)
-    tool_compatible = runner.run(
-        definition, mode="tok-tool-compatible", turns=3
-    )
+    tool_compatible = runner.run(definition, mode="tok-tool-compatible", turns=3)
 
     assert baseline.task_success is True
     assert baseline.compression_metrics["total_saved_tokens"] == 0
@@ -456,20 +414,13 @@ def test_live_benchmark_runner_reports_prompt_and_response_metrics(tmp_path):
 
     assert tool_compatible.task_success is True
     assert tool_compatible.diagnostics["tool_compatible_requested"] is True
-    assert tool_compatible.turns[0]["diagnostics"]["request_policy"] == (
-        "natural_first"
-    )
-    assert (
-        tool_compatible.response_metrics["response_mode"] == "tool-compatible"
-    )
+    assert tool_compatible.turns[0]["diagnostics"]["request_policy"] == ("natural_first")
+    assert tool_compatible.response_metrics["response_mode"] == "tool-compatible"
 
 
-def test_live_benchmark_runner_rejects_placeholder_success(tmp_path):
+def test_live_benchmark_runner_rejects_placeholder_success(tmp_path) -> None:
     fixture = tmp_path / "fixture.jsonl"
-    fixture.write_text(
-        json.dumps({"messages": [{"role": "user", "content": "Fix it"}]})
-        + "\n"
-    )
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Fix it"}]}) + "\n")
     definition = BenchmarkDefinition(
         name="coding-loop",
         fixture_path=fixture,
@@ -493,12 +444,11 @@ def test_live_benchmark_runner_rejects_placeholder_success(tmp_path):
     assert "placeholder_verification_field" in result.notes
 
 
-def test_live_benchmark_runner_accepts_plain_pytest_verification(tmp_path):
+def test_live_benchmark_runner_accepts_plain_pytest_verification(
+    tmp_path,
+) -> None:
     fixture = tmp_path / "fixture.jsonl"
-    fixture.write_text(
-        json.dumps({"messages": [{"role": "user", "content": "Fix gateway"}]})
-        + "\n"
-    )
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Fix gateway"}]}) + "\n")
     definition = BenchmarkDefinition(
         name="coding-loop",
         fixture_path=fixture,
@@ -509,9 +459,7 @@ def test_live_benchmark_runner_accepts_plain_pytest_verification(tmp_path):
         expected_file_terms=("gateway.py",),
         expected_verification_terms=("passed", "1 passed", "pytest"),
     )
-    client = _FakeClient(
-        "File=src/tok/gateway.py\nVerification=pytest src/tok/gateway.py"
-    )
+    client = _FakeClient("File=src/tok/gateway.py\nVerification=pytest src/tok/gateway.py")
     runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
 
     result = runner.run(definition, mode="baseline", turns=1)
@@ -520,12 +468,11 @@ def test_live_benchmark_runner_accepts_plain_pytest_verification(tmp_path):
     assert result.notes == []
 
 
-def test_live_benchmark_runner_rejects_bare_failed_verification(tmp_path):
+def test_live_benchmark_runner_rejects_bare_failed_verification(
+    tmp_path,
+) -> None:
     fixture = tmp_path / "fixture.jsonl"
-    fixture.write_text(
-        json.dumps({"messages": [{"role": "user", "content": "Fix gateway"}]})
-        + "\n"
-    )
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Fix gateway"}]}) + "\n")
     definition = BenchmarkDefinition(
         name="coding-loop",
         fixture_path=fixture,

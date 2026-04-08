@@ -1,4 +1,5 @@
-"""Tests for thinking-block mutation detection and deduplication.
+"""
+Tests for thinking-block mutation detection and deduplication.
 
 These tests verify:
 1. No false positive when multiple assistant turns have thinking blocks.
@@ -76,12 +77,12 @@ def _make_messages_with_two_thinking_assistants() -> list[dict]:
 class TestNoFalsePositiveWithMultipleThinkingMessages:
     """The LAST assistant with thinking is protected, not the first."""
 
-    def test_no_mutation_signal_with_two_thinking_assistants(self):
+    def test_no_mutation_signal_with_two_thinking_assistants(self) -> None:
         messages = _make_messages_with_two_thinking_assistants()
         _, _, signals = canonicalize_anthropic_bridge_messages(messages)
         assert "thinking_block_mutated" not in signals
 
-    def test_protected_hash_matches_latest_assistant(self):
+    def test_protected_hash_matches_latest_assistant(self) -> None:
         messages = _make_messages_with_two_thinking_assistants()
         latest_content = messages[3]["content"]
         latest_hash = _content_hash(latest_content)
@@ -93,10 +94,12 @@ class TestNoFalsePositiveWithMultipleThinkingMessages:
 
 
 class TestPerCycleDedup:
-    """Identical mutation detections within one canonicalization cycle are
-    deduplicated via the seen_mutation_pairs set."""
+    """
+    Identical mutation detections within one canonicalization cycle are
+    deduplicated via the seen_mutation_pairs set.
+    """
 
-    def test_dedup_prevents_double_signal(self):
+    def test_dedup_prevents_double_signal(self) -> None:
         messages = _make_messages_with_two_thinking_assistants()
         protected_content = messages[3]["content"]
         before_hash = _content_hash(protected_content)
@@ -131,7 +134,7 @@ class TestPerCycleDedup:
         )
         assert "thinking_block_mutated" not in signals2
 
-    def test_different_mutations_both_fire(self):
+    def test_different_mutations_both_fire(self) -> None:
         messages = _make_messages_with_two_thinking_assistants()
 
         first_content = messages[1]["content"]
@@ -177,21 +180,22 @@ class TestPerCycleDedup:
 
 
 class TestRestoreBreadcrumb:
-    """Verify the THINKING_BLOCK_MUTATION_RESTORED event exists and has zero
-    penalty weight."""
+    """
+    Verify the THINKING_BLOCK_MUTATION_RESTORED event exists and has zero
+    penalty weight.
+    """
 
-    def test_restored_event_type_exists(self):
+    def test_restored_event_type_exists(self) -> None:
         assert hasattr(SmoothnessEventType, "THINKING_BLOCK_MUTATION_RESTORED")
 
-    def test_restored_event_has_no_penalty(self):
+    def test_restored_event_has_no_penalty(self) -> None:
         from tok.runtime.smoothness.scoring import PENALTIES
 
-        assert (
-            SmoothnessEventType.THINKING_BLOCK_MUTATION_RESTORED
-            not in PENALTIES
-        )
+        assert SmoothnessEventType.THINKING_BLOCK_MUTATION_RESTORED not in PENALTIES
 
-    def test_restored_event_does_not_trigger_smooth_mode_override(self):
+    def test_restored_event_does_not_trigger_smooth_mode_override(
+        self,
+    ) -> None:
         from tok.runtime.smoothness.policy import choose_tok_mode
         from tok.runtime.smoothness.scoring import score_turn
 
@@ -201,14 +205,18 @@ class TestRestoreBreadcrumb:
 
 
 class TestMultiThinkingBlocksLatestAssistant:
-    """Test the exact multi-thinking reproducer shape: latest assistant with two
-    thinking blocks followed by tool_use blocks."""
+    """
+    Test the exact multi-thinking reproducer shape: latest assistant with two
+    thinking blocks followed by tool_use blocks.
+    """
 
     def _make_messages_with_two_thinking_and_three_tool_uses(
         self,
     ) -> list[dict]:
-        """Construct a latest assistant message with exact type sequence:
-        thinking, thinking, tool_use, tool_use, tool_use."""
+        """
+        Construct a latest assistant message with exact type sequence:
+        thinking, thinking, tool_use, tool_use, tool_use.
+        """
         return [
             {
                 "role": "user",
@@ -263,7 +271,7 @@ class TestMultiThinkingBlocksLatestAssistant:
 
     def test_latest_assistant_with_two_thinking_blocks_survives_preflight_restore(
         self,
-    ):
+    ) -> None:
         messages = self._make_messages_with_two_thinking_and_three_tool_uses()
 
         latest_content = messages[1]["content"]
@@ -272,15 +280,15 @@ class TestMultiThinkingBlocksLatestAssistant:
         snapshot = _snapshot_latest_assistant_thinking(messages)
         assert snapshot is not None
 
-        canonicalized, changed, signals = (
-            canonicalize_anthropic_bridge_messages(messages)
-        )
+        (
+            canonicalized,
+            _changed,
+            signals,
+        ) = canonicalize_anthropic_bridge_messages(messages)
 
         assert signals.get("thinking_block_mutated") is None
 
-        restore_success = _restore_latest_assistant_thinking(
-            canonicalized, snapshot
-        )
+        restore_success = _restore_latest_assistant_thinking(canonicalized, snapshot)
         assert restore_success is True
 
         restored_latest = canonicalized[1]["content"]
@@ -291,7 +299,8 @@ class TestMultiThinkingBlocksLatestAssistant:
 
 
 class TestPartialRestoreDoesNotClearMutationSignal:
-    """Test that partial restore does not clear the mutation signal.
+    """
+    Test that partial restore does not clear the mutation signal.
     The old bug treated 'some replacement happened' as success. The new
     behavior must only clear mutation on exact full-content restoration.
     """
@@ -299,7 +308,8 @@ class TestPartialRestoreDoesNotClearMutationSignal:
     def _make_mutated_restore_scenario(
         self,
     ) -> tuple[list[dict], str, str, list[str]]:
-        """Construct a snapshot plus mutated latest assistant content where only
+        """
+        Construct a snapshot plus mutated latest assistant content where only
         part of the protected content would be restorable under the old
         positional logic.
 
@@ -354,10 +364,15 @@ class TestPartialRestoreDoesNotClearMutationSignal:
 
         return mutated_messages, snapshot, original_hash, original_block_types
 
-    def test_partial_restore_does_not_clear_thinking_block_mutated(self):
-        mutated_messages, snapshot, original_hash, original_block_types = (
-            self._make_mutated_restore_scenario()
-        )
+    def test_partial_restore_does_not_clear_thinking_block_mutated(
+        self,
+    ) -> None:
+        (
+            mutated_messages,
+            snapshot,
+            original_hash,
+            original_block_types,
+        ) = self._make_mutated_restore_scenario()
 
         signals: dict[str, int] = {}
 
@@ -390,20 +405,20 @@ class TestPartialRestoreDoesNotClearMutationSignal:
         )
 
         assert signals_after_restore.get("thinking_block_mutated") == 1
-        assert (
-            signals_after_restore.get("thinking_block_mutation_restored")
-            is None
-        )
+        assert signals_after_restore.get("thinking_block_mutation_restored") is None
 
 
 class TestProviderSensitiveRewriteSkipsProtectedLatestAssistant:
-    """Test the provider-sensitive large tool-use text interleaving rewrite
-    must not touch the protected latest assistant message."""
+    """
+    Test the provider-sensitive large tool-use text interleaving rewrite
+    must not touch the protected latest assistant message.
+    """
 
     def _make_protected_latest_assistant_with_large_batch(
         self,
     ) -> tuple[list[dict], int, str]:
-        """Construct a message sequence where the latest assistant message is the
+        """
+        Construct a message sequence where the latest assistant message is the
         protected one and contains at least one thinking block and enough
         additional blocks that the provider-sensitive rewrite path would
         normally inspect the message.
@@ -446,9 +461,7 @@ class TestProviderSensitiveRewriteSkipsProtectedLatestAssistant:
             {
                 "role": "assistant",
                 "content": [
-                    _make_thinking_block(
-                        "latest protected thinking", "sig_latest"
-                    ),
+                    _make_thinking_block("latest protected thinking", "sig_latest"),
                     {
                         "type": "text",
                         "text": "Latest assistant with large tool batch",
@@ -491,33 +504,31 @@ class TestProviderSensitiveRewriteSkipsProtectedLatestAssistant:
 
     def test_provider_sensitive_interleaving_rewrite_skips_protected_latest_assistant(
         self,
-    ):
+    ) -> None:
         from tok.runtime.pipeline.request_validation import (
             canonicalize_anthropic_bridge_messages,
         )
 
-        messages, protected_index, original_hash = (
-            self._make_protected_latest_assistant_with_large_batch()
-        )
+        (
+            messages,
+            _protected_index,
+            original_hash,
+        ) = self._make_protected_latest_assistant_with_large_batch()
 
-        canonicalized, changed, signals = (
-            canonicalize_anthropic_bridge_messages(messages)
-        )
+        (
+            canonicalized,
+            _changed,
+            signals,
+        ) = canonicalize_anthropic_bridge_messages(messages)
 
         found_protected = None
         for msg in canonicalized:
             if msg.get("role") == "assistant":
                 content = msg.get("content")
-                if isinstance(content, list):
-                    if any(
-                        isinstance(b, dict)
-                        and b.get("type") in {"thinking", "redacted_thinking"}
-                        for b in content
-                    ):
-                        if found_protected is None:
-                            found_protected = msg
-                        else:
-                            found_protected = msg
+                if isinstance(content, list) and any(
+                    isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content
+                ):
+                    found_protected = msg if found_protected is None else msg
 
         assert found_protected is not None
 

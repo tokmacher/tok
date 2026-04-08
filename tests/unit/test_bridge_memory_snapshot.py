@@ -10,7 +10,7 @@ from tok.runtime.memory.bridge_memory import BridgeMemoryState
 class TestRecordFileSnapshotFormat:
     """Test suite for record_file_snapshot enhanced format."""
 
-    def test_new_format_includes_line_count(self):
+    def test_new_format_includes_line_count(self) -> None:
         """Verify new format includes line count in fact value."""
         state = BridgeMemoryState()
         content = "line1\nline2\nline3\nline4\nline5"
@@ -23,7 +23,7 @@ class TestRecordFileSnapshotFormat:
         assert "5|" in facts[0].value  # 5 lines
         assert "|~20t" in facts[0].value  # ~20 tokens (5 lines * 4)
 
-    def test_large_file_shows_token_savings(self):
+    def test_large_file_shows_token_savings(self) -> None:
         """Verify large files show significant token savings."""
         state = BridgeMemoryState()
         # Simulate 1000 line file
@@ -37,7 +37,7 @@ class TestRecordFileSnapshotFormat:
         assert "1000|" in facts[0].value
         assert "|~4000t" in facts[0].value
 
-    def test_extracts_digest_from_content(self):
+    def test_extracts_digest_from_content(self) -> None:
         """Verify semantic digest is extracted from content."""
         state = BridgeMemoryState()
         content = "def foo():\n    pass\n\nclass Bar:\n    pass"
@@ -49,7 +49,7 @@ class TestRecordFileSnapshotFormat:
         # Should contain function/class definitions in digest
         assert "def " in facts[0].value or "class " in facts[0].value
 
-    def test_creates_files_entry(self):
+    def test_creates_files_entry(self) -> None:
         """Verify files field is also populated."""
         state = BridgeMemoryState()
         content = "line1\nline2\nline3"
@@ -64,7 +64,7 @@ class TestRecordFileSnapshotFormat:
 class TestGetFileFactDigests:
     """Test suite for get_file_fact_digests with new format."""
 
-    def test_parses_new_format_correctly(self):
+    def test_parses_new_format_correctly(self) -> None:
         """Verify parsing of new format: LINE_COUNT|digest|~tokens."""
         state = BridgeMemoryState()
         content = "def foo():\n    pass\n"
@@ -79,7 +79,7 @@ class TestGetFileFactDigests:
         assert "|" not in digest  # Should be clean digest
         assert "~" not in digest
 
-    def test_handles_legacy_format(self):
+    def test_handles_legacy_format(self) -> None:
         """Verify backward compatibility with legacy format (no line count)."""
         state = BridgeMemoryState()
         # Manually insert legacy format fact
@@ -95,7 +95,7 @@ class TestGetFileFactDigests:
         assert "/test/legacy.py" in digests
         assert digests["/test/legacy.py"] == "def foo() pass"
 
-    def test_empty_content_returns_empty_digest(self):
+    def test_empty_content_returns_empty_digest(self) -> None:
         """Verify empty content handling."""
         state = BridgeMemoryState()
 
@@ -103,21 +103,19 @@ class TestGetFileFactDigests:
 
         assert result is False
 
-    def test_multiple_files_parsed_correctly(self):
+    def test_multiple_files_parsed_correctly(self) -> None:
         """Verify multiple files with new format are all parsed."""
         state = BridgeMemoryState()
 
         state.record_file_snapshot("/test/a.py", "def a():\n    pass\n")
-        state.record_file_snapshot(
-            "/test/b.py", "def b():\n    pass\n\nclass B:\n    pass\n"
-        )
+        state.record_file_snapshot("/test/b.py", "def b():\n    pass\n\nclass B:\n    pass\n")
 
         digests = state.get_file_fact_digests()
 
         assert "/test/a.py" in digests
         assert "/test/b.py" in digests
         # Both should have clean digests without line count tokens
-        for _path, digest in digests.items():
+        for digest in digests.values():
             assert "|" not in digest
             assert "~" not in digest
 
@@ -125,7 +123,7 @@ class TestGetFileFactDigests:
 class TestFileSnapshotWithHeat:
     """Test suite for file snapshots with heat tracking."""
 
-    def test_edited_files_get_higher_score(self):
+    def test_edited_files_get_higher_score(self) -> None:
         """Verify files with heat >= 2.0 get edited flag."""
         state = BridgeMemoryState()
         # Simulate edited file by bumping heat
@@ -139,7 +137,7 @@ class TestFileSnapshotWithHeat:
         assert len(edited) == 1
         assert edited[0].value == "/test/edited.py"
 
-    def test_heat_bonus_increases_score(self):
+    def test_heat_bonus_increases_score(self) -> None:
         """Verify heat bonus increases fact score."""
         state = BridgeMemoryState()
         state.bump_file_heat("/test/hot.py", weight=5.0)

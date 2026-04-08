@@ -11,6 +11,12 @@ class CodingTask:
         self.tests = tests
 
 
-def tokify_code(_code: str) -> Any:
+class TokifyResult:
+    """Result of tokify_code with tokens list."""
+
+    def __init__(self, tokens: list[str]) -> None:
+        self.tokens = tokens
+
+
+def tokify_code(_code: str) -> TokifyResult:
     """Stub for tokify_code function."""
-    pass

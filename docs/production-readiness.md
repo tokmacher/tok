@@ -24,20 +24,28 @@ Runtime defaults and release posture for Tok.
 - The bridge is the only supported product surface
 - SDK/wrapper path exists but is experimental
 - No breaking changes are guaranteed before 1.0
-- The automated local gate for a release candidate is `pre-commit`, `ruff`,
-  `mypy`, `pytest ... --cov-fail-under=80`, and `python -m build`
-- The current release candidate is gated on one final live Claude validation pass against the supported bridge workflow
-- The release candidate should be tagged only from a quiet, clean tree after that validation passes
+- The automated local gate for a release candidate is `pre-commit`, `ruff`, `mypy`,
+  `pytest ... --cov-fail-under=80`, and `python -m build`
+- The current release candidate is gated on one final live Claude validation pass
+  against the supported bridge workflow
+- The release candidate should be tagged only from a quiet, clean tree after that
+  validation passes
 
 ## Intentional Deferrals For 0.1.0
 
-- `src/tok/cli/__init__.py` is still larger than ideal. The split helpers now own real implementation paths, but the final command-registration file will be reduced further after the first public release rather than during the release-candidate window.
-- Published dependencies do not currently carry blanket upper bounds. For `0.1.0`, Tok treats the lockfile, CI matrix, and clean-room install/build verification as the source of truth for tested compatibility.
+- `src/tok/cli/__init__.py` is still larger than ideal. The split helpers now own real
+  implementation paths, but the final command-registration file will be reduced further
+  after the first public release rather than during the release-candidate window.
+- Published dependencies do not currently carry blanket upper bounds. For `0.1.0`, Tok
+  treats the lockfile, CI matrix, and clean-room install/build verification as the
+  source of truth for tested compatibility.
 
 ## Safety Guarantees
 
-1. **Fail-open**: if the bridge encounters an error, requests are forwarded without compression
-1. **Observable degradation**: `tok doctor` and `tok bridge status` always report session health
+1. **Fail-open**: if the bridge encounters an error, requests are forwarded without
+   compression
+1. **Observable degradation**: `tok doctor` and `tok bridge status` always report
+   session health
 1. **No data leaves your machine**: Tok runs locally; only your normal API calls leave
 
 ## Monitoring

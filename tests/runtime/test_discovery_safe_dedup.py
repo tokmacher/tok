@@ -1,4 +1,5 @@
-"""Tests for discovery-safe deduplication - first exact observation contract.
+"""
+Tests for discovery-safe deduplication - first exact observation contract.
 
 This module tests the core contract that:
 1. First exact observations MUST be preserved exactly (not summarized)
@@ -14,8 +15,8 @@ import time
 from typing import Any
 
 from tok.compression._history_pipeline import compress_tool_results_impl
-from tok.runtime.repeat_targets import evidence_identity_key
 from tok.runtime.pipeline._tool_context import build_tool_use_id_to_context
+from tok.runtime.repeat_targets import evidence_identity_key
 
 
 def _tool_use(tool_id: str, tool_name: str, **input_kw: Any) -> dict[str, Any]:
@@ -57,7 +58,7 @@ def _make_cache_key(tool_name: str, context: dict[str, Any]) -> str:
 class TestFirstExactObservationContract:
     """Test Rule 1: First exact observation must not be replaced by summary-only."""
 
-    def test_first_file_read_is_exact_not_summary(self):
+    def test_first_file_read_is_exact_not_summary(self) -> None:
         """First file observation must be exact, not substituted with summary."""
         file_content = "def foo():\n    pass\n\ndef bar():\n    return 42\n"
         messages = [
@@ -67,14 +68,12 @@ class TestFirstExactObservationContract:
         tool_use_id_to_context = build_tool_use_id_to_context(messages)
         first_exact_evidence_seen: set[str] = set()
 
-        result_cache: dict[
-            str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-        ] = {}
+        result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
         cache_key = _make_cache_key("read_file", tool_use_id_to_context["t1"])
         digest = hashlib.sha256(file_content.encode()).hexdigest()[:8]
         result_cache[cache_key] = (digest, file_content, time.time())
 
-        compressed, breakdown = compress_tool_results_impl(
+        compressed, _breakdown = compress_tool_results_impl(
             messages,
             result_cache=result_cache,
             tool_use_id_to_context=tool_use_id_to_context,
@@ -98,7 +97,7 @@ class TestFirstExactObservationContract:
         )
         assert evidence_key in first_exact_evidence_seen
 
-    def test_repeated_file_read_can_dedup_after_first_exact(self):
+    def test_repeated_file_read_can_dedup_after_first_exact(self) -> None:
         """After first exact observation, repeated reads may dedup."""
         file_content = "def foo():\n    pass\n\ndef bar():\n    return 42\n"
         messages = [
@@ -111,14 +110,12 @@ class TestFirstExactObservationContract:
         first_exact_evidence_seen: set[str] = set()
 
         # Pre-populate result cache for second read
-        result_cache: dict[
-            str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-        ] = {}
+        result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
         cache_key = _make_cache_key("read_file", tool_use_id_to_context["t1"])
         digest = hashlib.sha256(file_content.encode()).hexdigest()[:8]
         result_cache[cache_key] = (digest, file_content, time.time())
 
-        compressed, breakdown = compress_tool_results_impl(
+        compressed, _breakdown = compress_tool_results_impl(
             messages,
             result_cache=result_cache,
             tool_use_id_to_context=tool_use_id_to_context,
@@ -152,13 +149,9 @@ class TestFirstExactObservationContract:
 class TestFirstGrepSearchObservationContract:
     """Test that first grep/search observations are exact."""
 
-    def test_first_grep_search_is_exact_not_summary(self):
+    def test_first_grep_search_is_exact_not_summary(self) -> None:
         """First grep/search result set must be exact, not pre-filtered."""
-        grep_results = (
-            "src/main.py:10:def main():\n"
-            "src/main.py:15:    print('hello')\n"
-            "src/utils.py:5:def helper():\n"
-        )
+        grep_results = "src/main.py:10:def main():\nsrc/main.py:15:    print('hello')\nsrc/utils.py:5:def helper():\n"
         messages = [
             _tool_use("t1", "grep_search", query="def ", path="src/"),
             _tool_result("t1", grep_results),
@@ -166,16 +159,12 @@ class TestFirstGrepSearchObservationContract:
         tool_use_id_to_context = build_tool_use_id_to_context(messages)
         first_exact_evidence_seen: set[str] = set()
 
-        result_cache: dict[
-            str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-        ] = {}
-        cache_key = _make_cache_key(
-            "grep_search", tool_use_id_to_context["t1"]
-        )
+        result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
+        cache_key = _make_cache_key("grep_search", tool_use_id_to_context["t1"])
         digest = hashlib.sha256(grep_results.encode()).hexdigest()[:8]
         result_cache[cache_key] = (digest, grep_results, time.time())
 
-        compressed, breakdown = compress_tool_results_impl(
+        compressed, _breakdown = compress_tool_results_impl(
             messages,
             result_cache=result_cache,
             tool_use_id_to_context=tool_use_id_to_context,
@@ -188,10 +177,7 @@ class TestFirstGrepSearchObservationContract:
         content_blocks = result_msg["content"]
         assert len(content_blocks) == 1
         # Content should be the original grep results (exact)
-        assert (
-            grep_results in content_blocks[0]["content"]
-            or content_blocks[0]["content"] == grep_results
-        )
+        assert grep_results in content_blocks[0]["content"] or content_blocks[0]["content"] == grep_results
 
         # Verify the evidence was tracked with proper identity
         evidence_key = evidence_identity_key(
@@ -202,11 +188,9 @@ class TestFirstGrepSearchObservationContract:
         )
         assert evidence_key in first_exact_evidence_seen
 
-    def test_repeated_grep_search_can_dedup_after_first_exact(self):
+    def test_repeated_grep_search_can_dedup_after_first_exact(self) -> None:
         """After first exact search, repeated searches may dedup."""
-        grep_results = (
-            "src/main.py:10:def main():\nsrc/main.py:15:    print('hello')\n"
-        )
+        grep_results = "src/main.py:10:def main():\nsrc/main.py:15:    print('hello')\n"
         messages = [
             _tool_use("t1", "grep_search", query="def ", path="src/"),
             _tool_result("t1", grep_results),
@@ -216,16 +200,12 @@ class TestFirstGrepSearchObservationContract:
         tool_use_id_to_context = build_tool_use_id_to_context(messages)
         first_exact_evidence_seen: set[str] = set()
 
-        result_cache: dict[
-            str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-        ] = {}
-        cache_key = _make_cache_key(
-            "grep_search", tool_use_id_to_context["t1"]
-        )
+        result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
+        cache_key = _make_cache_key("grep_search", tool_use_id_to_context["t1"])
         digest = hashlib.sha256(grep_results.encode()).hexdigest()[:8]
         result_cache[cache_key] = (digest, grep_results, time.time())
 
-        compressed, breakdown = compress_tool_results_impl(
+        compressed, _breakdown = compress_tool_results_impl(
             messages,
             result_cache=result_cache,
             tool_use_id_to_context=tool_use_id_to_context,
@@ -250,7 +230,7 @@ class TestFirstGrepSearchObservationContract:
 class TestEvidenceIdentityKey:
     """Test evidence identity key generation for different evidence types."""
 
-    def test_file_read_identity_key_format(self):
+    def test_file_read_identity_key_format(self) -> None:
         """File reads keyed by canonical path."""
         key = evidence_identity_key(
             "read_file",
@@ -261,7 +241,7 @@ class TestEvidenceIdentityKey:
         assert key.startswith("file_read|")
         assert "/tmp/foo.py" in key
 
-    def test_search_identity_key_includes_query_and_scope(self):
+    def test_search_identity_key_includes_query_and_scope(self) -> None:
         """Search identity includes normalized query, scope, and flags."""
         key1 = evidence_identity_key(
             "grep_search",
@@ -282,7 +262,7 @@ class TestEvidenceIdentityKey:
         assert "def" in key1
         assert "src" in key1
 
-    def test_search_identity_key_differs_by_flags(self):
+    def test_search_identity_key_differs_by_flags(self) -> None:
         """Search keys differ when flags differ."""
         key1 = evidence_identity_key(
             "grep_search",
@@ -299,7 +279,7 @@ class TestEvidenceIdentityKey:
         # Different flags should produce different keys
         assert key1 != key2
 
-    def test_listing_identity_key_format(self):
+    def test_listing_identity_key_format(self) -> None:
         """Directory listings keyed by path + mode."""
         key = evidence_identity_key(
             "list_dir",
@@ -314,7 +294,7 @@ class TestEvidenceIdentityKey:
 class TestDirectoryListingObservationContract:
     """Test first directory listing observations are exact."""
 
-    def test_first_directory_listing_is_exact(self):
+    def test_first_directory_listing_is_exact(self) -> None:
         """First directory listing must be exact, not curated."""
         dir_listing = "file1.py\nfile2.py\nsubdir/\nREADME.md\n"
         messages = [
@@ -324,7 +304,7 @@ class TestDirectoryListingObservationContract:
         tool_use_id_to_context = build_tool_use_id_to_context(messages)
         first_exact_evidence_seen: set[str] = set()
 
-        compressed, breakdown = compress_tool_results_impl(
+        compressed, _breakdown = compress_tool_results_impl(
             messages,
             result_cache={},
             tool_use_id_to_context=tool_use_id_to_context,

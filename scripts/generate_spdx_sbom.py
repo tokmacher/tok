@@ -6,23 +6,23 @@ Generates SPDX 2.3 format Software Bill of Materials.
 """
 
 import json
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
+from typing import Any
 
 
-def parse_uv_lock() -> list:
+def parse_uv_lock() -> list[dict[str, str]]:
     """Parse uv.lock file to extract package information."""
     lock_file = Path("uv.lock")
     if not lock_file.exists():
-        print("❌ uv.lock file not found")
         sys.exit(1)
 
-    packages = []
-    current_package = {}
+    packages: list[dict[str, str]] = []
+    current_package: dict[str, str] = {}
 
-    with open(lock_file) as f:
+    with lock_file.open() as f:
         lines = f.readlines()
 
     for line in lines:
@@ -44,14 +44,11 @@ def parse_uv_lock() -> list:
     return packages
 
 
-def generate_spdx_sbom(packages: list) -> dict:
+def generate_spdx_sbom(packages: list[dict[str, str]]) -> dict[str, Any]:
     """Generate SPDX 2.3 format SBOM."""
-
     # Document creation info
     creation_info = {
-        "created": datetime.now(timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z"),
+        "created": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "creators": [
             "Tool: tok-security-pipeline-1.0.0",
             "Organization: tokmacher",
@@ -121,9 +118,7 @@ def generate_spdx_sbom(packages: list) -> dict:
 
         # Add checksum if available
         if package_hash:
-            spdx_package["checksums"] = [
-                {"algorithm": "SHA256", "checksumValue": package_hash}
-            ]
+            spdx_package["checksums"] = [{"algorithm": "SHA256", "checksumValue": package_hash}]
 
         document_packages.append(spdx_package)
 
@@ -134,9 +129,7 @@ def generate_spdx_sbom(packages: list) -> dict:
     for package in packages:
         package_name = package.get("name", "")
         if package_name:
-            spdx_id = (
-                f"SPDXRef-{package_name.replace('-', '_').replace('.', '_')}"
-            )
+            spdx_id = f"SPDXRef-{package_name.replace('-', '_').replace('.', '_')}"
             relationships.append(
                 {
                     "spdxElementId": "SPDXRef-tok-protocol",
@@ -146,31 +139,21 @@ def generate_spdx_sbom(packages: list) -> dict:
             )
 
     # Build complete SBOM
-    sbom = {
+    return {
         **document_descriptor,
         "packages": document_packages,
         "relationships": relationships,
     }
 
-    return sbom
 
-
-def main():
+def main() -> None:
     """Main function to generate SBOM."""
-    print("📋 Generating SPDX SBOM...")
-
     packages = parse_uv_lock()
-    print(f"📦 Found {len(packages)} dependencies")
 
     sbom = generate_spdx_sbom(packages)
 
     output_file = Path("sbom.spdx")
-    with open(output_file, "w") as f:
-        json.dump(sbom, f, indent=2)
-
-    print(f"✅ SPDX SBOM generated: {output_file}")
-    print(f"📊 Total packages: {len(sbom['packages'])}")
-    print(f"🔗 Relationships: {len(sbom['relationships'])}")
+    output_file.write_text(json.dumps(sbom, indent=2))
 
 
 if __name__ == "__main__":

@@ -14,8 +14,7 @@ from typing import Any, Literal, cast
 
 from openai import OpenAI
 
-from ..utils.config import API_BASE
-from ..runtime.core import (
+from tok.runtime.core import (
     RuntimeRequest,
     RuntimeSession,
     UniversalTokRuntime,
@@ -23,6 +22,7 @@ from ..runtime.core import (
     calculate_invisible_pressure,
     count_tokens,
 )
+from tok.utils.config import API_BASE
 
 
 def _system_to_messages(
@@ -35,13 +35,11 @@ def _system_to_messages(
     messages: list[dict[str, str]] = []
     for block in system:
         if isinstance(block, dict):
-            messages.append(
-                {"role": "system", "content": block.get("text", "")}
-            )
+            messages.append({"role": "system", "content": block.get("text", "")})
     return messages
 
 
-def _estimate_tokens(value: Any) -> int:
+def _estimate_tokens(value: str | dict[str, Any] | list[Any] | None) -> int:
     if value is None:
         return 0
     if isinstance(value, str):
@@ -156,8 +154,7 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
         name="coding-loop",
         fixture_path=Path("tests/fixtures/replay/claude_coding_loop.jsonl"),
         system_prompt=(
-            "You are evaluating a completed coding session. "
-            "Answer briefly and cite exact filenames when possible."
+            "You are evaluating a completed coding session. Answer briefly and cite exact filenames when possible."
         ),
         followup_prompt=(
             "Based on the conversation so far, respond in exactly two lines:\n"
@@ -174,8 +171,7 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
         name="coding-loop-5",
         fixture_path=Path("tests/fixtures/replay/claude_coding_loop.jsonl"),
         system_prompt=(
-            "You are evaluating a completed coding session. "
-            "Answer briefly and cite exact filenames when possible."
+            "You are evaluating a completed coding session. Answer briefly and cite exact filenames when possible."
         ),
         followup_prompt=(
             "Based on the conversation so far, respond in exactly two lines:\n"
@@ -254,8 +250,7 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
         name="coding-loop-8",
         fixture_path=Path("tests/fixtures/replay/claude_coding_loop.jsonl"),
         system_prompt=(
-            "You are evaluating a completed coding session. "
-            "Answer briefly and cite exact filenames when possible."
+            "You are evaluating a completed coding session. Answer briefly and cite exact filenames when possible."
         ),
         followup_prompt=(
             "Based on the conversation so far, respond in exactly two lines:\n"
@@ -313,8 +308,7 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
         name="neuro-loop",
         fixture_path=Path("tests/fixtures/replay/neuro_loop.jsonl"),
         system_prompt=(
-            "You are evaluating a completed coding session. "
-            "Answer briefly and cite exact filenames when possible."
+            "You are evaluating a completed coding session. Answer briefly and cite exact filenames when possible."
         ),
         followup_prompt=(
             "Based on the conversation so far, respond in exactly two lines:\n"
@@ -359,8 +353,7 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
         name="coding-loop-15",
         fixture_path=Path("tests/fixtures/replay/claude_coding_loop.jsonl"),
         system_prompt=(
-            "You are evaluating a completed coding session. "
-            "Answer briefly and cite exact filenames when possible."
+            "You are evaluating a completed coding session. Answer briefly and cite exact filenames when possible."
         ),
         followup_prompt=(
             "Based on the conversation so far, respond in exactly two lines:\n"
@@ -375,9 +368,7 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
     ),
     "research-loop-15": BenchmarkDefinition(
         name="research-loop-15",
-        fixture_path=Path(
-            "tests/fixtures/replay/research_loop_extended.jsonl"
-        ),
+        fixture_path=Path("tests/fixtures/replay/research_loop_extended.jsonl"),
         system_prompt=(
             "You are evaluating a completed codebase research session. "
             "Answer briefly and cite exact filenames and identifiers when possible."
@@ -418,8 +409,7 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
         name="coding-loop-25",
         fixture_path=Path("tests/fixtures/replay/claude_coding_loop.jsonl"),
         system_prompt=(
-            "You are evaluating a completed coding session. "
-            "Answer briefly and cite exact filenames when possible."
+            "You are evaluating a completed coding session. Answer briefly and cite exact filenames when possible."
         ),
         followup_prompt=(
             "Based on the conversation so far, respond in exactly two lines:\n"
@@ -434,9 +424,7 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
     ),
     "research-loop-25": BenchmarkDefinition(
         name="research-loop-25",
-        fixture_path=Path(
-            "tests/fixtures/replay/research_loop_extended.jsonl"
-        ),
+        fixture_path=Path("tests/fixtures/replay/research_loop_extended.jsonl"),
         system_prompt=(
             "You are evaluating a completed codebase research session. "
             "Answer briefly and cite exact filenames and identifiers when possible."
@@ -488,7 +476,8 @@ def load_benchmark_definition(name: str) -> BenchmarkDefinition:
     try:
         return DEFAULT_BENCHMARKS[name]
     except KeyError as exc:
-        raise ValueError(f"Unknown benchmark: {name}") from exc
+        msg = f"Unknown benchmark: {name}"
+        raise ValueError(msg) from exc
 
 
 def load_fixture_messages(path: Path) -> list[dict[str, Any]]:
@@ -505,9 +494,7 @@ def load_fixture_messages(path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def normalize_fixture_messages(
-    messages: list[dict[str, Any]], followup_prompt: str
-) -> list[dict[str, Any]]:
+def normalize_fixture_messages(messages: list[dict[str, Any]], followup_prompt: str) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for msg in messages:
         role = str(msg.get("role", "")).strip()
@@ -543,24 +530,16 @@ def normalize_fixture_messages(
                 # Preserve structured blocks for Tok runtime analysis but stringify for baseline simplicity in tests
                 if role == "assistant" and block_type == "tool_use":
                     tool_name = block.get("name", "unknown")
-                    new_content.append(
-                        {"type": "text", "text": f"Tool use ({tool_name})"}
-                    )
+                    new_content.append({"type": "text", "text": f"Tool use ({tool_name})"})
                 new_content.append(block)
 
         if new_content:
             # Flatten to string if possible for broader provider compatibility (e.g. Bedrock)
             if all(block.get("type") == "text" for block in new_content):
-                text_content = "\n".join(
-                    block.get("text", "") for block in new_content
-                ).strip()
-                normalized.append(
-                    {"role": role or "user", "content": text_content}
-                )
+                text_content = "\n".join(block.get("text", "") for block in new_content).strip()
+                normalized.append({"role": role or "user", "content": text_content})
             else:
-                normalized.append(
-                    {"role": role or "user", "content": new_content}
-                )
+                normalized.append({"role": role or "user", "content": new_content})
 
     # Flatten the final followup_prompt as well
     if isinstance(followup_prompt, str):
@@ -586,9 +565,7 @@ def _turn_prompts(definition: BenchmarkDefinition, turns: int) -> list[str]:
     return prompts
 
 
-def _chunk_messages(
-    messages: list[dict[str, Any]], turns: int
-) -> list[list[dict[str, Any]]]:
+def _chunk_messages(messages: list[dict[str, Any]], turns: int) -> list[list[dict[str, Any]]]:
     if turns <= 1:
         return [messages]
     if not messages:
@@ -596,16 +573,10 @@ def _chunk_messages(
 
     def _is_tool_result_message(message: dict[str, Any]) -> bool:
         content = str(message.get("content", "")).strip()
-        return bool(
-            message.get("role") == "user"
-            and content.startswith("Tool result (")
-        )
+        return bool(message.get("role") == "user" and content.startswith("Tool result ("))
 
     def _is_user_authored_message(message: dict[str, Any]) -> bool:
-        return bool(
-            message.get("role") == "user"
-            and not _is_tool_result_message(message)
-        )
+        return bool(message.get("role") == "user" and not _is_tool_result_message(message))
 
     units: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
@@ -633,16 +604,13 @@ def _chunk_messages(
         previous_target = target
 
     if previous_target < len(units):
-        chunks[-1].extend(
-            message for unit in units[previous_target:] for message in unit
-        )
+        chunks[-1].extend(message for unit in units[previous_target:] for message in unit)
     return chunks
 
 
-def _minimalize_system_prompt(system: Any, original_system_prompt: str) -> Any:
+def _minimalize_system_prompt(system: str | dict[str, Any] | list[Any], original_system_prompt: str) -> str:
     minimal_directive = (
-        "Use plain text only. History may be compressed. "
-        "Prefer exact filenames and verification results."
+        "Use plain text only. History may be compressed. Prefer exact filenames and verification results."
     )
 
     # Extract @pointers and @macros from the 'system' returned by runtime
@@ -651,9 +619,7 @@ def _minimalize_system_prompt(system: Any, original_system_prompt: str) -> Any:
         system_text = system
     elif isinstance(system, list):
         system_text = "\n".join(
-            block.get("text", "")
-            for block in system
-            if isinstance(block, dict) and block.get("type") == "text"
+            block.get("text", "") for block in system if isinstance(block, dict) and block.get("type") == "text"
         )
 
     extra_blocks = []
@@ -687,21 +653,13 @@ def _minimalize_system_prompt(system: Any, original_system_prompt: str) -> Any:
         additions += "\n\n" + "\n\n".join(extra_blocks)
 
     if isinstance(system, str):
-        return (
-            original_system_prompt + "\n\n" + additions
-            if original_system_prompt
-            else additions
-        )
+        return original_system_prompt + "\n\n" + additions if original_system_prompt else additions
 
     # Return as list of blocks if original was likely a list or specifically requested
-    return (
-        original_system_prompt + "\n\n" + additions
-        if original_system_prompt
-        else additions
-    )
+    return original_system_prompt + "\n\n" + additions if original_system_prompt else additions
 
 
-def _system_text(system: Any) -> str:
+def _system_text(system: str | dict[str, Any] | list[Any]) -> str:
     if isinstance(system, str):
         return system
     if isinstance(system, list):
@@ -713,9 +671,7 @@ def _system_text(system: Any) -> str:
     return ""
 
 
-def _system_breakdown(
-    original_system_prompt: str, system: Any
-) -> tuple[int, int, int]:
+def _system_breakdown(original_system_prompt: str, system: str | dict[str, Any] | list[Any]) -> tuple[int, int, int]:
     system_text = _system_text(system)
     if not system_text:
         return 0, 0, 0
@@ -727,16 +683,12 @@ def _system_breakdown(
         state_tokens = _estimate_tokens(state_fragment)
     directive_tokens = max(
         0,
-        total_system_tokens
-        - _estimate_tokens(original_system_prompt)
-        - state_tokens,
+        total_system_tokens - _estimate_tokens(original_system_prompt) - state_tokens,
     )
     return total_system_tokens, directive_tokens, state_tokens
 
 
-def _extract_labeled_fields(
-    text: str, session: RuntimeSession | None = None
-) -> dict[str, str]:
+def _extract_labeled_fields(text: str, session: RuntimeSession | None = None) -> dict[str, str]:
     fields: dict[str, str] = {}
     # Search for labels anywhere in the text (last occurrence wins)
     labels = ["file", "verification", "related"]
@@ -799,26 +751,15 @@ def _evaluate_task_success(
     session: RuntimeSession | None = None,
 ) -> tuple[bool, list[str], list[str]]:
     if session:
-        session_id = id(session)
-        pointers_id = (
-            id(session.bridge_memory.pointers)
-            if session.bridge_memory
-            else "none"
-        )
-        print(
-            f"DEBUG: _evaluate_task_success session={session_id} pointers={pointers_id}"
-        )
+        id(session)
+        (id(session.bridge_memory.pointers) if session.bridge_memory else "none")
     fields = _extract_labeled_fields(visible_response, session=session)
     # Combine the visible text with resolved values for term matching
     search_space = visible_response.lower()
     for val in fields.values():
         search_space += f" {val.lower()}"
 
-    matched_terms = [
-        term
-        for term in definition.success_terms
-        if term.lower() in search_space
-    ]
+    matched_terms = [term for term in definition.success_terms if term.lower() in search_space]
     failures: list[str] = []
     file_value = fields.get("file", "")
     verification_value = fields.get("verification", "")
@@ -835,8 +776,7 @@ def _evaluate_task_success(
                 normalized_file = normalized_file[len(prefix) :]
                 break
         if not any(
-            term.lower() in normalized_file
-            or term.lower() in file_value.lower()
+            term.lower() in normalized_file or term.lower() in file_value.lower()
             for term in definition.expected_file_terms
         ):
             failures.append("unexpected_file_field")
@@ -846,16 +786,12 @@ def _evaluate_task_success(
     elif _looks_like_placeholder(verification_value):
         failures.append("placeholder_verification_field")
     elif definition.expected_verification_terms and not any(
-        term.lower() in verification_value.lower()
-        for term in definition.expected_verification_terms
+        term.lower() in verification_value.lower() for term in definition.expected_verification_terms
     ):
         failures.append("unexpected_verification_field")
 
     structured_valid = not failures
-    if (
-        not structured_valid
-        and len(matched_terms) < definition.min_success_terms
-    ):
+    if not structured_valid and len(matched_terms) < definition.min_success_terms:
         failures.append("response_missing_success_terms")
 
     return not failures, matched_terms, failures
@@ -876,16 +812,12 @@ def _diagnose_comparison(
     if reacquisition_delta > 0 and total_delta > 0:
         return "lost_on_reacquisition"
 
-    response_signals = candidate.response_metrics.get(
-        "response_behavior_signals", {}
-    )
+    response_signals = candidate.response_metrics.get("response_behavior_signals", {})
     if _sum_warning_signals(response_signals) > 0 and total_delta > 0:
         return "lost_on_response_drift"
 
     tok_overhead = int(candidate.prompt_metrics.get("tok_overhead_tokens", 0))
-    total_saved = int(
-        candidate.compression_metrics.get("total_saved_tokens", 0)
-    )
+    total_saved = int(candidate.compression_metrics.get("total_saved_tokens", 0))
     if total_delta > 0 and tok_overhead >= total_saved:
         return "lost_on_bootstrap_overhead"
 
@@ -895,40 +827,21 @@ def _diagnose_comparison(
     return "mixed_result"
 
 
-def compare_results(
-    baseline: BenchmarkResult, candidate: BenchmarkResult
-) -> BenchmarkComparison:
-    total_delta = (
-        candidate.provider_usage.total_tokens
-        - baseline.provider_usage.total_tokens
-    )
+def compare_results(baseline: BenchmarkResult, candidate: BenchmarkResult) -> BenchmarkComparison:
+    total_delta = candidate.provider_usage.total_tokens - baseline.provider_usage.total_tokens
     total_pct = None
     if baseline.provider_usage.total_tokens > 0:
-        total_pct = round(
-            (total_delta / baseline.provider_usage.total_tokens) * 100.0, 1
-        )
+        total_pct = round((total_delta / baseline.provider_usage.total_tokens) * 100.0, 1)
 
-    baseline_reacq = int(
-        baseline.response_metrics.get("reacquisition_cost_tokens", 0)
-    )
-    candidate_reacq = int(
-        candidate.response_metrics.get("reacquisition_cost_tokens", 0)
-    )
-    baseline_pressure = int(
-        baseline.response_metrics.get("invisible_pressure", 0)
-    )
-    candidate_pressure = int(
-        candidate.response_metrics.get("invisible_pressure", 0)
-    )
+    baseline_reacq = int(baseline.response_metrics.get("reacquisition_cost_tokens", 0))
+    candidate_reacq = int(candidate.response_metrics.get("reacquisition_cost_tokens", 0))
+    baseline_pressure = int(baseline.response_metrics.get("invisible_pressure", 0))
+    candidate_pressure = int(candidate.response_metrics.get("invisible_pressure", 0))
     task_success_equal_or_better = candidate.task_success and (
-        baseline.task_success == candidate.task_success
-        or not baseline.task_success
+        baseline.task_success == candidate.task_success or not baseline.task_success
     )
     provider_total_token_winner = (
-        candidate.mode
-        if candidate.provider_usage.total_tokens
-        < baseline.provider_usage.total_tokens
-        else "baseline"
+        candidate.mode if candidate.provider_usage.total_tokens < baseline.provider_usage.total_tokens else "baseline"
     )
     diagnosis = _diagnose_comparison(
         baseline,
@@ -945,15 +858,12 @@ def compare_results(
         candidate_mode=candidate.mode,
         baseline=baseline,
         candidate=candidate,
-        prompt_token_delta=candidate.provider_usage.prompt_tokens
-        - baseline.provider_usage.prompt_tokens,
-        completion_token_delta=candidate.provider_usage.completion_tokens
-        - baseline.provider_usage.completion_tokens,
+        prompt_token_delta=candidate.provider_usage.prompt_tokens - baseline.provider_usage.prompt_tokens,
+        completion_token_delta=candidate.provider_usage.completion_tokens - baseline.provider_usage.completion_tokens,
         total_token_delta=total_delta,
         total_token_delta_pct=total_pct,
         latency_delta_ms=round(
-            candidate.provider_usage.latency_ms
-            - baseline.provider_usage.latency_ms,
+            candidate.provider_usage.latency_ms - baseline.provider_usage.latency_ms,
             2,
         ),
         reacquisition_delta_tokens=candidate_reacq - baseline_reacq,
@@ -965,28 +875,17 @@ def compare_results(
     )
 
 
-def select_preferred_mode(
-    baseline: BenchmarkResult, comparisons: list[BenchmarkComparison]
-) -> str:
-    viable = [
-        comparison
-        for comparison in comparisons
-        if comparison.candidate.task_success
-    ]
+def select_preferred_mode(baseline: BenchmarkResult, comparisons: list[BenchmarkComparison]) -> str:
+    viable = [comparison for comparison in comparisons if comparison.candidate.task_success]
     if not viable:
         return "baseline" if baseline.task_success else "none"
     best = min(
         viable,
-        key=lambda comparison: (
-            comparison.candidate.provider_usage.total_tokens
-        ),
+        key=lambda comparison: (comparison.candidate.provider_usage.total_tokens),
     )
     if not baseline.task_success:
         return best.candidate.mode
-    if (
-        best.candidate.provider_usage.total_tokens
-        < baseline.provider_usage.total_tokens
-    ):
+    if best.candidate.provider_usage.total_tokens < baseline.provider_usage.total_tokens:
         return best.candidate.mode
     return "baseline"
 
@@ -1002,7 +901,7 @@ class LiveBenchmarkRunner:
         temperature: float = 0.0,
         max_tokens: int = 300,
         timeout: float = 120.0,
-        client: Any | None = None,
+        client: OpenAI | None = None,
         pricing: dict[str, float] | None = None,
         provider_options: dict[str, Any] | None = None,
     ) -> None:
@@ -1022,37 +921,26 @@ class LiveBenchmarkRunner:
             max_retries=0,
         )
 
-    def run(
-        self, definition: BenchmarkDefinition, *, mode: str, turns: int = 3
-    ) -> BenchmarkResult:
+    def run(self, definition: BenchmarkDefinition, *, mode: str, turns: int = 3) -> BenchmarkResult:
         if turns < 1:
-            raise ValueError("turns must be >= 1")
+            msg = "turns must be >= 1"
+            raise ValueError(msg)
         raw_messages = load_fixture_messages(definition.fixture_path)
-        normalized = normalize_fixture_messages(
-            raw_messages, definition.followup_prompt
-        )
+        normalized = normalize_fixture_messages(raw_messages, definition.followup_prompt)
         context_messages = normalized[:-1]
         turn_prompts = _turn_prompts(definition, turns)
         message_chunks = _chunk_messages(context_messages, turns)
         original_system_tokens = _estimate_tokens(definition.system_prompt)
         runtime = UniversalTokRuntime()
         tool_compatible = mode in {"tok-tool-compatible", "tok-minimal"}
-        request_policy = (
-            "natural_first"
-            if mode == "tok-tool-compatible"
-            else "legacy_tool_compatible"
-        )
+        request_policy = "natural_first" if mode == "tok-tool-compatible" else "legacy_tool_compatible"
 
         # Identity logging for pointer registry continuity
-        session_id = id(runtime)
-        pointers_id = (
+        id(runtime)
+        (
             id(runtime._state.pointers)
-            if hasattr(runtime, "_state")
-            and hasattr(runtime._state, "pointers")
+            if hasattr(runtime, "_state") and hasattr(runtime._state, "pointers")
             else "unknown"
-        )
-        print(
-            f"DEBUG: LiveBenchmarkRunner.run starting session={session_id} pointers={pointers_id}"
         )
 
         if mode not in {
@@ -1062,7 +950,8 @@ class LiveBenchmarkRunner:
             "tok-minimal",
             "tok-neuro",
         }:
-            raise ValueError(f"Unknown benchmark mode: {mode}")
+            msg = f"Unknown benchmark mode: {mode}"
+            raise ValueError(msg)
 
         # Set Pattern Reactor toggle
         if mode == "tok-neuro":
@@ -1070,9 +959,7 @@ class LiveBenchmarkRunner:
         else:
             os.environ["TOK_NEURO_REACTOR"] = "0"
 
-        with tempfile.TemporaryDirectory(
-            prefix="tok_live_benchmark_"
-        ) as tmpdir:
+        with tempfile.TemporaryDirectory(prefix="tok_live_benchmark_") as tmpdir:
             session = RuntimeSession(memory_dir=Path(tmpdir))
             conversation: list[dict[str, str]] = []
             turn_results: list[dict[str, Any]] = []
@@ -1087,18 +974,14 @@ class LiveBenchmarkRunner:
             final_visible_response = ""
             final_raw_response = ""
 
-            from ..compression import compress_history
-            from ..runtime.policy.smart_policy import policy_for_model
+            from tok.compression import compress_history
+            from tok.runtime.policy.smart_policy import policy_for_model
 
             past_messages: list[dict[str, str]] = []
             for idx, chunk in enumerate(message_chunks):
                 # Ingest previous assistant turns to prime the Reactor
                 if mode == "tok-neuro" and idx > 0:
-                    h_profile = dict(
-                        policy_for_model(self.model).history_profiles[
-                            "balanced"
-                        ]
-                    )
+                    h_profile = dict(policy_for_model(self.model).history_profiles["balanced"])
                     h_profile["_no_pointers"] = True
                     _, tok_state = compress_history(
                         past_messages,
@@ -1115,9 +998,7 @@ class LiveBenchmarkRunner:
                 past_messages.append(user_msg)
 
                 normalized_messages_tokens = _estimate_tokens(conversation)
-                baseline_prompt_estimate = (
-                    original_system_tokens + normalized_messages_tokens
-                )
+                baseline_prompt_estimate = original_system_tokens + normalized_messages_tokens
                 prepared = None
                 prepared_body: dict[str, Any] | None = None
 
@@ -1174,11 +1055,7 @@ class LiveBenchmarkRunner:
                             adapter_kind="text-loop",
                             tool_compatible=tool_compatible,
                             request_policy=cast(
-                                Literal[
-                                    "legacy_tool_compatible",
-                                    "natural_first",
-                                    "forced_baseline",
-                                ],
+                                "Literal['legacy_tool_compatible', 'natural_first', 'forced_baseline']",
                                 request_policy,
                             ),
                         ),
@@ -1190,41 +1067,25 @@ class LiveBenchmarkRunner:
                             prepared_body.get("system"),
                             definition.system_prompt,
                         )
-                    chat_messages = _system_to_messages(
-                        prepared_body.get("system")
-                    ) + prepared_body.get("messages", [])
-                    prepared_system_tokens = _estimate_tokens(
-                        prepared_body.get("system")
-                    )
-                    prepared_messages_tokens = _estimate_tokens(
-                        prepared_body.get("messages", [])
-                    )
+                    chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get("messages", [])
+                    prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
+                    prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
                     (
                         system_tokens_estimate,
                         directive_tokens_estimate,
                         state_payload_tokens_estimate,
-                    ) = _system_breakdown(
-                        definition.system_prompt, prepared_body.get("system")
-                    )
-                    outbound_prompt_estimate = (
-                        prepared_system_tokens + prepared_messages_tokens
-                    )
-                    tok_system_additions_tokens = max(
-                        0, prepared_system_tokens - original_system_tokens
-                    )
+                    ) = _system_breakdown(definition.system_prompt, prepared_body.get("system"))
+                    outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
+                    tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
                     tok_overhead_tokens = max(
                         0,
-                        outbound_prompt_estimate
-                        - baseline_prompt_estimate
-                        + prepared.input_saved_tokens,
+                        outbound_prompt_estimate - baseline_prompt_estimate + prepared.input_saved_tokens,
                     )
                     turn_compression_metrics = {
                         "input_saved_tokens": prepared.input_saved_tokens,
                         "output_saved_tokens": 0,
                         "total_saved_tokens": prepared.input_saved_tokens,
-                        "input_behavior_signals": dict(
-                            prepared.behavior_signals
-                        ),
+                        "input_behavior_signals": dict(prepared.behavior_signals),
                         "type_breakdown": dict(prepared.type_breakdown),
                     }
                     turn_prompt_metrics = {
@@ -1236,18 +1097,13 @@ class LiveBenchmarkRunner:
                         "state_payload_tokens_estimate": state_payload_tokens_estimate,
                         "tok_system_additions_tokens": tok_system_additions_tokens,
                         "tok_overhead_tokens": tok_overhead_tokens,
-                        "estimated_prompt_delta_tokens": outbound_prompt_estimate
-                        - baseline_prompt_estimate,
+                        "estimated_prompt_delta_tokens": outbound_prompt_estimate - baseline_prompt_estimate,
                         "outbound_prompt_estimate_tokens": outbound_prompt_estimate,
                     }
                     turn_response_metrics = {
                         "response_behavior_signals": {},
                         "invisible_pressure": 0,
-                        "reacquisition_cost_tokens": int(
-                            prepared.behavior_signals.get(
-                                "reacquisition_cost_tokens", 0
-                            )
-                        ),
+                        "reacquisition_cost_tokens": int(prepared.behavior_signals.get("reacquisition_cost_tokens", 0)),
                         "family_mode": "",
                         "response_mode": mode,
                     }
@@ -1264,12 +1120,12 @@ class LiveBenchmarkRunner:
                     }
 
                 started = time.time()
-                create_kwargs: dict[str, Any] = dict(
-                    model=self.model,
-                    messages=chat_messages,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
+                create_kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "messages": chat_messages,
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                }
                 if self.provider_options:
                     create_kwargs["extra_body"] = self.provider_options
 
@@ -1287,41 +1143,26 @@ class LiveBenchmarkRunner:
                         raw_response,
                         model=self.model,
                         session=session,
-                        behavior_signals=turn_compression_metrics[
-                            "input_behavior_signals"
-                        ],
+                        behavior_signals=turn_compression_metrics["input_behavior_signals"],
                         tool_compatible=tool_compatible,
                     )
                     visible_response = (
                         "\n".join(
-                            block.get("text", "")
-                            for block in processed.content_blocks
-                            if block.get("type") == "text"
+                            block.get("text", "") for block in processed.content_blocks if block.get("type") == "text"
                         ).strip()
                         or raw_response
                     )
-                    turn_compression_metrics["output_saved_tokens"] = (
-                        processed.output_saved_tokens
-                    )
+                    turn_compression_metrics["output_saved_tokens"] = processed.output_saved_tokens
                     turn_compression_metrics["total_saved_tokens"] = (
-                        turn_compression_metrics["input_saved_tokens"]
-                        + processed.output_saved_tokens
+                        turn_compression_metrics["input_saved_tokens"] + processed.output_saved_tokens
                     )
-                    turn_response_metrics["response_behavior_signals"] = dict(
+                    turn_response_metrics["response_behavior_signals"] = dict(processed.behavior_signals)
+                    turn_response_metrics["family_mode"] = processed.family_mode
+                    turn_response_metrics["invisible_pressure"] = calculate_invisible_pressure(
                         processed.behavior_signals
                     )
-                    turn_response_metrics["family_mode"] = (
-                        processed.family_mode
-                    )
-                    turn_response_metrics["invisible_pressure"] = (
-                        calculate_invisible_pressure(
-                            processed.behavior_signals
-                        )
-                    )
                     turn_response_metrics["reacquisition_cost_tokens"] = int(
-                        processed.behavior_signals.get(
-                            "reacquisition_cost_tokens", 0
-                        )
+                        processed.behavior_signals.get("reacquisition_cost_tokens", 0)
                         or turn_response_metrics["reacquisition_cost_tokens"]
                     )
                     turn_response_metrics["response_mode"] = processed.mode
@@ -1332,36 +1173,17 @@ class LiveBenchmarkRunner:
                 total_prompt_tokens += prompt_tokens
                 total_completion_tokens += completion_tokens
                 total_latency_ms += latency_ms
-                total_input_saved += int(
-                    turn_compression_metrics["input_saved_tokens"]
-                )
-                total_output_saved += int(
-                    turn_compression_metrics["output_saved_tokens"]
-                )
-                for key, value in turn_compression_metrics[
-                    "type_breakdown"
-                ].items():
-                    total_type_breakdown[key] = total_type_breakdown.get(
-                        key, 0
-                    ) + int(value)
-                for key, value in turn_compression_metrics[
-                    "input_behavior_signals"
-                ].items():
-                    aggregate_input_behavior_signals[key] = (
-                        aggregate_input_behavior_signals.get(key, 0)
-                        + int(value)
-                    )
-                for key, value in turn_response_metrics[
-                    "response_behavior_signals"
-                ].items():
-                    aggregate_response_signals[key] = (
-                        aggregate_response_signals.get(key, 0) + int(value)
-                    )
+                total_input_saved += int(turn_compression_metrics["input_saved_tokens"])
+                total_output_saved += int(turn_compression_metrics["output_saved_tokens"])
+                for key, value in turn_compression_metrics["type_breakdown"].items():
+                    total_type_breakdown[key] = total_type_breakdown.get(key, 0) + int(value)
+                for key, value in turn_compression_metrics["input_behavior_signals"].items():
+                    aggregate_input_behavior_signals[key] = aggregate_input_behavior_signals.get(key, 0) + int(value)
+                for key, value in turn_response_metrics["response_behavior_signals"].items():
+                    aggregate_response_signals[key] = aggregate_response_signals.get(key, 0) + int(value)
 
-                turn_diagnostics["response_warning_signal_count"] = (
-                    _sum_warning_signals(
-                        turn_response_metrics["response_behavior_signals"]
-                    )
+                turn_diagnostics["response_warning_signal_count"] = _sum_warning_signals(
+                    turn_response_metrics["response_behavior_signals"]
                 )
                 turn_results.append(
                     {
@@ -1369,9 +1191,7 @@ class LiveBenchmarkRunner:
                         "provider_usage": {
                             "prompt_tokens": prompt_tokens,
                             "completion_tokens": completion_tokens,
-                            "total_tokens": int(
-                                getattr(usage, "total_tokens", 0)
-                            ),
+                            "total_tokens": int(getattr(usage, "total_tokens", 0)),
                             "latency_ms": round(latency_ms, 2),
                         },
                         "compression_metrics": turn_compression_metrics,
@@ -1385,17 +1205,13 @@ class LiveBenchmarkRunner:
                 )
                 final_visible_response = visible_response
                 final_raw_response = raw_response
-                conversation.append(
-                    {"role": "assistant", "content": raw_response}
-                )
+                conversation.append({"role": "assistant", "content": raw_response})
 
             cost_usd: float | None = None
             if self.pricing is not None:
-                from ..runtime.metrics import calculate_usage_cost
+                from tok.runtime.metrics import calculate_usage_cost
 
-                cost_usd = calculate_usage_cost(
-                    total_prompt_tokens, total_completion_tokens, self.pricing
-                )
+                cost_usd = calculate_usage_cost(total_prompt_tokens, total_completion_tokens, self.pricing)
             provider_usage = ProviderUsageSnapshot(
                 prompt_tokens=total_prompt_tokens,
                 completion_tokens=total_completion_tokens,
@@ -1407,107 +1223,62 @@ class LiveBenchmarkRunner:
                 definition, final_visible_response, session=session
             )
             notes = list(failures)
-            if mode != "baseline" and _sum_warning_signals(
-                aggregate_response_signals
-            ):
+            if mode != "baseline" and _sum_warning_signals(aggregate_response_signals):
                 notes.append("response_contract_friction_detected")
 
             prompt_metrics = {
                 "system_prompt_tokens": original_system_tokens,
                 "normalized_messages_tokens": sum(
-                    int(turn["prompt_metrics"]["normalized_messages_tokens"])
-                    for turn in turn_results
+                    int(turn["prompt_metrics"]["normalized_messages_tokens"]) for turn in turn_results
                 ),
                 "prepared_messages_tokens": sum(
-                    int(turn["prompt_metrics"]["prepared_messages_tokens"])
-                    for turn in turn_results
+                    int(turn["prompt_metrics"]["prepared_messages_tokens"]) for turn in turn_results
                 ),
                 "system_tokens_estimate": sum(
-                    int(turn["prompt_metrics"]["system_tokens_estimate"])
-                    for turn in turn_results
+                    int(turn["prompt_metrics"]["system_tokens_estimate"]) for turn in turn_results
                 ),
                 "directive_tokens_estimate": sum(
-                    int(turn["prompt_metrics"]["directive_tokens_estimate"])
-                    for turn in turn_results
+                    int(turn["prompt_metrics"]["directive_tokens_estimate"]) for turn in turn_results
                 ),
                 "state_payload_tokens_estimate": sum(
-                    int(
-                        turn["prompt_metrics"]["state_payload_tokens_estimate"]
-                    )
-                    for turn in turn_results
+                    int(turn["prompt_metrics"]["state_payload_tokens_estimate"]) for turn in turn_results
                 ),
                 "tok_system_additions_tokens": sum(
-                    int(turn["prompt_metrics"]["tok_system_additions_tokens"])
-                    for turn in turn_results
+                    int(turn["prompt_metrics"]["tok_system_additions_tokens"]) for turn in turn_results
                 ),
-                "tok_overhead_tokens": sum(
-                    int(turn["prompt_metrics"]["tok_overhead_tokens"])
-                    for turn in turn_results
-                ),
+                "tok_overhead_tokens": sum(int(turn["prompt_metrics"]["tok_overhead_tokens"]) for turn in turn_results),
                 "estimated_prompt_delta_tokens": sum(
-                    int(
-                        turn["prompt_metrics"]["estimated_prompt_delta_tokens"]
-                    )
-                    for turn in turn_results
+                    int(turn["prompt_metrics"]["estimated_prompt_delta_tokens"]) for turn in turn_results
                 ),
                 "outbound_prompt_estimate_tokens": sum(
-                    int(
-                        turn["prompt_metrics"][
-                            "outbound_prompt_estimate_tokens"
-                        ]
-                    )
-                    for turn in turn_results
+                    int(turn["prompt_metrics"]["outbound_prompt_estimate_tokens"]) for turn in turn_results
                 ),
             }
             response_metrics = {
                 "response_behavior_signals": aggregate_response_signals,
-                "invisible_pressure": calculate_invisible_pressure(
-                    aggregate_response_signals
-                ),
-                "reacquisition_cost_tokens": int(
-                    aggregate_response_signals.get(
-                        "reacquisition_cost_tokens", 0
-                    )
-                ),
-                "family_mode": (
-                    turn_results[-1]["response_metrics"]["family_mode"]
-                    if turn_results
-                    else ""
-                ),
-                "response_mode": (
-                    turn_results[-1]["response_metrics"]["response_mode"]
-                    if turn_results
-                    else mode
-                ),
+                "invisible_pressure": calculate_invisible_pressure(aggregate_response_signals),
+                "reacquisition_cost_tokens": int(aggregate_response_signals.get("reacquisition_cost_tokens", 0)),
+                "family_mode": (turn_results[-1]["response_metrics"]["family_mode"] if turn_results else ""),
+                "response_mode": (turn_results[-1]["response_metrics"]["response_mode"] if turn_results else mode),
             }
             diagnostics = {
                 "tool_compatible_requested": tool_compatible,
                 "request_messages_before": len(context_messages),
                 "request_messages_after": (
-                    turn_results[-1]["diagnostics"]["request_messages_after"]
-                    if turn_results
-                    else 0
+                    turn_results[-1]["diagnostics"]["request_messages_after"] if turn_results else 0
                 ),
-                "response_warning_signal_count": _sum_warning_signals(
-                    aggregate_response_signals
-                ),
+                "response_warning_signal_count": _sum_warning_signals(aggregate_response_signals),
                 "session_turns": turns,
                 "cumulative_prompt_tokens": total_prompt_tokens,
                 "cumulative_completion_tokens": total_completion_tokens,
                 "state_resend_suppressed_turns": aggregate_input_behavior_signals.get(
                     "state_resend_suppressed_turn", 0
                 ),
-                "state_resend_delta_turns": aggregate_input_behavior_signals.get(
-                    "state_resend_delta_turn", 0
-                ),
-                "state_resend_full_turns": aggregate_input_behavior_signals.get(
-                    "state_resend_full_turn", 0
-                ),
+                "state_resend_delta_turns": aggregate_input_behavior_signals.get("state_resend_delta_turn", 0),
+                "state_resend_full_turns": aggregate_input_behavior_signals.get("state_resend_full_turn", 0),
             }
             if mode != "baseline" and turn_results:
-                diagnostics["runtime_mode"] = turn_results[-1][
-                    "diagnostics"
-                ].get("runtime_mode", "")
+                diagnostics["runtime_mode"] = turn_results[-1]["diagnostics"].get("runtime_mode", "")
 
             compression_metrics = {
                 "input_saved_tokens": total_input_saved,
@@ -1530,11 +1301,7 @@ class LiveBenchmarkRunner:
                 diagnostics=diagnostics,
                 task_success=task_success,
                 matched_success_terms=matched_terms,
-                request_messages=(
-                    turn_results[-1]["diagnostics"]["request_messages_after"]
-                    if turn_results
-                    else 0
-                ),
+                request_messages=(turn_results[-1]["diagnostics"]["request_messages_after"] if turn_results else 0),
                 turn_count=turns,
                 turns=turn_results,
                 visible_response=final_visible_response,
@@ -1543,15 +1310,11 @@ class LiveBenchmarkRunner:
             )
 
 
-def write_result(
-    path: Path, payload: BenchmarkResult | BenchmarkComparison
-) -> None:
+def write_result(path: Path, payload: BenchmarkResult | BenchmarkComparison) -> None:
     path.write_text(json.dumps(payload.to_dict(), indent=2))
 
 
-def render_comparison_markdown(
-    baseline: BenchmarkResult, comparisons: list[BenchmarkComparison]
-) -> str:
+def render_comparison_markdown(baseline: BenchmarkResult, comparisons: list[BenchmarkComparison]) -> str:
     lines = [
         f"# Live Benchmark: {baseline.benchmark}",
         "",
@@ -1580,11 +1343,7 @@ def render_comparison_markdown(
         )
     lines.extend(["", "## Comparisons", ""])
     for comparison in comparisons:
-        pct = (
-            f"{comparison.total_token_delta_pct:+.1f}%"
-            if comparison.total_token_delta_pct is not None
-            else "n/a"
-        )
+        pct = f"{comparison.total_token_delta_pct:+.1f}%" if comparison.total_token_delta_pct is not None else "n/a"
         lines.extend(
             [
                 f"### {comparison.candidate.mode}",
@@ -1605,9 +1364,7 @@ def render_comparison_markdown(
                 "",
             ]
         )
-    lines.append(
-        f"- Preferred mode: `{select_preferred_mode(baseline, comparisons)}`"
-    )
+    lines.append(f"- Preferred mode: `{select_preferred_mode(baseline, comparisons)}`")
     lines.append("")
     return "\n".join(lines)
 
@@ -1646,23 +1403,15 @@ def summarize_compare_runs(
         if not comparisons:
             continue
         preferred = select_preferred_mode(baseline, comparisons)
-        preferred_mode_counts[preferred] = (
-            preferred_mode_counts.get(preferred, 0) + 1
-        )
+        preferred_mode_counts[preferred] = preferred_mode_counts.get(preferred, 0) + 1
 
     for mode in mode_order:
         results = [run[mode] for run in repeated_results if mode in run]
         if not results:
             continue
-        total_tokens = [
-            result.provider_usage.total_tokens for result in results
-        ]
-        prompt_tokens = [
-            result.provider_usage.prompt_tokens for result in results
-        ]
-        completion_tokens = [
-            result.provider_usage.completion_tokens for result in results
-        ]
+        total_tokens = [result.provider_usage.total_tokens for result in results]
+        prompt_tokens = [result.provider_usage.prompt_tokens for result in results]
+        completion_tokens = [result.provider_usage.completion_tokens for result in results]
         latency_ms = [result.provider_usage.latency_ms for result in results]
         successes = sum(1 for result in results if result.task_success)
 
@@ -1674,9 +1423,7 @@ def summarize_compare_runs(
             "min_total_tokens": min(total_tokens),
             "max_total_tokens": max(total_tokens),
             "median_prompt_tokens": int(statistics.median(prompt_tokens)),
-            "median_completion_tokens": int(
-                statistics.median(completion_tokens)
-            ),
+            "median_completion_tokens": int(statistics.median(completion_tokens)),
             "median_latency_ms": round(statistics.median(latency_ms), 2),
         }
 
@@ -1760,18 +1507,11 @@ def check_stability_artifacts(
         preferred_mode_counts = payload.get("preferred_mode_counts", {})
         tok_summary = mode_summaries.get("tok-tool-compatible", {})
         runs = int(payload.get("runs", 0))
-        preferred_count = int(
-            preferred_mode_counts.get("tok-tool-compatible", 0)
-        )
+        preferred_count = int(preferred_mode_counts.get("tok-tool-compatible", 0))
         success_rate = float(tok_summary.get("success_rate", 0.0))
 
         benchmark_name = str(payload.get("benchmark", benchmark))
-        passed = (
-            benchmark_name == benchmark
-            and runs > 0
-            and success_rate == 1.0
-            and preferred_count == runs
-        )
+        passed = benchmark_name == benchmark and runs > 0 and success_rate == 1.0 and preferred_count == runs
 
         row.update(
             {
@@ -1790,7 +1530,7 @@ def check_stability_artifacts(
     return results
 
 
-def _content_text(content: Any) -> str:
+def _content_text(content: str | dict[str, Any] | list[Any]) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):

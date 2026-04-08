@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import json
-from typing import Any
-from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import Response, StreamingResponse
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 mock_app = FastAPI(title="mock-anthropic")
 
 
-def _make_message_response(
-    text: str, model: str = "claude-sonnet-4-20250101"
-) -> dict[str, Any]:
+def _make_message_response(text: str, model: str = "claude-sonnet-4-20250101") -> dict[str, Any]:
     return {
         "id": "msg_mock_001",
         "type": "message",
@@ -31,9 +31,7 @@ def _make_message_response(
     }
 
 
-def _make_sse_stream(
-    text: str, model: str = "claude-sonnet-4-20250101"
-) -> AsyncGenerator[str, None]:
+def _make_sse_stream(text: str, model: str = "claude-sonnet-4-20250101") -> AsyncGenerator[str, None]:
     """Generate SSE events mimicking Anthropic's streaming format."""
     events: list[dict[str, Any]] = [
         {
@@ -108,15 +106,11 @@ async def messages(request: Request) -> Response | dict[str, Any]:
 
     if is_streaming:
         return StreamingResponse(
-            _make_sse_stream(
-                text, body.get("model", "claude-sonnet-4-20250101")
-            ),
+            _make_sse_stream(text, body.get("model", "claude-sonnet-4-20250101")),
             media_type="text/event-stream",
         )
 
-    return _make_message_response(
-        text, body.get("model", "claude-sonnet-4-20250101")
-    )
+    return _make_message_response(text, body.get("model", "claude-sonnet-4-20250101"))
 
 
 @mock_app.get("/{path:path}")

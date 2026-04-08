@@ -7,10 +7,11 @@ from __future__ import annotations
 import logging
 import re
 import sys
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import tomllib
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -28,13 +29,9 @@ SECURITY_CONFIG = {
         "pycrypto",
     ],
 }
-BLOCKED_PACKAGES = {
-    blocked.lower() for blocked in SECURITY_CONFIG["blocked_packages"]
-}
+BLOCKED_PACKAGES = {blocked.lower() for blocked in SECURITY_CONFIG["blocked_packages"]}
 
-PACKAGE_NAME_REGEX = re.compile(
-    r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$"
-)
+PACKAGE_NAME_REGEX = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$")
 VERSION_REGEX = re.compile(r"^[a-zA-Z0-9._+-]+$")
 HASH_REGEX = re.compile(r"^[a-fA-F0-9]{64}$")
 
@@ -81,9 +78,7 @@ def collect_artifacts(package: dict[str, Any]) -> list[dict[str, Any]]:
 
     wheels = package.get("wheels", [])
     if isinstance(wheels, list):
-        artifacts.extend(
-            artifact for artifact in wheels if isinstance(artifact, dict)
-        )
+        artifacts.extend(artifact for artifact in wheels if isinstance(artifact, dict))
 
     return artifacts
 
@@ -99,7 +94,7 @@ def parse_uv_lock() -> list[dict[str, Any]]:
         with open(lock_file, "rb") as f:
             data = tomllib.load(f)
     except (OSError, tomllib.TOMLDecodeError) as e:
-        logger.error(f"Failed to read uv.lock file: {e}")
+        logger.exception(f"Failed to read uv.lock file: {e}")
         sys.exit(1)
 
     packages: list[dict[str, Any]] = []
@@ -125,30 +120,18 @@ def parse_uv_lock() -> list[dict[str, Any]]:
         upload_times = [
             parsed
             for artifact in artifacts
-            for parsed in [
-                parse_upload_time(str(artifact.get("upload-time", "")))
-            ]
+            for parsed in [parse_upload_time(str(artifact.get("upload-time", "")))]
             if parsed is not None
         ]
-        hashes = [
-            str(artifact.get("hash", ""))
-            for artifact in artifacts
-            if artifact.get("hash")
-        ]
-        primary_artifact = next(
-            (artifact for artifact in artifacts if artifact.get("url")), None
-        )
+        hashes = [str(artifact.get("hash", "")) for artifact in artifacts if artifact.get("hash")]
+        primary_artifact = next((artifact for artifact in artifacts if artifact.get("url")), None)
 
         packages.append(
             {
                 "name": package_name,
                 "version": version,
                 "source": source if isinstance(source, dict) else {},
-                "artifact_url": (
-                    str(primary_artifact.get("url", ""))
-                    if isinstance(primary_artifact, dict)
-                    else ""
-                ),
+                "artifact_url": (str(primary_artifact.get("url", "")) if isinstance(primary_artifact, dict) else ""),
                 "hashes": hashes,
                 "upload_time": min(upload_times) if upload_times else None,
             }
@@ -165,10 +148,7 @@ def check_blocked_packages(package_name: str) -> bool:
 
 def verify_source_integrity(source: str) -> bool:
     """Verify package comes from an allowed source."""
-    return any(
-        source.startswith(allowed_source)
-        for allowed_source in SECURITY_CONFIG["allowed_sources"]
-    )
+    return any(source.startswith(allowed_source) for allowed_source in SECURITY_CONFIG["allowed_sources"])
 
 
 def check_package_age(upload_time: datetime | None) -> int | None:
@@ -197,45 +177,30 @@ def evaluate_package(package: dict[str, Any]) -> tuple[list[str], list[str]]:
     if isinstance(source, dict) and "editable" in source:
         editable_path = Path(str(source["editable"]))
         if not editable_path.exists():
-            violations.append(
-                f"❌ Editable source missing for {package_name}: {editable_path}"
-            )
+            violations.append(f"❌ Editable source missing for {package_name}: {editable_path}")
         return warnings, violations
 
     registry = ""
     if isinstance(source, dict):
         registry = str(source.get("registry", ""))
     if registry and not verify_source_integrity(registry):
-        violations.append(
-            f"❌ Untrusted registry source for {package_name}: {registry}"
-        )
+        violations.append(f"❌ Untrusted registry source for {package_name}: {registry}")
         return warnings, violations
     if artifact_url and not verify_source_integrity(artifact_url):
-        violations.append(
-            f"❌ Untrusted artifact source for {package_name}: {artifact_url}"
-        )
+        violations.append(f"❌ Untrusted artifact source for {package_name}: {artifact_url}")
         return warnings, violations
 
     age_days = check_package_age(upload_time)
     if age_days is None:
-        warnings.append(
-            f"⚠️  No upload timestamp available for {package_name}@{version}"
-        )
+        warnings.append(f"⚠️  No upload timestamp available for {package_name}@{version}")
     elif age_days < SECURITY_CONFIG["min_package_age_days"]:
-        warnings.append(
-            f"⚠️  Recent package: {package_name}@{version} "
-            f"({age_days} days old, review before release)"
-        )
+        warnings.append(f"⚠️  Recent package: {package_name}@{version} ({age_days} days old, review before release)")
 
     if not hashes:
-        warnings.append(
-            f"⚠️  No artifact hashes recorded for {package_name}@{version}"
-        )
+        warnings.append(f"⚠️  No artifact hashes recorded for {package_name}@{version}")
         return warnings, violations
     if any(not validate_hash(hash_value) for hash_value in hashes):
-        violations.append(
-            f"❌ Invalid hash format recorded for {package_name}@{version}"
-        )
+        violations.append(f"❌ Invalid hash format recorded for {package_name}@{version}")
 
     return warnings, violations
 
@@ -253,24 +218,15 @@ def main() -> int:
         warnings.extend(package_warnings)
         violations.extend(package_violations)
 
-    print("\n" + "=" * 60)
-    print("DEPENDENCY INTEGRITY VERIFICATION RESULTS")
-    print("=" * 60)
-
     if violations:
-        print(f"\n❌ SECURITY VIOLATIONS ({len(violations)}):")
-        for violation in violations:
-            print(f"  - {violation}")
+        for _violation in violations:
+            pass
 
     if warnings:
-        print(f"\n⚠️  WARNINGS ({len(warnings)}):")
-        for warning in warnings:
-            print(f"  - {warning}")
+        for _warning in warnings:
+            pass
 
     if violations:
-        print(
-            f"\n❌ Security verification failed with {len(violations)} violations"
-        )
         logger.error(
             "Security verification failed with %d violations",
             len(violations),
@@ -278,16 +234,12 @@ def main() -> int:
         return 1
 
     if warnings:
-        print(
-            f"\n⚠️  Security verification passed with {len(warnings)} warnings"
-        )
         logger.warning(
             "Security verification passed with %d warnings",
             len(warnings),
         )
         return 0
 
-    print("\n✅ All dependency integrity checks passed!")
     logger.info("All dependency integrity checks passed")
     return 0
 

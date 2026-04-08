@@ -1,21 +1,22 @@
-from __future__ import annotations
-
 """Streaming response helpers for the Tok gateway."""
 
+from __future__ import annotations
+
+import contextlib
 import json
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpcore
 import httpx
 
-from ..runtime.pipeline.request_validation import normalize_tool_use_blocks
-from ..runtime.policy.translator import IS_TOK
-from ..runtime.smoothness.models import SmoothnessEventType
+from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
+from tok.runtime.policy.translator import IS_TOK
+from tok.runtime.smoothness.models import SmoothnessEventType
+
 from . import (
-    BridgeSession,
     _RUNTIME,
+    BridgeSession,
     _materialize_stream_tool_blocks,
     _record_fallback_once,
     _response_contract_for_mode,
@@ -23,24 +24,22 @@ from . import (
 )
 from ._signal_utils import _merge_signal_counts
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable
+
 __all__ = ["buffer_strip_restream_impl", "passthrough_stream_impl"]
 
-_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = int(
-    os.getenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", "2")
-)
+_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = int(os.getenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", "2"))
 
 
 def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
-    """Create a signature from tool_use blocks for loop detection.
+    """
+    Create a signature from tool_use blocks for loop detection.
 
     Returns a hashable string signature based on tool names and input keys
     to detect repeated identical tool_use-only recovery patterns.
     """
-    tool_uses = [
-        block
-        for block in blocks
-        if isinstance(block, dict) and block.get("type") == "tool_use"
-    ]
+    tool_uses = [block for block in blocks if isinstance(block, dict) and block.get("type") == "tool_use"]
     if not tool_uses:
         return ""
     parts: list[str] = []
@@ -71,9 +70,7 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
                 "thinking": "",
             },
         }
-        events.append(
-            f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
-        )
+        events.append(f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode())
         if thinking_text:
             delta = {
                 "type": "content_block_delta",
@@ -83,9 +80,7 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
                     "thinking": thinking_text,
                 },
             }
-            events.append(
-                f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
-            )
+            events.append(f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode())
         if signature:
             sig_delta = {
                 "type": "content_block_delta",
@@ -95,13 +90,9 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
                     "signature": signature,
                 },
             }
-            events.append(
-                f"event: content_block_delta\ndata: {json.dumps(sig_delta)}\n\n".encode()
-            )
+            events.append(f"event: content_block_delta\ndata: {json.dumps(sig_delta)}\n\n".encode())
         stop = {"type": "content_block_stop", "index": i}
-        events.append(
-            f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
-        )
+        events.append(f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode())
 
     elif block_type == "redacted_thinking":
         start = {
@@ -112,13 +103,9 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
                 "data": block.get("data"),
             },
         }
-        events.append(
-            f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
-        )
+        events.append(f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode())
         stop = {"type": "content_block_stop", "index": i}
-        events.append(
-            f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
-        )
+        events.append(f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode())
 
     elif block_type == "text":
         start = {
@@ -126,21 +113,15 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
             "index": i,
             "content_block": {"type": "text", "text": ""},
         }
-        events.append(
-            f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
-        )
+        events.append(f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode())
         delta = {
             "type": "content_block_delta",
             "index": i,
             "delta": {"type": "text_delta", "text": block.get("text", "")},
         }
-        events.append(
-            f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
-        )
+        events.append(f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode())
         stop = {"type": "content_block_stop", "index": i}
-        events.append(
-            f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
-        )
+        events.append(f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode())
 
     else:
         tool_input = block.get("input", {})
@@ -154,9 +135,7 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
                 "input": {},
             },
         }
-        events.append(
-            f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode()
-        )
+        events.append(f"event: content_block_start\ndata: {json.dumps(start)}\n\n".encode())
         if isinstance(tool_input, dict):
             delta = {
                 "type": "content_block_delta",
@@ -166,13 +145,9 @@ def _emit_sse_block(i: int, block: dict[str, Any]) -> list[bytes]:
                     "partial_json": json.dumps(tool_input),
                 },
             }
-            events.append(
-                f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode()
-            )
+            events.append(f"event: content_block_delta\ndata: {json.dumps(delta)}\n\n".encode())
         stop = {"type": "content_block_stop", "index": i}
-        events.append(
-            f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode()
-        )
+        events.append(f"event: content_block_stop\ndata: {json.dumps(stop)}\n\n".encode())
 
     return events
 
@@ -188,13 +163,11 @@ def _record_stream_read_error(
         stage_label,
         read_error_text,
     )
-    try:
+    with contextlib.suppress(Exception):
         session.smoothness_tracker.record(
             SmoothnessEventType.STREAM_READ_ERROR,
             {"error": read_error_text},
         )
-    except Exception:
-        pass
 
     runtime_session = session.runtime_session
     if not hasattr(runtime_session, "_stream_read_error_consecutive_count"):
@@ -237,7 +210,8 @@ async def passthrough_stream_impl(
     prompt_metrics: dict[str, int] | None = None,
     client_owned: bool = False,
 ) -> AsyncIterator[bytes]:
-    """Stream-through mode: yield raw SSE chunks without buffering.
+    """
+    Stream-through mode: yield raw SSE chunks without buffering.
 
     Used when tool_compatible=False (baseline mode) to preserve real-time
     streaming UX for clients like Claude Code that feed bytes incrementally
@@ -269,15 +243,11 @@ async def passthrough_stream_impl(
         read_error = str(e)
         _record_stream_read_error(session, "passthrough", read_error)
     finally:
-        response_aclose: Callable[[], Awaitable[None]] | None = getattr(
-            response, "aclose", None
-        )
+        response_aclose: Callable[[], Awaitable[None]] | None = getattr(response, "aclose", None)
         if callable(response_aclose):
             await response_aclose()
         if client_owned:
-            client_aclose: Callable[[], Awaitable[None]] | None = getattr(
-                client, "aclose", None
-            )
+            client_aclose: Callable[[], Awaitable[None]] | None = getattr(client, "aclose", None)
             if callable(client_aclose):
                 await client_aclose()
         if not read_error_occurred:
@@ -347,9 +317,7 @@ async def buffer_strip_restream_impl(
                     elif etype == "content_block_start":
                         index = d.get("index")
                         block = d.get("content_block", {})
-                        if not isinstance(index, int) or not isinstance(
-                            block, dict
-                        ):
+                        if not isinstance(index, int) or not isinstance(block, dict):
                             continue
                         if index not in stream_blocks:
                             stream_order.append(index)
@@ -383,9 +351,7 @@ async def buffer_strip_restream_impl(
                         delta_type = delta.get("type", "")
                         if not isinstance(index, int):
                             continue
-                        block = stream_blocks.setdefault(
-                            index, {"type": "text", "text": ""}
-                        )
+                        block = stream_blocks.setdefault(index, {"type": "text", "text": ""})
                         if index not in stream_order:
                             stream_order.append(index)
                         if delta_type == "text_delta":
@@ -400,14 +366,10 @@ async def buffer_strip_restream_impl(
                                 partials.append(delta.get("partial_json", ""))
                         elif delta_type == "thinking_delta":
                             block["type"] = "thinking"
-                            block["thinking"] = str(
-                                block.get("thinking", "")
-                            ) + delta.get("thinking", "")
+                            block["thinking"] = str(block.get("thinking", "")) + delta.get("thinking", "")
                         elif delta_type == "signature_delta":
                             block["type"] = "thinking"
-                            block["signature"] = str(
-                                block.get("signature", "")
-                            ) + delta.get("signature", "")
+                            block["signature"] = str(block.get("signature", "")) + delta.get("signature", "")
                         logger.debug(
                             "Delta type: %s, partial: %s",
                             delta_type,
@@ -429,13 +391,9 @@ async def buffer_strip_restream_impl(
         if read_error:
             stream_behavior_signals["stream_buffer_read_error"] = 1
 
-        processed: Any | None = (
-            None  # Will hold ProcessedRuntimeResponse when available
-        )
+        processed: Any | None = None  # Will hold ProcessedRuntimeResponse when available
 
-        tool_blocks = _materialize_stream_tool_blocks(
-            stream_blocks, stream_order
-        )
+        tool_blocks = _materialize_stream_tool_blocks(stream_blocks, stream_order)
         thinking_blocks = [
             stream_blocks[idx]
             for idx in stream_order
@@ -443,16 +401,21 @@ async def buffer_strip_restream_impl(
             and isinstance(stream_blocks[idx], dict)
             and stream_blocks[idx].get("type") == "thinking"
         ]
-        content_blocks = _response_contract_for_mode(
-            full_text, tool_compatible=tool_compatible
-        ).content_blocks
-        translated_blocks = thinking_blocks + content_blocks + tool_blocks
+        # Extract text blocks from stream_blocks to ensure content_block_start
+        # text is considered for has_visible_blocks even without text_delta events
+        text_blocks_from_start = [
+            stream_blocks[idx]
+            for idx in stream_order
+            if idx in stream_blocks
+            and isinstance(stream_blocks[idx], dict)
+            and stream_blocks[idx].get("type") == "text"
+            and str(stream_blocks[idx].get("text", "")).strip()
+        ]
+        content_blocks = _response_contract_for_mode(full_text, tool_compatible=tool_compatible).content_blocks
+        translated_blocks = thinking_blocks + content_blocks + tool_blocks + text_blocks_from_start
         has_visible_blocks = any(
             block.get("type") == "tool_use"
-            or (
-                block.get("type") == "text"
-                and str(block.get("text", "")).strip()
-            )
+            or (block.get("type") == "text" and str(block.get("text", "")).strip())
             or block.get("type") == "thinking"
             for block in translated_blocks
         )
@@ -476,9 +439,7 @@ async def buffer_strip_restream_impl(
                 behavior_signals=stream_behavior_signals or None,
                 tool_compatible=tool_compatible,
             )
-            content_blocks = (
-                thinking_blocks + processed.content_blocks + tool_blocks
-            )
+            content_blocks = thinking_blocks + processed.content_blocks + tool_blocks
             response_signals = processed.behavior_signals
 
             logger.info("Response mode: %s", processed.mode)
@@ -487,31 +448,22 @@ async def buffer_strip_restream_impl(
             translated_blocks = content_blocks
             recovered = any(
                 block.get("type") == "tool_use"
-                or (
-                    block.get("type") == "text"
-                    and str(block.get("text", "")).strip()
-                )
+                or (block.get("type") == "text" and str(block.get("text", "")).strip())
                 or block.get("type") == "thinking"
                 for block in translated_blocks
             )
-        recovery_required = not has_visible_blocks and (
-            read_error is not None or len(translated_blocks) == 0
-        )
+        recovery_required = not has_visible_blocks and (read_error is not None or len(translated_blocks) == 0)
         if recovery_required:
-            recovery_allowed, recovery_reason = _stream_recovery_allowed_now(
-                session
-            )
+            recovery_allowed, _recovery_reason = _stream_recovery_allowed_now(session)
             stream_behavior_signals["stream_empty_after_success"] = 1
             if read_error is not None:
                 stream_behavior_signals["stream_recovery_read_error"] = 1
             else:
                 stream_behavior_signals["stream_recovery_empty_success"] = 1
-                try:
+                with contextlib.suppress(Exception):
                     session.smoothness_tracker.record(
                         SmoothnessEventType.EMPTY_STREAM_SUCCESS,
                     )
-                except Exception:
-                    pass
             if recovery_allowed:
                 session.runtime_session._stream_recovery_reacquisition_budget = 1
                 session.runtime_session._stream_recovery_history_floor_budget = 1
@@ -529,12 +481,10 @@ async def buffer_strip_restream_impl(
                 logger.warning(
                     "stream_recovery_retry_started: empty streamed success detected; retrying upstream non-stream"
                 )
-                try:
+                with contextlib.suppress(Exception):
                     session.smoothness_tracker.record(
                         SmoothnessEventType.STREAM_RECOVERY_STARTED,
                     )
-                except Exception:
-                    pass
                 recovery_payload = request_content
                 try:
                     parsed_request = json.loads(request_content)
@@ -551,9 +501,7 @@ async def buffer_strip_restream_impl(
                         headers=request_headers or {},
                         content=recovery_payload,
                     )
-                    retry_response = await retry_client.send(
-                        retry_request, stream=False
-                    )
+                    retry_response = await retry_client.send(retry_request, stream=False)
                     if retry_response.status_code == 200:
                         try:
                             retry_json = retry_response.json()
@@ -565,9 +513,7 @@ async def buffer_strip_restream_impl(
                             retry_thinking_blocks = [
                                 block
                                 for block in retry_json.get("content", [])
-                                if isinstance(block, dict)
-                                and block.get("type")
-                                in {"thinking", "redacted_thinking"}
+                                if isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}
                             ]
                             passthrough_blocks = [
                                 block
@@ -580,33 +526,28 @@ async def buffer_strip_restream_impl(
                                     "redacted_thinking",
                                 }
                             ]
-                            passthrough_blocks, passthrough_signals = (
-                                normalize_tool_use_blocks(
-                                    passthrough_blocks,
-                                    seed_prefix="toolu_recovery",
-                                )
+                            (
+                                passthrough_blocks,
+                                passthrough_signals,
+                            ) = normalize_tool_use_blocks(
+                                passthrough_blocks,
+                                seed_prefix="toolu_recovery",
                             )
-                            _merge_signal_counts(
-                                stream_behavior_signals, passthrough_signals
-                            )
+                            _merge_signal_counts(stream_behavior_signals, passthrough_signals)
                             retry_text = "".join(
                                 str(block.get("text", ""))
                                 for block in retry_json.get("content", [])
-                                if isinstance(block, dict)
-                                and block.get("type") == "text"
+                                if isinstance(block, dict) and block.get("type") == "text"
                             )
                             retry_output_saved = 0
                             # Initialize retry_response_signals to accumulate across branches
-                            retry_response_signals: dict[str, int] = dict(
-                                stream_behavior_signals
-                            )
+                            retry_response_signals: dict[str, int] = dict(stream_behavior_signals)
                             if retry_text:
                                 retry_processed = _RUNTIME.process_response(
                                     retry_text,
                                     model=str(retry_json.get("model", "")),
                                     session=session.runtime_session,
-                                    behavior_signals=stream_behavior_signals
-                                    or None,
+                                    behavior_signals=stream_behavior_signals or None,
                                     tool_compatible=tool_compatible,
                                 )
                                 _merge_signal_counts(
@@ -614,56 +555,40 @@ async def buffer_strip_restream_impl(
                                     retry_processed.behavior_signals,
                                 )
                                 translated_blocks = (
-                                    retry_thinking_blocks
-                                    + retry_processed.content_blocks
-                                    + passthrough_blocks
+                                    retry_thinking_blocks + retry_processed.content_blocks + passthrough_blocks
                                 )
-                                retry_output_saved = (
-                                    retry_processed.output_saved_tokens
-                                )
+                                retry_output_saved = retry_processed.output_saved_tokens
                             elif passthrough_blocks:
                                 retry_processed = _RUNTIME.process_response(
                                     "",
                                     model=str(retry_json.get("model", "")),
                                     session=session.runtime_session,
-                                    behavior_signals=stream_behavior_signals
-                                    or None,
+                                    behavior_signals=stream_behavior_signals or None,
                                     tool_compatible=tool_compatible,
                                 )
                                 _merge_signal_counts(
                                     retry_response_signals,
                                     retry_processed.behavior_signals,
                                 )
-                                translated_blocks = (
-                                    retry_thinking_blocks + passthrough_blocks
-                                )
+                                translated_blocks = retry_thinking_blocks + passthrough_blocks
                             else:
                                 # Keep response_signals as initialized from stream_behavior_signals
                                 translated_blocks = []
                             recovered = any(
                                 block.get("type") == "tool_use"
-                                or (
-                                    block.get("type") == "text"
-                                    and str(block.get("text", "")).strip()
-                                )
+                                or (block.get("type") == "text" and str(block.get("text", "")).strip())
                                 for block in translated_blocks
                             )
                             recovered_text = False
                             recovered_tool_use = False
                             if recovered:
                                 recovered_text = any(
-                                    block.get("type") == "text"
-                                    and str(block.get("text", "")).strip()
+                                    block.get("type") == "text" and str(block.get("text", "")).strip()
                                     for block in translated_blocks
                                 )
-                                recovered_tool_use = any(
-                                    block.get("type") == "tool_use"
-                                    for block in translated_blocks
-                                )
+                                recovered_tool_use = any(block.get("type") == "tool_use" for block in translated_blocks)
                                 if recovered_tool_use and not recovered_text:
-                                    signature = _tool_use_only_signature(
-                                        translated_blocks
-                                    )
+                                    signature = _tool_use_only_signature(translated_blocks)
                                     if (
                                         signature
                                         and signature
@@ -678,21 +603,15 @@ async def buffer_strip_restream_impl(
                                         session.runtime_session._stream_recovery_tool_use_only_repeat_count
                                         >= _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT
                                     ):
-                                        stream_behavior_signals[
-                                            "stream_recovery_loop_broken"
-                                        ] = 1
-                                        stream_behavior_signals[
-                                            "stream_recovery_fallback"
-                                        ] = 1
+                                        stream_behavior_signals["stream_recovery_loop_broken"] = 1
+                                        stream_behavior_signals["stream_recovery_fallback"] = 1
                                         logger.warning(
                                             "stream_recovery_loop_breaker_triggered: repeated identical tool_use-only recovery detected; falling back to avoid retry loop"
                                         )
-                                        try:
+                                        with contextlib.suppress(Exception):
                                             session.smoothness_tracker.record(
                                                 SmoothnessEventType.STREAM_RECOVERY_LOOP_BREAKER,
                                             )
-                                        except Exception:
-                                            pass
                                         recovered = False
                                 else:
                                     session.runtime_session._stream_recovery_tool_use_only_signature = ""
@@ -701,39 +620,27 @@ async def buffer_strip_restream_impl(
                             if recovered:
                                 recovery_success_signals: dict[str, int] = {}
                                 if recovered_text:
-                                    stream_behavior_signals[
-                                        "stream_recovery_success_text"
-                                    ] = 1
-                                    recovery_success_signals[
-                                        "stream_recovery_success_text"
-                                    ] = 1
+                                    stream_behavior_signals["stream_recovery_success_text"] = 1
+                                    recovery_success_signals["stream_recovery_success_text"] = 1
                                     logger.info(
                                         "stream_recovery_succeeded_text: recovered empty streamed success via non-stream retry"
                                     )
-                                    try:
+                                    with contextlib.suppress(Exception):
                                         session.smoothness_tracker.record(
                                             SmoothnessEventType.STREAM_RECOVERY_SUCCEEDED,
                                             {"recovery_type": "text"},
                                         )
-                                    except Exception:
-                                        pass
                                 if recovered_tool_use:
-                                    stream_behavior_signals[
-                                        "stream_recovery_success_tool_use"
-                                    ] = 1
-                                    recovery_success_signals[
-                                        "stream_recovery_success_tool_use"
-                                    ] = 1
+                                    stream_behavior_signals["stream_recovery_success_tool_use"] = 1
+                                    recovery_success_signals["stream_recovery_success_tool_use"] = 1
                                     logger.info(
                                         "stream_recovery_succeeded_tool_use: recovered empty streamed success via non-stream retry"
                                     )
-                                    try:
+                                    with contextlib.suppress(Exception):
                                         session.smoothness_tracker.record(
                                             SmoothnessEventType.STREAM_RECOVERY_SUCCEEDED,
                                             {"recovery_type": "tool_use"},
                                         )
-                                    except Exception:
-                                        pass
                                 _merge_signal_counts(
                                     response_signals,
                                     recovery_success_signals,
@@ -755,23 +662,14 @@ async def buffer_strip_restream_impl(
                                 if retry_model and retry_usage:
                                     session.tracker.record_call(
                                         model=retry_model,
-                                        actual_input=retry_usage.get(
-                                            "input_tokens", 0
-                                        ),
-                                        actual_output=retry_usage.get(
-                                            "output_tokens", 0
-                                        ),
-                                        cache_read=retry_usage.get(
-                                            "cache_read_input_tokens", 0
-                                        ),
-                                        cache_write=retry_usage.get(
-                                            "cache_creation_input_tokens", 0
-                                        ),
+                                        actual_input=retry_usage.get("input_tokens", 0),
+                                        actual_output=retry_usage.get("output_tokens", 0),
+                                        cache_read=retry_usage.get("cache_read_input_tokens", 0),
+                                        cache_write=retry_usage.get("cache_creation_input_tokens", 0),
                                         input_saved=input_saved_tokens,
                                         output_saved=retry_output_saved,
                                         type_breakdown=type_breakdown,
-                                        behavior_signals=response_signals
-                                        or None,
+                                        behavior_signals=response_signals or None,
                                         prompt_metrics=prompt_metrics,
                                     )
                                 message_start = {
@@ -783,9 +681,7 @@ async def buffer_strip_restream_impl(
                                 }
                                 yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n".encode()
                                 for i, block in enumerate(translated_blocks):
-                                    for event_bytes in _emit_sse_block(
-                                        i, block
-                                    ):
+                                    for event_bytes in _emit_sse_block(i, block):
                                         yield event_bytes
                                 yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
                                 _clear_stream_read_error_streak(session)
@@ -807,17 +703,12 @@ async def buffer_strip_restream_impl(
                         model=recovery_model,
                         actual_input=recovery_usage.get("input_tokens", 0),
                         actual_output=recovery_usage.get("output_tokens", 0),
-                        cache_read=recovery_usage.get(
-                            "cache_read_input_tokens", 0
-                        ),
-                        cache_write=recovery_usage.get(
-                            "cache_creation_input_tokens", 0
-                        ),
+                        cache_read=recovery_usage.get("cache_read_input_tokens", 0),
+                        cache_write=recovery_usage.get("cache_creation_input_tokens", 0),
                         input_saved=input_saved_tokens,
                         output_saved=0,
                         type_breakdown=type_breakdown,
-                        behavior_signals=empty_processed.behavior_signals
-                        or None,
+                        behavior_signals=empty_processed.behavior_signals or None,
                         prompt_metrics=prompt_metrics,
                     )
                 if request_state is not None:
@@ -831,20 +722,17 @@ async def buffer_strip_restream_impl(
                     behavior_signals=stream_behavior_signals or None,
                     tool_compatible=tool_compatible,
                 )
-                content_blocks = (
-                    thinking_blocks + processed.content_blocks + tool_blocks
-                )
+                content_blocks = thinking_blocks + processed.content_blocks + tool_blocks
                 output_saved = 0
                 response_signals = processed.behavior_signals
+            # processed was assigned in the outer full_text block at lines 203-209
+            # Ensure we have a valid processed object before accessing attributes
+            elif processed is not None:
+                output_saved = processed.output_saved_tokens
+                response_signals = processed.behavior_signals
             else:
-                # processed was assigned in the outer full_text block at lines 203-209
-                # Ensure we have a valid processed object before accessing attributes
-                if processed is not None:
-                    output_saved = processed.output_saved_tokens
-                    response_signals = processed.behavior_signals
-                else:
-                    output_saved = 0
-                    response_signals = stream_behavior_signals or {}
+                output_saved = 0
+                response_signals = stream_behavior_signals or {}
 
             session.tracker.record_call(
                 model=sse_model,
@@ -880,15 +768,11 @@ async def buffer_strip_restream_impl(
                     yield (event_str + "\n\n").encode()
                     continue
 
-                if (
-                    etype in ("message_delta", "message_stop")
-                    and not content_emitted
-                ):
-                    if content_blocks:
-                        for i, block in enumerate(content_blocks):
-                            for event_bytes in _emit_sse_block(i, block):
-                                yield event_bytes
-                        content_emitted = True
+                if (etype in ("message_delta", "message_stop") and not content_emitted) and content_blocks:
+                    for i, block in enumerate(content_blocks):
+                        for event_bytes in _emit_sse_block(i, block):
+                            yield event_bytes
+                    content_emitted = True
 
                 yield (event_str + "\n\n").encode()
 
@@ -897,14 +781,10 @@ async def buffer_strip_restream_impl(
         if content_emitted:
             _clear_stream_read_error_streak(session)
     finally:
-        response_aclose: Callable[[], Awaitable[None]] | None = getattr(
-            response, "aclose", None
-        )
+        response_aclose: Callable[[], Awaitable[None]] | None = getattr(response, "aclose", None)
         if callable(response_aclose):
             await response_aclose()
         if client_owned:
-            client_aclose: Callable[[], Awaitable[None]] | None = getattr(
-                client, "aclose", None
-            )
+            client_aclose: Callable[[], Awaitable[None]] | None = getattr(client, "aclose", None)
             if callable(client_aclose):
                 await client_aclose()

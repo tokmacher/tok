@@ -1,29 +1,25 @@
-"""Tests verifying smoothness events are emitted at the correct code sites.
+"""
+Tests verifying smoothness events are emitted at the correct code sites.
 
 These tests exercise the tracker directly to confirm events produce
 the expected scores without requiring a live bridge session.
 """
 
-from tok.runtime.smoothness.models import (
-    SmoothnessEventType,
-    TokMode,
-)
+from tok.runtime.smoothness.models import SmoothnessEventType, TokMode
 from tok.runtime.smoothness.tracker import SmoothnessTracker
 
 
-def test_stream_read_error_event():
+def test_stream_read_error_event() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
-    tracker.record(
-        SmoothnessEventType.STREAM_READ_ERROR, {"error": "conn reset"}
-    )
+    tracker.record(SmoothnessEventType.STREAM_READ_ERROR, {"error": "conn reset"})
     report = tracker.finish_turn()
     assert report.score == 88
     assert len(report.events) == 1
     assert report.events[0].event_type == SmoothnessEventType.STREAM_READ_ERROR
 
 
-def test_thinking_block_mutation_event():
+def test_thinking_block_mutation_event() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.THINKING_BLOCK_MUTATION)
@@ -33,7 +29,7 @@ def test_thinking_block_mutation_event():
     assert report.mode == TokMode.SMOOTH_MODE
 
 
-def test_repeated_active_file_read_event():
+def test_repeated_active_file_read_event() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.REPEATED_ACTIVE_FILE_READ, {"count": 3})
@@ -43,7 +39,7 @@ def test_repeated_active_file_read_event():
     assert report.mode == TokMode.FULL_TOK
 
 
-def test_stream_recovery_started_event():
+def test_stream_recovery_started_event() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.STREAM_RECOVERY_STARTED)
@@ -52,7 +48,7 @@ def test_stream_recovery_started_event():
     assert report.labour_index == 1
 
 
-def test_stream_recovery_loop_breaker_event():
+def test_stream_recovery_loop_breaker_event() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.STREAM_RECOVERY_LOOP_BREAKER)
@@ -60,7 +56,7 @@ def test_stream_recovery_loop_breaker_event():
     assert report.score == 92
 
 
-def test_empty_stream_success_event():
+def test_empty_stream_success_event() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.EMPTY_STREAM_SUCCESS)
@@ -68,7 +64,7 @@ def test_empty_stream_success_event():
     assert report.score == 92
 
 
-def test_messages_changed_open_tool_loop():
+def test_messages_changed_open_tool_loop() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.MESSAGES_CHANGED_OPEN_TOOL_LOOP)
@@ -76,7 +72,7 @@ def test_messages_changed_open_tool_loop():
     assert report.score == 88
 
 
-def test_history_winnowing_active_loop():
+def test_history_winnowing_active_loop() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.HISTORY_WINNOWING_ACTIVE_LOOP)
@@ -84,7 +80,7 @@ def test_history_winnowing_active_loop():
     assert report.score == 88
 
 
-def test_prompt_optimization_active_task():
+def test_prompt_optimization_active_task() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.PROMPT_OPTIMIZATION_ACTIVE_TASK)
@@ -92,7 +88,7 @@ def test_prompt_optimization_active_task():
     assert report.score == 94
 
 
-def test_multiple_events_produce_correct_score():
+def test_multiple_events_produce_correct_score() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.STREAM_READ_ERROR)
@@ -103,7 +99,7 @@ def test_multiple_events_produce_correct_score():
     assert report.labour_index == 1
 
 
-def test_task_report_aggregates_events():
+def test_task_report_aggregates_events() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.STREAM_READ_ERROR)
@@ -121,7 +117,7 @@ def test_task_report_aggregates_events():
     assert task.event_counts.get("thinking_block_mutation") == 1
 
 
-def test_upstream_400_forces_smooth_mode():
+def test_upstream_400_forces_smooth_mode() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.UPSTREAM_400_AFTER_PREPARED_PAYLOAD)
@@ -130,7 +126,7 @@ def test_upstream_400_forces_smooth_mode():
     assert report.score == 75
 
 
-def test_two_stream_recoveries_force_smooth_mode():
+def test_two_stream_recoveries_force_smooth_mode() -> None:
     tracker = SmoothnessTracker()
     tracker.start_turn("t1", "task1")
     tracker.record(SmoothnessEventType.STREAM_RECOVERY_STARTED)

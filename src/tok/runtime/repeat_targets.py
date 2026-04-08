@@ -7,11 +7,12 @@ import json
 import posixpath
 import re
 import shlex
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from ..compression import FILE_LIKE_TOOLS
+from tok.compression import FILE_LIKE_TOOLS
 
 SEARCH_LIKE_TOOLS = frozenset({"grep", "grep_search", "search", "rg"})
 COMMAND_LIKE_TOOLS = frozenset({"bash", "sh", "run_terminal", "computer"})
@@ -46,9 +47,7 @@ _EVIDENCE_DOMAIN = Literal[
 ]
 
 SearchResultEvidenceLevel = Literal["navigation", "exact_content"]
-_EVIDENCE_VARIANT = Literal[
-    "full", "snippet", "diff", "metadata", "copy", "search_results"
-]
+_EVIDENCE_VARIANT = Literal["full", "snippet", "diff", "metadata", "copy", "search_results"]
 _EVIDENCE_SOURCE_KIND = Literal[
     "native_tool",
     "shell_read",
@@ -61,10 +60,7 @@ _EVIDENCE_SOURCE_KIND = Literal[
 _GIT_SHOW_RE = re.compile(r"^git\s+show\s+([^:]+):(.+)$")
 _GIT_DIFF_PATH_RE = re.compile(r"^git\s+diff\s+([\w@~^./:-]+)\s*--\s*(.+)$")
 _METADATA_SUBTYPES = frozenset({"git", "stat", "wc", "file", "ls", "find"})
-_TMP_PREFIXES = ("/tmp/", "/var/tmp/", "/private/tmp/", "tmp/")
-
-
-_TMP_PREFIXES = ("/tmp/", "/var/tmp/", "/private/tmp/", "tmp/")
+_TMP_PREFIXES = (tempfile.gettempdir(), "/var/tmp/", "/private/tmp/", "tmp/")
 
 
 @dataclass(frozen=True)
@@ -78,6 +74,7 @@ class EvidenceIntent:
 
 
 def _classify_revision(revision: str) -> str:
+    """Classify a git revision string into a normalized form."""
     if revision in {"HEAD", "head"}:
         return "HEAD"
     if revision.startswith("HEAD~"):
@@ -90,14 +87,13 @@ def _classify_revision(revision: str) -> str:
 
 
 def extract_git_history_path(command: str) -> tuple[str | None, str]:
+    """Extract the file path and revision from a git history command."""
     text = " ".join(str(command or "").strip().split())
     if not text:
         return None, ""
     m = _GIT_SHOW_RE.match(text)
     if m:
-        return normalize_path_target(m.group(2)), _classify_revision(
-            m.group(1)
-        )
+        return normalize_path_target(m.group(2)), _classify_revision(m.group(1))
     m = _GIT_DIFF_PATH_RE.match(text)
     if m:
         path_str = m.group(2).strip()
@@ -108,6 +104,7 @@ def extract_git_history_path(command: str) -> tuple[str | None, str]:
 def extract_shell_search_params(
     command: str,
 ) -> tuple[str | None, str | None]:
+    """Extract search query and scope from a shell search command."""
     text = " ".join(str(command or "").strip().split())
     if not text:
         return None, None
@@ -129,6 +126,7 @@ def extract_shell_search_params(
 
 
 def extract_metadata_probe(command: str) -> str | None:
+    """Extract the metadata subtype from a metadata probe command."""
     text = " ".join(str(command or "").strip().split())
     if not text:
         return None
@@ -152,13 +150,12 @@ def extract_metadata_probe(command: str) -> str | None:
 
 
 def _is_temp_path(path: str) -> bool:
+    """Check if a path is within a temporary directory."""
     normalized = normalize_path_target(path)
     return any(normalized.startswith(p) for p in _TMP_PREFIXES)
 
 
-def _resolve_command_intent(
-    command: str, path: str | None
-) -> EvidenceIntent | None:
+def _resolve_command_intent(command: str, path: str | None) -> EvidenceIntent | None:
     """Resolve evidence intent for command-like tools."""
     git_path, git_rev = extract_git_history_path(command)
     if git_path:
@@ -184,26 +181,20 @@ def _resolve_command_intent(
             anchor=anchor,
             variant="search_results",
             novelty_key=anchor,
-            display_label=(
-                f"{shell_query} @ {scope}" if scope else shell_query
-            ),
+            display_label=(f"{shell_query} @ {scope}" if scope else shell_query),
             source_kind="shell_search",
         )
 
     meta_subtype = extract_metadata_probe(command)
     if meta_subtype:
         meta_path = path or ""
-        domain = (
-            "listing" if meta_subtype in {"ls", "find"} else "file_metadata"
-        )
+        domain: _EVIDENCE_DOMAIN = "listing" if meta_subtype in {"ls", "find"} else "file_metadata"
         return EvidenceIntent(
             domain=domain,
             anchor=normalize_path_target(meta_path) or meta_subtype,
             variant="metadata",
             novelty_key=meta_subtype,
-            display_label=(
-                f"{meta_subtype}:{meta_path}" if meta_path else meta_subtype
-            ),
+            display_label=(f"{meta_subtype}:{meta_path}" if meta_path else meta_subtype) or "",
             source_kind="metadata_probe",
         )
 
@@ -249,7 +240,7 @@ def _resolve_native_intent(
             source_kind="native_tool",
         )
 
-    if lowered in SEARCH_LIKE_TOOLS and query:
+    if lowered in SEARCH_LIKE_TOOLS or query:
         scope = normalize_path_target(path or "") or ""
         anchor = json.dumps(
             {"query": query, "scope": scope},
@@ -261,7 +252,7 @@ def _resolve_native_intent(
             anchor=anchor,
             variant="search_results",
             novelty_key=anchor,
-            display_label=f"{query} @ {scope}" if scope else query,
+            display_label=f"{query or ''} @ {scope}" if scope else query or "",
             source_kind="native_tool",
         )
     return None
@@ -274,6 +265,7 @@ def resolve_evidence_intent(
     query: str | None = None,
     command: str | None = None,
 ) -> EvidenceIntent | None:
+    """Resolve the evidence intent for a tool invocation."""
     lowered = str(tool_name or "").strip().lower()
 
     if lowered in COMMAND_LIKE_TOOLS and command:
@@ -284,9 +276,7 @@ def resolve_evidence_intent(
     return _resolve_native_intent(lowered, path, query)
 
 
-_EVIDENCE_KEYS = frozenset(
-    {"line", "snippet", "content", "text", "match", "context"}
-)
+_EVIDENCE_KEYS = frozenset({"line", "snippet", "content", "text", "match", "context"})
 
 
 def _has_line_evidence(lines: list[str]) -> bool:
@@ -301,7 +291,7 @@ def _has_json_array_evidence(data: list[Any]) -> bool:
     for item in data:
         if not isinstance(item, dict):
             continue
-        keys = {str(key).lower() for key in item.keys()}
+        keys = {str(key).lower() for key in item}
         if _EVIDENCE_KEYS.intersection(keys):
             return True
     return False
@@ -361,6 +351,7 @@ def extract_shell_file_read_path(command: str) -> str | None:
 
 
 def _extract_shell_read_cat_path(args: list[str]) -> str | None:
+    """Extract file path from cat command arguments."""
     if args[:1] == ["--"]:
         args = args[1:]
     if len(args) != 1:
@@ -369,17 +360,17 @@ def _extract_shell_read_cat_path(args: list[str]) -> str | None:
 
 
 def _extract_shell_read_head_tail_nl_path(args: list[str]) -> str | None:
+    """Extract file path from head/tail/nl command arguments."""
     if not args:
         return None
-    candidate_paths = [
-        arg for arg in args if arg != "--" and not arg.startswith("-")
-    ]
+    candidate_paths = [arg for arg in args if arg != "--" and not arg.startswith("-")]
     if len(candidate_paths) != 1:
         return None
     return candidate_paths[0]
 
 
 def _extract_shell_read_sed_path(args: list[str]) -> str | None:
+    """Extract file path from sed command arguments."""
     if len(args) != 3 or args[0] != "-n":
         return None
     return args[2]
@@ -395,6 +386,7 @@ _SHELL_READ_PATH_HANDLERS = {
 
 
 def normalize_path_target(path: str) -> str:
+    """Normalize a file path to POSIX format."""
     text = str(path or "").strip()
     if not text:
         return ""
@@ -406,6 +398,7 @@ def normalize_path_target(path: str) -> str:
 
 
 def normalize_command_family(command: str) -> str:
+    """Normalize a command to its canonical family name."""
     text = " ".join(str(command or "").strip().split())
     if not text:
         return ""
@@ -415,18 +408,18 @@ def normalize_command_family(command: str) -> str:
         parts = text.split()
     while parts and Path(parts[0]).name.lower() in {"env", "/usr/bin/env"}:
         parts = parts[1:]
-    if (
-        len(parts) >= 2
-        and Path(parts[0]).name.lower() == "uv"
-        and parts[1] == "run"
-    ):
+    if len(parts) >= 2 and Path(parts[0]).name.lower() == "uv" and parts[1] == "run":
         parts = parts[2:]
-    if len(parts) >= 3 and Path(parts[0]).name.lower() in {
-        "python",
-        "python3",
-    }:
-        if parts[1] == "-m":
-            return parts[2].lower()
+    if (
+        len(parts) >= 3
+        and Path(parts[0]).name.lower()
+        in {
+            "python",
+            "python3",
+        }
+        and parts[1] == "-m"
+    ):
+        return parts[2].lower()
     if not parts:
         return text.lower()
     return Path(parts[0]).name.lower()
@@ -438,14 +431,13 @@ def normalize_tool_family(
     query: str | None = None,
     command: str | None = None,
 ) -> str:
+    """Normalize a tool to its canonical family name."""
     lowered = str(tool_name or "").strip().lower()
     if lowered in FILE_LIKE_TOOLS:
         return "file_read"
     if lowered in LISTING_LIKE_TOOLS:
         return "listing"
-    if lowered in COMMAND_LIKE_TOOLS and extract_shell_file_read_path(
-        command or ""
-    ):
+    if lowered in COMMAND_LIKE_TOOLS and extract_shell_file_read_path(command or ""):
         return "file_read"
     if lowered in SEARCH_LIKE_TOOLS or query:
         return "search"
@@ -482,17 +474,14 @@ def _normalize_command_parts(parts: list[str]) -> list[str]:
     """Normalize command parts by stripping env wrappers and uv run."""
     while parts and Path(parts[0]).name.lower() in {"env", "/usr/bin/env"}:
         parts = parts[1:]
-    if (
-        len(parts) >= 2
-        and Path(parts[0]).name.lower() == "uv"
-        and parts[1] == "run"
-    ):
+    if len(parts) >= 2 and Path(parts[0]).name.lower() == "uv" and parts[1] == "run":
         parts = parts[2:]
     return parts
 
 
 def _parse_listing_args(parts: list[str]) -> tuple[str, str]:
-    """Parse listing command arguments to extract path and mode.
+    """
+    Parse listing command arguments to extract path and mode.
 
     Returns (listing_path, mode_string).
     """
@@ -512,6 +501,7 @@ def _parse_listing_args(parts: list[str]) -> tuple[str, str]:
 
 
 def _extract_shell_listing_target(command: str) -> tuple[str, str]:
+    """Extract the listing target from a shell command."""
     text = " ".join(str(command or "").strip().split())
     if not text:
         return "", ""
@@ -562,9 +552,7 @@ def evidence_identity_key(
     shell_file_read_path = extract_shell_file_read_path(command or "")
     if lowered in FILE_LIKE_TOOLS or shell_file_read_path:
         resolved_path = path or shell_file_read_path or ""
-        return "file_read|" + (
-            normalize_path_target(resolved_path) or "path-missing"
-        )
+        return "file_read|" + (normalize_path_target(resolved_path) or "path-missing")
 
     shell_query, shell_scope = extract_shell_search_params(command or "")
     if lowered in SEARCH_LIKE_TOOLS or shell_query:
@@ -578,13 +566,9 @@ def evidence_identity_key(
             "query": " ".join(str(query_value or "").split()),
             "scope": scope_value,
         }
-        return "search|" + json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        )
+        return "search|" + json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
-    shell_listing_path, shell_listing_mode = _extract_shell_listing_target(
-        command or ""
-    )
+    shell_listing_path, shell_listing_mode = _extract_shell_listing_target(command or "")
     if lowered in LISTING_LIKE_TOOLS or shell_listing_path:
         listing_path = normalize_path_target(path or shell_listing_path or "")
         mode_payload = (
@@ -599,9 +583,7 @@ def evidence_identity_key(
             "mode": mode_payload,
             "path": listing_path or "path-missing",
         }
-        return "listing|" + json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        )
+        return "listing|" + json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     return None
 
@@ -614,25 +596,20 @@ def logical_target_identity(
     command: str | None = None,
     args: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
+    """Generate a canonical logical target identity for a tool invocation."""
     family = normalize_tool_family(tool_name, query=query, command=command)
     if family == "file_read":
-        resolved_path = (
-            path or extract_shell_file_read_path(command or "") or ""
-        )
+        resolved_path = path or extract_shell_file_read_path(command or "") or ""
         return family, normalize_path_target(resolved_path) or "path-missing"
     if family == "search":
         payload = {
             "query": " ".join(str(query or "").split()),
             "search_path": normalize_path_target(path or ""),
         }
-        return family, json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        )
+        return family, json.dumps(payload, sort_keys=True, separators=(",", ":"))
     if family == "listing":
         shell_path, shell_mode = _extract_shell_listing_target(command or "")
-        target_path = (
-            normalize_path_target(path or shell_path or "") or "path-missing"
-        )
+        target_path = normalize_path_target(path or shell_path or "") or "path-missing"
         normalized_args = _normalize_identity_args(
             args if isinstance(args, dict) else {},
             excluded_keys=frozenset(
@@ -648,17 +625,13 @@ def logical_target_identity(
             ),
         )
         payload = {
-            "mode": shell_mode or normalized_args,
+            "mode": shell_mode or json.dumps({k: str(v) for k, v in normalized_args.items()}),
             "path": target_path,
         }
-        return family, json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        )
+        return family, json.dumps(payload, sort_keys=True, separators=(",", ":"))
     if family == "command":
         payload = {"family": normalize_command_family(command or "")}
-        return family, json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        )
+        return family, json.dumps(payload, sort_keys=True, separators=(",", ":"))
     raw = json.dumps(
         {
             "path": normalize_path_target(path or ""),
@@ -679,10 +652,9 @@ def display_target_label(
     command: str | None = None,
     logical_target: str = "",
 ) -> str:
+    """Generate a human-readable display label for a target."""
     if family == "file_read":
-        resolved_path = (
-            path or extract_shell_file_read_path(command or "") or ""
-        )
+        resolved_path = path or extract_shell_file_read_path(command or "") or ""
         return str(resolved_path or logical_target or "").strip()
     if family == "search":
         q = " ".join(str(query or "").split())
@@ -700,10 +672,12 @@ def display_target_label(
 
 
 def stable_digest(text: str) -> str:
+    """Generate a stable 16-character digest of text."""
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
 
 
 def _truncate_chars(text: str, limit: int) -> str:
+    """Truncate text to a character limit with ellipsis."""
     cleaned = str(text or "").strip()
     if len(cleaned) <= limit:
         return cleaned
@@ -713,12 +687,13 @@ def _truncate_chars(text: str, limit: int) -> str:
 
 
 def _join_summary_lines(lines: list[str], limit: int) -> str:
+    """Join summary lines with pipe separators within a character limit."""
     parts: list[str] = []
     for line in lines:
         item = line.strip()
         if not item:
             continue
-        candidate = " | ".join(parts + [item])
+        candidate = " | ".join([*parts, item])
         if len(candidate) > limit:
             break
         parts.append(item)
@@ -726,9 +701,8 @@ def _join_summary_lines(lines: list[str], limit: int) -> str:
 
 
 def _non_empty_lines(text: str) -> list[str]:
-    return [
-        line.strip() for line in str(text or "").splitlines() if line.strip()
-    ]
+    """Extract non-empty lines from text."""
+    return [line.strip() for line in str(text or "").splitlines() if line.strip()]
 
 
 def _summary_scoring_text(line: str) -> str:
@@ -769,9 +743,7 @@ _NEGATIVE_SCORE_PREFIXES = [
     (("pass", "continue", "break"), 80),
     ("#", 40),
 ]
-_NEGATIVE_TOKENS = frozenset(
-    ("logger.debug", "logger.info", "logger.warning", "logger.error", "print(")
-)
+_NEGATIVE_TOKENS = frozenset(("logger.debug", "logger.info", "logger.warning", "logger.error", "print("))
 _NEGATIVE_EXCEPTIONS = frozenset(("except Exception", "except BaseException"))
 
 
@@ -791,8 +763,9 @@ def _calculate_negative_score(text: str, lower: str) -> int:
     """Calculate negative score contribution."""
     score = 0
     for prefixes, points in _NEGATIVE_SCORE_PREFIXES:
-        if lower.startswith(prefixes):
-            score -= points
+        if isinstance(prefixes, (tuple, str)):
+            if lower.startswith(prefixes):
+                score -= points
     for exc in _NEGATIVE_EXCEPTIONS:
         if exc in text:
             score -= 80
@@ -811,9 +784,7 @@ def _summary_line_score(line: str) -> int:
 
     score += _calculate_positive_score(text, lower)
 
-    if _ASSIGNMENT_RE.search(text) and not any(
-        token in text for token in ("==", "!=", ">=", "<=")
-    ):
+    if _ASSIGNMENT_RE.search(text) and not any(token in text for token in ("==", "!=", ">=", "<=")):
         score += 100
     if "(" in text and ")" in text and not lower.startswith("#"):
         score += 30
@@ -837,9 +808,7 @@ def _structural_summary_indices(lines: list[str], max_lines: int) -> list[int]:
     return sorted({idx for _, idx in top})
 
 
-def _find_enclosing_scope(
-    all_lines: list[str], summary_lines: list[str]
-) -> str:
+def _find_enclosing_scope(all_lines: list[str], summary_lines: list[str]) -> str:
     if not summary_lines or not all_lines:
         return ""
     first_line = summary_lines[0].strip()
@@ -909,24 +878,22 @@ def build_search_summary(text: str, *, max_chars: int, max_lines: int) -> str:
 
 
 def canonicalize_command_output(text: str) -> str:
+    """Canonicalize command output by normalizing newlines and ANSI codes."""
     cleaned = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     cleaned = _ANSI_RE.sub("", cleaned)
     stripped = cleaned.strip()
     if stripped and stripped[0] in "[{":
         try:
-            return json.dumps(
-                json.loads(stripped), sort_keys=True, separators=(",", ":")
-            )
+            return json.dumps(json.loads(stripped), sort_keys=True, separators=(",", ":"))
         except Exception:
             pass
     return cleaned
 
 
 def build_command_summary(text: str, *, max_chars: int, max_lines: int) -> str:
+    """Build a summary of command output."""
     canonical = canonicalize_command_output(text)
-    return _join_summary_lines(
-        _non_empty_lines(canonical)[:max_lines], max_chars
-    )
+    return _join_summary_lines(_non_empty_lines(canonical)[:max_lines], max_chars)
 
 
 def build_summary_for_family(
@@ -940,22 +907,15 @@ def build_summary_for_family(
     command_max_chars: int,
     command_max_lines: int,
 ) -> str:
+    """Build a summary of tool output based on its family type."""
     if family == "file_read":
-        return build_file_summary(
-            text, max_chars=file_max_chars, max_lines=file_max_lines
-        )
+        return build_file_summary(text, max_chars=file_max_chars, max_lines=file_max_lines)
     if family == "search":
-        return build_search_summary(
-            text, max_chars=search_max_chars, max_lines=search_max_lines
-        )
+        return build_search_summary(text, max_chars=search_max_chars, max_lines=search_max_lines)
     if family == "listing":
-        return build_search_summary(
-            text, max_chars=search_max_chars, max_lines=search_max_lines
-        )
+        return build_search_summary(text, max_chars=search_max_chars, max_lines=search_max_lines)
     if family == "command":
-        return build_command_summary(
-            text, max_chars=command_max_chars, max_lines=command_max_lines
-        )
+        return build_command_summary(text, max_chars=command_max_chars, max_lines=command_max_lines)
     return ""
 
 

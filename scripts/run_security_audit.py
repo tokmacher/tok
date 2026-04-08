@@ -19,13 +19,8 @@ def export_requirements() -> str:
         text=True,
     )
     if completed.returncode != 0:
-        print(completed.stderr, file=sys.stderr, end="")
         raise SystemExit(completed.returncode)
-    filtered_lines = [
-        line
-        for line in completed.stdout.splitlines()
-        if not line.startswith("-e ")
-    ]
+    filtered_lines = [line for line in completed.stdout.splitlines() if not line.startswith("-e ")]
     return "\n".join(filtered_lines) + "\n"
 
 
@@ -37,13 +32,10 @@ def audit_command() -> list[str]:
 def main() -> int:
     lock_path = Path("uv.lock")
     if not lock_path.exists():
-        print("uv.lock not found", file=sys.stderr)
         return 1
 
     requirements_text = export_requirements()
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".requirements.txt", delete=False
-    ) as temp_file:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".requirements.txt", delete=False) as temp_file:
         temp_file.write(requirements_text)
         temp_path = Path(temp_file.name)
 

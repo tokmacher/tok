@@ -4,25 +4,31 @@ Steps for cutting a Tok release.
 
 ## Before Release
 
-- [ ] Worktree is clean or intentionally quarantined; do not tag from a churn-heavy bridge/runtime branch
+- [ ] Worktree is clean or intentionally quarantined; do not tag from a churn-heavy
+  bridge/runtime branch
 - [ ] All CI checks pass on `main`
 - [ ] Run full test suite locally: `pytest tests/unit tests/integration -v`
 - [ ] Run lint and hygiene: `pre-commit run --all-files && ruff check src/tok tests`
 - [ ] Run type check: `mypy src/tok/`
 - [ ] Run maintainer release smoke: `python scripts/run_release_smoke.py`
-- [ ] Confirm the release-surface gate passes and no experimental root exports are advertised as canonical
+- [ ] Confirm the release-surface gate passes and no experimental root exports are
+  advertised as canonical
 - [ ] Build package: `python -m build`
 - [ ] Verify wheel installs cleanly in a fresh venv
 - [ ] Run the clean-room install verification from the README
 - [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.0`
-- [ ] Run live Claude bridge validation on the supported path: `tok install`, `tok bridge start`, `claude`, `tok bridge status`, `tok doctor`, `tok stats`, `tok bridge stop`
-- [ ] Treat any frontier/OpenRouter report as advisory validation only; do not let it redefine the Claude bridge default
+- [ ] Run live Claude bridge validation on the supported path: `tok install`,
+  `tok bridge start`, `claude`, `tok bridge status`, `tok doctor`, `tok stats`,
+  `tok bridge stop`
+- [ ] Treat any frontier/OpenRouter report as advisory validation only; do not let it
+  redefine the Claude bridge default
 - [ ] Confirm only supported examples remain in `examples/`
 - [ ] Update `CHANGELOG.md` with release date
 - [ ] Update `__version__` in `src/tok/__init__.py`
 - [ ] Update version in `pyproject.toml`
 - [ ] Confirm README badges and repository URLs resolve publicly
-- [ ] Confirm the deferred `0.1.0` follow-ups are documented: CLI decomposition and dependency upper-bound policy
+- [ ] Confirm the deferred `0.1.0` follow-ups are documented: CLI decomposition and
+  dependency upper-bound policy
 
 Recommended local gate sequence for the exact release candidate:
 
@@ -35,15 +41,16 @@ pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
 python -m build
 ```
 
-If the release check is running in an offline or sandboxed environment that
-already has build requirements installed, `python -m build --no-isolation` is an
-acceptable local fallback. The canonical release command remains `python -m build`.
-The release smoke harness already uses a self-contained `uv run --with build --with hatchling`
-build step so maintainers can verify packaging before running the canonical command.
+If the release check is running in an offline or sandboxed environment that already has
+build requirements installed, `python -m build --no-isolation` is an acceptable local
+fallback. The canonical release command remains `python -m build`. The release smoke
+harness already uses a self-contained `uv run --with build --with hatchling` build step
+so maintainers can verify packaging before running the canonical command.
 
 ## Release
 
-- [ ] Reconfirm the exact release candidate still passes the supported bridge-first live validation path
+- [ ] Reconfirm the exact release candidate still passes the supported bridge-first live
+  validation path
 - [ ] Tag the commit: `git tag v0.x.x`
 - [ ] Push the tag: `git push origin v0.x.x`
 - [ ] Watch the `Release` GitHub Actions workflow build the artifacts

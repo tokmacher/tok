@@ -6,15 +6,13 @@ from tok.universal_runtime import (
 )
 
 
-def test_runtime_contract_prefers_structured_memory_on_cold_start(tmp_path):
+def test_runtime_contract_prefers_structured_memory_on_cold_start(
+    tmp_path,
+) -> None:
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
-    (memory_dir / "bridge_memory.tok").write_text(
-        "@mem v:b1 t:3\n@h\n@f goal\n  |> ship_runtime|score:3|last:3\n"
-    )
-    (memory_dir / "memory.tok").write_text(
-        ">>> turns:9|goal:legacy_fallback|files:old.py\n"
-    )
+    (memory_dir / "bridge_memory.tok").write_text("@mem v:b1 t:3\n@h\n@f goal\n  |> ship_runtime|score:3|last:3\n")
+    (memory_dir / "memory.tok").write_text(">>> turns:9|goal:legacy_fallback|files:old.py\n")
 
     session = RuntimeSession(memory_dir=memory_dir)
     memory = session.load_memory(model="claude-sonnet-4")
@@ -25,7 +23,9 @@ def test_runtime_contract_prefers_structured_memory_on_cold_start(tmp_path):
     assert signals.get("cold_start_wire_fallback", 0) == 0
 
 
-def test_runtime_contract_uses_wire_fallback_when_structured_missing(tmp_path):
+def test_runtime_contract_uses_wire_fallback_when_structured_missing(
+    tmp_path,
+) -> None:
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
     fallback_line = ">>> turns:4|goal:wire_only|files:main.py"
@@ -42,7 +42,7 @@ def test_runtime_contract_uses_wire_fallback_when_structured_missing(tmp_path):
     assert signals.get("cold_start_structured_memory", 0) == 0
 
 
-def test_response_contract_classifies_tok_native_vs_fail_open():
+def test_response_contract_classifies_tok_native_vs_fail_open() -> None:
     tok_text = ">>> turns:2|goal:fix\n@msg role:assistant\n  |> done"
     markdown_text = "## heading\nPlain response"
 
@@ -56,7 +56,7 @@ def test_response_contract_classifies_tok_native_vs_fail_open():
     assert degraded.behavior_signals.get("fail_open_compat_response", 0) == 1
 
 
-def test_response_contract_handles_tool_compatible_plain_text():
+def test_response_contract_handles_tool_compatible_plain_text() -> None:
     text = "Plain response"
 
     contract = response_contract_for_mode(text, tool_compatible=True)
@@ -66,13 +66,8 @@ def test_response_contract_handles_tool_compatible_plain_text():
     assert "non_tok_response" not in contract.behavior_signals
 
 
-def test_response_contract_marks_malformed_hybrid_tool_blocks():
-    text = (
-        ">>> turns:3|goal:tests\n"
-        '@Tool(json={"command": "pytest"})\n'
-        "@msg role:assistant\n"
-        "  |> done"
-    )
+def test_response_contract_marks_malformed_hybrid_tool_blocks() -> None:
+    text = '>>> turns:3|goal:tests\n@Tool(json={"command": "pytest"})\n@msg role:assistant\n  |> done'
 
     contract = response_contract_for_mode(text, tool_compatible=False)
 
@@ -82,7 +77,7 @@ def test_response_contract_marks_malformed_hybrid_tool_blocks():
     assert contract.behavior_signals.get("fail_open_compat_response", 0) == 1
 
 
-def test_normalize_tool_events_captures_file_command_search_classes():
+def test_normalize_tool_events_captures_file_command_search_classes() -> None:
     messages = [
         {
             "role": "assistant",

@@ -1,4 +1,5 @@
-"""Tests for smoothness scoring model.
+"""
+Tests for smoothness scoring model.
 
 These tests verify the pure scoring functions and penalty calculations
 without any runtime wiring.
@@ -12,14 +13,11 @@ from tok.runtime.smoothness.models import (
     TokMode,
 )
 from tok.runtime.smoothness.policy import choose_tok_mode
-from tok.runtime.smoothness.scoring import (
-    score_task,
-    score_turn,
-)
+from tok.runtime.smoothness.scoring import score_task, score_turn
 from tok.runtime.smoothness.tracker import SmoothnessTracker
 
 
-def test_clean_turn_no_events():
+def test_clean_turn_no_events() -> None:
     """A turn with no events should score 100."""
     report = score_turn("turn_1", "task_1", [])
     assert report.score == 100
@@ -27,7 +25,7 @@ def test_clean_turn_no_events():
     assert report.mode == TokMode.FULL_TOK
 
 
-def test_one_stream_read_error():
+def test_one_stream_read_error() -> None:
     """A turn with one STREAM_READ_ERROR should score 88 (100 - 12)."""
     events = [
         SmoothnessEvent(
@@ -42,7 +40,7 @@ def test_one_stream_read_error():
     assert report.labour_index == 0
 
 
-def test_one_thinking_block_mutation():
+def test_one_thinking_block_mutation() -> None:
     """A turn with one THINKING_BLOCK_MUTATION should score 65 (100 - 35)."""
     events = [
         SmoothnessEvent(
@@ -57,7 +55,7 @@ def test_one_thinking_block_mutation():
     assert report.labour_index == 2
 
 
-def test_clamping_below_zero():
+def test_clamping_below_zero() -> None:
     """Score should clamp to 0 even with many penalties."""
     events = [
         SmoothnessEvent(
@@ -72,7 +70,7 @@ def test_clamping_below_zero():
     assert report.score == 0
 
 
-def test_score_task_aggregation():
+def test_score_task_aggregation() -> None:
     """Task score should average across turns."""
     turn1 = score_turn(
         "turn_1",
@@ -96,7 +94,7 @@ def test_score_task_aggregation():
     assert task_report.turn_count == 2
 
 
-def test_task_event_counts():
+def test_task_event_counts() -> None:
     """Task report should aggregate event counts."""
     turn1 = score_turn(
         "turn_1",
@@ -135,14 +133,14 @@ def test_task_event_counts():
     assert task_report.event_counts.get("repeated_active_file_read") == 1
 
 
-def test_mode_full_tok():
+def test_mode_full_tok() -> None:
     """Score >= 70 should result in FULL_TOK mode."""
     report = score_turn("turn_1", "task_1", [])
     mode = choose_tok_mode(report, None)
     assert mode == TokMode.FULL_TOK
 
 
-def test_mode_guarded_tok():
+def test_mode_guarded_tok() -> None:
     """Score 55-69 should result in GUARDED_TOK mode."""
     events = [
         SmoothnessEvent(
@@ -159,7 +157,7 @@ def test_mode_guarded_tok():
     assert mode == TokMode.GUARDED_TOK
 
 
-def test_mode_smooth_mode_by_score():
+def test_mode_smooth_mode_by_score() -> None:
     """Score 40-54 should result in SMOOTH_MODE."""
     events = [
         SmoothnessEvent(
@@ -176,7 +174,7 @@ def test_mode_smooth_mode_by_score():
     assert mode == TokMode.SMOOTH_MODE
 
 
-def test_mode_lossless_by_score():
+def test_mode_lossless_by_score() -> None:
     """Score < 40 should result in LOSSLESS_TASK_MODE."""
     events = [
         SmoothnessEvent(
@@ -193,7 +191,7 @@ def test_mode_lossless_by_score():
     assert mode == TokMode.LOSSLESS_TASK_MODE
 
 
-def test_mode_override_thinking_mutation():
+def test_mode_override_thinking_mutation() -> None:
     """THINKING_BLOCK_MUTATION should force SMOOTH_MODE regardless of score."""
     events = [
         SmoothnessEvent(
@@ -209,7 +207,7 @@ def test_mode_override_thinking_mutation():
     assert mode == TokMode.SMOOTH_MODE
 
 
-def test_mode_override_repeated_stream_recovery():
+def test_mode_override_repeated_stream_recovery() -> None:
     """Two STREAM_RECOVERY_STARTED events should force SMOOTH_MODE."""
     events = [
         SmoothnessEvent(
@@ -231,7 +229,7 @@ def test_mode_override_repeated_stream_recovery():
     assert mode == TokMode.SMOOTH_MODE
 
 
-def test_tracker_basic_workflow():
+def test_tracker_basic_workflow() -> None:
     """SmoothnessTracker should track events across turns."""
     tracker = SmoothnessTracker()
 
@@ -245,7 +243,7 @@ def test_tracker_basic_workflow():
     assert len(report.events) == 1
 
 
-def test_tracker_task_aggregation():
+def test_tracker_task_aggregation() -> None:
     """SmoothnessTracker should aggregate reports across turns."""
     tracker = SmoothnessTracker()
 
@@ -262,21 +260,21 @@ def test_tracker_task_aggregation():
     assert task_report.average_turn_score == 94.0
 
 
-def test_tracker_without_start_raises():
+def test_tracker_without_start_raises() -> None:
     """Calling record() before start_turn() should raise."""
     tracker = SmoothnessTracker()
     with pytest.raises(RuntimeError, match="Must call start_turn"):
         tracker.record(SmoothnessEventType.STREAM_READ_ERROR)
 
 
-def test_tracker_finish_without_start_raises():
+def test_tracker_finish_without_start_raises() -> None:
     """Calling finish_turn() before start_turn() should raise."""
     tracker = SmoothnessTracker()
     with pytest.raises(RuntimeError, match="Must call start_turn"):
         tracker.finish_turn()
 
 
-def test_bonus_direct_action():
+def test_bonus_direct_action() -> None:
     """DIRECT_ACTION_AFTER_FIRST_READ should add 5 to score, but clamped to 100."""
     events = [
         SmoothnessEvent(
@@ -290,7 +288,7 @@ def test_bonus_direct_action():
     assert report.score == 100  # Clamped from 105
 
 
-def test_labour_index_calculation():
+def test_labour_index_calculation() -> None:
     """Labour index should weight thinking mutations double."""
     events = [
         SmoothnessEvent(

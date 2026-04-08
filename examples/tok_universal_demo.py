@@ -1,4 +1,5 @@
-"""Demonstrate tok-universal profile behavior across model families.
+"""
+Demonstrate tok-universal profile behavior across model families.
 
 This example shows how the tok-universal profile:
 1. Preserves assistant thinking blocks (Claude models)
@@ -40,12 +41,14 @@ from tok.runtime.policy.smart_policy import UNIVERSAL_MODE
 def _require_env(name: str) -> str:
     val = os.getenv(name)
     if not val:
-        raise SystemExit(f"Set {name}=... before running.")
+        msg = f"Set {name}=... before running."
+        raise SystemExit(msg)
     return val
 
 
 def create_universal_demo_prompt() -> list[dict]:
-    """Create a multi-turn conversation that exercises tok-universal behavior.
+    """
+    Create a multi-turn conversation that exercises tok-universal behavior.
 
     This prompt is designed to:
     - Trigger assistant reasoning/thinking blocks
@@ -120,23 +123,13 @@ def run_universal_demo() -> None:
 
     # Verify universal mode is active
     policy = tok.policy_for_model(model)
-    print(f"Model: {model}")
-    print(f"Universal mode: {policy.default_mode}")
-    print(f"Expected mode: {UNIVERSAL_MODE}")
     assert policy.default_mode == UNIVERSAL_MODE, "Universal mode not active!"
-    print("✓ Universal profile confirmed active\n")
 
     # Create demonstration messages
     messages = create_universal_demo_prompt()
-    print(f"Input messages: {len(messages)} turns")
 
     # Wrap with tok-universal
     prepared = tok.wrap(messages, model=model, session=session)
-
-    print("\nCompression results:")
-    print(f"  Input tokens saved: {prepared.input_saved_tokens}")
-    print(f"  Compression mode: {prepared.mode}")
-    print(f"  Behavior signals: {dict(prepared.behavior_signals)}")
 
     # Check thinking blocks are preserved in output
     output_messages = prepared.body.get("messages", [])
@@ -148,49 +141,22 @@ def run_universal_demo() -> None:
         if isinstance(block, dict) and block.get("type") == "thinking"
     )
 
-    print("\nContent preservation:")
-    print(f"  Thinking blocks preserved: {thinking_count}")
-
     if thinking_count > 0:
-        print("  ✓ Assistant thinking blocks maintained through compression")
+        pass
     else:
-        print("  (No thinking blocks in this conversation turn)")
+        pass
 
     # Show savings percentage if we had baseline info
     baseline_tokens = sum(len(str(m).encode()) for m in messages) // 4
-    estimated_savings_pct = (
-        (prepared.input_saved_tokens / baseline_tokens * 100)
-        if baseline_tokens > 0
-        else 0
-    )
-
-    print(f"\nEstimated savings: ~{estimated_savings_pct:.1f}%")
-    print("Target range: 30-50% (tok-universal prioritizes robustness)")
+    ((prepared.input_saved_tokens / baseline_tokens * 100) if baseline_tokens > 0 else 0)
 
     # Demonstrate that the output is ready for API use
-    print(f"\nOutput ready for API: {bool(prepared.body.get('messages'))}")
-    print(f"Final message count: {len(output_messages)}")
 
     # Summary
-    print("\n" + "=" * 50)
-    print("tok-universal profile demonstration complete")
-    print("=" * 50)
-    print("\nKey behaviors verified:")
-    print("  ✓ Single universal mode across all model families")
-    print("  ✓ Thinking blocks preserved for Claude models")
-    print("  ✓ Robust compression (30-50% target)")
-    print("  ✓ Task completion prioritized over max savings")
 
     # If we have API keys, show how to send
     if "ANTHROPIC_API_KEY" in os.environ and model.startswith("claude"):
-        print("\nTo send this to Claude:")
-        print("  from anthropic import Anthropic")
-        print("  client = Anthropic()")
-        print("  response = client.messages.create(")
-        print(f"      model='{model}',")
-        print("      messages=prepared.body['messages'],")
-        print("      max_tokens=1024,")
-        print("  )")
+        pass
 
 
 if __name__ == "__main__":

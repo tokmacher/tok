@@ -1,3 +1,5 @@
+"""CLI commands for managing the Tok bridge server."""
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -8,23 +10,13 @@ from ._cli_support import LOG_FILE, console
 
 
 def bridge_start(
-    port: Annotated[
-        int, typer.Option("--port", "-p", help="Port to listen on")
-    ] = 9090,
-    keep_turns: Annotated[
-        int, typer.Option("--keep-turns", help="Human turns to keep verbatim")
-    ] = 2,
-    debug: Annotated[
-        bool, typer.Option("--debug", help="Enable debug logging")
-    ] = False,
-    foreground: Annotated[
-        bool, typer.Option("--foreground", "-f", help="Run in foreground")
-    ] = False,
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on")] = 9090,
+    keep_turns: Annotated[int, typer.Option("--keep-turns", help="Human turns to keep verbatim")] = 2,
+    debug: Annotated[bool, typer.Option("--debug", help="Enable debug logging")] = False,
+    foreground: Annotated[bool, typer.Option("--foreground", "-f", help="Run in foreground")] = False,
     fail_open: Annotated[
         bool,
-        typer.Option(
-            "--fail-open/--no-fail-open", help="Pass through on errors"
-        ),
+        typer.Option("--fail-open/--no-fail-open", help="Pass through on errors"),
     ] = True,
     capture: Annotated[
         bool,
@@ -80,12 +72,12 @@ def bridge_logs(
     content = LOG_FILE.read_text().splitlines()
     for line in content[-lines:]:
         # Strip legacy prefix if present to avoid confusing Rich markup
-        if line.startswith("[tok-bridge] "):
-            line = line[len("[tok-bridge] ") :]
+        line = line.removeprefix("[tok-bridge] ")
         console.print(line, markup=True)
 
 
 def register(bridge_app: typer.Typer) -> None:
+    """Register bridge commands with the CLI app."""
     bridge_app.command("start")(bridge_start)
     bridge_app.command("stop")(bridge_stop)
     bridge_app.command("status")(bridge_status)

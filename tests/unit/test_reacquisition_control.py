@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tok.runtime.config import ANSWER_READY_REPAIR_HINT
 from tok.runtime.core import (
@@ -11,13 +10,14 @@ from tok.runtime.core import (
     RuntimeSession,
     UniversalTokRuntime,
 )
-from tok.runtime.repeat_targets import HotSummaryRecord, evidence_identity_key
-from tok.runtime.memory.tok_state import (
-    _delta_tok_state_fields,
-)
+from tok.runtime.memory.tok_state import _delta_tok_state_fields
 from tok.runtime.pipeline.tool_processing import (
     logical_target_key_from_context,
 )
+from tok.runtime.repeat_targets import HotSummaryRecord, evidence_identity_key
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_tool_result_msg(tool_id: str, content: str) -> dict[str, Any]:
@@ -33,9 +33,7 @@ def _make_tool_result_msg(tool_id: str, content: str) -> dict[str, Any]:
     }
 
 
-def _make_tool_use_msg(
-    tool_id: str, tool_name: str, **tool_input: str
-) -> dict[str, Any]:
+def _make_tool_use_msg(tool_id: str, tool_name: str, **tool_input: str) -> dict[str, Any]:
     return {
         "role": "assistant",
         "content": [
@@ -56,7 +54,7 @@ def _runtime(tmp_path: Path) -> tuple[UniversalTokRuntime, RuntimeSession]:
 
 def test_shell_cat_then_view_file_promotes_hot_file_hint_with_alias_paths(
     tmp_path,
-):
+) -> None:
     runtime, session = _runtime(tmp_path)
     content = "\n".join(f"line {idx}" for idx in range(1, 20))
 
@@ -97,7 +95,8 @@ def test_shell_cat_then_view_file_promotes_hot_file_hint_with_alias_paths(
 
     system_text = str(second.body.get("system", ""))
     assert "@hot_recent_file:./src/foo.py |>" in system_text
-    assert "Reuse" in system_text and "cached result" in system_text
+    assert "Reuse" in system_text
+    assert "cached result" in system_text
     assert second.behavior_signals["repeat_target_hot"] >= 1
     assert second.behavior_signals["hot_recent_hint_injected"] >= 1
     assert second.behavior_signals["repeat_file_read"] >= 1
@@ -106,7 +105,7 @@ def test_shell_cat_then_view_file_promotes_hot_file_hint_with_alias_paths(
     assert second.hot_hint_tokens_added > 0
 
 
-def test_shell_head_and_sed_count_as_same_file_target(tmp_path):
+def test_shell_head_and_sed_count_as_same_file_target(tmp_path) -> None:
     runtime, session = _runtime(tmp_path)
     content = "\n".join(f"line {idx}" for idx in range(1, 40))
 
@@ -116,9 +115,7 @@ def test_shell_head_and_sed_count_as_same_file_target(tmp_path):
             tool_compatible=True,
             messages=[
                 {"role": "user", "content": "Inspect foo via shell."},
-                _make_tool_use_msg(
-                    "t1", "bash", command="head -200 src/foo.py"
-                ),
+                _make_tool_use_msg("t1", "bash", command="head -200 src/foo.py"),
                 _make_tool_result_msg("t1", content),
                 {"role": "user", "content": "Keep going."},
             ],
@@ -131,14 +128,10 @@ def test_shell_head_and_sed_count_as_same_file_target(tmp_path):
             tool_compatible=True,
             messages=[
                 {"role": "user", "content": "Inspect foo via shell."},
-                _make_tool_use_msg(
-                    "t1", "bash", command="head -200 src/foo.py"
-                ),
+                _make_tool_use_msg("t1", "bash", command="head -200 src/foo.py"),
                 _make_tool_result_msg("t1", content),
                 {"role": "user", "content": "Keep going."},
-                _make_tool_use_msg(
-                    "t2", "bash", command="sed -n '1,200p' ./src/foo.py"
-                ),
+                _make_tool_use_msg("t2", "bash", command="sed -n '1,200p' ./src/foo.py"),
                 _make_tool_result_msg("t2", content),
                 {
                     "role": "user",
@@ -156,11 +149,9 @@ def test_shell_head_and_sed_count_as_same_file_target(tmp_path):
     assert prepared.behavior_signals["shell_file_read_normalized"] >= 2
 
 
-def test_repeated_search_promotes_hot_search_hint(tmp_path):
+def test_repeated_search_promotes_hot_search_hint(tmp_path) -> None:
     runtime, session = _runtime(tmp_path)
-    search_result = "\n".join(
-        f"src/foo.py:{line}:needle match" for line in range(1, 10)
-    )
+    search_result = "\n".join(f"src/foo.py:{line}:needle match" for line in range(1, 10))
 
     first = runtime.prepare_request(
         RuntimeRequest(
@@ -199,13 +190,13 @@ def test_repeated_search_promotes_hot_search_hint(tmp_path):
         session,
     )
 
-    assert "@hot_recent_search:needle @ src |>" in str(
-        prepared.body.get("system", "")
-    )
+    assert "@hot_recent_search:needle @ src |>" in str(prepared.body.get("system", ""))
     assert prepared.behavior_signals["repeat_target_hot"] >= 1
 
 
-def test_hot_recent_search_hints_require_session_exact_observation(tmp_path):
+def test_hot_recent_search_hints_require_session_exact_observation(
+    tmp_path,
+) -> None:
     _, session = _runtime(tmp_path)
     exact_key = evidence_identity_key(
         "grep_search",
@@ -239,7 +230,7 @@ def test_hot_recent_search_hints_require_session_exact_observation(tmp_path):
     assert metrics["hot_recent_hint_injected"] == 1
 
 
-def test_repeated_command_family_promotes_hot_command_hint(tmp_path):
+def test_repeated_command_family_promotes_hot_command_hint(tmp_path) -> None:
     runtime, session = _runtime(tmp_path)
     pytest_output = "collected 3 items\n3 passed in 0.22s\n"
 
@@ -268,9 +259,7 @@ def test_repeated_command_family_promotes_hot_command_hint(tmp_path):
                 _make_tool_use_msg("c2", "bash", command="python -m pytest"),
                 _make_tool_result_msg("c2", pytest_output),
                 _make_tool_use_msg("c3", "bash", command="git status"),
-                _make_tool_result_msg(
-                    "c3", "On branch main\nnothing to commit\n"
-                ),
+                _make_tool_result_msg("c3", "On branch main\nnothing to commit\n"),
                 {"role": "user", "content": "Answer now."},
             ],
         ),
@@ -283,7 +272,7 @@ def test_repeated_command_family_promotes_hot_command_hint(tmp_path):
     assert prepared.behavior_signals["repeat_tool_collapse_applied"] >= 1
 
 
-def test_unsafe_or_multi_target_shell_commands_do_not_normalize_to_file_read():
+def test_unsafe_or_multi_target_shell_commands_do_not_normalize_to_file_read() -> None:
     cases = (
         "cat src/foo.py | head -5",
         "cat src/foo.py > /tmp/out.txt",
@@ -303,7 +292,7 @@ def test_unsafe_or_multi_target_shell_commands_do_not_normalize_to_file_read():
         assert label
 
 
-def test_hot_recent_hints_are_bounded_and_char_limited(tmp_path):
+def test_hot_recent_hints_are_bounded_and_char_limited(tmp_path) -> None:
     _, session = _runtime(tmp_path)
     long_text = "\n".join(f"important line {idx}" for idx in range(1, 50))
 
@@ -335,7 +324,7 @@ def test_hot_recent_hints_are_bounded_and_char_limited(tmp_path):
         assert len(summary) <= 400
 
 
-def test_hot_recent_hints_require_a_captured_snapshot(tmp_path):
+def test_hot_recent_hints_require_a_captured_snapshot(tmp_path) -> None:
     _, session = _runtime(tmp_path)
     session.bridge_memory.turn = 2
     hints, metrics = session.hot_recent_runtime_hints()
@@ -343,7 +332,9 @@ def test_hot_recent_hints_require_a_captured_snapshot(tmp_path):
     assert metrics["hot_recent_hint_injected"] == 0
 
 
-def test_shell_read_snapshots_only_capture_successful_text_output(tmp_path):
+def test_shell_read_snapshots_only_capture_successful_text_output(
+    tmp_path,
+) -> None:
     runtime, session = _runtime(tmp_path)
     content = "\n".join(f"line {idx}" for idx in range(1, 10))
 
@@ -354,9 +345,7 @@ def test_shell_read_snapshots_only_capture_successful_text_output(tmp_path):
             messages=[
                 {"role": "user", "content": "Inspect foo."},
                 _make_tool_use_msg("t1", "bash", command="cat src/foo.py"),
-                _make_tool_result_msg(
-                    "t1", "cat: src/foo.py: No such file or directory"
-                ),
+                _make_tool_result_msg("t1", "cat: src/foo.py: No such file or directory"),
                 {"role": "user", "content": "Try again."},
             ],
         ),
@@ -371,9 +360,7 @@ def test_shell_read_snapshots_only_capture_successful_text_output(tmp_path):
             messages=[
                 {"role": "user", "content": "Inspect foo."},
                 _make_tool_use_msg("t1", "bash", command="cat src/foo.py"),
-                _make_tool_result_msg(
-                    "t1", "cat: src/foo.py: No such file or directory"
-                ),
+                _make_tool_result_msg("t1", "cat: src/foo.py: No such file or directory"),
                 {"role": "user", "content": "Try again."},
                 _make_tool_use_msg("t2", "bash", command="cat src/foo.py"),
                 _make_tool_result_msg("t2", content),
@@ -385,7 +372,9 @@ def test_shell_read_snapshots_only_capture_successful_text_output(tmp_path):
     assert succeeded.behavior_signals["shell_file_snapshot_captured"] >= 1
 
 
-def test_stuck_shell_file_targets_use_stronger_reuse_guidance(tmp_path):
+def test_stuck_shell_file_targets_use_stronger_reuse_guidance(
+    tmp_path,
+) -> None:
     _, session = _runtime(tmp_path)
     content = "\n".join(f"line {idx}" for idx in range(1, 20))
     commands = (
@@ -408,14 +397,13 @@ def test_stuck_shell_file_targets_use_stronger_reuse_guidance(tmp_path):
     hints, metrics = session.hot_recent_runtime_hints()
     assert metrics["hot_recent_hint_injected"] == 1
     assert (
-        "This target is stuck and unchanged. Reuse the cached result and move forward without rereading it."
-        in hints[0]
+        "This target is stuck and unchanged. Reuse the cached result and move forward without rereading it." in hints[0]
     )
 
 
 def test_answer_ready_repair_hint_priority_stays_ahead_of_hot_shell_file_hints(
     tmp_path,
-):
+) -> None:
     runtime, session = _runtime(tmp_path)
     content = "\n".join(f"line {idx}" for idx in range(1, 16))
 
@@ -451,14 +439,12 @@ def test_answer_ready_repair_hint_priority_stays_ahead_of_hot_shell_file_hints(
     system_text = str(prepared.body.get("system", ""))
     assert ANSWER_READY_REPAIR_HINT in system_text
     assert "@hot_recent_file:./src/foo.py |>" in system_text
-    assert system_text.index(ANSWER_READY_REPAIR_HINT) < system_text.index(
-        "@hot_recent_file:./src/foo.py |>"
-    )
+    assert system_text.index(ANSWER_READY_REPAIR_HINT) < system_text.index("@hot_recent_file:./src/foo.py |>")
 
 
 def test_shell_read_loop_fixture_keeps_prompt_compact_and_state_suppressed(
     tmp_path,
-):
+) -> None:
     runtime, session = _runtime(tmp_path)
     content = "\n".join(f"line {idx}" for idx in range(1, 30))
 
@@ -471,14 +457,10 @@ def test_shell_read_loop_fixture_keeps_prompt_compact_and_state_suppressed(
                 _make_tool_use_msg("t1", "bash", command="cat src/foo.py"),
                 _make_tool_result_msg("t1", content),
                 {"role": "user", "content": "Keep going."},
-                _make_tool_use_msg(
-                    "t2", "bash", command="head -200 ./src/foo.py"
-                ),
+                _make_tool_use_msg("t2", "bash", command="head -200 ./src/foo.py"),
                 _make_tool_result_msg("t2", content),
                 {"role": "user", "content": "Keep going."},
-                _make_tool_use_msg(
-                    "t3", "bash", command="sed -n '1,200p' src/foo.py"
-                ),
+                _make_tool_use_msg("t3", "bash", command="sed -n '1,200p' src/foo.py"),
                 _make_tool_result_msg("t3", content),
                 {
                     "role": "user",
@@ -499,14 +481,10 @@ def test_shell_read_loop_fixture_keeps_prompt_compact_and_state_suppressed(
                 _make_tool_use_msg("t1", "bash", command="cat src/foo.py"),
                 _make_tool_result_msg("t1", content),
                 {"role": "user", "content": "Keep going."},
-                _make_tool_use_msg(
-                    "t2", "bash", command="head -200 ./src/foo.py"
-                ),
+                _make_tool_use_msg("t2", "bash", command="head -200 ./src/foo.py"),
                 _make_tool_result_msg("t2", content),
                 {"role": "user", "content": "Keep going."},
-                _make_tool_use_msg(
-                    "t3", "bash", command="sed -n '1,200p' src/foo.py"
-                ),
+                _make_tool_use_msg("t3", "bash", command="sed -n '1,200p' src/foo.py"),
                 _make_tool_result_msg("t3", content),
                 {
                     "role": "user",
@@ -525,40 +503,32 @@ def test_shell_read_loop_fixture_keeps_prompt_compact_and_state_suppressed(
     assert (
         prepared.behavior_signals.get("state_resend_suppressed_turn", 0) >= 1
         or prepared.behavior_signals.get("state_resend_delta_turn", 0) >= 1
-        or prepared.behavior_signals.get(
-            "state_resend_reason_delta_not_smaller", 0
-        )
-        >= 1
+        or prepared.behavior_signals.get("state_resend_reason_delta_not_smaller", 0) >= 1
     )
-    assert (
-        prepared.behavior_signals.get("state_resend_reason_full_default", 0)
-        == 0
-    )
+    assert prepared.behavior_signals.get("state_resend_reason_full_default", 0) == 0
 
 
 def test_prepared_request_reports_baseline_and_prepared_prompt_tokens(
     tmp_path,
-):
+) -> None:
     runtime, session = _runtime(tmp_path)
     prepared = runtime.prepare_request(
         RuntimeRequest(
             model="claude-sonnet-4",
             tool_compatible=True,
-            messages=[
-                {"role": "user", "content": "Confirm the gateway entry point."}
-            ],
+            messages=[{"role": "user", "content": "Confirm the gateway entry point."}],
         ),
         session,
     )
 
     assert prepared.baseline_prompt_tokens >= 0
     assert prepared.prepared_prompt_tokens >= 0
-    assert prepared.saved_prompt_tokens == max(
-        0, prepared.baseline_prompt_tokens - prepared.prepared_prompt_tokens
-    )
+    assert prepared.saved_prompt_tokens == max(0, prepared.baseline_prompt_tokens - prepared.prepared_prompt_tokens)
 
 
-def test_unchanged_prepared_payload_reuses_cached_token_estimate(tmp_path):
+def test_unchanged_prepared_payload_reuses_cached_token_estimate(
+    tmp_path,
+) -> None:
     _, session = _runtime(tmp_path)
     payload = {
         "system": "system",
@@ -569,10 +539,7 @@ def test_unchanged_prepared_payload_reuses_cached_token_estimate(tmp_path):
     second = session.prepared_prompt_tokens(payload)
 
     assert first == second
-    assert (
-        session.consume_behavior_signals()["prepared_prompt_token_cache_hit"]
-        == 1
-    )
+    assert session.consume_behavior_signals()["prepared_prompt_token_cache_hit"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -582,13 +549,11 @@ def test_unchanged_prepared_payload_reuses_cached_token_estimate(tmp_path):
 
 def _state(turns: int, **kwargs: str | list[str]) -> dict[str, list[str]]:
     base: dict[str, list[str]] = {"turns": [str(turns)]}
-    base.update(
-        {k: [v] if isinstance(v, str) else v for k, v in kwargs.items()}
-    )
+    base.update({k: [v] if isinstance(v, str) else v for k, v in kwargs.items()})
     return base
 
 
-def test_unchanged_files_not_in_delta():
+def test_unchanged_files_not_in_delta() -> None:
     """When files are identical across turns, they should not appear in the delta."""
     previous = _state(1, files="src/tok/foo.py", goal="fix tests")
     current = _state(2, files="src/tok/foo.py", goal="fix tests")
@@ -596,45 +561,37 @@ def test_unchanged_files_not_in_delta():
     delta = _delta_tok_state_fields(previous, current)
 
     # Delta should only carry the turn counter (or be empty if nothing changed).
-    assert "foo.py" not in delta, (
-        f"Expected unchanged files to be omitted from delta; got: {delta!r}"
-    )
+    assert "foo.py" not in delta, f"Expected unchanged files to be omitted from delta; got: {delta!r}"
 
 
-def test_changed_files_appear_in_delta():
+def test_changed_files_appear_in_delta() -> None:
     """When files change, the new files list must appear in the delta."""
     previous = _state(1, files="src/tok/foo.py", goal="fix tests")
     current = _state(2, files="src/tok/bar.py", goal="fix tests")
 
     delta = _delta_tok_state_fields(previous, current)
 
-    assert "bar.py" in delta, (
-        f"Expected changed files in delta; got: {delta!r}"
-    )
+    assert "bar.py" in delta, f"Expected changed files in delta; got: {delta!r}"
 
 
-def test_unchanged_tests_not_in_delta():
+def test_unchanged_tests_not_in_delta() -> None:
     """When tests are identical, they should not appear in the delta."""
     previous = _state(1, tests="3_passed", goal="fix tests")
     current = _state(2, tests="3_passed", goal="fix tests")
 
     delta = _delta_tok_state_fields(previous, current)
 
-    assert "3_passed" not in delta, (
-        f"Expected unchanged tests to be omitted from delta; got: {delta!r}"
-    )
+    assert "3_passed" not in delta, f"Expected unchanged tests to be omitted from delta; got: {delta!r}"
 
 
-def test_changed_tests_appear_in_delta():
+def test_changed_tests_appear_in_delta() -> None:
     """When tests change, the new test status must appear in the delta."""
     previous = _state(1, tests="2_passed", goal="fix tests")
     current = _state(2, tests="3_passed", goal="fix tests")
 
     delta = _delta_tok_state_fields(previous, current)
 
-    assert "3_passed" in delta, (
-        f"Expected changed tests in delta; got: {delta!r}"
-    )
+    assert "3_passed" in delta, f"Expected changed tests in delta; got: {delta!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +599,7 @@ def test_changed_tests_appear_in_delta():
 # ---------------------------------------------------------------------------
 
 
-def test_answer_anchor_facts_unchanged_not_in_delta():
+def test_answer_anchor_facts_unchanged_not_in_delta() -> None:
     """Stable answer-anchor facts should not be re-sent in delta on subsequent turns."""
     previous = _state(
         1,
@@ -663,12 +620,10 @@ def test_answer_anchor_facts_unchanged_not_in_delta():
     assert "answer_verification" not in delta, (
         f"Expected unchanged anchor facts to be omitted from delta; got: {delta!r}"
     )
-    assert "foo.py" not in delta, (
-        f"Expected unchanged anchor files to be omitted from delta; got: {delta!r}"
-    )
+    assert "foo.py" not in delta, f"Expected unchanged anchor files to be omitted from delta; got: {delta!r}"
 
 
-def test_answer_anchor_facts_changed_appear_in_delta():
+def test_answer_anchor_facts_changed_appear_in_delta() -> None:
     """When anchor facts change, new facts must appear in the delta."""
     previous = _state(
         1,
@@ -685,9 +640,7 @@ def test_answer_anchor_facts_changed_appear_in_delta():
 
     delta = _delta_tok_state_fields(previous, current)
 
-    assert "answer_verification:all_pass" in delta, (
-        f"Expected changed anchor facts in delta; got: {delta!r}"
-    )
+    assert "answer_verification:all_pass" in delta, f"Expected changed anchor facts in delta; got: {delta!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -695,7 +648,7 @@ def test_answer_anchor_facts_changed_appear_in_delta():
 # ---------------------------------------------------------------------------
 
 
-def test_delta_empty_when_only_turns_change():
+def test_delta_empty_when_only_turns_change() -> None:
     """When only the turn counter changes with no other field differences, delta is empty."""
     previous = _state(1, goal="fix tests")
     current = _state(2, goal="fix tests")
@@ -704,12 +657,12 @@ def test_delta_empty_when_only_turns_change():
 
     # delta should be empty string — only turns changed, which is excluded from delta
     # (only turns in delta means the function returns "" per the guard at line 339)
-    assert delta == "", (
-        f"Expected empty delta when only turns differ; got: {delta!r}"
-    )
+    assert delta == "", f"Expected empty delta when only turns differ; got: {delta!r}"
 
 
-def test_stream_recovery_budget_suppresses_next_reacquisition_burst(tmp_path):
+def test_stream_recovery_budget_suppresses_next_reacquisition_burst(
+    tmp_path,
+) -> None:
     runtime, session = _runtime(tmp_path)
     content = "\n".join(f"line {idx}" for idx in range(1, 20))
     session._stream_recovery_reacquisition_budget = 1
@@ -735,8 +688,5 @@ def test_stream_recovery_budget_suppresses_next_reacquisition_burst(tmp_path):
     )
 
     assert prepared.behavior_signals.get("repeat_file_read", 0) == 0
-    assert (
-        prepared.behavior_signals["stream_recovery_reacquisition_suppressed"]
-        == 1
-    )
+    assert prepared.behavior_signals["stream_recovery_reacquisition_suppressed"] == 1
     assert session._stream_recovery_reacquisition_budget == 0

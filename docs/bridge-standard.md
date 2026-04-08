@@ -3,8 +3,8 @@
 This document is the canonical contract for the live Tok bridge. If another document
 disagrees with this one, this document wins.
 
-It defines the current bridge contract, not the future universal communication
-contract. That broader ambition remains later-stage work.
+It defines the current bridge contract, not the future universal communication contract.
+That broader ambition remains later-stage work.
 
 ## Scope
 
@@ -12,15 +12,18 @@ Tok is standardized around the bridge-first runtime in `src/tok/gateway/__init__
 
 - Primary runtime: the Claude Code bridge
 - Secondary runtime: `adapters/orchestrator.py` and related archived/custom-agent paths
-- Acceptance target: invisible operation inside the bridge, not protocol purity in isolation
-- Current release target: a trustworthy Claude-first public release, not cross-surface standardization
+- Acceptance target: invisible operation inside the bridge, not protocol purity in
+  isolation
+- Current release target: a trustworthy Claude-first public release, not cross-surface
+  standardization
 
-The release-surface manifest in `src/tok/release_surface.py` defines which exports
-and commands are supported versus experimental for the 0.1 release story.
+The release-surface manifest in `src/tok/release_surface.py` defines which exports and
+commands are supported versus experimental for the 0.1 release story.
 
 ## Wire Memory Contract
 
-The bridge working-memory line is a sparse `>>>` record. Canonical fields, in canonical order:
+The bridge working-memory line is a sparse `>>>` record. Canonical fields, in canonical
+order:
 
 `turns`, `goal`, `files`, `cmds`, `tests`, `errs`, `constraints`, `next`
 
@@ -30,7 +33,8 @@ Rules:
 - Fields are optional except `turns` when memory exists.
 - `turns`, `goal`, and `next` are single-value fields.
 - `files`, `cmds`, `tests`, `errs`, and `constraints` are comma-separated bounded lists.
-- Additional `key:value` pairs after the canonical fields are non-canonical facts. They may be stored, but they are not part of the standard bridge contract.
+- Additional `key:value` pairs after the canonical fields are non-canonical facts. They
+  may be stored, but they are not part of the standard bridge contract.
 
 ## Projection Rules
 
@@ -49,7 +53,8 @@ A response counts as Tok-native success only when all of the following hold:
 
 - the response uses Tok markers
 - the bridge can project it into at least one user-visible Anthropic content block
-- the result contains readable assistant text and/or valid tool-use blocks without needing markdown fallback
+- the result contains readable assistant text and/or valid tool-use blocks without
+  needing markdown fallback
 
 This is the preferred success path.
 

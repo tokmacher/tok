@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import shlex
 from typing import TYPE_CHECKING
-from tok.neuro.ir import TokIR, Instruction, Macro
+
+from tok.neuro.ir import Instruction, Macro, TokIR
 from tok.neuro.miner import IRPatternMiner
 
 if TYPE_CHECKING:
@@ -42,9 +43,7 @@ def distill_bridge_history(
     # Sort by last_seen_turn to roughly approximate sequence
     # Since rolling_cmds is already chronological, we just use enumeration to be extra safe
     enumerated_cmds = list(enumerate(cmds))
-    sorted_cmds = sorted(
-        enumerated_cmds, key=lambda x: (x[1].last_seen_turn, x[0])
-    )
+    sorted_cmds = sorted(enumerated_cmds, key=lambda x: (x[1].last_seen_turn, x[0]))
     instructions = []
 
     for _, entry in sorted_cmds:
@@ -73,9 +72,7 @@ def distill_bridge_history(
     ir = TokIR(instructions=tuple(instructions))
 
     logger.info("NeuroReactor: op_seq = %s", [ins.op for ins in instructions])
-    logger.debug(
-        "NeuroReactor: Mining %d bridged instructions.", len(instructions)
-    )
+    logger.debug("NeuroReactor: Mining %d bridged instructions.", len(instructions))
     discovered = miner.mine([ir], registry=memory_state.macro_registry)
 
     if discovered:

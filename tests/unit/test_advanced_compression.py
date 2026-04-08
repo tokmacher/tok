@@ -4,13 +4,13 @@ import tok.compression._pipeline
 tok.compression._pipeline.TOOL_COMPRESS_THRESHOLD = 0
 
 from tok.compression import (
-    _detect_tool_content_type,
     ResultCacheEntry,
+    _detect_tool_content_type,
     tok_tool_result,
 )
 
 
-def test_stack_trace_filtering():
+def test_stack_trace_filtering() -> None:
     trace = (
         "Traceback (most recent call last):\n"
         '  File "main.py", line 10, in main\n'
@@ -28,7 +28,7 @@ def test_stack_trace_filtering():
     assert "app.py" in compressed
 
 
-def test_grep_context_compression():
+def test_grep_context_compression() -> None:
     grep_out = (
         "src/main.py-10-def main():\n"
         "src/main.py-11-    print('hello')\n"
@@ -41,7 +41,7 @@ def test_grep_context_compression():
     assert "[11]" in compressed
 
 
-def test_ps_output_compression():
+def test_ps_output_compression() -> None:
     ps_out = (
         "USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\n"
         "root         1  0.0  0.0 168012  9812 ?        Ss   Mar15   0:02 /sbin/init\n"
@@ -55,7 +55,7 @@ def test_ps_output_compression():
     assert "python3 main.py" in compressed
 
 
-def test_env_output_compression():
+def test_env_output_compression() -> None:
     env_out = "PATH=/usr/bin:/bin\nHOME=/tmp\nUSER=testuser\nSECRET_API_KEY=sk-12345\nLESS_IMPORTANT=ignored\n"
     env_out += "PADDING=more data\n" * 100
     compressed = tok_tool_result(env_out)
@@ -64,7 +64,7 @@ def test_env_output_compression():
     assert "SECRET_API_KEY=" in compressed
 
 
-def test_json_skeletonization():
+def test_json_skeletonization() -> None:
     import json
 
     large_data = {
@@ -79,7 +79,7 @@ def test_json_skeletonization():
     assert "..." in compressed
 
 
-def test_general_result_caching():
+def test_general_result_caching() -> None:
     from tok.compression import _apply_result_cache
 
     cache: dict[str, ResultCacheEntry] = {}
@@ -89,11 +89,11 @@ def test_general_result_caching():
     raw_ls = "file1.txt\nfile2.txt\nfile3.txt\n" * 50
 
     # First call: compressed
-    out1, saved1 = _apply_result_cache(raw_ls, context_ls, cache)
+    out1, _saved1 = _apply_result_cache(raw_ls, context_ls, cache)
     assert ">>> tool:ls" in out1
 
     # Second call (unchanged): stub
-    out2, saved2 = _apply_result_cache(raw_ls, context_ls, cache)
+    out2, _saved2 = _apply_result_cache(raw_ls, context_ls, cache)
     assert "|unchanged|cached" in out2
 
     # Tool 2: ps aux
@@ -104,10 +104,10 @@ def test_general_result_caching():
     _apply_result_cache(raw_ps1, context_ps, cache)
 
     # Second call (changed): diff
-    out3, saved3 = _apply_result_cache(raw_ps2, context_ps, cache)
+    out3, _saved3 = _apply_result_cache(raw_ps2, context_ps, cache)
     assert "|delta|changed" in out3
 
 
-def test_detect_stack_trace():
+def test_detect_stack_trace() -> None:
     trace = 'Traceback (most recent call last):\n  File "main.py", line 1\n    raise E\nException: E'
     assert _detect_tool_content_type(trace) == "stack_trace"

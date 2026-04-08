@@ -1,10 +1,11 @@
-import pytest
 from typing import Any
+
+import pytest
 
 from tok.universal_runtime import apply_schema_adaptations
 
 
-def test_apply_schema_adaptations_merging():
+def test_apply_schema_adaptations_merging() -> None:
     # Role merging was removed in consolidation
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Hello"},
@@ -17,7 +18,7 @@ def test_apply_schema_adaptations_merging():
     assert adapted[1]["content"] == "world"
 
 
-def test_apply_schema_adaptations_placeholders():
+def test_apply_schema_adaptations_placeholders() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": ""},
         {"role": "assistant", "content": []},
@@ -29,7 +30,7 @@ def test_apply_schema_adaptations_placeholders():
     assert adapted[1]["content"] == " "
 
 
-def test_apply_schema_adaptations_flattening():
+def test_apply_schema_adaptations_flattening() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
     ]

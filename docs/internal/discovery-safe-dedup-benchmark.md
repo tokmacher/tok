@@ -1,10 +1,12 @@
 # Discovery-Safe Deduplication Benchmark
 
-This document defines the benchmark specification and "first exact observation" contract for evaluating discovery-safe deduplication improvements.
+This document defines the benchmark specification and "first exact observation" contract
+for evaluating discovery-safe deduplication improvements.
 
 ## Purpose
 
-Establish a fixed before/after benchmark so that discovery improvements are measurable and the "first exact observation" contract is clearly defined.
+Establish a fixed before/after benchmark so that discovery improvements are measurable
+and the "first exact observation" contract is clearly defined.
 
 ______________________________________________________________________
 
@@ -83,7 +85,8 @@ ______________________________________________________________________
 
 ### Definition
 
-A **first exact observation** is the initial retrieval of specific content from the codebase using exact (non-summarized) retrieval methods.
+A **first exact observation** is the initial retrieval of specific content from the
+codebase using exact (non-summarized) retrieval methods.
 
 ### Observation Types
 
@@ -131,24 +134,33 @@ This ensures:
 
 When a discovery search is issued on first pass:
 
-- First-pass discovery search on the live discovery surface should return line-level evidence with surrounding context by default
-- Path-only search output is valid only for explicitly navigational searches and is not sufficient first-pass exact evidence for content discovery
-- Repeat compression is only allowed after line-level or equivalent exact evidence has been seen in-session
+- First-pass discovery search on the live discovery surface should return line-level
+  evidence with surrounding context by default
+- Path-only search output is valid only for explicitly navigational searches and is not
+  sufficient first-pass exact evidence for content discovery
+- Repeat compression is only allowed after line-level or equivalent exact evidence has
+  been seen in-session
 
 This ensures:
 
-- The model can reason directly from returned evidence without requiring immediate re-queries
+- The model can reason directly from returned evidence without requiring immediate
+  re-queries
 - File paths alone do not constitute "exact observation" for code content discovery
-- Content discovery requires actual content (lines, context, matches) not just location hints
+- Content discovery requires actual content (lines, context, matches) not just location
+  hints
 
 #### Rule 3: Unified First-Observation Rule with Evidence-Specific Identity
 
-No cache or stabilization layer may replace the first exact observation in-session. This applies globally across:
+No cache or stabilization layer may replace the first exact observation in-session. This
+applies globally across:
 
 - **Stable-result paths**: Result stabilization must not summarize on first observation
-- **Hot-recent search paths**: Hot-recent cache must not substitute first exact observation with stubs or summaries
-- **Shared compressor paths**: Compression layers must not affect first exact observations
-- **Discovery-oriented wrappers**: Any wrapper over grep/search/listing outputs (e.g., exploration mode, discovery helpers) must preserve first exact observation
+- **Hot-recent search paths**: Hot-recent cache must not substitute first exact
+  observation with stubs or summaries
+- **Shared compressor paths**: Compression layers must not affect first exact
+  observations
+- **Discovery-oriented wrappers**: Any wrapper over grep/search/listing outputs (e.g.,
+  exploration mode, discovery helpers) must preserve first exact observation
 
 **Evidence-Specific Identity Keys:**
 
@@ -160,10 +172,12 @@ No cache or stabilization layer may replace the first exact observation in-sessi
 
 #### Rule 4: Repeat Deduplication After Exact Evidence Established
 
-Once first exact evidence has been established in-session, repeated identical observations may still compress:
+Once first exact evidence has been established in-session, repeated identical
+observations may still compress:
 
 - Subsequent identical retrievals may deduplicate to stable summaries
-- The same content accessed via the same evidence identity may use compressed representation
+- The same content accessed via the same evidence identity may use compressed
+  representation
 - Cross-session observations follow normal caching policies
 
 ______________________________________________________________________
@@ -182,7 +196,8 @@ ______________________________________________________________________
 
 ### Observed Failure
 
-During latest benchmark run, the first-pass search behavior conflicted with previous smoke test expectations:
+During latest benchmark run, the first-pass search behavior conflicted with previous
+smoke test expectations:
 
 | Failure Mode                    | Description                                      |
 | ------------------------------- | ------------------------------------------------ |
@@ -202,12 +217,17 @@ Subsequent search behavior showed correct patterns:
 
 ### Classification
 
-The audit classifies first-pass path-only `Search(pattern: ...)` results on discovery-oriented surfaces as a **behavioral defect**, not the intended default.
+The audit classifies first-pass path-only `Search(pattern: ...)` results on
+discovery-oriented surfaces as a **behavioral defect**, not the intended default.
 
-- **First pass**: discovery search should surface line-level evidence with surrounding context first.
-- **Upgrade trigger**: later repeats may compress once exact evidence is already in-session.
-- **Root cause**: wrapper / tool-selection behavior and search-result shaping, not cache warming or repeat dedup alone.
-- **Semantics split**: treat path-only output as navigational-only; treat content+context as the discovery default.
+- **First pass**: discovery search should surface line-level evidence with surrounding
+  context first.
+- **Upgrade trigger**: later repeats may compress once exact evidence is already
+  in-session.
+- **Root cause**: wrapper / tool-selection behavior and search-result shaping, not cache
+  warming or repeat dedup alone.
+- **Semantics split**: treat path-only output as navigational-only; treat
+  content+context as the discovery default.
 
 ### Phase 3 Metrics
 
@@ -223,11 +243,14 @@ ______________________________________________________________________
 
 ### 0.1 Extended Benchmark Scope
 
-The benchmark has shifted from discovery behavior to release transport correctness. This section captures the release-critical infrastructure issues and their resolution criteria.
+The benchmark has shifted from discovery behavior to release transport correctness. This
+section captures the release-critical infrastructure issues and their resolution
+criteria.
 
 #### 0.1.1 New Section: Release Transport Hardening Benchmark
 
-This extension adds release-blocking infrastructure validation to the existing discovery-safe deduplication benchmark.
+This extension adds release-blocking infrastructure validation to the existing
+discovery-safe deduplication benchmark.
 
 #### 0.1.2 Confirmed Wins (Out of Blocker Scope)
 
@@ -263,39 +286,46 @@ Precise definition of "ready to release" for the 0.2.0 milestone:
 
 #### 0.2.1 Streaming Response Lifetime Rule
 
-**Rule:** Tok must not return a streaming response whose upstream client can close before generator consumption.
+**Rule:** Tok must not return a streaming response whose upstream client can close
+before generator consumption.
 
-- **Validation:** All streaming paths must ensure client lifetime extends through full generator exhaustion
-- **Test:** Verify `aiter_bytes()` completes without `ConnectionClosed` or `GeneratorExit` errors
+- **Validation:** All streaming paths must ensure client lifetime extends through full
+  generator exhaustion
+- **Test:** Verify `aiter_bytes()` completes without `ConnectionClosed` or
+  `GeneratorExit` errors
 
 #### 0.2.2 API Base Plumbing Rule
 
-**Rule:** Configured API base must reach request URL construction in both foreground and subprocess bridge modes.
+**Rule:** Configured API base must reach request URL construction in both foreground and
+subprocess bridge modes.
 
-- **Validation:** `--api-base` parameter propagates through CLI → config → adapter → transport
+- **Validation:** `--api-base` parameter propagates through CLI → config → adapter →
+  transport
 - **Test:** Custom API base is used in actual HTTP requests in both execution modes
 
 #### 0.2.3 Real Streaming Coverage Rule
 
-**Rule:** At least one real streaming verification path must exercise the actual `aiter_bytes()` lifecycle.
+**Rule:** At least one real streaming verification path must exercise the actual
+`aiter_bytes()` lifecycle.
 
 - **Validation:** Integration test with real (non-mock) streaming backend
 - **Test:** Full bytes→chunks→generator→consumption flow verified end-to-end
 
 #### 0.2.4 Session Quality Stability Rule
 
-**Rule:** Live session quality must no longer degrade due to stream transport instability under normal benchmark use.
+**Rule:** Live session quality must no longer degrade due to stream transport
+instability under normal benchmark use.
 
 - **Validation:** 10 consecutive benchmark runs without transport-related errors
-- **Test:** Tok stats show zero read-errors and no recovery holdovers during standard workload
+- **Test:** Tok stats show zero read-errors and no recovery holdovers during standard
+  workload
 
 ______________________________________________________________________
 
 ## Version
 
-**Version:** 0.2.0-draft
-**Last Updated:** 2026-04-07
-**Status:** Release gate locked - awaiting blocker resolution
+**Version:** 0.2.0-draft **Last Updated:** 2026-04-07 **Status:** Release gate locked -
+awaiting blocker resolution
 
 ______________________________________________________________________
 
@@ -303,11 +333,13 @@ ______________________________________________________________________
 
 ### 0.1 Intended Behavior
 
-This section documents a narrow ergonomics fix for expensive search results. This is **not** a change to the evidence contract.
+This section documents a narrow ergonomics fix for expensive search results. This is
+**not** a change to the evidence contract.
 
 #### 0.1.1 Search-Cost Advisory Definition
 
-A **search-cost advisory** is a local, advisory hint attached to expensive search results that:
+A **search-cost advisory** is a local, advisory hint attached to expensive search
+results that:
 
 - Alerts the model to the computational cost of the operation
 - Suggests optimization strategies (narrower scope, regex alternatives)
@@ -326,7 +358,8 @@ A **search-cost advisory** is a local, advisory hint attached to expensive searc
 This fix does **not** change:
 
 - **First-pass exact evidence**: First exact observations remain raw and uncompressed
-- **Repeat compression policy**: Deduplication rules after first exact observation unchanged
+- **Repeat compression policy**: Deduplication rules after first exact observation
+  unchanged
 - **Hot-search policy**: Hot-recent cache behavior and first-pass rules unchanged
 
 #### 0.1.4 Acceptance Criteria
@@ -400,7 +433,8 @@ ______________________________________________________________________
 
 ### Observed Wins
 
-The following behaviors were verified as working correctly after implementing the first-exact guard:
+The following behaviors were verified as working correctly after implementing the
+first-exact guard:
 
 | Win                                 | Description                                                                                  |
 | ----------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -436,7 +470,10 @@ ______________________________________________________________________
 
 ### Scope
 
-This audit focuses specifically on the Claude-facing live `Search(pattern: ...)` surface, including wrapper/cache/compression layers that can affect first-pass output mode. The issue is no longer broad discovery safety—it is a single surface-specific repeat-compression question.
+This audit focuses specifically on the Claude-facing live `Search(pattern: ...)`
+surface, including wrapper/cache/compression layers that can affect first-pass output
+mode. The issue is no longer broad discovery safety—it is a single surface-specific
+repeat-compression question.
 
 ### Confirmed Working Behaviors
 
@@ -453,7 +490,9 @@ This audit focuses specifically on the Claude-facing live `Search(pattern: ...)`
 | -------------------------------------------------- | ----------- |
 | Repeated identical Search(pattern: ...) stayed raw | Under audit |
 
-**Observation:** During testing, repeated identical `Search(pattern: ...)` calls remained in raw/full form rather than compressing to stable summaries after the first exact observation.
+**Observation:** During testing, repeated identical `Search(pattern: ...)` calls
+remained in raw/full form rather than compressing to stable summaries after the first
+exact observation.
 
 ### Acceptance Question
 
@@ -461,8 +500,10 @@ This audit focuses specifically on the Claude-facing live `Search(pattern: ...)`
 
 The answer to this question determines the classification of the observed behavior:
 
-- **If YES**: The current behavior (remaining raw on repeat) is a gap/bug that should be fixed.
-- **If NO**: The current behavior is intentional and must be treated as an explicit surface behavior, not an accidental gap.
+- **If YES**: The current behavior (remaining raw on repeat) is a gap/bug that should be
+  fixed.
+- **If NO**: The current behavior is intentional and must be treated as an explicit
+  surface behavior, not an accidental gap.
 
 ______________________________________________________________________
 
@@ -487,21 +528,21 @@ ______________________________________________________________________
 
 ### Gap Identified
 
-**`compress_recent_window_impl()`** (lines 1319-1323) checks evidence level before tracking:
+**`compress_recent_window_impl()`** (lines 1319-1323) checks evidence level before
+tracking:
 
 ```python
-if (
-    tool_name in SEARCH_LIKE_TOOLS
-    and search_result_evidence_level(raw) == "navigation"
-):
+if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
     continue  # Skip tracking, stay raw
 ```
 
-**`compress_tool_results_impl()`** does NOT have this check - it tracks evidence key regardless of level.
+**`compress_tool_results_impl()`** does NOT have this check - it tracks evidence key
+regardless of level.
 
 **Impact:**
 
-- Path-only results incorrectly count as "first exact evidence" in `compress_tool_results_impl`
+- Path-only results incorrectly count as "first exact evidence" in
+  `compress_tool_results_impl`
 - Later content-level results may be treated as "repeat" and compress incorrectly
 
 ______________________________________________________________________
@@ -510,10 +551,13 @@ ______________________________________________________________________
 
 ### Rationale
 
-1. `SEARCH_LIKE_TOOLS` includes `"search"` - the surface IS covered by repeat compression logic
+1. `SEARCH_LIKE_TOOLS` includes `"search"` - the surface IS covered by repeat
+   compression logic
 1. The first-exact guard mechanism exists and works for `exact_content` results
-1. Rule 4 in this benchmark explicitly allows repeat dedup after exact evidence established
-1. Existing tests confirm intended behavior: `test_second_identical_hot_search_result_may_compress_after_exact_seen`
+1. Rule 4 in this benchmark explicitly allows repeat dedup after exact evidence
+   established
+1. Existing tests confirm intended behavior:
+   `test_second_identical_hot_search_result_may_compress_after_exact_seen`
 
 ### Locked No-Regression Rules
 
@@ -534,7 +578,8 @@ ______________________________________________________________________
 
 ### Status: FIXED
 
-The gap has been resolved by adding a search-specific repeat compression path in `compress_tool_results_impl()` that:
+The gap has been resolved by adding a search-specific repeat compression path in
+`compress_tool_results_impl()` that:
 
 1. Checks if tool is in `SEARCH_LIKE_TOOLS`
 1. Generates evidence identity key from query + scope + flags
@@ -542,7 +587,8 @@ The gap has been resolved by adding a search-specific repeat compression path in
 1. Skips navigation-only results (path-only stays raw)
 1. Applies result cache or semantic hash compression for repeat exact-content searches
 
-**Commit:** Search-specific repeat compression path added to `src/tok/compression/_history_pipeline.py`
+**Commit:** Search-specific repeat compression path added to
+`src/tok/compression/_history_pipeline.py`
 
 ______________________________________________________________________
 
@@ -550,15 +596,18 @@ ______________________________________________________________________
 
 ### Rule A: Compressor-Managed Surfaces
 
-If a live search surface is compressor-managed, repeated identical exact-content results **may compress after first exact observation**.
+If a live search surface is compressor-managed, repeated identical exact-content results
+**may compress after first exact observation**.
 
 - The first exact observation establishes the evidence identity
-- Subsequent identical observations via the same evidence key may use compressed representation
+- Subsequent identical observations via the same evidence key may use compressed
+  representation
 - Compression must not occur until after first exact evidence is established in-session
 
 ### Rule B: Intentionally Raw Surfaces
 
-If a live search surface is intentionally raw, that must be treated as **an explicit surface behavior, not an accidental gap**.
+If a live search surface is intentionally raw, that must be treated as **an explicit
+surface behavior, not an accidental gap**.
 
 - Raw-on-repeat behavior must be documented and intentional
 - The surface contract must clearly state that compression is not applied

@@ -47,9 +47,7 @@ def _handle_block_header(stripped: str, state: _TokReadableState) -> bool:
     return True
 
 
-def _handle_pipe_line(
-    line: str, state: _TokReadableState, output: list[str]
-) -> bool:
+def _handle_pipe_line(line: str, state: _TokReadableState, output: list[str]) -> bool:
     if not _PIPE_LINE_RE.match(line):
         return False
     if not state.in_thought and not state.in_msg_assistant:
@@ -62,9 +60,7 @@ def _handle_pipe_line(
     return True
 
 
-def _should_capture_plain_line(
-    stripped: str, state: _TokReadableState
-) -> bool:
+def _should_capture_plain_line(stripped: str, state: _TokReadableState) -> bool:
     if state.in_thought:
         return False
     if state.in_msg_assistant:
@@ -91,7 +87,8 @@ def strip_markdown_fallback(text: str) -> str:
 
 
 def tok_to_readable(text: str) -> str:
-    """Parse Tok-grammar response and extract user-visible content.
+    """
+    Parse Tok-grammar response and extract user-visible content.
 
     - >>> lines: stripped (internal state)
     - @thought blocks: stripped entirely (internal reasoning)
@@ -121,12 +118,12 @@ def tok_to_readable(text: str) -> str:
         if _should_capture_plain_line(stripped, state):
             output.append(line)
 
-    result = "\n".join(output).strip()
-    return result
+    return "\n".join(output).strip()
 
 
 def postprocess_response(text: str) -> tuple[str, str]:
-    """Process Claude's response text.
+    """
+    Process Claude's response text.
 
     Returns (processed_text, mode) where mode is 'tok-native', 'tok-empty', 'tok', or 'markdown'.
     """

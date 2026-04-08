@@ -4,28 +4,26 @@ import datetime
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any
-from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
-from ..utils.event_logging import log_macro_registered
+from tok.utils.event_logging import log_macro_registered
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 @dataclass(frozen=True)
 class Instruction:
     op: str
     args: tuple[Any, ...]
-    target: str | None = (
-        None  # None means it's a 'return' or 'check' instruction
-    )
+    target: str | None = None  # None means it's a 'return' or 'check' instruction
 
     def to_dict(self) -> dict[str, Any]:
         return {"op": self.op, "args": list(self.args), "target": self.target}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Instruction:
-        return cls(
-            op=data["op"], args=tuple(data["args"]), target=data.get("target")
-        )
+        return cls(op=data["op"], args=tuple(data["args"]), target=data.get("target"))
 
 
 @dataclass(frozen=True)
@@ -33,9 +31,7 @@ class MacroProvenance:
     source_code: str | None = None
     episode_id: str | None = None
     source_file: str | None = None
-    composed_of: tuple[
-        str, ...
-    ] = ()  # Names of lower-level macros this abstracts
+    composed_of: tuple[str, ...] = ()  # Names of lower-level macros this abstracts
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -61,9 +57,7 @@ class Macro:
     last_seen: str | None = None  # ISO format timestamp
     is_durable: bool = False
     lifetime_savings: int = 0  # cumulative tokens saved by this macro
-    avg_tokens_per_use: float = (
-        0.0  # rolling average tokens saved per invocation
-    )
+    avg_tokens_per_use: float = 0.0  # rolling average tokens saved per invocation
     # Context requirements for JIT filtering, e.g. {"file": "src/tok/cli.py"}.
     # An empty dict means the macro applies in any context.
     context_requirements: dict[str, str] = field(default_factory=dict)
@@ -73,9 +67,7 @@ class Macro:
             "name": self.name,
             "instructions": [i.to_dict() for i in self.instructions],
             "inputs": list(self.inputs),
-            "provenance": (
-                self.provenance.to_dict() if self.provenance else None
-            ),
+            "provenance": (self.provenance.to_dict() if self.provenance else None),
             "hit_count": self.hit_count,
             "last_seen": self.last_seen,
             "is_durable": self.is_durable,
@@ -88,15 +80,9 @@ class Macro:
     def from_dict(cls, data: dict[str, Any]) -> Macro:
         return cls(
             name=data["name"],
-            instructions=tuple(
-                Instruction.from_dict(i) for i in data["instructions"]
-            ),
+            instructions=tuple(Instruction.from_dict(i) for i in data["instructions"]),
             inputs=tuple(data["inputs"]),
-            provenance=(
-                MacroProvenance.from_dict(data["provenance"])
-                if data.get("provenance")
-                else None
-            ),
+            provenance=(MacroProvenance.from_dict(data["provenance"]) if data.get("provenance") else None),
             hit_count=data.get("hit_count", 1),
             last_seen=data.get("last_seen"),
             is_durable=data.get("is_durable", False),
@@ -122,7 +108,8 @@ class MacroRegistry:
         return None
 
     def find_op_sequence_duplicate(self, macro: Macro) -> str | None:
-        """Returns the name of an existing macro with the same op sequence, if any.
+        """
+        Returns the name of an existing macro with the same op sequence, if any.
 
         Two macros are considered op-sequence duplicates if they share the same
         ordered list of operator names, regardless of concrete argument values.
@@ -135,9 +122,7 @@ class MacroRegistry:
                 return existing.name
         return None
 
-    def match_recent_sequence(
-        self, instructions: list[Instruction]
-    ) -> Macro | None:
+    def match_recent_sequence(self, instructions: list[Instruction]) -> Macro | None:
         """
         Checks if the end of the provided sequence of instructions matches any
         known macro's instruction sequence (by operator names).
@@ -192,7 +177,8 @@ class MacroRegistry:
     ROI_PROTECTION_THRESHOLD: int = 50
 
     def apply_decay(self, max_age_days: int = 7, min_hits: int = 3) -> None:
-        """Prune macros that are old and have low hit counts.
+        """
+        Prune macros that are old and have low hit counts.
 
         High-ROI macros (lifetime_savings >= ROI_PROTECTION_THRESHOLD) are kept
         even if they would otherwise fall below the age/hit threshold, since they
@@ -235,7 +221,8 @@ class MacroRegistry:
         new_instructions: tuple[Instruction, ...],
         new_inputs: tuple[str, ...] | None = None,
     ) -> bool:
-        """Replace a macro's instructions with a repaired version.
+        """
+        Replace a macro's instructions with a repaired version.
 
         Preserves ``hit_count``, ``lifetime_savings``, ``avg_tokens_per_use``,
         ``context_requirements``, and ``is_durable`` from the existing macro.
@@ -291,9 +278,7 @@ class MacroRegistry:
         except Exception as e:
             import logging
 
-            logging.getLogger("tok.neuro").error(
-                f"Failed to load global macros from {path}: {e}"
-            )
+            logging.getLogger("tok.neuro").exception(f"Failed to load global macros from {path}: {e}")
 
     def save_global(self, path: str | None = None) -> None:
         if path is None:
@@ -301,15 +286,11 @@ class MacroRegistry:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             with open(path, "w") as f:
-                json.dump(
-                    [m.to_dict() for m in self.macros.values()], f, indent=2
-                )
+                json.dump([m.to_dict() for m in self.macros.values()], f, indent=2)
         except Exception as e:
             import logging
 
-            logging.getLogger("tok.neuro").error(
-                f"Failed to save global macros to {path}: {e}"
-            )
+            logging.getLogger("tok.neuro").exception(f"Failed to save global macros to {path}: {e}")
 
 
 class TokIR:
@@ -317,10 +298,8 @@ class TokIR:
         self,
         instructions: Iterable[Instruction] | None = None,
         macros: Iterable[Macro] | None = None,
-    ):
-        self.instructions: list[Instruction] = (
-            list(instructions) if instructions is not None else []
-        )
+    ) -> None:
+        self.instructions: list[Instruction] = list(instructions) if instructions is not None else []
         self.macros: list[Macro] = list(macros) if macros is not None else []
 
     def add_instruction(self, ins: Instruction) -> None:
@@ -339,12 +318,8 @@ class TokIR:
         }
 
 
-def execute_ir(
-    ir: TokIR, inputs: dict[str, Any], registry: MacroRegistry | None = None
-) -> Any:
-    """
-    Executes a sequence of instructions using a local scope initialized with inputs.
-    """
+def execute_ir(ir: TokIR, inputs: dict[str, Any], registry: MacroRegistry | None = None) -> object:
+    """Executes a sequence of instructions using a local scope initialized with inputs."""
     scope = dict(inputs)
     last_result = None
 
@@ -365,9 +340,7 @@ def execute_ir(
                         macro_inputs[param] = arg
 
                 # Execute nested IR
-                result = execute_ir(
-                    TokIR(macro.instructions), macro_inputs, registry
-                )
+                result = execute_ir(TokIR(macro.instructions), macro_inputs, registry)
                 if ins.target:
                     scope[ins.target] = result
                 last_result = result
@@ -378,7 +351,8 @@ def execute_ir(
             if isinstance(arg, str) and arg.startswith("$"):
                 var_name = arg[1:]
                 if var_name not in scope:
-                    raise NameError(f"Undefined variable in IR: {arg}")
+                    msg = f"Undefined variable in IR: {arg}"
+                    raise NameError(msg)
                 resolved_args.append(scope[var_name])
             else:
                 resolved_args.append(arg)
@@ -394,7 +368,7 @@ def execute_ir(
     return last_result
 
 
-def _execute_op(op: str, args: list[Any]) -> Any:
+def _execute_op(op: str, args: list[Any]) -> object:
     if op == "add":
         return args[0] + args[1]
     if op == "sub":
@@ -433,4 +407,5 @@ def _execute_op(op: str, args: list[Any]) -> Any:
     if op == "join":
         return "".join(str(x) for x in args[0])
 
-    raise ValueError(f"Unknown IR operator: {op}")
+    msg = f"Unknown IR operator: {op}"
+    raise ValueError(msg)

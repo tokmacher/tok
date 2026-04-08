@@ -3,7 +3,9 @@ from types import SimpleNamespace
 from tok.testing.live_runner import LiveAgent
 
 
-def test_live_agent_passes_prepared_behavior_signals_to_finalize(monkeypatch):
+def test_live_agent_passes_prepared_behavior_signals_to_finalize(
+    monkeypatch,
+) -> None:
     class FakeClient:
         class _Chat:
             class _Completions:
@@ -15,22 +17,14 @@ def test_live_agent_passes_prepared_behavior_signals_to_finalize(monkeypatch):
                             completion_tokens=30,
                             total_tokens=150,
                         ),
-                        choices=[
-                            SimpleNamespace(
-                                message=SimpleNamespace(
-                                    content="plain assistant reply"
-                                )
-                            )
-                        ],
+                        choices=[SimpleNamespace(message=SimpleNamespace(content="plain assistant reply"))],
                     )
 
             completions = _Completions()
 
         chat = _Chat()
 
-    monkeypatch.setattr(
-        "tok.testing.live_runner.OpenAI", lambda **_kwargs: FakeClient()
-    )
+    monkeypatch.setattr("tok.testing.live_runner.OpenAI", lambda **_kwargs: FakeClient())
     monkeypatch.setattr("tok.testing.live_runner.config.API_KEY", "test-key")
 
     agent = LiveAgent(model="openai/gpt-4.1-mini")
@@ -48,9 +42,7 @@ def test_live_agent_passes_prepared_behavior_signals_to_finalize(monkeypatch):
         finalize_calls["behavior_signals"] = behavior_signals
         return SimpleNamespace(content_blocks=[{"type": "text", "text": "ok"}])
 
-    monkeypatch.setattr(
-        agent.adapter, "build_chat_messages", fake_build_chat_messages
-    )
+    monkeypatch.setattr(agent.adapter, "build_chat_messages", fake_build_chat_messages)
     monkeypatch.setattr(agent.adapter, "finalize", fake_finalize)
     monkeypatch.setattr(agent.adapter, "visible_text", lambda processed: "ok")
 

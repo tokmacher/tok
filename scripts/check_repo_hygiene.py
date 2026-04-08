@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
+"""Fail fast when tracked repo clutter slips back into the tree."""
 
 from __future__ import annotations
 
-"""Fail fast when tracked repo clutter slips back into the tree."""
-
 import subprocess
 from pathlib import Path
-from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 ALLOWED_TOP_LEVEL_FILES = frozenset(
     {
@@ -66,11 +68,7 @@ def find_violations(tracked_files: Iterable[str]) -> list[str]:
     for path in tracked_files:
         if path.endswith(".bak"):
             violations.append(f"tracked backup file: {path}")
-        if (
-            path.endswith(".pyc")
-            or path.startswith("__pycache__/")
-            or "/__pycache__/" in path
-        ):
+        if path.endswith(".pyc") or path.startswith("__pycache__/") or "/__pycache__/" in path:
             violations.append(f"tracked Python cache artifact: {path}")
         if path.startswith("dist/"):
             violations.append(f"tracked build artifact under dist/: {path}")
@@ -86,16 +84,10 @@ def find_violations(tracked_files: Iterable[str]) -> list[str]:
 def main() -> int:
     violations = find_violations(load_tracked_files())
     if not violations:
-        print("Repo hygiene check passed.")
         return 0
 
-    print("Repo hygiene check failed:")
     for violation in violations:
-        print(f"- {violation}")
-    print("")
-    print(
-        "Keep the repo root canonical, and move historical or generated material out of tracked paths."
-    )
+        print(violation)
     return 1
 
 

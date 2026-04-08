@@ -1,18 +1,15 @@
-import re
 import json
 import os
+import re
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
 LOG_FILE = os.environ.get("TOK_VIS_LOG", SCRIPT_DIR.parent / "tokviz.txt")
-OUTPUT_FILE = os.environ.get(
-    "TOK_VIS_OUTPUT", SCRIPT_DIR.parent / "viz" / "tok_metrics.json"
-)
+OUTPUT_FILE = os.environ.get("TOK_VIS_OUTPUT", SCRIPT_DIR.parent / "viz" / "tok_metrics.json")
 
 
-def parse_logs():
+def parse_logs() -> None:
     if not os.path.exists(LOG_FILE):
-        print(f"Error: {LOG_FILE} not found.")
         return
 
     metrics = {
@@ -30,18 +27,10 @@ def parse_logs():
     }
 
     # Regex patterns
-    cost_pattern = re.compile(
-        r"cost: baseline=\$([\d.]+) actual=\$([\d.]+) saved=\$([\d.]+) \(([\d.]+)%\) \[(.*)\]"
-    )
-    token_saved_pattern = re.compile(
-        r"Tool results: ~(\d+) tokens saved (\{.*\})"
-    )
-    prompt_optimized_pattern = re.compile(
-        r"tok_prompt_optimized: system prompt reduced from (\d+) to (\d+) chars"
-    )
-    request_pattern = re.compile(
-        r"HTTP Request: (POST|GET) (.*) \"HTTP/1.1 (.*)\""
-    )
+    cost_pattern = re.compile(r"cost: baseline=\$([\d.]+) actual=\$([\d.]+) saved=\$([\d.]+) \(([\d.]+)%\) \[(.*)\]")
+    token_saved_pattern = re.compile(r"Tool results: ~(\d+) tokens saved (\{.*\})")
+    prompt_optimized_pattern = re.compile(r"tok_prompt_optimized: system prompt reduced from (\d+) to (\d+) chars")
+    request_pattern = re.compile(r"HTTP Request: (POST|GET) (.*) \"HTTP/1.1 (.*)\"")
 
     with open(LOG_FILE) as f:
         for line in f:
@@ -62,9 +51,7 @@ def parse_logs():
             token_match = token_saved_pattern.search(line)
             if token_match:
                 try:
-                    details = json.loads(
-                        token_match.group(2).replace("'", '"')
-                    )
+                    details = json.loads(token_match.group(2).replace("'", '"'))
                     for key, val in details.items():
                         if key in metrics["token_savings"]:
                             metrics["token_savings"][key] += val
@@ -97,11 +84,6 @@ def parse_logs():
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     with open(OUTPUT_FILE, "w") as f:
         json.dump(metrics, f, indent=2)
-
-    print(
-        f"Parsed {len(metrics['costs'])} cost entries, {len(metrics['prompt_optimization'])} prompt optimizations."
-    )
-    print(f"Metrics saved to {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """Tests for tok stats rendering — Interaction Quality panel and session quality."""
 
 from pathlib import Path
+
 from typer.testing import CliRunner
 
 from tok.cli import app
@@ -9,13 +10,9 @@ runner = CliRunner()
 
 
 class TestStatsRendering:
-    def test_doctor_renders_interaction_quality_panel(self, monkeypatch):
-        monkeypatch.setattr(
-            "tok.cli._release.get_running_bridge_pid", lambda port: 321
-        )
-        monkeypatch.setattr(
-            "shutil.which", lambda name: "/usr/local/bin/claude"
-        )
+    def test_doctor_renders_interaction_quality_panel(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
         monkeypatch.setenv("TOK_SAVINGS_FILE", "/tmp/test-iq-panel.tok")
         Path("/tmp/test-iq-panel.tok").unlink(missing_ok=True)
 
@@ -43,9 +40,7 @@ class TestStatsRendering:
                     "task_score": 90,
                 }
 
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
         monkeypatch.setattr(
             "tok.cli._release.memory_root",
             lambda: Path("/tmp/nonexistent_tok"),
@@ -63,15 +58,9 @@ class TestStatsRendering:
         assert "90" in result.output
         assert "Current mode" in result.output
 
-    def test_bridge_status_session_quality_changes_with_smoothness(
-        self, monkeypatch
-    ):
-        monkeypatch.setattr(
-            "tok.cli._bridge.get_running_bridge_pid", lambda port: 321
-        )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", "/tmp/test-quality-smoothness.tok"
-        )
+    def test_bridge_status_session_quality_changes_with_smoothness(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setenv("TOK_SAVINGS_FILE", "/tmp/test-quality-smoothness.tok")
         Path("/tmp/test-quality-smoothness.tok").unlink(missing_ok=True)
 
         class FakeResponse:
@@ -102,9 +91,7 @@ class TestStatsRendering:
                     "state_resend_suppressed_count": 0,
                 }
 
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
 
         result = runner.invoke(app, ["bridge", "status"])
         assert result.exit_code == 0
@@ -112,16 +99,10 @@ class TestStatsRendering:
         assert "clean" in result.output
         assert "Tok active" in result.output
 
-    def test_bridge_status_distinguishes_fallback_from_compat_fallback(
-        self, monkeypatch
-    ):
+    def test_bridge_status_distinguishes_fallback_from_compat_fallback(self, monkeypatch) -> None:
         """Verify degradation fallback and compat-fallback are rendered distinctly."""
-        monkeypatch.setattr(
-            "tok.cli._bridge.get_running_bridge_pid", lambda port: 321
-        )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", "/tmp/test-fallback-distinction.tok"
-        )
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setenv("TOK_SAVINGS_FILE", "/tmp/test-fallback-distinction.tok")
         Path("/tmp/test-fallback-distinction.tok").unlink(missing_ok=True)
 
         class FakeResponse:
@@ -152,9 +133,7 @@ class TestStatsRendering:
                     "state_resend_suppressed_count": 0,
                 }
 
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
 
         result = runner.invoke(app, ["bridge", "status"])
         assert result.exit_code == 0
@@ -164,19 +143,11 @@ class TestStatsRendering:
         assert "fallback=1" in result.output
         assert "compat-fallback=2" in result.output
 
-    def test_doctor_renders_per_turn_vs_per_call_distinction(
-        self, monkeypatch
-    ):
+    def test_doctor_renders_per_turn_vs_per_call_distinction(self, monkeypatch) -> None:
         """Verify per-turn instability and per-call transport are labeled distinctly."""
-        monkeypatch.setattr(
-            "tok.cli._release.get_running_bridge_pid", lambda port: 321
-        )
-        monkeypatch.setattr(
-            "shutil.which", lambda name: "/usr/local/bin/claude"
-        )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", "/tmp/test-per-turn-per-call.tok"
-        )
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
+        monkeypatch.setenv("TOK_SAVINGS_FILE", "/tmp/test-per-turn-per-call.tok")
         Path("/tmp/test-per-turn-per-call.tok").unlink(missing_ok=True)
 
         class FakeResponse:
@@ -204,9 +175,7 @@ class TestStatsRendering:
                     "task_score": 92,
                 }
 
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
         monkeypatch.setattr(
             "tok.cli._release.memory_root",
             lambda: Path("/tmp/nonexistent_tok"),

@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 import statistics
 from pathlib import Path
-
 from typing import Any
 
-from ..runtime.policy.semantic_validation import calculate_invisible_pressure
-from ..stats import SavingsTracker
+from tok.runtime.policy.semantic_validation import calculate_invisible_pressure
+from tok.stats import SavingsTracker
 
 
 def format_trend_display(trend: dict[str, Any], metric_name: str) -> str:
@@ -17,9 +16,7 @@ def format_trend_display(trend: dict[str, Any], metric_name: str) -> str:
     if trend["sessions_considered"] == 0:
         return f"[dim]No {metric_name} data available[/dim]"
 
-    direction_icon = {"improving": "📈", "regressing": "📉", "flat": "➡️"}.get(
-        trend["direction"], "❓"
-    )
+    direction_icon = {"improving": "📈", "regressing": "📉", "flat": "➡️"}.get(trend["direction"], "❓")
 
     result = (
         f"[bold]{metric_name.title()} Trend ({trend['sessions_considered']} sessions):[/bold] "
@@ -31,9 +28,7 @@ def format_trend_display(trend: dict[str, Any], metric_name: str) -> str:
         velocity_key = f"{metric_name}_velocity"
         if velocity_key in trend:
             velocity = trend[velocity_key]
-            velocity_icon = (
-                "📈" if velocity > 0 else "📉" if velocity < 0 else "➡️"
-            )
+            velocity_icon = "📈" if velocity > 0 else "📉" if velocity < 0 else "➡️"
             result += f"  Velocity: {velocity_icon} {velocity:+.2f}/session\n"
 
     return result.strip()
@@ -50,15 +45,11 @@ def pressure_trends(window: int = 10, export: str = "") -> None:
     current_signals = tracker.behavior_signals()
     current_pressure_raw = calculate_invisible_pressure(current_signals)
 
-    console.print(
-        f"[bold]Current Session Pressure (raw cumulative):[/bold] {current_pressure_raw}"
-    )
+    console.print(f"[bold]Current Session Pressure (raw cumulative):[/bold] {current_pressure_raw}")
 
     if current_signals:
         console.print("\n[bold]Current Session Signals:[/bold]")
-        for signal, count in sorted(
-            current_signals.items(), key=lambda x: (-x[1], x[0])
-        ):
+        for signal, count in sorted(current_signals.items(), key=lambda x: (-x[1], x[0])):
             console.print(f"  {signal:<25} {count:>3}")
 
     # Get trend data (per-session averages over recent completed sessions)
@@ -70,11 +61,7 @@ def pressure_trends(window: int = 10, export: str = "") -> None:
         "direction": (
             "regressing"
             if float(trend["pressure_velocity"]) > 0
-            else (
-                "improving"
-                if float(trend["pressure_velocity"]) < 0
-                else "flat"
-            )
+            else ("improving" if float(trend["pressure_velocity"]) < 0 else "flat")
         ),
         "avg_pressure": trend["avg_invisible_pressure"],
         "pressure_velocity": trend["pressure_velocity"],
@@ -88,24 +75,16 @@ def pressure_trends(window: int = 10, export: str = "") -> None:
     avg_pressure = trend.get("avg_invisible_pressure", 0.0)
 
     if sessions_considered == 0:
-        console.print(
-            "\n[yellow]⚠️  Status: Unknown - No completed session history[/yellow]"
-        )
+        console.print("\n[yellow]⚠️  Status: Unknown - No completed session history[/yellow]")
         status = "unknown"
     elif float(avg_pressure) == 0:
-        console.print(
-            "\n[green]✅ Status: Clean - No pressure in recent sessions[/green]"
-        )
+        console.print("\n[green]✅ Status: Clean - No pressure in recent sessions[/green]")
         status = "clean"
     elif float(avg_pressure) <= 3:
-        console.print(
-            f"\n[yellow]⚠️  Status: Watch - Low avg pressure ({avg_pressure:.1f})[/yellow]"
-        )
+        console.print(f"\n[yellow]⚠️  Status: Watch - Low avg pressure ({avg_pressure:.1f})[/yellow]")
         status = "watch"
     else:
-        console.print(
-            f"\n[red]❌ Status: Noisy - High avg pressure ({avg_pressure:.1f})[/red]"
-        )
+        console.print(f"\n[red]❌ Status: Noisy - High avg pressure ({avg_pressure:.1f})[/red]")
         status = "noisy"
 
     # Export functionality
@@ -152,15 +131,11 @@ def memory_trends(window: int = 10) -> None:
 
     if current_signals:
         memory_signals = {
-            k: v
-            for k, v in current_signals.items()
-            if any(name in k for name in ("cold_start", "durable", "hot"))
+            k: v for k, v in current_signals.items() if any(name in k for name in ("cold_start", "durable", "hot"))
         }
         if memory_signals:
             console.print("\n[bold]Memory-related Signals:[/bold]")
-            for signal, count in sorted(
-                memory_signals.items(), key=lambda x: (-x[1], x[0])
-            ):
+            for signal, count in sorted(memory_signals.items(), key=lambda x: (-x[1], x[0])):
                 console.print(f"  {signal:<25} {count:>3}")
 
     # Get trend data
@@ -171,11 +146,7 @@ def memory_trends(window: int = 10) -> None:
         "direction": (
             "improving"
             if float(trend["memory_lift_velocity"]) > 0
-            else (
-                "regressing"
-                if float(trend["memory_lift_velocity"]) < 0
-                else "flat"
-            )
+            else ("regressing" if float(trend["memory_lift_velocity"]) < 0 else "flat")
         ),
         "avg_memory_lift": trend.get("avg_memory_lift", memory_lift),
         "memory_lift_velocity": trend["memory_lift_velocity"],
@@ -185,13 +156,9 @@ def memory_trends(window: int = 10) -> None:
 
     # Status indicator
     if memory_lift > 0:
-        console.print(
-            f"\n[green]✅ Status: Active - Memory lift detected ({memory_lift})[/green]"
-        )
+        console.print(f"\n[green]✅ Status: Active - Memory lift detected ({memory_lift})[/green]")
     else:
-        console.print(
-            "\n[yellow]⚠️  Status: Inactive - No memory lift detected[/yellow]"
-        )
+        console.print("\n[yellow]⚠️  Status: Inactive - No memory lift detected[/yellow]")
 
 
 def savings_trends(window: int = 10) -> None:
@@ -229,17 +196,11 @@ def savings_trends(window: int = 10) -> None:
     # Status indicator
     avg_savings = trend["avg_savings_pct"]
     if float(avg_savings) >= 20:
-        console.print(
-            f"\n[green]✅ Status: Excellent - {avg_savings}% average savings[/green]"
-        )
+        console.print(f"\n[green]✅ Status: Excellent - {avg_savings}% average savings[/green]")
     elif float(avg_savings) >= 10:
-        console.print(
-            f"\n[yellow]⚠️  Status: Good - {avg_savings}% average savings[/yellow]"
-        )
+        console.print(f"\n[yellow]⚠️  Status: Good - {avg_savings}% average savings[/yellow]")
     else:
-        console.print(
-            f"\n[red]❌ Status: Poor - {avg_savings}% average savings[/red]"
-        )
+        console.print(f"\n[red]❌ Status: Poor - {avg_savings}% average savings[/red]")
 
 
 def fallback_trends(window: int = 10) -> None:
@@ -251,17 +212,11 @@ def fallback_trends(window: int = 10) -> None:
 
     # Get current session fallback signals
     current_signals = tracker.behavior_signals()
-    fallback_signals = {
-        k: v
-        for k, v in current_signals.items()
-        if "fallback" in k or "cold_start" in k
-    }
+    fallback_signals = {k: v for k, v in current_signals.items() if "fallback" in k or "cold_start" in k}
 
     console.print("[bold]Current Session Fallback Activity:[/bold]")
     if fallback_signals:
-        for signal, count in sorted(
-            fallback_signals.items(), key=lambda x: (-x[1], x[0])
-        ):
+        for signal, count in sorted(fallback_signals.items(), key=lambda x: (-x[1], x[0])):
             console.print(f"  {signal:<25} {count:>3}")
     else:
         console.print("  [dim]No fallback activity detected[/dim]")
@@ -277,23 +232,13 @@ def fallback_trends(window: int = 10) -> None:
             entry.get("invisible_pressure", 0) for entry in recent
         ]  # Using pressure as proxy for fallback activity
 
-        avg_fallback = (
-            statistics.mean(fallback_counts) if fallback_counts else 0
-        )
+        avg_fallback = statistics.mean(fallback_counts) if fallback_counts else 0
 
         fallback_trend = {
             "sessions_considered": len(recent),
-            "direction": (
-                "regressing"
-                if avg_fallback > 3
-                else "improving"
-                if avg_fallback <= 1
-                else "flat"
-            ),
+            "direction": ("regressing" if avg_fallback > 3 else "improving" if avg_fallback <= 1 else "flat"),
             "avg_fallback": round(avg_fallback, 1),
-            "fallback_velocity": trend.get(
-                "pressure_velocity", 0
-            ),  # Using pressure velocity as proxy
+            "fallback_velocity": trend.get("pressure_velocity", 0),  # Using pressure velocity as proxy
         }
 
         console.print(f"\n{format_trend_display(fallback_trend, 'fallback')}")
@@ -344,13 +289,7 @@ def health_summary(window: int = 10, export: str = "") -> None:
 
     # Savings health — from trend (avg over recent sessions)
     avg_savings = trend["avg_savings_pct"]
-    savings_status = (
-        "healthy"
-        if avg_savings >= 20
-        else "watch"
-        if avg_savings >= 10
-        else "unhealthy"
-    )
+    savings_status = "healthy" if avg_savings >= 20 else "watch" if avg_savings >= 10 else "unhealthy"
     metrics.append(("Savings", f"{avg_savings}%", savings_status))
 
     # Pressure health — use bounded avg_invisible_pressure from recent sessions.
@@ -361,13 +300,7 @@ def health_summary(window: int = 10, export: str = "") -> None:
         pressure_display = "no history"
     else:
         pressure_display = f"{avg_pressure:.1f} avg/{sessions_considered}s"
-        pressure_status = (
-            "healthy"
-            if avg_pressure == 0
-            else "watch"
-            if avg_pressure <= 3
-            else "unhealthy"
-        )
+        pressure_status = "healthy" if avg_pressure == 0 else "watch" if avg_pressure <= 3 else "unhealthy"
     metrics.append(("Pressure", pressure_display, pressure_status))
 
     # Memory health — current session signal count (positive indicator)
@@ -376,27 +309,19 @@ def health_summary(window: int = 10, export: str = "") -> None:
 
     # Trend direction
     trend_status = (
-        "healthy"
-        if trend["direction"] == "improving"
-        else "watch"
-        if trend["direction"] == "flat"
-        else "unhealthy"
+        "healthy" if trend["direction"] == "improving" else "watch" if trend["direction"] == "flat" else "unhealthy"
     )
     metrics.append(("Trend", trend["direction"], trend_status))
 
     # Display metrics with status indicators
     for name, value, status in metrics:
-        icon = {"healthy": "✅", "watch": "⚠️", "unhealthy": "❌"}.get(
-            status, "❓"
-        )
+        icon = {"healthy": "✅", "watch": "⚠️", "unhealthy": "❌"}.get(status, "❓")
         color = {
             "healthy": "green",
             "watch": "yellow",
             "unhealthy": "red",
         }.get(status, "white")
-        console.print(
-            f"  {icon} {name:<12} {value:<15} [{color}]{status}[/{color}]"
-        )
+        console.print(f"  {icon} {name:<12} {value:<15} [{color}]{status}[/{color}]")
 
     # Show raw current-session pressure as a diagnostic footnote only
     if current_pressure_raw > 0:
@@ -406,9 +331,7 @@ def health_summary(window: int = 10, export: str = "") -> None:
         )
 
     # Overall health assessment
-    unhealthy_count = sum(
-        1 for _, _, status in metrics if status == "unhealthy"
-    )
+    unhealthy_count = sum(1 for _, _, status in metrics if status == "unhealthy")
     watch_count = sum(1 for _, _, status in metrics if status == "watch")
 
     console.print("\n" + "=" * 50)
@@ -419,9 +342,7 @@ def health_summary(window: int = 10, export: str = "") -> None:
         console.print("[yellow]👀 Overall Status: MONITOR[/yellow]")
         overall_status = "monitor"
     else:
-        console.print(
-            f"[red]⚠️  Overall Status: ATTENTION NEEDED ({unhealthy_count} issues)[/red]"
-        )
+        console.print(f"[red]⚠️  Overall Status: ATTENTION NEEDED ({unhealthy_count} issues)[/red]")
         overall_status = "attention_needed"
 
     # Export functionality
@@ -429,10 +350,7 @@ def health_summary(window: int = 10, export: str = "") -> None:
         export_data = {
             "metric": "health",
             "window": window,
-            "metrics": [
-                {"name": name, "value": value, "status": status}
-                for name, value, status in metrics
-            ],
+            "metrics": [{"name": name, "value": value, "status": status} for name, value, status in metrics],
             "overall_status": overall_status,
             "unhealthy_count": unhealthy_count,
             "watch_count": watch_count,

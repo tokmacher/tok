@@ -1,5 +1,5 @@
 """
-Tok Compress Hook (Stop event)
+Tok Compress Hook (Stop event).
 ==============================
 Registered as a Claude Code Stop hook. Fires after each session ends.
 Reads the session JSONL transcript, runs TokOrchestrator on it, and
@@ -105,9 +105,7 @@ def find_memory_dir() -> Path | None:
         return None
 
 
-def write_memory(
-    memory_dir: Path, tok_state: str, message_count: int, session_id: str
-) -> None:
+def write_memory(memory_dir: Path, tok_state: str, message_count: int, session_id: str) -> None:
     # Write the raw Tok state as memory.tok (native protocol format)
     tok_file = memory_dir / "memory.tok"
     tok_file.write_text(tok_state, encoding="utf-8")
@@ -136,9 +134,7 @@ Compressed from {message_count} messages in session `{session_id}`.
     if memory_index.exists():
         existing = memory_index.read_text(encoding="utf-8")
         if "tok_session_state.md" not in existing:
-            memory_index.write_text(
-                existing.rstrip() + "\n" + pointer, encoding="utf-8"
-            )
+            memory_index.write_text(existing.rstrip() + "\n" + pointer, encoding="utf-8")
     else:
         memory_index.write_text(pointer, encoding="utf-8")
 
@@ -166,10 +162,6 @@ def main() -> None:
 
     transcript_path = Path(transcript_path_str)
     if not transcript_path.exists():
-        print(
-            f"[tok-hook] transcript not found: {transcript_path}",
-            file=sys.stderr,
-        )
         sys.exit(0)
 
     messages = parse_transcript(transcript_path)
@@ -182,7 +174,9 @@ def main() -> None:
         if src_path not in sys.path:
             sys.path.insert(0, src_path)
 
-        from tok.adapters.orchestrator import TokOrchestrator  # type: ignore
+        from tok.adapters.orchestrator import (
+            TokOrchestrator,  # type: ignore[import-not-found]
+        )
 
         orch = TokOrchestrator(model="dummy")
         for i, msg in enumerate(messages):
@@ -195,24 +189,15 @@ def main() -> None:
 
         tok_state = orch.memory.to_tok()  # type: ignore[attr-defined]
 
-    except Exception as exc:
-        print(f"[tok-hook] orchestrator error: {exc}", file=sys.stderr)
+    except Exception:
         sys.exit(0)
 
     memory_dir = find_memory_dir()
     if not memory_dir:
-        print(
-            "[tok-hook] could not find or create memory directory",
-            file=sys.stderr,
-        )
         sys.exit(0)
 
     write_memory(memory_dir, tok_state, len(messages), session_id)
-    output_path = memory_dir / "tok_session_state.md"
-    print(
-        f"[tok-hook] compressed {len(messages)} msgs → {output_path}",
-        file=sys.stderr,
-    )
+    memory_dir / "tok_session_state.md"
 
 
 if __name__ == "__main__":

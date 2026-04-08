@@ -60,8 +60,8 @@ class TokRegistry:
         tool: str,
         path: str,
         status: str,
-        metadata: Any = None,
-        **kwargs: Any,
+        metadata: object = None,
+        **kwargs: object,
     ) -> None:
         """Register an operation."""
         record = {

@@ -14,16 +14,16 @@ LEGACY_HISTORY_SKIP_TOTAL_TOKENS = 8412
 LEGACY_MODERATE_TOOL_RETENTION_TOKENS = 802
 
 
-def test_prepared_request_bloat_attribution_tracks_cold_start_floor(tmp_path):
+def test_prepared_request_bloat_attribution_tracks_cold_start_floor(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     prepared = runtime.prepare_request(
         RuntimeRequest(
             model="claude-sonnet-4",
             tool_compatible=True,
-            messages=[
-                {"role": "user", "content": "Confirm the gateway entry point."}
-            ],
+            messages=[{"role": "user", "content": "Confirm the gateway entry point."}],
         ),
         session,
     )
@@ -41,21 +41,15 @@ def test_prepared_request_bloat_attribution_tracks_cold_start_floor(tmp_path):
     assert state_resend["mode"] == "none"
 
 
-def test_live_bridge_scenarios_keep_second_warm_turn_no_larger_than_first():
+def test_live_bridge_scenarios_keep_second_warm_turn_no_larger_than_first() -> None:
     try:
         scenarios = measure_live_bridge_bloat_scenarios()
     except KeyError:
         return
 
-    first = scenarios["warm_unchanged_state_first"]["request_footprint"].get(
-        "prepared", {}
-    )
-    second = scenarios["warm_unchanged_state_second"]["request_footprint"].get(
-        "prepared", {}
-    )
-    second_mode = scenarios["warm_unchanged_state_second"]["state_resend"].get(
-        "mode"
-    )
+    first = scenarios["warm_unchanged_state_first"]["request_footprint"].get("prepared", {})
+    second = scenarios["warm_unchanged_state_second"]["request_footprint"].get("prepared", {})
+    second_mode = scenarios["warm_unchanged_state_second"]["state_resend"].get("mode")
 
     if not first or not second_mode:
         return
@@ -64,7 +58,7 @@ def test_live_bridge_scenarios_keep_second_warm_turn_no_larger_than_first():
     assert second_mode in {"suppressed", "delta"}
 
 
-def test_live_bridge_scenarios_suppress_answer_anchor_after_first_turn():
+def test_live_bridge_scenarios_suppress_answer_anchor_after_first_turn() -> None:
     try:
         scenarios = measure_live_bridge_bloat_scenarios()
     except KeyError:
@@ -72,23 +66,10 @@ def test_live_bridge_scenarios_suppress_answer_anchor_after_first_turn():
 
     first = scenarios["answer_anchor_first"]["state_resend"].get("mode")
     second = scenarios["answer_anchor_second"]["state_resend"].get("mode")
-    first_system = (
-        scenarios["answer_anchor_first"]["request_footprint"]
-        .get("prepared", {})
-        .get("system_tokens")
-    )
-    second_system = (
-        scenarios["answer_anchor_second"]["request_footprint"]
-        .get("prepared", {})
-        .get("system_tokens")
-    )
+    first_system = scenarios["answer_anchor_first"]["request_footprint"].get("prepared", {}).get("system_tokens")
+    second_system = scenarios["answer_anchor_second"]["request_footprint"].get("prepared", {}).get("system_tokens")
 
-    if (
-        not first
-        or not second
-        or first_system is None
-        or second_system is None
-    ):
+    if not first or not second or first_system is None or second_system is None:
         return
 
     assert first == "full"
@@ -96,7 +77,7 @@ def test_live_bridge_scenarios_suppress_answer_anchor_after_first_turn():
     assert second_system <= first_system
 
 
-def test_live_bridge_scenarios_keep_tool_heavy_bridge_turns_compressed():
+def test_live_bridge_scenarios_keep_tool_heavy_bridge_turns_compressed() -> None:
     try:
         scenarios = measure_live_bridge_bloat_scenarios()
     except KeyError:
@@ -114,20 +95,14 @@ def test_live_bridge_scenarios_keep_tool_heavy_bridge_turns_compressed():
     assert counterfactual.get("savings_tokens_vs_legacy_skip", 0) > 0
 
 
-def test_live_bridge_hotfix_meets_bloat_reduction_targets():
+def test_live_bridge_hotfix_meets_bloat_reduction_targets() -> None:
     try:
         scenarios = measure_live_bridge_bloat_scenarios()
     except KeyError:
         return
 
-    history_prepared = (
-        scenarios["history_skip"]
-        .get("request_footprint", {})
-        .get("prepared", {})
-    )
-    tool_retention = scenarios["moderate_coding"].get(
-        "tool_result_retention", {}
-    )
+    history_prepared = scenarios["history_skip"].get("request_footprint", {}).get("prepared", {})
+    tool_retention = scenarios["moderate_coding"].get("tool_result_retention", {})
 
     if not history_prepared or not tool_retention:
         return
@@ -136,16 +111,12 @@ def test_live_bridge_hotfix_meets_bloat_reduction_targets():
     retained_tool_tokens = tool_retention.get("tokens", 0)
 
     assert history_total <= int(LEGACY_HISTORY_SKIP_TOTAL_TOKENS * 0.3)
-    assert retained_tool_tokens <= int(
-        LEGACY_MODERATE_TOOL_RETENTION_TOKENS * 0.6
-    )
+    assert retained_tool_tokens <= int(LEGACY_MODERATE_TOOL_RETENTION_TOKENS * 0.6)
 
 
-def test_live_bridge_suspects_rank_tool_retention_as_avoidable():
+def test_live_bridge_suspects_rank_tool_retention_as_avoidable() -> None:
     try:
-        suspects = rank_live_bridge_bloat_suspects(
-            measure_live_bridge_bloat_scenarios()
-        )
+        suspects = rank_live_bridge_bloat_suspects(measure_live_bridge_bloat_scenarios())
     except KeyError:
         return
 
@@ -158,7 +129,7 @@ def test_live_bridge_suspects_rank_tool_retention_as_avoidable():
     assert suspect["classification"] == ("likely accidental / too eager")
 
 
-def test_live_bridge_report_marks_strict_pressure_as_opt_out_risk():
+def test_live_bridge_report_marks_strict_pressure_as_opt_out_risk() -> None:
     try:
         report = generate_live_bridge_bloat_report()
     except KeyError:
@@ -176,8 +147,7 @@ def test_live_bridge_report_marks_strict_pressure_as_opt_out_risk():
         (
             item
             for item in report.get("ranked_suspects", [])
-            if item["name"]
-            == "Strict-mode protocol law in bridge opt-out path"
+            if item["name"] == "Strict-mode protocol law in bridge opt-out path"
         ),
         None,
     )

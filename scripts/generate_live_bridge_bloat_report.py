@@ -13,9 +13,7 @@ from tok.analysis.live_bridge_bloat import (
     render_live_bridge_bloat_markdown,
 )
 
-REPORT_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "tmp", "live_bridge_bloat_report.json"
-)
+REPORT_PATH = os.path.join(os.path.dirname(__file__), "..", "tmp", "live_bridge_bloat_report.json")
 FINDINGS_PATH = os.path.join(
     os.path.dirname(__file__),
     "..",
@@ -33,9 +31,6 @@ def main() -> None:
 
     with open(FINDINGS_PATH, "w") as handle:
         handle.write(render_live_bridge_bloat_markdown(report))
-
-    print(f"Live bridge bloat report saved to: {REPORT_PATH}")
-    print(f"Live bridge findings doc written to: {FINDINGS_PATH}")
 
 
 if __name__ == "__main__":

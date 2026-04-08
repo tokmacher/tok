@@ -7,9 +7,13 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ...compression import text_of
-from ..config import TOOL_DENSITY_THRESHOLD, TOOL_VOLUME_HEAVY_BYTES
-from ..repeat_targets import SEARCH_LIKE_TOOLS, extract_shell_file_read_path
+from tok.compression import text_of
+from tok.runtime.config import TOOL_DENSITY_THRESHOLD, TOOL_VOLUME_HEAVY_BYTES
+from tok.runtime.repeat_targets import (
+    SEARCH_LIKE_TOOLS,
+    extract_shell_file_read_path,
+)
+
 from ._tool_context import logical_target_key_from_context
 
 SignalBump = Callable[[str, int], None]
@@ -61,16 +65,8 @@ def _should_skip_history_rewrite(
     total = len(messages) or 1
     density = tool_results / total
 
-    file_like_reads = sum(
-        1
-        for event in normalized_tool_events
-        if event.compressibility_class == "file_read"
-    )
-    command_like = sum(
-        1
-        for event in normalized_tool_events
-        if event.compressibility_class == "command"
-    )
+    file_like_reads = sum(1 for event in normalized_tool_events if event.compressibility_class == "file_read")
+    command_like = sum(1 for event in normalized_tool_events if event.compressibility_class == "command")
     heavy_results = _count_heavy_results(messages)
 
     if tool_compatible:
@@ -111,9 +107,7 @@ def _iter_tool_results(
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 tool_id = str(block.get("tool_use_id", "")).strip()
                 if tool_id:
-                    results.append(
-                        (tool_id, text_of(block.get("content", "")))
-                    )
+                    results.append((tool_id, text_of(block.get("content", ""))))
     return results
 
 
@@ -127,15 +121,9 @@ def _extract_tool_input_params(
         or tool_input.get("TargetFile")
         or ""
     ).strip()
-    command = str(
-        tool_input.get("command") or tool_input.get("cmd") or ""
-    ).strip()
+    command = str(tool_input.get("command") or tool_input.get("cmd") or "").strip()
     query = str(
-        tool_input.get("query")
-        or tool_input.get("pattern")
-        or tool_input.get("search")
-        or tool_input.get("text")
-        or ""
+        tool_input.get("query") or tool_input.get("pattern") or tool_input.get("search") or tool_input.get("text") or ""
     ).strip()
     return path, command, query
 
@@ -150,20 +138,13 @@ def _track_file_read_repeats(
     file_reads_seen_raw: dict[str, int],
     file_reads_seen_logical: dict[str, int],
     repeat_file_read_ids: list[str],
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None,
     bump: SignalBump,
 ) -> None:
     if family != "file_read" or logical_target == "path-missing":
         return
-    file_reads_seen_raw[effective_path] = (
-        file_reads_seen_raw.get(effective_path, 0) + 1
-    )
-    file_reads_seen_logical[logical_target] = (
-        file_reads_seen_logical.get(logical_target, 0) + 1
-    )
+    file_reads_seen_raw[effective_path] = file_reads_seen_raw.get(effective_path, 0) + 1
+    file_reads_seen_logical[logical_target] = file_reads_seen_logical.get(logical_target, 0) + 1
     if is_shell_file_read:
         bump("shell_file_read_normalized", 1)
     if file_reads_seen_logical[logical_target] > 1:
@@ -184,9 +165,7 @@ def _track_search_repeats(
 ) -> None:
     if tool_name not in SEARCH_LIKE_TOOLS or not query:
         return
-    searches_seen_logical[logical_target] = (
-        searches_seen_logical.get(logical_target, 0) + 1
-    )
+    searches_seen_logical[logical_target] = searches_seen_logical.get(logical_target, 0) + 1
     if searches_seen_logical[logical_target] > 1:
         if tool_id:
             repeat_search_ids.append(tool_id)
@@ -205,9 +184,7 @@ def _track_command_repeats(
 ) -> None:
     if family != "command" or not logical_target:
         return
-    commands_seen_logical[logical_target] = (
-        commands_seen_logical.get(logical_target, 0) + 1
-    )
+    commands_seen_logical[logical_target] = commands_seen_logical.get(logical_target, 0) + 1
     if commands_seen_logical[logical_target] > 1:
         if tool_id:
             repeat_command_ids.append(tool_id)
@@ -251,9 +228,7 @@ def _detect_repeated_tool_calls(
             ).strip()
             or None,
             command=str(
-                (tool_use.get("input") or {}).get("command")
-                or (tool_use.get("input") or {}).get("cmd")
-                or ""
+                (tool_use.get("input") or {}).get("command") or (tool_use.get("input") or {}).get("cmd") or ""
             ).strip()
             or None,
         )[:2]
@@ -274,10 +249,7 @@ def _is_cached_hit(
     tool_name: str,
     context: dict[str, Any],
     raw_content: str,
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None,
 ) -> bool:
     if result_cache is None:
         return False
@@ -299,27 +271,19 @@ def _process_repeat_file_results(
     result_text: str,
     is_repeat_file: bool,
     file_reads_seen_logical: dict[str, int],
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None,
     bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:
     if family != "file_read":
         return
-    if (
-        not effective_path
-        or file_reads_seen_logical.get(logical_target, 0) <= 1
-    ):
+    if not effective_path or file_reads_seen_logical.get(logical_target, 0) <= 1:
         return
     if is_repeat_file:
         args = context.get("args") if isinstance(context, dict) else None
         if isinstance(args, dict) and args.get("tok_bypass_cache"):
             bump("bypass_reacquire", 1)
-        elif result_cache is not None and _is_cached_hit(
-            tool_name, context, result_text, result_cache
-        ):
+        elif result_cache is not None and _is_cached_hit(tool_name, context, result_text, result_cache):
             bump("cached_file_read", 1)
         else:
             bump("repeat_file_read", 1)
@@ -336,10 +300,7 @@ def _process_repeat_search_results(
     query: str,
     is_repeat_search: bool,
     searches_seen_logical: dict[str, int],
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None,
     bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:
@@ -348,9 +309,7 @@ def _process_repeat_search_results(
     if searches_seen_logical.get(logical_target, 0) <= 1:
         return
     if is_repeat_search:
-        if result_cache is not None and _is_cached_hit(
-            tool_name, context, result_text, result_cache
-        ):
+        if result_cache is not None and _is_cached_hit(tool_name, context, result_text, result_cache):
             bump("cached_search", 1)
         else:
             bump("repeat_search", 1)
@@ -374,8 +333,7 @@ def _process_repeat_command_results(
     digest = hashlib.sha256(text.encode()).hexdigest() if text else ""
     lowered = text.lower()
     current_success = bool(text.strip()) and not any(
-        token in lowered
-        for token in ("error", "failed", "traceback", "exception")
+        token in lowered for token in ("error", "failed", "traceback", "exception")
     )
     previous_state = command_result_state.get(logical_target)
     command_result_state[logical_target] = (digest, current_success)
@@ -403,10 +361,7 @@ def _process_cached_tool_results(
     file_reads_seen_logical: dict[str, int],
     searches_seen_logical: dict[str, int],
     commands_seen_logical: dict[str, int],
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None,
     bump: SignalBump,
     count_tokens: Callable[[str], int],
 ) -> None:
@@ -421,20 +376,14 @@ def _process_cached_tool_results(
             path=str(context.get("path") or "").strip() or None,
             query=str(context.get("query") or "").strip() or None,
             command=str(
-                (context.get("args") or {}).get("command")
-                or (context.get("args") or {}).get("cmd")
-                or ""
+                (context.get("args") or {}).get("command") or (context.get("args") or {}).get("cmd") or ""
             ).strip()
             or None,
         )
         effective_path = (
             str(context.get("path") or "").strip()
             or extract_shell_file_read_path(
-                str(
-                    (context.get("args") or {}).get("command")
-                    or (context.get("args") or {}).get("cmd")
-                    or ""
-                ).strip()
+                str((context.get("args") or {}).get("command") or (context.get("args") or {}).get("cmd") or "").strip()
             )
             or ""
         )

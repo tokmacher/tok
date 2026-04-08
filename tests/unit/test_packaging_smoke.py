@@ -1,4 +1,5 @@
-"""Packaging smoke tests for Batch 3: install-path hardening.
+"""
+Packaging smoke tests for Batch 3: install-path hardening.
 
 Verifies that the shell integration script is resolvable from package data
 in both source-checkout and installed-wheel scenarios.
@@ -11,7 +12,7 @@ from pathlib import Path
 
 
 class TestBundledScript:
-    def test_bundled_script_exists_via_importlib_resources(self):
+    def test_bundled_script_exists_via_importlib_resources(self) -> None:
         """tok_claude.sh must be resolvable from tok.data package data."""
         ref = files("tok.data").joinpath("tok_claude.sh")
         path = Path(str(ref))
@@ -21,25 +22,23 @@ class TestBundledScript:
             "Run Batch 3: the script must live in src/tok/data/ and be included in the wheel."
         )
 
-    def test_bundled_script_is_nonempty(self):
+    def test_bundled_script_is_nonempty(self) -> None:
         """tok_claude.sh must not be empty."""
         ref = files("tok.data").joinpath("tok_claude.sh")
         path = Path(str(ref))
 
         assert path.stat().st_size > 0, "tok_claude.sh is empty"
 
-    def test_bundled_script_contains_claude_function(self):
+    def test_bundled_script_contains_claude_function(self) -> None:
         """Sanity-check that the sourced script defines a claude() function."""
         ref = files("tok.data").joinpath("tok_claude.sh")
         content = Path(str(ref)).read_text()
 
-        assert "claude()" in content, (
-            "tok_claude.sh must define claude() function"
-        )
+        assert "claude()" in content, "tok_claude.sh must define claude() function"
 
 
 class TestShellIntegrationBlock:
-    def test_integration_block_references_bundled_script(self):
+    def test_integration_block_references_bundled_script(self) -> None:
         """integration_block() must point at the bundled script, not scripts/."""
         from tok.utils.shell_integration import integration_block
 
@@ -51,7 +50,7 @@ class TestShellIntegrationBlock:
             "It should use the bundled package data path."
         )
 
-    def test_integration_block_has_markers(self):
+    def test_integration_block_has_markers(self) -> None:
         from tok.utils.shell_integration import (
             END_MARKER,
             START_MARKER,
@@ -62,9 +61,7 @@ class TestShellIntegrationBlock:
         assert START_MARKER in block
         assert END_MARKER in block
 
-    def test_install_writes_block_pointing_at_bundled_path(
-        self, tmp_path, monkeypatch
-    ):
+    def test_install_writes_block_pointing_at_bundled_path(self, tmp_path, monkeypatch) -> None:
         """install() must write a source line that points at the bundled script."""
         monkeypatch.setenv("SHELL", "/bin/zsh")
         from tok.utils.shell_integration import install

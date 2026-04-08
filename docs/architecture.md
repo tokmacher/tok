@@ -1,6 +1,7 @@
 # Architecture
 
-For visual flow diagrams, see [architecture-diagrams.md](./architecture-diagrams.md). For the active roadmap and tranche sequencing, see `roadmap.md` in the repository root.
+For visual flow diagrams, see [architecture-diagrams.md](./architecture-diagrams.md).
+For the active roadmap and tranche sequencing, see `roadmap.md` in the repository root.
 
 Current architecture posture:
 
@@ -44,7 +45,8 @@ The Claude bridge remains the primary acceptance surface.
 1. Claude Code sends a `/v1/messages` POST to `localhost:9090`
 1. The bridge adapter forwards the normalized request into `UniversalTokRuntime`
 1. If history exceeds `keep_turns` human turns:
-   - Older messages are compressed into a `>>>` rolling state line using the live bridge memory schema
+   - Older messages are compressed into a `>>>` rolling state line using the live bridge
+     memory schema
    - Only the last `keep_turns` human turns are kept verbatim
    - Tool-use/tool-result pairs are never split
 1. The runtime injects the Tok output directive and projected memory
@@ -53,16 +55,21 @@ The Claude bridge remains the primary acceptance surface.
 ### Response Path
 
 1. Anthropic returns a response (streaming SSE or non-streaming JSON)
-1. For streaming: the full SSE stream is buffered, then the bridge adapter passes the accumulated text to the runtime
+1. For streaming: the full SSE stream is buffered, then the bridge adapter passes the
+   accumulated text to the runtime
 1. The runtime detects if the response is in Tok grammar:
-   - **Tok mode**: `@thought` blocks are stripped, `|>` content from `@msg role:assistant` is extracted
+   - **Tok mode**: `@thought` blocks are stripped, `|>` content from
+     `@msg role:assistant` is extracted
    - **Markdown fallback**: Headers, bold, italic, horizontal rules are stripped
 1. The bridge re-emits the processed response to Claude Code
-1. Memory, family-mode state, savings, and invisible-pressure signals are recorded through shared runtime logic
+1. Memory, family-mode state, savings, and invisible-pressure signals are recorded
+   through shared runtime logic
 
 ### Fail-Open Behavior
 
-If any error occurs during compression or translation, the bridge transparently passes the raw request/response through. The user never sees a Tok-related error; worst case is higher token cost for that request.
+If any error occurs during compression or translation, the bridge transparently passes
+the raw request/response through. The user never sees a Tok-related error; worst case is
+higher token cost for that request.
 
 ## Runtime Contract
 
@@ -72,8 +79,11 @@ For `0.1.0`, Tok should be described as having one canonical protocol IDL and tw
 derived translation layers:
 
 - Canonical protocol IDL: `src/tok/protocol/schema.py` and `src/tok/protocol/models.py`
-- Derived runtime tool-input contract: `TOOL_SCHEMAS` in `src/tok/protocol/models.py`, enforced by `RuntimeToolExecutor._compiler_guard()` in `src/tok/runtime/tools.py`
-- Bridge / wire adaptation: request shaping in `src/tok/runtime/pipeline/request_preparation.py` and transport canonicalization in `src/tok/runtime/pipeline/request_validation.py`
+- Derived runtime tool-input contract: `TOOL_SCHEMAS` in `src/tok/protocol/models.py`,
+  enforced by `RuntimeToolExecutor._compiler_guard()` in `src/tok/runtime/tools.py`
+- Bridge / wire adaptation: request shaping in
+  `src/tok/runtime/pipeline/request_preparation.py` and transport canonicalization in
+  `src/tok/runtime/pipeline/request_validation.py`
 
 Top-level exports in `src/tok/__init__.py` are convenience re-exports, not an
 independent source of truth. Release audits should score schema drift against the
@@ -82,35 +92,57 @@ derived-contract drift rather than a competing second IDL.
 
 ### Wire Memory Schema
 
-- The working-memory state is a sparse `>>>` line emitted in canonical order: `turns`, `goal`, `files`, `cmds`, `tests`, `errs`, `constraints`, `next`.
-- Structured bridge memory is authoritative when present; `memory.tok` is a compatibility fallback only.
-- Projection remains bounded and deterministic—fields are emitted only when populated, but ordering never changes.
+- The working-memory state is a sparse `>>>` line emitted in canonical order: `turns`,
+  `goal`, `files`, `cmds`, `tests`, `errs`, `constraints`, `next`.
+- Structured bridge memory is authoritative when present; `memory.tok` is a
+  compatibility fallback only.
+- Projection remains bounded and deterministic—fields are emitted only when populated,
+  but ordering never changes.
 
 ### Request Preparation Rules
 
-1. Keep the last `keep_turns` human turns verbatim; everything older compresses into the state line via `BridgeMemoryState`.
-1. Tool-use/tool-result pairs must remain intact (never split across compression boundaries).
-1. Tool density determines whether history rewrite is skipped to preserve fidelity on heavy tool sessions.
-1. The runtime keeps semantic deduplication, tool-result compression, and history winnowing active by default, then escalates into tool-compatible shaping only when the session is recovery-sensitive.
+1. Keep the last `keep_turns` human turns verbatim; everything older compresses into the
+   state line via `BridgeMemoryState`.
+1. Tool-use/tool-result pairs must remain intact (never split across compression
+   boundaries).
+1. Tool density determines whether history rewrite is skipped to preserve fidelity on
+   heavy tool sessions.
+1. The runtime keeps semantic deduplication, tool-result compression, and history
+   winnowing active by default, then escalates into tool-compatible shaping only when
+   the session is recovery-sensitive.
 
 ### Response Classification
 
-- **Tok-native success:** response uses Tok markers, has a visible `@msg role:assistant` block, and yields readable assistant/tool content without markdown fallback.
-- **Model-Agnostic Leniency:** The parser supports both `:` and `=` as attribute separators. It also recognizes hybrid `@Tool name {json}` blocks with unquoted keys and TitleCase normalization (e.g., `@Tool ReadFile` maps to `read`).
-- **Tool-compatible mode:** plain text is accepted when the upstream request declared tool compatibility. Telemetry records `tool_compatible_response` instead of `non_tok_response`.
-- **Fail-open compatibility:** malformed or markdown-only responses pass through but increment `fail_open_compat_response` and `non_tok_response` signals.
-- **Malformed enforcement:** hybrid tool JSON, non-inverted assistant blocks, or bad headers increment the specific `malformed_tok_*` signals and still fail to count as Tok-native success.
+- **Tok-native success:** response uses Tok markers, has a visible `@msg role:assistant`
+  block, and yields readable assistant/tool content without markdown fallback.
+- **Model-Agnostic Leniency:** The parser supports both `:` and `=` as attribute
+  separators. It also recognizes hybrid `@Tool name {json}` blocks with unquoted keys
+  and TitleCase normalization (e.g., `@Tool ReadFile` maps to `read`).
+- **Tool-compatible mode:** plain text is accepted when the upstream request declared
+  tool compatibility. Telemetry records `tool_compatible_response` instead of
+  `non_tok_response`.
+- **Fail-open compatibility:** malformed or markdown-only responses pass through but
+  increment `fail_open_compat_response` and `non_tok_response` signals.
+- **Malformed enforcement:** hybrid tool JSON, non-inverted assistant blocks, or bad
+  headers increment the specific `malformed_tok_*` signals and still fail to count as
+  Tok-native success.
 
 ### Inversion & Memory Guarantees
 
-- Cold starts prefer structured memory; wire fallback is only used when structured memory is empty.
-- Memory ingestion always writes the latest `>>>` line to both structured state and fallback files, keeping bridge replays consistent.
-- File/search snapshots are recorded through runtime helpers and surfaced to telemetry as `file_snapshot_recorded` / `search_snapshot_recorded` signals.
+- Cold starts prefer structured memory; wire fallback is only used when structured
+  memory is empty.
+- Memory ingestion always writes the latest `>>>` line to both structured state and
+  fallback files, keeping bridge replays consistent.
+- File/search snapshots are recorded through runtime helpers and surfaced to telemetry
+  as `file_snapshot_recorded` / `search_snapshot_recorded` signals.
 
 ### Telemetry & Conformance Signals
 
-- Behavior signals cover `tok_native_response`, `non_tok_response`, `fail_open_compat_response`, `malformed_tok_*`, cold-start metrics, invisible pressure, and mutation detection.
-- `tok doctor` and CI gates consume these signals; any regression of the contract is treated as a release blocker per the roadmap.
+- Behavior signals cover `tok_native_response`, `non_tok_response`,
+  `fail_open_compat_response`, `malformed_tok_*`, cold-start metrics, invisible
+  pressure, and mutation detection.
+- `tok doctor` and CI gates consume these signals; any regression of the contract is
+  treated as a release blocker per the roadmap.
 
 ## Module Layout
 
@@ -138,11 +170,14 @@ src/tok/
 - Canonical runtime: `runtime/core.py`
 - Compatibility shim: `universal_runtime.py`
 - Primary adapter: `gateway/__init__.py`
-- Secondary / experimental adapters: `adapters.py`, `live_runner.py`, `agent.py`, `adapters/orchestrator.py`
+- Secondary / experimental adapters: `adapters.py`, `live_runner.py`, `agent.py`,
+  `adapters/orchestrator.py`
 - Canonical protocol IDL: `protocol/schema.py`, `protocol/models.py`
 - Derived runtime contract: `runtime/tools.py`
-- Bridge transport adaptation: `runtime/pipeline/request_preparation.py`, `runtime/pipeline/request_validation.py`
-- Experimental / legacy: deeper orchestrator internals, monitoring/dashboard code, and archive material
+- Bridge transport adaptation: `runtime/pipeline/request_preparation.py`,
+  `runtime/pipeline/request_validation.py`
+- Experimental / legacy: deeper orchestrator internals, monitoring/dashboard code, and
+  archive material
 
 The release surface for `0.1.0` is intentionally narrower than the repository layout:
 see `src/tok/release_surface.py` for the supported-versus-experimental split that
@@ -171,20 +206,26 @@ Runtime health is evaluated on two axes that must move together:
 | Efficiency | tokens per successful step                                      | ↓ lower is better  |
 | Depth      | `reasoning_depth_per_token` = (steps × tool_diversity) / tokens | ↑ higher is better |
 
-If token savings increase while `reasoning_depth_per_token` decreases, the compression is over-aggressive and the change should be treated as a regression.
+If token savings increase while `reasoning_depth_per_token` decreases, the compression
+is over-aggressive and the change should be treated as a regression.
 
-`semantic_regression_score` (sum of non-Tok responses, fail-open churn, repeat reads, blocker rediscovery) is the third axis that guards against protocol drift silently growing behind improving efficiency numbers.
+`semantic_regression_score` (sum of non-Tok responses, fail-open churn, repeat reads,
+blocker rediscovery) is the third axis that guards against protocol drift silently
+growing behind improving efficiency numbers.
 
 ### Episode Ledger
 
-`EpisodeLedger` (in `universal_runtime.py`) stores a rolling window of completed reasoning episodes. Each episode captures:
+`EpisodeLedger` (in `universal_runtime.py`) stores a rolling window of completed
+reasoning episodes. Each episode captures:
 
 - `goal` — the active objective when the episode started
 - `outcome` — success / failure / partial / open
-- `learnings` — one-line causal summary (e.g. "test X failed because missing import Y; fixed by adding Z")
+- `learnings` — one-line causal summary (e.g. "test X failed because missing import Y;
+  fixed by adding Z")
 - `artifacts` — key files or commands touched
 
-The ledger is projected into the working-memory state line to prevent the model from re-opening solved subproblems across session boundaries.
+The ledger is projected into the working-memory state line to prevent the model from
+re-opening solved subproblems across session boundaries.
 
 ## Compression Algorithm
 
@@ -202,6 +243,8 @@ The input compression (`compress_history`) works by:
    - `errs`: recent error signals
    - `constraints`: user instructions that must persist
    - `next`: near-term intended action when available
-1. The summary is encoded as a `>>>` state line appended to the injected runtime directive
+1. The summary is encoded as a `>>>` state line appended to the injected runtime
+   directive
 
-This produces O(1) context growth — the state line is a fixed size regardless of conversation length.
+This produces O(1) context growth — the state line is a fixed size regardless of
+conversation length.

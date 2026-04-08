@@ -11,7 +11,7 @@ import tok
 from tok.universal_runtime import ProcessedRuntimeResponse, RuntimeSession
 
 
-def test_public_wrap_routes_through_runtime(tmp_path):
+def test_public_wrap_routes_through_runtime(tmp_path) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
     prepared = tok.wrap(
@@ -26,7 +26,7 @@ def test_public_wrap_routes_through_runtime(tmp_path):
     assert isinstance(prepared.behavior_signals, dict)
 
 
-def test_public_process_routes_through_runtime(tmp_path):
+def test_public_process_routes_through_runtime(tmp_path) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
     result = tok.process(
@@ -41,7 +41,7 @@ def test_public_process_routes_through_runtime(tmp_path):
     assert isinstance(result.updated_memory, str)
 
 
-def test_python_m_tok_invokes_cli_help(monkeypatch, capsys):
+def test_python_m_tok_invokes_cli_help(monkeypatch, capsys) -> None:
     monkeypatch.setattr("sys.argv", ["python", "--help"])
 
     with pytest.raises(SystemExit) as excinfo:
@@ -54,10 +54,6 @@ def test_python_m_tok_invokes_cli_help(monkeypatch, capsys):
     assert "install" in out
 
 
-def test_tok_wrap_example_is_syntax_valid():
-    example = (
-        Path(__file__).resolve().parents[2]
-        / "examples"
-        / "tok_wrap_example.py"
-    )
+def test_tok_wrap_example_is_syntax_valid() -> None:
+    example = Path(__file__).resolve().parents[2] / "examples" / "tok_wrap_example.py"
     compile(example.read_text(), str(example), "exec")

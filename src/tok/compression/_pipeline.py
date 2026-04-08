@@ -1,9 +1,20 @@
-from __future__ import annotations
-
 """Compression pipeline facade and backward-compatible entrypoints."""
+
+from __future__ import annotations
 
 from typing import Any
 
+from . import _history_pipeline as _history
+from ._history_pipeline import (
+    RECENT_WINDOW_THRESHOLD,
+    _compress_git_log_impl,
+    _detect_tool_content_type_impl,
+    compress_history_impl,
+    inject_system_additions_impl,
+)
+from ._history_pipeline import (
+    compress_recent_window_impl as _compress_recent_window_impl,
+)
 from ._tool_result_codecs import (
     _compress_config_json,
     _compress_env_ps,
@@ -23,15 +34,6 @@ from ._tool_result_codecs import (
     _tighten_compressed_output,
     truncate_large_result,
 )
-from . import _history_pipeline as _history
-from ._history_pipeline import (
-    _compress_git_log_impl,
-    _detect_tool_content_type_impl,
-    compress_history_impl,
-    compress_recent_window_impl as _compress_recent_window_impl,
-    inject_system_additions_impl,
-)
-from ._history_pipeline import RECENT_WINDOW_THRESHOLD
 
 __all__ = [
     "TOOL_COMPRESS_THRESHOLD",
@@ -66,6 +68,7 @@ TOOL_COMPRESS_THRESHOLD = 0
 
 
 def _sync_threshold() -> None:
+    """Synchronize the threshold between pipeline modules."""
     _history.TOOL_COMPRESS_THRESHOLD = TOOL_COMPRESS_THRESHOLD
 
 
@@ -74,6 +77,7 @@ def tok_tool_result_impl(
     compression_level: str = "balanced",
     tool_context: dict[str, Any] | None = None,
 ) -> str:
+    """Compress a tool result using the history pipeline."""
     _sync_threshold()
     return _history.tok_tool_result_impl(
         content,
@@ -84,10 +88,7 @@ def tok_tool_result_impl(
 
 def compress_tool_results_impl(
     messages: list[dict[str, Any]],
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None = None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
@@ -99,6 +100,7 @@ def compress_tool_results_impl(
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Compress tool results in messages using the history pipeline."""
     _sync_threshold()
     return _history.compress_tool_results_impl(
         messages,

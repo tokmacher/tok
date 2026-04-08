@@ -1,4 +1,5 @@
-"""Generate a comprehensive system prompt bloat attribution report.
+"""
+Generate a comprehensive system prompt bloat attribution report.
 
 Reads the baseline JSON (or re-runs measurements if not present),
 computes component-wise attribution, trend analysis, and writes:
@@ -14,22 +15,15 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-BASELINE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "tmp", "prompt_bloat_baseline.json"
-)
-REPORT_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "tmp", "prompt_bloat_analysis_report.json"
-)
-FINDINGS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "docs", "prompt_bloat_findings.md"
-)
+BASELINE_PATH = os.path.join(os.path.dirname(__file__), "..", "tmp", "prompt_bloat_baseline.json")
+REPORT_PATH = os.path.join(os.path.dirname(__file__), "..", "tmp", "prompt_bloat_analysis_report.json")
+FINDINGS_PATH = os.path.join(os.path.dirname(__file__), "..", "docs", "prompt_bloat_findings.md")
 
 
 def _load_or_measure() -> dict:
     if os.path.exists(BASELINE_PATH):
         with open(BASELINE_PATH) as f:
             return json.load(f)
-    print("Baseline not found — running measurements...")
     import subprocess
 
     subprocess.run(
@@ -69,9 +63,7 @@ def compute_attribution(data: dict) -> dict:
     state_overhead = sb["typical_session"]["tokens"] - cold_start_tokens
 
     # Incremental cost of pressure escalation
-    pressure_delta_low_to_high = (
-        pi["pressure_75"]["tokens"] - pi["pressure_0"]["tokens"]
-    )
+    pressure_delta_low_to_high = pi["pressure_75"]["tokens"] - pi["pressure_0"]["tokens"]
     law_tokens = ds["TOK_PROTOCOL_LAW"]["tokens"]
     reinforced_tokens = ds["TOK_OUTPUT_DIRECTIVE_REINFORCED"]["tokens"]
     minimal_tokens = ds["TOK_OUTPUT_DIRECTIVE_MINIMAL"]["tokens"]
@@ -100,9 +92,7 @@ def compute_attribution(data: dict) -> dict:
         "high_pressure_breakdown": {
             "total_tokens": high_pressure_total,
             "pressure_escalation_delta": pressure_delta_low_to_high,
-            "pressure_escalation_pct_of_highpressure": _pct(
-                pressure_delta_low_to_high, high_pressure_total
-            ),
+            "pressure_escalation_pct_of_highpressure": _pct(pressure_delta_low_to_high, high_pressure_total),
             "protocol_law_tokens": law_tokens,
             "reinforced_vs_minimal_extra": reinforced_tokens - minimal_tokens,
         },
@@ -110,10 +100,8 @@ def compute_attribution(data: dict) -> dict:
             "essentials": grammar_essentials_tokens,
             "restricted": grammar_restricted_tokens,
             "full_grammar": grammar_full_tokens,
-            "full_vs_restricted_overhead": grammar_full_tokens
-            - grammar_restricted_tokens,
-            "full_vs_essentials_overhead": grammar_full_tokens
-            - grammar_essentials_tokens,
+            "full_vs_restricted_overhead": grammar_full_tokens - grammar_restricted_tokens,
+            "full_vs_essentials_overhead": grammar_full_tokens - grammar_essentials_tokens,
         },
         "base_system_prompt": {
             "tok_system_prompt_tokens": system_prompt_full,
@@ -142,7 +130,7 @@ def compute_top_contributors(data: dict, attribution: dict) -> list[dict]:
     gs = data["grammar_snippets"]
     bp = data["base_prompts"]
 
-    contributors = [
+    return [
         {
             "rank": 1,
             "component": "TOK_SYSTEM_PROMPT (grammar=full bootstrap)",
@@ -158,13 +146,8 @@ def compute_top_contributors(data: dict, attribution: dict) -> list[dict]:
         {
             "rank": 2,
             "component": "Pressure escalation: TOK_PROTOCOL_LAW + REINFORCED directive",
-            "tokens": attribution["directive_component_costs"][
-                "law_plus_reinforced"
-            ],
-            "chars": (
-                ds["TOK_PROTOCOL_LAW"]["chars"]
-                + ds["TOK_OUTPUT_DIRECTIVE_REINFORCED"]["chars"]
-            ),
+            "tokens": attribution["directive_component_costs"]["law_plus_reinforced"],
+            "chars": (ds["TOK_PROTOCOL_LAW"]["chars"] + ds["TOK_OUTPUT_DIRECTIVE_REINFORCED"]["chars"]),
             "scenario": "pressure > 50 (protocol drift detected)",
             "frequency": "Triggered on any turn where invisible pressure exceeds 50",
             "notes": (
@@ -214,7 +197,6 @@ def compute_top_contributors(data: dict, attribution: dict) -> list[dict]:
             ),
         },
     ]
-    return contributors
 
 
 def compute_compression_efficiency(data: dict) -> dict:
@@ -260,9 +242,7 @@ def compute_trend_analysis(data: dict) -> dict:
             trend[f"turn_{n}"] = {
                 "wire_state_tokens": mg[key]["tokens"],
                 "wire_state_chars": mg[key]["chars"],
-                "full_tok_tokens": mg.get(f"{key}_full_tok", {}).get(
-                    "tokens", "n/a"
-                ),
+                "full_tok_tokens": mg.get(f"{key}_full_tok", {}).get("tokens", "n/a"),
             }
     return trend
 
@@ -277,12 +257,8 @@ def generate_report(data: dict) -> dict:
     optimizations = [
         {
             "contributor": "Pressure escalation overhead",
-            "current_cost_tokens": attribution["directive_component_costs"][
-                "law_plus_reinforced"
-            ],
-            "optimized_cost_tokens": attribution["directive_component_costs"][
-                "minimal_directive"
-            ],
+            "current_cost_tokens": attribution["directive_component_costs"]["law_plus_reinforced"],
+            "optimized_cost_tokens": attribution["directive_component_costs"]["minimal_directive"],
             "savings_tokens": (
                 attribution["directive_component_costs"]["law_plus_reinforced"]
                 - attribution["directive_component_costs"]["minimal_directive"]
@@ -296,12 +272,9 @@ def generate_report(data: dict) -> dict:
         {
             "contributor": "Grammar bootstrap level selection",
             "current_cost_tokens": data["grammar_snippets"]["full"]["tokens"],
-            "optimized_cost_tokens": data["grammar_snippets"]["essentials"][
-                "tokens"
-            ],
+            "optimized_cost_tokens": data["grammar_snippets"]["essentials"]["tokens"],
             "savings_tokens": (
-                data["grammar_snippets"]["full"]["tokens"]
-                - data["grammar_snippets"]["essentials"]["tokens"]
+                data["grammar_snippets"]["full"]["tokens"] - data["grammar_snippets"]["essentials"]["tokens"]
             ),
             "strategy": (
                 "Default delegation to 'essentials' (87t) or 'restricted' (133t) instead of 'full' (891t). "
@@ -311,17 +284,11 @@ def generate_report(data: dict) -> dict:
         },
         {
             "contributor": "TOK_OUTPUT_DIRECTIVE full vs minimal",
-            "current_cost_tokens": data["directive_sizes"][
-                "TOK_OUTPUT_DIRECTIVE"
-            ]["tokens"],
-            "optimized_cost_tokens": data["directive_sizes"][
-                "TOK_OUTPUT_DIRECTIVE_MINIMAL"
-            ]["tokens"],
+            "current_cost_tokens": data["directive_sizes"]["TOK_OUTPUT_DIRECTIVE"]["tokens"],
+            "optimized_cost_tokens": data["directive_sizes"]["TOK_OUTPUT_DIRECTIVE_MINIMAL"]["tokens"],
             "savings_tokens": (
                 data["directive_sizes"]["TOK_OUTPUT_DIRECTIVE"]["tokens"]
-                - data["directive_sizes"]["TOK_OUTPUT_DIRECTIVE_MINIMAL"][
-                    "tokens"
-                ]
+                - data["directive_sizes"]["TOK_OUTPUT_DIRECTIVE_MINIMAL"]["tokens"]
             ),
             "strategy": (
                 "Current code already uses TOK_OUTPUT_DIRECTIVE_MINIMAL at pressure<=50 (56t). "
@@ -332,13 +299,9 @@ def generate_report(data: dict) -> dict:
         },
         {
             "contributor": "TOK_PROTOCOL_LAW firing threshold",
-            "current_cost_tokens": data["directive_sizes"]["TOK_PROTOCOL_LAW"][
-                "tokens"
-            ],
+            "current_cost_tokens": data["directive_sizes"]["TOK_PROTOCOL_LAW"]["tokens"],
             "optimized_cost_tokens": 0,
-            "savings_tokens": data["directive_sizes"]["TOK_PROTOCOL_LAW"][
-                "tokens"
-            ],
+            "savings_tokens": data["directive_sizes"]["TOK_PROTOCOL_LAW"]["tokens"],
             "strategy": (
                 "TOK_PROTOCOL_LAW (155t) fires at pressure>0. "
                 "Raise threshold to pressure>25 to skip it for minor drift. "
@@ -351,21 +314,11 @@ def generate_report(data: dict) -> dict:
     return {
         "summary": {
             "baseline_scenarios": {
-                "cold_start_tokens": data["scenario_baselines"]["cold_start"][
-                    "tokens"
-                ],
-                "typical_session_tokens": data["scenario_baselines"][
-                    "typical_session"
-                ]["tokens"],
-                "high_pressure_tokens": data["scenario_baselines"][
-                    "high_pressure"
-                ]["tokens"],
-                "memory_heavy_wire_state_tokens": data["scenario_baselines"][
-                    "memory_heavy"
-                ]["wire_state"]["tokens"],
-                "memory_heavy_injected_tokens": data["scenario_baselines"][
-                    "memory_heavy"
-                ]["injected_system"]["tokens"],
+                "cold_start_tokens": data["scenario_baselines"]["cold_start"]["tokens"],
+                "typical_session_tokens": data["scenario_baselines"]["typical_session"]["tokens"],
+                "high_pressure_tokens": data["scenario_baselines"]["high_pressure"]["tokens"],
+                "memory_heavy_wire_state_tokens": data["scenario_baselines"]["memory_heavy"]["wire_state"]["tokens"],
+                "memory_heavy_injected_tokens": data["scenario_baselines"]["memory_heavy"]["injected_system"]["tokens"],
             },
         },
         "attribution": attribution,
@@ -469,9 +422,7 @@ def write_markdown(report: dict) -> str:
         "|-------|-------------------:|--------------------------------:|",
     ]
     for k, v in trend.items():
-        lines.append(
-            f"| {k.replace('turn_', '')} | {v['wire_state_tokens']} | {v['full_tok_tokens']} |"
-        )
+        lines.append(f"| {k.replace('turn_', '')} | {v['wire_state_tokens']} | {v['full_tok_tokens']} |")
 
     lines += [
         "",
@@ -568,9 +519,7 @@ def write_markdown(report: dict) -> str:
         "",
     ]
     for c in top[:3]:
-        lines.append(
-            f"{c['rank']}. **{c['component']}** — {c['tokens']} tokens"
-        )
+        lines.append(f"{c['rank']}. **{c['component']}** — {c['tokens']} tokens")
         lines.append(f"   - {c['notes']}")
         lines.append("")
 
@@ -578,35 +527,24 @@ def write_markdown(report: dict) -> str:
 
 
 def main() -> None:
-    print("Tok System Prompt Bloat — Analysis Report")
-    print("=" * 60)
-
     data = _load_or_measure()
     report = generate_report(data)
 
     os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
     with open(REPORT_PATH, "w") as f:
         json.dump(report, f, indent=2)
-    print(f"Report saved to: {REPORT_PATH}")
 
     os.makedirs(os.path.dirname(FINDINGS_PATH), exist_ok=True)
     md = write_markdown(report)
     with open(FINDINGS_PATH, "w") as f:
         f.write(md)
-    print(f"Findings saved to: {FINDINGS_PATH}")
 
     # Print top contributors
-    print("\n--- Top 3 Bloat Contributors ---")
-    for c in report["top_contributors"][:3]:
-        print(f"\n{c['rank']}. {c['component']}")
-        print(f"   Tokens: {c['tokens']}")
-        print(f"   Scenario: {c['scenario']}")
-        print(f"   Notes: {c['notes'][:120]}...")
+    for _c in report["top_contributors"][:3]:
+        pass
 
-    print("\n--- Optimization Summary ---")
     for opt in report["optimization_opportunities"]:
-        savings = opt["savings_tokens"]
-        print(f"  [{savings:+d}t] {opt['contributor']}")
+        opt["savings_tokens"]
 
 
 if __name__ == "__main__":

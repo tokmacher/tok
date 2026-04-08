@@ -42,15 +42,14 @@ def get_client() -> httpx.AsyncClient:
     if _CLIENT is None:
         _CLIENT = httpx.AsyncClient(
             timeout=2.0,
-            limits=httpx.Limits(
-                max_keepalive_connections=5, max_connections=10
-            ),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
         )
     return _CLIENT
 
 
 async def cleanup_telemetry() -> None:
-    """Cleanup telemetry resources. Call this on application shutdown.
+    """
+    Cleanup telemetry resources. Call this on application shutdown.
     This function is idempotent and can be called multiple times safely.
     """
     global _CLIENT, _CLEANUP_COMPLETED
@@ -70,7 +69,8 @@ async def cleanup_telemetry() -> None:
 
 
 def _sync_cleanup() -> None:
-    """Synchronous cleanup for atexit handler.
+    """
+    Synchronous cleanup for atexit handler.
     Python 3.10+ compatible version that handles loop detection properly.
     """
     global _CLEANUP_COMPLETED
@@ -149,9 +149,7 @@ def emit_event_sync(
     try:
         loop = asyncio.get_running_loop()
         if loop.is_running():
-            loop.create_task(
-                emit_event(event_type, payload, model, request_id)
-            )
+            loop.create_task(emit_event(event_type, payload, model, request_id))
             return
     except RuntimeError:
         pass

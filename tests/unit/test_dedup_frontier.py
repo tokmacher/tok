@@ -37,19 +37,10 @@ def test_canonicalize_tool_result_text_normalizes_noise(
         '{"b":2,"a":1} '
         "123e4567-e89b-12d3-a456-426614174000"
     )
-    raw_b = (
-        "ERROR $CWD/src/app.py "
-        "2026-03-29T15:00:00Z "
-        '{"a":1,"b":2} '
-        "123e4567-e89b-12d3-a456-426614174000"
-    )
+    raw_b = 'ERROR $CWD/src/app.py 2026-03-29T15:00:00Z {"a":1,"b":2} 123e4567-e89b-12d3-a456-426614174000'
 
-    canonical_a = canonicalize_tool_result_text(
-        raw_a, workspace_root=workspace
-    )
-    canonical_b = canonicalize_tool_result_text(
-        raw_b, workspace_root=workspace
-    )
+    canonical_a = canonicalize_tool_result_text(raw_a, workspace_root=workspace)
+    canonical_b = canonicalize_tool_result_text(raw_b, workspace_root=workspace)
 
     assert canonical_a == canonical_b
     assert "\x1b" not in canonical_a
@@ -63,12 +54,8 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(
 ) -> None:
     large = "A" * (_SEMANTIC_HASH_MIN_CHARS + 20)
     small_file = "def helper():\n    return 'ok'\n" * 4
-    volatile_a = (
-        "build started 2026-03-29T12:00:00Z\nstatus: ok\n" * 8
-    ).strip()
-    volatile_b = (
-        "build started 2026-03-29T13:00:00Z\nstatus: ok\n" * 8
-    ).strip()
+    volatile_a = ("build started 2026-03-29T12:00:00Z\nstatus: ok\n" * 8).strip()
+    volatile_b = ("build started 2026-03-29T13:00:00Z\nstatus: ok\n" * 8).strip()
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Read foo once"},
         {
@@ -209,9 +196,7 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(
     assert by_tool["small_file2"]["miss_reason"] is None
     assert by_tool["small_file2"]["opportunity_class"] == "small_file_repeat"
     assert by_tool["small_file2"]["incremental_headroom_chars"] > 0
-    assert by_tool["small_file2"]["candidate_strategy"].startswith(
-        "experiment_a_file_read_threshold_"
-    )
+    assert by_tool["small_file2"]["candidate_strategy"].startswith("experiment_a_file_read_threshold_")
     assert by_tool["volatile2"]["miss_reason"] == "volatile_only_change"
     assert by_tool["volatile2"]["repeat_class"] == "canonical_repeat"
     assert by_tool["volatile2"]["opportunity_class"] == "volatile_repeat"
@@ -324,9 +309,7 @@ def test_dedup_frontier_writes_replay_and_stress_artifacts(
             "content": "G" * (_SEMANTIC_HASH_MIN_CHARS + 50),
         },
     ]
-    fixture_path = _write_fixture(
-        tmp_path / "pressure.jsonl", fixture_messages
-    )
+    fixture_path = _write_fixture(tmp_path / "pressure.jsonl", fixture_messages)
     stress_run = {
         "turns": [
             {
@@ -411,9 +394,7 @@ def test_dedup_frontier_writes_replay_and_stress_artifacts(
     assert "live_confirmation_candidates" in summary
     assert "patch_queue" in summary
     assert "source_summaries" in summary
-    assert "stress_run" in {
-        item["source_kind"] for item in summary["source_summaries"]
-    }
+    assert "stress_run" in {item["source_kind"] for item in summary["source_summaries"]}
     assert "actionable_headroom_chars" in summary
 
 
@@ -435,10 +416,7 @@ def test_benign_first_turn_cut_failures_are_not_actionable(
 
     assert summary["benign_first_turn_cut_failures"] >= 0
     assert summary["history_cliff_events"] == 0
-    assert all(
-        item["opportunity_class"] != "structural_cliff"
-        for item in summary["patch_queue"]
-    )
+    assert all(item["opportunity_class"] != "structural_cliff" for item in summary["patch_queue"])
 
 
 def test_small_command_repeat_with_better_cache_does_not_drive_patch_queue(
@@ -482,13 +460,8 @@ def test_small_command_repeat_with_better_cache_does_not_drive_patch_queue(
     )
     summary = _load_summary(artifacts["summary"])
 
-    assert "small_command_repeat" not in {
-        item["opportunity_class"]
-        for item in summary["incremental_top_buckets"]
-    }
-    assert "small_command_repeat" not in {
-        item["opportunity_class"] for item in summary["patch_queue"]
-    }
+    assert "small_command_repeat" not in {item["opportunity_class"] for item in summary["incremental_top_buckets"]}
+    assert "small_command_repeat" not in {item["opportunity_class"] for item in summary["patch_queue"]}
 
 
 def test_malformed_replay_fixture_is_excluded_from_trusted_summary(
@@ -518,11 +491,7 @@ def test_malformed_replay_fixture_is_excluded_from_trusted_summary(
         workspace_root=tmp_path,
     )
     summary = _load_summary(artifacts["summary"])
-    source = next(
-        item
-        for item in summary["source_summaries"]
-        if item["session_id"] == "malformed"
-    )
+    source = next(item for item in summary["source_summaries"] if item["session_id"] == "malformed")
 
     assert summary["noisy_fixture_count"] == 1
     assert source["trusted_source"] is False
@@ -534,13 +503,8 @@ def test_repo_dedup_opportunity_corpus_surfaces_runtime_candidates(
     tmp_path: Path,
 ) -> None:
     workspace_root = Path.cwd()
-    fixture_path = (
-        workspace_root / "tests/fixtures/replay/dedup_opportunity_corpus.jsonl"
-    )
-    stress_path = (
-        workspace_root
-        / "tests/fixtures/stress/dedup_repeat_under_pressure.json"
-    )
+    fixture_path = workspace_root / "tests/fixtures/replay/dedup_opportunity_corpus.jsonl"
+    stress_path = workspace_root / "tests/fixtures/stress/dedup_repeat_under_pressure.json"
 
     artifacts = run_dedup_frontier(
         output_dir=tmp_path / "out",
@@ -555,13 +519,9 @@ def test_repo_dedup_opportunity_corpus_surfaces_runtime_candidates(
     assert stress_path.exists()
     assert summary["trusted_incremental_headroom_chars"] > 0
     assert summary["experiment_matrix"]
-    assert any(
-        item["incremental_headroom_chars"] > 0
-        for item in summary["experiment_matrix"]
-    )
+    assert any(item["incremental_headroom_chars"] > 0 for item in summary["experiment_matrix"])
     assert summary["live_confirmation_candidates"]
     assert any(
-        item["opportunity_class"]
-        in {"small_file_repeat", "alias_miss", "volatile_repeat"}
+        item["opportunity_class"] in {"small_file_repeat", "alias_miss", "volatile_repeat"}
         for item in summary["patch_queue"]
     )

@@ -1,4 +1,5 @@
-"""Tok Bridge Gateway — sits between Claude Code and api.anthropic.com.
+"""
+Tok Bridge Gateway — sits between Claude Code and api.anthropic.com.
 
 Two-sided compression:
   INPUT:  Compresses old message history into a Tok rolling state (>>> ...)
@@ -12,38 +13,38 @@ import atexit
 import json
 import logging
 import os
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
-import httpx
 import uvicorn
-from typing import Any, cast
-from collections.abc import Callable
-from collections.abc import AsyncIterator
-from fastapi import FastAPI
 
-from ..runtime.memory.bridge_memory import BridgeMemoryState
-from ..runtime.smoothness import SmoothnessTracker
-from ..stats import SavingsTracker
-from ..universal_runtime import (
+from tok.runtime.pipeline.request_validation import (
+    normalize_tool_use_blocks,
+    summarize_message_structure,
+)
+from tok.runtime.smoothness import SmoothnessTracker
+from tok.stats import SavingsTracker
+from tok.universal_runtime import (
     RuntimeSession,
     UniversalTokRuntime,
     build_tool_use_id_to_context,
     collect_behavior_signals,
     response_contract_for_mode,
 )
-from ..runtime.pipeline.request_validation import (
-    normalize_tool_use_blocks,
-    summarize_message_structure,
-)
+
+from ._bridge_comparison import _request_fingerprint_diff
 
 # Internal gateway support modules
+from ._fingerprint import _request_body_fingerprint
 
-from ._fingerprint import (
-    _request_body_fingerprint,
-)
-from ._bridge_comparison import _request_fingerprint_diff
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable
+
+    import httpx
+    from fastapi import FastAPI
+
+    from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
 # PID file handling for foreground mode
 TOK_DIR = Path.home() / ".tok"
@@ -102,9 +103,7 @@ def _default_request_policy() -> str:
     tok_mode = os.getenv("TOK_MODE", "tool-compatible").strip().lower()
     if tok_mode == "baseline":
         return "forced_baseline"
-    explicit_policy = _normalize_request_policy(
-        os.getenv("TOK_REQUEST_POLICY", "")
-    )
+    explicit_policy = _normalize_request_policy(os.getenv("TOK_REQUEST_POLICY", ""))
     if explicit_policy:
         return explicit_policy
     return "natural_first"
@@ -189,9 +188,7 @@ def _build_request_fingerprint(
     if parsed_body is None:
         return {}
     if parsed_original_body is not None:
-        return _request_fingerprint_diff(
-            headers or {}, parsed_body, parsed_original_body
-        )
+        return _request_fingerprint_diff(headers or {}, parsed_body, parsed_original_body)
     return _request_body_fingerprint(headers or {}, parsed_body)
 
 
@@ -219,12 +216,8 @@ def _log_bridge_body_structure(
     reverted_to_original: bool | None = None,
 ) -> None:
     parsed_body, summary = _parse_request_body(body, content)
-    parsed_original_body = _parse_original_body(
-        original_body, original_content
-    )
-    fingerprint = _build_request_fingerprint(
-        parsed_body, parsed_original_body, headers
-    )
+    parsed_original_body = _parse_original_body(original_body, original_content)
+    fingerprint = _build_request_fingerprint(parsed_body, parsed_original_body, headers)
     log = _select_log_level(strict_failures, reverted_to_original)
     log(
         "Bridge request structure | event=%s compressed=%s canonicalized_changed=%s reverted_to_original=%s strict_failures=%s summary=%s fingerprint=%s",
@@ -254,9 +247,7 @@ class ResponseContract:
     mode: str
 
 
-def _record_fallback_once(
-    session: BridgeSession, request_state: dict[str, bool]
-) -> None:
+def _record_fallback_once(session: BridgeSession, request_state: dict[str, bool]) -> None:
     """Record at most one fallback threshold step per client request."""
     if request_state.get("fallback_recorded", False):
         return
@@ -277,12 +268,8 @@ def _response_contract(text: str) -> ResponseContract:
     return _response_contract_for_mode(text, tool_compatible=False)
 
 
-def _response_contract_for_mode(
-    text: str, *, tool_compatible: bool
-) -> ResponseContract:
-    processed = response_contract_for_mode(
-        text, tool_compatible=tool_compatible
-    )
+def _response_contract_for_mode(text: str, *, tool_compatible: bool) -> ResponseContract:
+    processed = response_contract_for_mode(text, tool_compatible=tool_compatible)
     return ResponseContract(
         content_blocks=processed.content_blocks,
         behavior_signals=processed.behavior_signals,
@@ -299,42 +286,24 @@ def _response_contract_for_mode(
 class BridgeSession:
     """HTTP gateway configuration and telemetry (delegates runtime state to RuntimeSession)."""
 
-    port: int = int(
-        os.getenv("TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090"))
-    )
-    keep_turns: int = int(
-        os.getenv("TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2"))
-    )
+    port: int = int(os.getenv("TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090")))
+    keep_turns: int = int(os.getenv("TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2")))
     debug: bool = os.getenv("TOK_DEBUG", "0") == "1"
     fail_open: bool = os.getenv("TOK_FAIL_OPEN", "1") == "1"
     capture: bool = os.getenv("TOK_CAPTURE", "0") == "1"
     api_base: str = field(default_factory=_default_api_base)
-    rate_limit_retry_max_attempts: int = int(
-        os.getenv("TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS", "2")
-    )
-    rate_limit_backoff_base_ms: int = int(
-        os.getenv("TOK_RATE_LIMIT_BACKOFF_BASE_MS", "150")
-    )
-    rate_limit_backoff_cap_ms: int = int(
-        os.getenv("TOK_RATE_LIMIT_BACKOFF_CAP_MS", "1000")
-    )
-    rate_limit_throttle_threshold: int = int(
-        os.getenv("TOK_RATE_LIMIT_THROTTLE_THRESHOLD", "4")
-    )
-    rate_limit_throttle_cooldown_sec: int = int(
-        os.getenv("TOK_RATE_LIMIT_THROTTLE_COOLDOWN_SEC", "20")
-    )
-    rate_limit_throttle_window_sec: int = int(
-        os.getenv("TOK_RATE_LIMIT_THROTTLE_WINDOW_SEC", "30")
-    )
+    rate_limit_retry_max_attempts: int = int(os.getenv("TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS", "2"))
+    rate_limit_backoff_base_ms: int = int(os.getenv("TOK_RATE_LIMIT_BACKOFF_BASE_MS", "150"))
+    rate_limit_backoff_cap_ms: int = int(os.getenv("TOK_RATE_LIMIT_BACKOFF_CAP_MS", "1000"))
+    rate_limit_throttle_threshold: int = int(os.getenv("TOK_RATE_LIMIT_THROTTLE_THRESHOLD", "4"))
+    rate_limit_throttle_cooldown_sec: int = int(os.getenv("TOK_RATE_LIMIT_THROTTLE_COOLDOWN_SEC", "20"))
+    rate_limit_throttle_window_sec: int = int(os.getenv("TOK_RATE_LIMIT_THROTTLE_WINDOW_SEC", "30"))
     _rate_limit_throttle_until: float = 0.0
     _rate_limit_429_history: list[float] = field(default_factory=list)
     # TOK_MODE=baseline still forces the conservative baseline path.
     # Otherwise, TOK_REQUEST_POLICY can explicitly override the stable
     # tool-compatible request policy default.
-    request_policy_default: str = field(
-        default_factory=_default_request_policy
-    )
+    request_policy_default: str = field(default_factory=_default_request_policy)
     # Kept for compatibility with existing gateway/reporting code.
     tool_compatible_default: bool = True
     memory_dir: Path | None = None
@@ -342,19 +311,14 @@ class BridgeSession:
     # Canonical runtime state: delegates to this
     runtime_session: RuntimeSession = field(default_factory=RuntimeSession)
     # Smoothness tracking for interaction quality
-    smoothness_tracker: SmoothnessTracker = field(
-        default_factory=SmoothnessTracker
-    )
+    smoothness_tracker: SmoothnessTracker = field(default_factory=SmoothnessTracker)
 
     def __post_init__(self) -> None:
         self.api_base = self.api_base.strip() or ANTHROPIC_API_BASE
         self.request_policy_default = (
-            _normalize_request_policy(self.request_policy_default)
-            or _default_request_policy()
+            _normalize_request_policy(self.request_policy_default) or _default_request_policy()
         )
-        self.tool_compatible_default = (
-            self.request_policy_default != "forced_baseline"
-        )
+        self.tool_compatible_default = self.request_policy_default != "forced_baseline"
         explicit_memory_dir = self.memory_dir is not None
         if self.memory_dir is None:
             project_dir = os.getenv("TOK_PROJECT_DIR", "")
@@ -366,9 +330,7 @@ class BridgeSession:
         if self.capture:
             import datetime
 
-            sessions_dir = (
-                self.memory_dir or Path.home() / ".tok"
-            ) / "sessions"
+            sessions_dir = (self.memory_dir or Path.home() / ".tok") / "sessions"
             sessions_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             self._capture_file = sessions_dir / f"{ts}.jsonl"
@@ -443,9 +405,7 @@ class BridgeSession:
     @property
     def result_cache(self) -> dict[str, tuple[str, str]]:
         """Delegate to runtime session."""
-        return cast(
-            "dict[str, tuple[str, str]]", self.runtime_session.result_cache
-        )
+        return cast("dict[str, tuple[str, str]]", self.runtime_session.result_cache)
 
     @property
     def bridge_memory(self) -> BridgeMemoryState:
@@ -509,25 +469,15 @@ def _materialize_stream_tool_blocks(
         block = stream_blocks.get(index, {})
         if block.get("type") != "tool_use":
             continue
-        tool_input = (
-            dict(block.get("input", {}))
-            if isinstance(block.get("input", {}), dict)
-            else {}
-        )
-        partial_json = "".join(
-            part
-            for part in block.get("partial_json", [])
-            if isinstance(part, str)
-        )
+        tool_input = dict(block.get("input", {})) if isinstance(block.get("input", {}), dict) else {}
+        partial_json = "".join(part for part in block.get("partial_json", []) if isinstance(part, str))
         if partial_json.strip():
             try:
                 parsed = json.loads(partial_json)
                 if isinstance(parsed, dict):
                     tool_input.update(parsed)
             except json.JSONDecodeError:
-                logger.debug(
-                    "Tool JSON delta parse error: %s", partial_json[:120]
-                )
+                logger.debug("Tool JSON delta parse error: %s", partial_json[:120])
                 continue
         tool_blocks.append(
             {
@@ -537,9 +487,7 @@ def _materialize_stream_tool_blocks(
                 "input": tool_input,
             }
         )
-    normalized_tool_blocks, _ = normalize_tool_use_blocks(
-        tool_blocks, seed_prefix="toolu_stream"
-    )
+    normalized_tool_blocks, _ = normalize_tool_use_blocks(tool_blocks, seed_prefix="toolu_stream")
     return normalized_tool_blocks
 
 
@@ -563,33 +511,22 @@ def run_bridge(
     _api_base: str | None = None,
 ) -> None:
     """Start the bridge server."""
-    _port_env: str = os.getenv(
-        "TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090")
-    )
+    _port_env: str = os.getenv("TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090"))
     port = int(port if port is not None else _port_env)
-    _keep_turns_env: str = os.getenv(
-        "TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2")
-    )
+    _keep_turns_env: str = os.getenv("TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2"))
     keep_turns = int(keep_turns if keep_turns is not None else _keep_turns_env)
     debug = debug if debug is not None else os.getenv("TOK_DEBUG", "0") == "1"
-    fail_open = (
-        fail_open
-        if fail_open is not None
-        else os.getenv("TOK_FAIL_OPEN", "1") == "1"
-    )
+    fail_open = fail_open if fail_open is not None else os.getenv("TOK_FAIL_OPEN", "1") == "1"
     api_base = (
-        _api_base
-        if _api_base is not None
-        else os.getenv("TOK_API_BASE", ANTHROPIC_API_BASE)
+        _api_base if _api_base is not None else os.getenv("TOK_API_BASE", ANTHROPIC_API_BASE)
     ).strip() or ANTHROPIC_API_BASE
 
     try:
         TOK_DIR.mkdir(parents=True, exist_ok=True)
         PID_FILE.write_text(str(os.getpid()))
     except OSError as exc:
-        logger.error(
-            "Failed to write PID file %s: %s. "
-            "Check permissions on %s or set TOK_DIR to a writable location.",
+        logger.exception(
+            "Failed to write PID file %s: %s. Check permissions on %s or set TOK_DIR to a writable location.",
             PID_FILE,
             exc,
             TOK_DIR,
@@ -616,7 +553,7 @@ def run_bridge(
             api_base=api_base,
         )
     except Exception as exc:
-        logger.error("Failed to create bridge session: %s", exc)
+        logger.exception("Failed to create bridge session: %s", exc)
         raise
 
     atexit.register(session.tracker.merge_session_to_ledger)
@@ -625,7 +562,7 @@ def run_bridge(
     try:
         app = create_app(session)
     except Exception as exc:
-        logger.error("Failed to create bridge application: %s", exc)
+        logger.exception("Failed to create bridge application: %s", exc)
         raise
 
     host_display = os.getenv("TOK_BRIDGE_HOST", "localhost")
@@ -644,9 +581,7 @@ def run_bridge(
     try:
         uvicorn.run(app, host="0.0.0.0", port=port, log_level=log_level)
     except Exception as exc:
-        logger.error(
-            "Bridge server exited unexpectedly on port %d: %s", port, exc
-        )
+        logger.exception("Bridge server exited unexpectedly on port %d: %s", port, exc)
         raise
 
 

@@ -1,9 +1,9 @@
-from tok.compression import truncate_large_result, tok_tool_result
+from tok.compression import tok_tool_result, truncate_large_result
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
 
 
-def test_semantic_truncation():
+def test_semantic_truncation() -> None:
     # 50 lines of garbage
     large_text = "\n".join([f"line {i}: content {i * 7}" for i in range(100)])
     # This is roughly 2000 chars
@@ -16,7 +16,7 @@ def test_semantic_truncation():
     assert "line 99:" in truncated
 
 
-def test_semantic_truncation_prefers_structure_boundary():
+def test_semantic_truncation_prefers_structure_boundary() -> None:
     lines = [
         "class Example:",
         "    def alpha(self):",
@@ -36,19 +36,8 @@ def test_semantic_truncation_prefers_structure_boundary():
     assert "\n\n... [TRUNCATED" in truncated
 
 
-def test_stable_file_summary_prefers_structural_lines():
-    text = "\n".join(
-        [
-            "class Example:",
-            "    def resolve(self):",
-            "        logger.debug('noise')",
-            "        value = compute_value()",
-            "        return value",
-            "",
-            "def helper():",
-            "    pass",
-        ]
-    )
+def test_stable_file_summary_prefers_structural_lines() -> None:
+    text = "class Example:\n    def resolve(self):\n        logger.debug('noise')\n        value = compute_value()\n        return value\n\ndef helper():\n    pass"
 
     summary = build_file_summary(text, max_chars=280, max_lines=6)
 
@@ -58,15 +47,8 @@ def test_stable_file_summary_prefers_structural_lines():
     assert "logger.debug" not in summary
 
 
-def test_stable_search_summary_prefers_matched_code_lines():
-    text = "\n".join(
-        [
-            "src/example.py:3:        logger.debug('noise')",
-            "src/example.py:4:    def resolve(self):",
-            "src/example.py:5:        result = compute_value()",
-            "src/example.py:6:        return result",
-        ]
-    )
+def test_stable_search_summary_prefers_matched_code_lines() -> None:
+    text = "src/example.py:3:        logger.debug('noise')\nsrc/example.py:4:    def resolve(self):\nsrc/example.py:5:        result = compute_value()\nsrc/example.py:6:        return result"
 
     summary = build_search_summary(text, max_chars=280, max_lines=4)
 
@@ -75,7 +57,7 @@ def test_stable_search_summary_prefers_matched_code_lines():
     assert "logger.debug" not in summary
 
 
-def test_result_cache_persistence(tmp_path):
+def test_result_cache_persistence(tmp_path) -> None:
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
 
@@ -88,7 +70,7 @@ def test_result_cache_persistence(tmp_path):
     assert session2.result_cache == {"some_hash": ["h1", "old content"]}
 
 
-def test_tok_tool_result_applies_truncation():
+def test_tok_tool_result_applies_truncation() -> None:
     # Long result that doesn't match any specific compressor
     long_raw = "A" * 5000
     compressed = tok_tool_result(long_raw)

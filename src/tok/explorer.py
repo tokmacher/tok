@@ -14,10 +14,12 @@ from .utils.sifter import Sifter
 
 
 def get_file_overview(filepath: str) -> dict[str, Any]:
-    """Return structured overview of a Python file.
+    """
+    Return structured overview of a Python file.
 
     Returns:
         dict with keys: path, line_count, classes, functions, is_large
+
     """
     path = Path(filepath)
 
@@ -30,9 +32,7 @@ def get_file_overview(filepath: str) -> dict[str, Any]:
         path.resolve().relative_to(Path.cwd())
     except ValueError:
         # Path is outside current directory - allow but log warning
-        logger.warning(
-            "Accessing file outside current directory: %s", filepath
-        )
+        logger.warning("Accessing file outside current directory: %s", filepath)
 
     # Ensure it's a file (not directory)
     if not path.is_file():
@@ -58,20 +58,13 @@ def get_file_overview(filepath: str) -> dict[str, Any]:
 
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
-            methods = [
-                m.name
-                for m in node.body
-                if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)
-            ]
+            methods = [m.name for m in node.body if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)]
             classes.append(
                 {
                     "name": node.name,
                     "line": node.lineno,
                     "methods": methods,
-                    "bases": [
-                        b.id if isinstance(b, ast.Name) else None
-                        for b in node.bases
-                    ],
+                    "bases": [b.id if isinstance(b, ast.Name) else None for b in node.bases],
                 }
             )
         elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -95,7 +88,8 @@ def get_file_overview(filepath: str) -> dict[str, Any]:
 
 
 def explore_file(filepath: str, mode: str = "overview") -> str:
-    """Explore a file and return Tok-formatted output.
+    """
+    Explore a file and return Tok-formatted output.
 
     Args:
         filepath: Path to Python file
@@ -103,16 +97,15 @@ def explore_file(filepath: str, mode: str = "overview") -> str:
 
     Returns:
         Tok-formatted string
+
     """
     path = Path(filepath)
     if not path.exists():
         return f"@error File not found: {filepath}"
 
     if mode == "skeleton":
-        result: dict[str, Any] = Sifter.from_file(
-            filepath, naked=False, minify=True
-        )
-        return cast(str, result["skeleton"])
+        result: dict[str, Any] = Sifter.from_file(filepath, naked=False, minify=True)
+        return cast("str", result["skeleton"])
 
     # overview mode
     overview: dict[str, Any] = get_file_overview(filepath)
@@ -130,9 +123,7 @@ def explore_file(filepath: str, mode: str = "overview") -> str:
         lines.append("  @class")
         for cls in overview["classes"]:
             methods = ", ".join(cls["methods"]) if cls["methods"] else ""
-            lines.append(
-                f"    {cls['name']} l:{cls['line']}{' ' + methods if methods else ''}"
-            )
+            lines.append(f"    {cls['name']} l:{cls['line']}{' ' + methods if methods else ''}")
 
     if overview.get("functions"):
         lines.append("  @func")
@@ -144,13 +135,15 @@ def explore_file(filepath: str, mode: str = "overview") -> str:
 
 
 def list_large_files(root: str = "src/tok") -> list[dict[str, Any]]:
-    """Find all Python files > 500 lines in a directory tree.
+    """
+    Find all Python files > 500 lines in a directory tree.
 
     Args:
         root: Root directory to search
 
     Returns:
         List of dicts with file info
+
     """
     root_path = Path(root)
 
@@ -180,11 +173,7 @@ def list_large_files(root: str = "src/tok") -> list[dict[str, Any]]:
             continue
 
         # Skip common non-code directories
-        dirs[:] = [
-            d
-            for d in dirs
-            if d not in ("__pycache__", ".git", ".venv", "venv", "env")
-        ]
+        dirs[:] = [d for d in dirs if d not in ("__pycache__", ".git", ".venv", "venv", "env")]
 
         for fname in files:
             if not fname.endswith(".py"):
@@ -213,7 +202,8 @@ def list_large_files(root: str = "src/tok") -> list[dict[str, Any]]:
 
 
 def explore_module(module_path: str, mode: str = "overview") -> str:
-    """Explore a module/package and return Tok-formatted overview.
+    """
+    Explore a module/package and return Tok-formatted overview.
 
     Args:
         module_path: Path to module directory or file
@@ -221,6 +211,7 @@ def explore_module(module_path: str, mode: str = "overview") -> str:
 
     Returns:
         Tok-formatted string
+
     """
     path = Path(module_path)
 
@@ -254,11 +245,7 @@ def explore_module(module_path: str, mode: str = "overview") -> str:
 
     # Overview mode
     init_file = path / "__init__.py"
-    overview = (
-        get_file_overview(str(init_file))
-        if init_file.exists()
-        else {"classes": [], "functions": []}
-    )
+    overview = get_file_overview(str(init_file)) if init_file.exists() else {"classes": [], "functions": []}
 
     lines = [
         f"@module {path.name}",
@@ -279,8 +266,8 @@ def explore_module(module_path: str, mode: str = "overview") -> str:
 
 
 __all__ = [
-    "get_file_overview",
     "explore_file",
     "explore_module",
+    "get_file_overview",
     "list_large_files",
 ]

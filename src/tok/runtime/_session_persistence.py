@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,12 +13,13 @@ from .memory.session_helpers import _discover_project_markers
 from .types import EpisodeEntry, EpisodeLedger
 
 if TYPE_CHECKING:
+    import logging
+
     from .core import RuntimeSession
 
 
-def initialize_session_storage(
-    session: RuntimeSession, *, explicit_memory_dir: bool
-) -> None:
+def initialize_session_storage(session: RuntimeSession, *, explicit_memory_dir: bool) -> None:
+    """Initialize session storage directories and load persisted state."""
     if session.memory_dir is None:
         project_dir = os.getenv("TOK_PROJECT_DIR", "")
         if project_dir:
@@ -47,25 +47,23 @@ def initialize_session_storage(
 
 
 def bridge_memory_file(session: RuntimeSession) -> Path:
+    """Return the path to the bridge memory file for this session."""
     assert session.memory_dir is not None
     return session.memory_dir / "bridge_memory.tok"
 
 
 def load_bridge_memory(session: RuntimeSession) -> BridgeMemoryState:
+    """Load bridge memory state from disk, or return empty state if not found."""
     path = bridge_memory_file(session)
     if not path.exists():
-        return BridgeMemoryState(
-            load_global_macros=session._load_global_macros
-        )
+        return BridgeMemoryState(load_global_macros=session._load_global_macros)
     try:
         return BridgeMemoryState.from_tok(
             path.read_text(),
             load_global_macros=session._load_global_macros,
         )
     except FileNotFoundError:
-        return BridgeMemoryState(
-            load_global_macros=session._load_global_macros
-        )
+        return BridgeMemoryState(load_global_macros=session._load_global_macros)
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as exc:
         session_logger = session_logger_for(session)
         session_logger.warning(
@@ -84,6 +82,7 @@ def load_bridge_memory(session: RuntimeSession) -> BridgeMemoryState:
 
 
 def save_bridge_memory(session: RuntimeSession) -> None:
+    """Persist bridge memory state to disk."""
     try:
         assert session.memory_dir is not None
         session.memory_dir.mkdir(parents=True, exist_ok=True)
@@ -98,11 +97,13 @@ def save_bridge_memory(session: RuntimeSession) -> None:
 
 
 def result_cache_file(session: RuntimeSession) -> Path:
+    """Return the path to the result cache file for this session."""
     assert session.memory_dir is not None
     return session.memory_dir / "result_cache.tok"
 
 
 def load_result_cache(session: RuntimeSession) -> dict[str, Any]:
+    """Load result cache from disk, filtering expired entries."""
     import time as time_module
 
     path = result_cache_file(session)
@@ -123,21 +124,16 @@ def load_result_cache(session: RuntimeSession) -> dict[str, Any]:
                 else:
                     cleaned[key] = value
             return cleaned
-        session_logger_for(session).warning(
-            "Result cache at %s is not a dict — starting empty", path
-        )
+        session_logger_for(session).warning("Result cache at %s is not a dict — starting empty", path)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        session_logger_for(session).warning(
-            "Result cache corrupted at %s: %s — starting empty", path, exc
-        )
+        session_logger_for(session).warning("Result cache corrupted at %s: %s — starting empty", path, exc)
     except Exception as exc:
-        session_logger_for(session).warning(
-            "Failed to load result cache from %s: %s", path, exc
-        )
+        session_logger_for(session).warning("Failed to load result cache from %s: %s", path, exc)
     return {}
 
 
 def save_result_cache(session: RuntimeSession) -> None:
+    """Persist result cache to disk with size trimming."""
     try:
         assert session.memory_dir is not None
         session.memory_dir.mkdir(parents=True, exist_ok=True)
@@ -159,34 +155,31 @@ def save_result_cache(session: RuntimeSession) -> None:
 
 
 def fallback_memory_file(session: RuntimeSession) -> Path:
+    """Return the path to the fallback memory file for this session."""
     assert session.memory_dir is not None
     return session.memory_dir / "memory.tok"
 
 
 def load_fallback_memory(session: RuntimeSession) -> str:
+    """Load fallback memory content from disk, or return empty string if not found."""
     path = fallback_memory_file(session)
     if not path.exists():
         return ""
     try:
         return path.read_text().strip()
     except (UnicodeDecodeError, PermissionError) as exc:
-        session_logger_for(session).warning(
-            "Failed to load fallback memory from %s: %s", path, exc
-        )
+        session_logger_for(session).warning("Failed to load fallback memory from %s: %s", path, exc)
     except Exception as exc:
-        session_logger_for(session).warning(
-            "Failed to load fallback memory from %s: %s", path, exc
-        )
+        session_logger_for(session).warning("Failed to load fallback memory from %s: %s", path, exc)
     return ""
 
 
 def save_fallback_memory(session: RuntimeSession) -> None:
+    """Persist fallback memory content to disk."""
     try:
         assert session.memory_dir is not None
         session.memory_dir.mkdir(parents=True, exist_ok=True)
-        fallback_memory_file(session).write_text(
-            session.fallback_memory + "\n"
-        )
+        fallback_memory_file(session).write_text(session.fallback_memory + "\n")
     except Exception as exc:
         session_logger_for(session).warning(
             "Failed to save fallback memory to %s: %s",
@@ -196,11 +189,13 @@ def save_fallback_memory(session: RuntimeSession) -> None:
 
 
 def episode_ledger_file(session: RuntimeSession) -> Path:
+    """Return the path to the episode ledger file for this session."""
     assert session.memory_dir is not None
     return session.memory_dir / "episode_ledger.tok"
 
 
 def load_episode_ledger(session: RuntimeSession) -> EpisodeLedger:
+    """Load episode ledger from disk, or return empty ledger if not found."""
     path = episode_ledger_file(session)
     if not path.exists():
         return EpisodeLedger()
@@ -213,19 +208,16 @@ def load_episode_ledger(session: RuntimeSession) -> EpisodeLedger:
             exc,
         )
     except Exception as exc:
-        session_logger_for(session).warning(
-            "Failed to load episode ledger from %s: %s", path, exc
-        )
+        session_logger_for(session).warning("Failed to load episode ledger from %s: %s", path, exc)
     return EpisodeLedger()
 
 
 def save_episode_ledger(session: RuntimeSession) -> None:
+    """Persist episode ledger to disk."""
     try:
         assert session.memory_dir is not None
         session.memory_dir.mkdir(parents=True, exist_ok=True)
-        episode_ledger_file(session).write_text(
-            session.episode_ledger.to_tok()
-        )
+        episode_ledger_file(session).write_text(session.episode_ledger.to_tok())
     except Exception as exc:
         session_logger_for(session).warning(
             "Failed to save episode ledger to %s: %s",
@@ -235,12 +227,14 @@ def save_episode_ledger(session: RuntimeSession) -> None:
 
 
 def record_episode(session: RuntimeSession, entry: EpisodeEntry) -> None:
+    """Record an episode entry and persist the updated ledger."""
     session.episode_ledger.record(entry)
     save_episode_ledger(session)
     session._bump_signals({"episode_recorded": 1})
 
 
 def session_logger_for(session: RuntimeSession) -> logging.Logger:
+    """Return the logger instance for the session module."""
     from .core import logger
 
     return logger

@@ -1,23 +1,20 @@
 from __future__ import annotations
+
 import pytest
 
-from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 from tok.neuro.integration import distill_bridge_history
 from tok.neuro.ir import MacroRegistry
+from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 
 
 @pytest.fixture(autouse=True)
-def isolate_macro_registry(monkeypatch):
+def isolate_macro_registry(monkeypatch) -> None:
     """Prevent tests from reading or writing the global macro store."""
-    monkeypatch.setattr(
-        MacroRegistry, "load_global", lambda self, *a, **kw: None
-    )
-    monkeypatch.setattr(
-        MacroRegistry, "save_global", lambda self, *a, **kw: None
-    )
+    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **kw: None)
+    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
 
 
-def test_neuro_reactor_discovers_simple_pattern():
+def test_neuro_reactor_discovers_simple_pattern() -> None:
     # Setup a state with a repeating sequence of commands
     state = BridgeMemoryState()
 
@@ -51,7 +48,7 @@ def test_neuro_reactor_discovers_simple_pattern():
     assert state.macro_registry.get(macro.name) is not None
 
 
-def test_neuro_reactor_serializes_macro():
+def test_neuro_reactor_serializes_macro() -> None:
     state = BridgeMemoryState()
 
     state.rolling_cmds = [
@@ -74,13 +71,8 @@ def test_neuro_reactor_serializes_macro():
     assert "ls(-la)" in tok_output
 
 
-def test_neuro_reactor_deserializes_macro():
-    raw_tok = (
-        "@memory version:bridge-v1 turn:10\n"
-        "@hot\n"
-        "@macros\n"
-        "  |> @auto_macro_0(p0, p1) -> ls(-la) | cat($p1)\n"
-    )
+def test_neuro_reactor_deserializes_macro() -> None:
+    raw_tok = "@memory version:bridge-v1 turn:10\n@hot\n@macros\n  |> @auto_macro_0(p0, p1) -> ls(-la) | cat($p1)\n"
 
     state = BridgeMemoryState.from_tok(raw_tok)
 

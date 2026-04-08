@@ -1,15 +1,17 @@
 from __future__ import annotations
+
 import collections
 import logging
 from typing import TYPE_CHECKING
 
-from ..runtime.memory.tok_state import (
-    TokMemory,
+from tok.runtime.memory.tok_state import (
+    ConstraintMemory,
     EpisodeMemory,
     LessonMemory,
-    ConstraintMemory,
     RepairMemory,
+    TokMemory,
 )
+
 from .ir import MacroRegistry, TokIR
 from .miner import IRPatternMiner
 
@@ -22,21 +24,17 @@ from .metrics import estimated_token_count
 
 
 class MemoryDistiller:
-    def __init__(self, llm: ChatLLM, threshold: int = 5):
+    def __init__(self, llm: ChatLLM, threshold: int = 5) -> None:
         self.llm = llm
         self.threshold = threshold
         self.registry = MacroRegistry()
         self.miner = IRPatternMiner()
 
     def compress(self, memory: list[TokMemory]) -> list[TokMemory]:
-        """
-        Analyzes memory and replaces redundant episodes with distilled lessons.
-        """
+        """Analyzes memory and replaces redundant episodes with distilled lessons."""
         initial_tokens = estimated_token_count(memory)
         episodes = [m for m in memory if isinstance(m, EpisodeMemory) and m.ok]
-        repairs = [
-            m for m in memory if isinstance(m, RepairMemory) and m.final_ok
-        ]
+        repairs = [m for m in memory if isinstance(m, RepairMemory) and m.final_ok]
 
         if len(episodes) < self.threshold and not repairs:
             return memory
@@ -51,36 +49,24 @@ class MemoryDistiller:
             elif isinstance(m, RepairMemory) and m.final_ok:
                 repair_groups[m.tokens].append(m)
 
-        logger.debug(
-            f"Distiller: Found {len(groups)} episode groups and {len(repair_groups)} repair groups."
-        )
+        logger.debug(f"Distiller: Found {len(groups)} episode groups and {len(repair_groups)} repair groups.")
 
         # 1. Autonomous IR Pattern Mining (Success)
         ir_histories = []
         for m in memory:
-            if (
-                isinstance(m, EpisodeMemory)
-                and "ir" in m.metadata
-                and isinstance(m.metadata["ir"], TokIR)
-            ):
+            if isinstance(m, EpisodeMemory) and "ir" in m.metadata and isinstance(m.metadata["ir"], TokIR):
                 ir_histories.append(m.metadata["ir"])
 
         discovered_macros = self.miner.mine(ir_histories, self.registry)
         for macro in discovered_macros:
             self.registry.register(macro)
-            logger.debug(
-                f"Autonomous Inversion: Registered macro @{macro.name}"
-            )
+            logger.debug(f"Autonomous Inversion: Registered macro @{macro.name}")
 
         # 2. Negative Distillation (Failure-Driven)
         negative_lessons = self.mine_negative_patterns(memory)
 
         # 3. Rule Synthesis and Compression
-        new_memory = [
-            m
-            for m in memory
-            if not isinstance(m, EpisodeMemory | RepairMemory)
-        ]
+        new_memory = [m for m in memory if not isinstance(m, EpisodeMemory | RepairMemory)]
         new_memory.extend(negative_lessons)
 
         # Distill episodic groups
@@ -91,9 +77,7 @@ class MemoryDistiller:
                 lesson = self.distill_batch(label, batch)
                 if lesson:
                     new_memory.append(lesson)
-                    logger.debug(
-                        f"Distiller: Collapsed {len(batch)} episodes into 1 lesson."
-                    )
+                    logger.debug(f"Distiller: Collapsed {len(batch)} episodes into 1 lesson.")
                     continue
             new_memory.extend(batch)
 
@@ -112,18 +96,12 @@ class MemoryDistiller:
         final_tokens = estimated_token_count(new_memory)
         savings = initial_tokens - final_tokens
         if savings > 0:
-            logger.info(
-                f"Distifflation complete: {initial_tokens} -> {final_tokens} tokens ({savings} saved)."
-            )
+            logger.info(f"Distifflation complete: {initial_tokens} -> {final_tokens} tokens ({savings} saved).")
 
         return new_memory
 
-    def mine_negative_patterns(
-        self, memory: list[TokMemory]
-    ) -> list[ConstraintMemory]:
-        """
-        Detects redundant logic attempts (shadowing) and creates constraints.
-        """
+    def mine_negative_patterns(self, memory: list[TokMemory]) -> list[ConstraintMemory]:
+        """Detects redundant logic attempts (shadowing) and creates constraints."""
         redundancies: dict[str, int] = collections.defaultdict(int)
         for m in memory:
             if not isinstance(m, EpisodeMemory) or "ir" not in m.metadata:
@@ -147,18 +125,12 @@ class MemoryDistiller:
                         constraint=f"TOK-NEG: avoid re-defining @{macro_name}; use existing definition to save tokens.",
                     )
                 )
-                logger.debug(
-                    f"Negative Distillation: Mining constraint for @{macro_name}"
-                )
+                logger.debug(f"Negative Distillation: Mining constraint for @{macro_name}")
 
         return constraints
 
-    def distill_batch(
-        self, key: str, episodes: list[EpisodeMemory]
-    ) -> LessonMemory | None:
-        """
-        Uses LLM to synthesize a batch of episodes into a single principle.
-        """
+    def distill_batch(self, key: str, episodes: list[EpisodeMemory]) -> LessonMemory | None:
+        """Uses LLM to synthesize a batch of episodes into a single principle."""
         if not episodes:
             return None
 
@@ -190,9 +162,7 @@ class MemoryDistiller:
         return None
 
     def distill_repair(self, repair: RepairMemory) -> LessonMemory | None:
-        """
-        Synthesizes a single multi-turn repair trace into a 'fixing strategy'.
-        """
+        """Synthesizes a single multi-turn repair trace into a 'fixing strategy'."""
         system = (
             "You are a programming mentor. Extract a dense 'Pitfall/Fix' rule from "
             "a debugging trace. "
@@ -202,33 +172,21 @@ class MemoryDistiller:
 
         history_str = []
         for idx, (code, err) in enumerate(repair.history, start=1):
-            status = (
-                "FINAL FIX"
-                if (idx == len(repair.history) and repair.final_ok)
-                else f"Attempt {idx}"
-            )
-            history_str.append(
-                f"--- {status} ---\nCode:\n{code}\nError: {err}"
-            )
+            status = "FINAL FIX" if (idx == len(repair.history) and repair.final_ok) else f"Attempt {idx}"
+            history_str.append(f"--- {status} ---\nCode:\n{code}\nError: {err}")
 
         user = "Repair History:\n" + "\n".join(history_str)
 
         try:
             lesson_text = self.llm.chat(system=system, user=user)
             if lesson_text:
-                return LessonMemory(
-                    tokens=repair.tokens, lesson=lesson_text.strip()
-                )
+                return LessonMemory(tokens=repair.tokens, lesson=lesson_text.strip())
         except Exception as exc:
-            logger.error(f"Distill error: {exc}")
+            logger.exception(f"Distill error: {exc}")
         return None
 
-    def hierarchical_compress(
-        self, memory: list[TokMemory]
-    ) -> list[TokMemory]:
-        """
-        Takes distilled lessons and attempts to invert them into higher-level abstractions.
-        """
+    def hierarchical_compress(self, memory: list[TokMemory]) -> list[TokMemory]:
+        """Takes distilled lessons and attempts to invert them into higher-level abstractions."""
         lessons = [m for m in memory if isinstance(m, LessonMemory)]
         if len(lessons) < 2:
             return memory
@@ -256,9 +214,7 @@ class MemoryDistiller:
             if start != -1 and end != -1:
                 inversions = json.loads(response[start:end])
 
-                new_memory = [
-                    m for m in memory if not isinstance(m, LessonMemory)
-                ]
+                new_memory = [m for m in memory if not isinstance(m, LessonMemory)]
                 replaced_indices = set()
 
                 for inv in inversions:
@@ -275,10 +231,7 @@ class MemoryDistiller:
                         # Identify which specific lessons were abstracted
                         for r_text in replaces:
                             for idx, m in enumerate(lessons):
-                                if (
-                                    r_text.strip() == m.lesson.strip()
-                                    or r_text in m.lesson
-                                ):
+                                if r_text.strip() == m.lesson.strip() or r_text in m.lesson:
                                     replaced_indices.add(idx)
 
                 # Keep lessons that weren't replaced
@@ -288,6 +241,6 @@ class MemoryDistiller:
 
                 return new_memory
         except Exception as exc:
-            logger.error(f"Meta-distill error: {exc}")
+            logger.exception(f"Meta-distill error: {exc}")
 
         return memory

@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tok.utils.config import API_BASE
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 READ_ONLY_TOOL_NAMES = {
     "view_file",
@@ -30,9 +32,7 @@ LATE_STAGED_RETRY_PHASES = {
     "near-neighbor disambiguation",
 }
 
-_PATH_PATTERN = re.compile(
-    r"(src/[\w./-]+\.\w+|tests/[\w./-]+\.\w+|docs/[\w./-]+\.\w+)"
-)
+_PATH_PATTERN = re.compile(r"(src/[\w./-]+\.\w+|tests/[\w./-]+\.\w+|docs/[\w./-]+\.\w+)")
 EXCLUDED_GROUNDED_PATH_FRAGMENTS = (
     "src/tok/stress_harness.py",
     "tests/",

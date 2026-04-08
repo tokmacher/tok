@@ -1,10 +1,26 @@
+"""
+Memory management and retrieval for neural components.
+
+This module provides memory structures and retrieval policies for
+the neural components of the Tok system, including episodic memory,
+rule storage, and lesson learning.
+"""
+
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
 
 
 class RetrievalPolicy(Enum):
+    """
+    Policy for memory retrieval operations.
+
+    Defines how different types of memories should be retrieved
+    and combined during operations.
+    """
+
     MIXED = auto()
     RULES_ONLY = auto()
     EPISODES_ONLY = auto()

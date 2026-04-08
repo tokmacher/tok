@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..repeat_targets import SEARCH_LIKE_TOOLS
+from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
+from tok.utils.token_utils import count_tokens
+
 from ._tool_context import (
     ToolContextModel,
     build_tool_use_id_to_context,
@@ -14,6 +16,7 @@ from ._tool_context import (
 )
 from ._tool_repeat_detection import (
     _count_tool_density,
+    _iter_tool_results,
     _process_cached_tool_results,
     _should_skip_history_rewrite,
 )
@@ -25,8 +28,6 @@ from ._tool_signal_detection import (
     _detect_prose_leaks,
     _track_assistant_tool_usage,
 )
-from ._tool_repeat_detection import _iter_tool_results
-from ...utils.token_utils import count_tokens
 
 
 def _suppress_reacquisition_signals(signals: dict[str, int]) -> bool:
@@ -47,10 +48,7 @@ def _suppress_reacquisition_signals(signals: dict[str, int]) -> bool:
 def collect_behavior_signals(
     messages: list[dict[str, Any]],
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None = None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None = None,
     suppress_reacquisition_once: bool = False,
 ) -> dict[str, int]:
     """Track patterns that indicate Tok is helping or being routed around."""
@@ -100,9 +98,7 @@ def collect_behavior_signals(
             bump,
             count_tokens,
         )
-        for key, value in collect_tool_context_validation_signals(
-            tool_use_id_to_context
-        ).items():
+        for key, value in collect_tool_context_validation_signals(tool_use_id_to_context).items():
             bump(key, value)
 
     _detect_prose_leaks(messages, bump_one)
@@ -113,26 +109,24 @@ def collect_behavior_signals(
             bump("blocker_rediscovery")
             break
 
-    if suppress_reacquisition_once and _suppress_reacquisition_signals(
-        signals
-    ):
+    if suppress_reacquisition_once and _suppress_reacquisition_signals(signals):
         bump("stream_recovery_reacquisition_suppressed")
 
     return signals
 
 
 __all__ = [
+    "SEARCH_LIKE_TOOLS",
+    "_HARD_BLOCKER_PHRASES_SET",
+    "_TRANSIENT_ERROR_PHRASES_SET",
     "ToolContextModel",
+    "_count_tool_density",
+    "_iter_tool_results",
+    "_should_skip_history_rewrite",
     "build_tool_use_id_to_context",
     "collect_behavior_signals",
     "collect_tool_context_validation_signals",
     "count_tokens",
     "logical_target_key_from_context",
     "normalize_tool_events",
-    "_count_tool_density",
-    "_HARD_BLOCKER_PHRASES_SET",
-    "_TRANSIENT_ERROR_PHRASES_SET",
-    "_iter_tool_results",
-    "_should_skip_history_rewrite",
-    "SEARCH_LIKE_TOOLS",
 ]

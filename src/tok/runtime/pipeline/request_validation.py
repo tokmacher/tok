@@ -18,34 +18,21 @@ from pydantic import (
     model_validator,
 )
 
-
 logger = logging.getLogger("tok.runtime.validation")
 
-_ALLOWED_BLOCK_TYPES = frozenset(
-    {"text", "tool_use", "tool_result", "thinking", "redacted_thinking"}
-)
+_ALLOWED_BLOCK_TYPES = frozenset({"text", "tool_use", "tool_result", "thinking", "redacted_thinking"})
 _PROVIDER_SAFE_TOOL_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _STRICT_FAILURE_SIGNAL_MAP = {
     "invalid_tool_use_block": "tok_bridge_strict_invalid_tool_use_block",
     "invalid_tool_result_block": "tok_bridge_strict_invalid_tool_result_block",
-    "assistant_tool_use_missing_next_tool_result": (
-        "tok_bridge_strict_missing_next_tool_result"
-    ),
+    "assistant_tool_use_missing_next_tool_result": ("tok_bridge_strict_missing_next_tool_result"),
     "assistant_tool_use_incomplete_next_tool_result_coverage": (
         "tok_bridge_strict_incomplete_next_tool_result_coverage"
     ),
-    "tool_result_unknown_tool_use_id": (
-        "tok_bridge_strict_tool_result_unknown_tool_use_id"
-    ),
-    "tool_result_not_immediately_after_assistant_tool_use": (
-        "tok_bridge_strict_tool_result_ordering_failure"
-    ),
-    "user_tool_result_after_text": (
-        "tok_bridge_strict_user_tool_result_after_text"
-    ),
-    "bridge_wire_model_invalid": (
-        "tok_bridge_strict_bridge_wire_model_invalid"
-    ),
+    "tool_result_unknown_tool_use_id": ("tok_bridge_strict_tool_result_unknown_tool_use_id"),
+    "tool_result_not_immediately_after_assistant_tool_use": ("tok_bridge_strict_tool_result_ordering_failure"),
+    "user_tool_result_after_text": ("tok_bridge_strict_user_tool_result_after_text"),
+    "bridge_wire_model_invalid": ("tok_bridge_strict_bridge_wire_model_invalid"),
     "provider_sensitive_large_tool_use_text_interleaving": (
         "tok_bridge_strict_provider_sensitive_large_tool_use_text_interleaving"
     ),
@@ -104,7 +91,8 @@ class _CanonicalTextBlock(BaseModel):
     @classmethod
     def _text_must_not_be_blank(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("blank text block")
+            msg = "blank text block"
+            raise ValueError(msg)
         return value
 
 
@@ -118,12 +106,9 @@ class _CanonicalToolUseBlock(BaseModel):
 
     @model_validator(mode="after")
     def _validate_tool_use(self) -> "_CanonicalToolUseBlock":
-        if (
-            not self.id.strip()
-            or not self.name.strip()
-            or not _is_provider_safe_tool_id(self.id)
-        ):
-            raise ValueError("invalid tool_use block")
+        if not self.id.strip() or not self.name.strip() or not _is_provider_safe_tool_id(self.id):
+            msg = "invalid tool_use block"
+            raise ValueError(msg)
         return self
 
 
@@ -136,10 +121,9 @@ class _CanonicalToolResultBlock(BaseModel):
 
     @model_validator(mode="after")
     def _validate_tool_result(self) -> "_CanonicalToolResultBlock":
-        if not self.tool_use_id.strip() or not _is_provider_safe_tool_id(
-            self.tool_use_id
-        ):
-            raise ValueError("invalid tool_result block")
+        if not self.tool_use_id.strip() or not _is_provider_safe_tool_id(self.tool_use_id):
+            msg = "invalid tool_result block"
+            raise ValueError(msg)
         return self
 
 
@@ -177,14 +161,12 @@ def _dedupe_provider_safe_tool_id(seed: str, occupied_ids: set[str]) -> str:
     return candidate
 
 
-def _tool_id_seed_hint(
-    *, msg_index: int, block_index: int, occurrence: int, prefix: str = "toolu"
-) -> str:
+def _tool_id_seed_hint(*, msg_index: int, block_index: int, occurrence: int, prefix: str = "toolu") -> str:
     return f"{prefix}_m{msg_index + 1}_b{block_index + 1}_{occurrence}"
 
 
 def _normalize_or_synthesize_tool_id(
-    raw_id: Any,
+    raw_id: str | None,
     occupied_ids: set[str],
     *,
     seed_hint: str,
@@ -200,13 +182,9 @@ def _normalize_or_synthesize_tool_id(
         )
         return deduped, "deduped"
     if not stripped:
-        synthesized = _dedupe_provider_safe_tool_id(
-            _provider_safe_tool_id_seed(seed_hint), occupied_ids
-        )
+        synthesized = _dedupe_provider_safe_tool_id(_provider_safe_tool_id_seed(seed_hint), occupied_ids)
         return synthesized, "synthesized"
-    sanitized = _dedupe_provider_safe_tool_id(
-        _provider_safe_tool_id_seed(stripped), occupied_ids
-    )
+    sanitized = _dedupe_provider_safe_tool_id(_provider_safe_tool_id_seed(stripped), occupied_ids)
     return sanitized, "sanitized"
 
 
@@ -230,17 +208,11 @@ def normalize_tool_use_blocks(
         )
         block["id"] = normalized_id
         if disposition == "sanitized":
-            signals["tool_use_id_sanitized"] = (
-                signals.get("tool_use_id_sanitized", 0) + 1
-            )
+            signals["tool_use_id_sanitized"] = signals.get("tool_use_id_sanitized", 0) + 1
         elif disposition == "synthesized":
-            signals["tool_use_blank_id_synthesized"] = (
-                signals.get("tool_use_blank_id_synthesized", 0) + 1
-            )
+            signals["tool_use_blank_id_synthesized"] = signals.get("tool_use_blank_id_synthesized", 0) + 1
         elif disposition == "deduped":
-            signals["tool_use_id_deduped"] = (
-                signals.get("tool_use_id_deduped", 0) + 1
-            )
+            signals["tool_use_id_deduped"] = signals.get("tool_use_id_deduped", 0) + 1
 
     return normalized_blocks, signals
 
@@ -266,20 +238,21 @@ class _CanonicalBridgeMessage(BaseModel):
 
     @field_validator("content")
     @classmethod
-    def _content_must_not_be_empty(
-        cls, value: list[_CanonicalContentBlock]
-    ) -> list[_CanonicalContentBlock]:
+    def _content_must_not_be_empty(cls, value: list[_CanonicalContentBlock]) -> list[_CanonicalContentBlock]:
         if not value:
-            raise ValueError("empty content blocks")
+            msg = "empty content blocks"
+            raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
     def _enforce_cross_role_shapes(self) -> "_CanonicalBridgeMessage":
         for block in self.content:
             if self.role == "user" and block.type == "tool_use":
-                raise ValueError("user contains tool_use")
+                msg = "user contains tool_use"
+                raise ValueError(msg)
             if self.role == "assistant" and block.type == "tool_result":
-                raise ValueError("assistant contains tool_result")
+                msg = "assistant contains tool_result"
+                raise ValueError(msg)
         return self
 
 
@@ -294,28 +267,27 @@ class _CanonicalBridgeBody(BaseModel):
     @classmethod
     def _model_must_not_be_blank(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("missing model")
+            msg = "missing model"
+            raise ValueError(msg)
         return value
 
     @field_validator("messages")
     @classmethod
-    def _messages_must_not_be_empty(
-        cls, value: list[_CanonicalBridgeMessage]
-    ) -> list[_CanonicalBridgeMessage]:
+    def _messages_must_not_be_empty(cls, value: list[_CanonicalBridgeMessage]) -> list[_CanonicalBridgeMessage]:
         if not value:
-            raise ValueError("empty messages")
+            msg = "empty messages"
+            raise ValueError(msg)
         return value
 
     @field_validator("system")
     @classmethod
-    def _validate_system_blocks(
-        cls, value: str | list[dict[str, Any]] | None
-    ) -> str | list[dict[str, Any]] | None:
+    def _validate_system_blocks(cls, value: str | list[dict[str, Any]] | None) -> str | list[dict[str, Any]] | None:
         if isinstance(value, list):
             try:
                 _CANONICAL_CONTENT_ADAPTER.validate_python(value)
             except ValidationError:
-                raise ValueError("invalid_system_block") from None
+                msg = "invalid_system_block"
+                raise ValueError(msg) from None
         return value
 
 
@@ -329,18 +301,17 @@ def _validate_canonical_bridge_body_model(body: dict[str, Any]) -> list[str]:
         if errors and all(err.get("loc") == ("messages",) for err in errors):
             return []
         if errors and any(
-            err.get("loc") == ("system",)
-            and "invalid_system_block" in str(err.get("msg", ""))
-            for err in errors
+            err.get("loc") == ("system",) and "invalid_system_block" in str(err.get("msg", "")) for err in errors
         ):
             return ["invalid_system_block"]
         return ["bridge_wire_model_invalid"]
 
 
 def _normalize_message_content_to_blocks(
-    content: Any,
+    content: str | list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Normalize message content to a list of Anthropic-style blocks.
+    """
+    Normalize message content to a list of Anthropic-style blocks.
 
     Returns (blocks, drops) where drops maps dropped block type names to
     the count of blocks of that type that were removed because they are
@@ -373,7 +344,7 @@ def _normalize_message_content_to_blocks(
 
 def _check_changed_content(
     canonical_message: dict[str, Any],
-    original_content: Any,
+    original_content: str | list[dict[str, Any]],
     role: str,
 ) -> bool:
     """Return True when normalization changed the message content."""
@@ -383,20 +354,14 @@ def _check_changed_content(
     if not isinstance(canonical_blocks, list):
         canonical_blocks = []
     if isinstance(original_content, str):
-        normalized_blocks, _ = _normalize_message_content_to_blocks(
-            original_content
-        )
-        return True if normalized_blocks or original_content != "" else False
+        normalized_blocks, _ = _normalize_message_content_to_blocks(original_content)
+        return bool(normalized_blocks or original_content != "")
     if isinstance(original_content, list):
-        original_blocks = [
-            block for block in original_content if isinstance(block, dict)
-        ]
+        original_blocks = [block for block in original_content if isinstance(block, dict)]
         if len(original_blocks) != len(canonical_blocks):
             return True
-    normalized_blocks, _ = _normalize_message_content_to_blocks(
-        original_content
-    )
-    return canonical_blocks != normalized_blocks
+    normalized_blocks, _ = _normalize_message_content_to_blocks(original_content)
+    return bool(canonical_blocks != normalized_blocks)
 
 
 def _canonicalize_bridge_message(
@@ -404,7 +369,8 @@ def _canonicalize_bridge_message(
     *,
     preserve_content: bool = False,
 ) -> tuple[dict[str, Any], dict[str, int]]:
-    """Rewrite a single message into a canonical user or assistant role with blocks.
+    """
+    Rewrite a single message into a canonical user or assistant role with blocks.
 
     Returns (canonical_message, drops) where drops maps dropped block type
     names to counts of blocks removed during normalization.
@@ -424,9 +390,7 @@ def _canonicalize_bridge_message(
         if "is_error" in message:
             block["is_error"] = bool(message.get("is_error"))
         if "cache_control" in message:
-            block["cache_control"] = copy.deepcopy(
-                message.get("cache_control")
-            )
+            block["cache_control"] = copy.deepcopy(message.get("cache_control"))
 
         return {"role": "user", "content": [block]}, {}
 
@@ -444,7 +408,7 @@ def _canonicalize_bridge_message(
                 elif block_type:
                     drops[block_type] = drops.get(block_type, 0) + 1
             return {"role": role, "content": preserved_blocks}, drops
-        elif isinstance(content, str):
+        if isinstance(content, str):
             text = content.strip()
             if text:
                 return {
@@ -455,9 +419,7 @@ def _canonicalize_bridge_message(
         return {"role": role, "content": []}, {}
 
     canonical_role = "assistant" if role == "assistant" else "user"
-    blocks, drops = _normalize_message_content_to_blocks(
-        message.get("content")
-    )
+    blocks, drops = _normalize_message_content_to_blocks(message.get("content"))
     if canonical_role == "user":
         filtered_blocks: list[dict[str, Any]] = []
         for block in blocks:
@@ -488,23 +450,17 @@ def _merge_adjacent_anthropic_messages(
         # Only merge user messages; assistant messages must not be merged across tool boundaries.
         # Preserve tool_result-only boundaries so canonical splitting cannot be re-collapsed into
         # mixed user messages that upstream may reject.
-        if (
-            msg["role"] == "user"
-            and prev["role"] == "user"
-            and _user_messages_are_merge_compatible(prev, msg)
-        ):
+        if msg["role"] == "user" and prev["role"] == "user" and _user_messages_are_merge_compatible(prev, msg):
             prev["content"].extend(msg["content"])
-            signals["tok_bridge_adjacent_user_merged"] = (
-                signals.get("tok_bridge_adjacent_user_merged", 0) + 1
-            )
+            signals["tok_bridge_adjacent_user_merged"] = signals.get("tok_bridge_adjacent_user_merged", 0) + 1
         else:
             merged.append(msg)
 
     return merged, signals
 
 
-def _is_tool_result_block(block: Any) -> bool:
-    return isinstance(block, dict) and block.get("type") == "tool_result"
+def _is_tool_result_block(block: dict[str, Any]) -> bool:
+    return bool(isinstance(block, dict) and block.get("type") == "tool_result")
 
 
 def _user_message_tool_result_shape(
@@ -515,30 +471,25 @@ def _user_message_tool_result_shape(
     if not isinstance(content, list):
         return False, False
     has_tool_result = any(_is_tool_result_block(block) for block in content)
-    has_non_tool_result = any(
-        isinstance(block, dict) and block.get("type") != "tool_result"
-        for block in content
-    )
+    has_non_tool_result = any(isinstance(block, dict) and block.get("type") != "tool_result" for block in content)
     return has_tool_result, has_non_tool_result
 
 
-def _user_messages_are_merge_compatible(
-    prev: dict[str, Any], current: dict[str, Any]
-) -> bool:
-    prev_has_tool_result, prev_has_non_tool_result = (
-        _user_message_tool_result_shape(prev)
-    )
-    curr_has_tool_result, curr_has_non_tool_result = (
-        _user_message_tool_result_shape(current)
-    )
+def _user_messages_are_merge_compatible(prev: dict[str, Any], current: dict[str, Any]) -> bool:
+    (
+        prev_has_tool_result,
+        prev_has_non_tool_result,
+    ) = _user_message_tool_result_shape(prev)
+    (
+        curr_has_tool_result,
+        curr_has_non_tool_result,
+    ) = _user_message_tool_result_shape(current)
 
     if prev_has_tool_result and prev_has_non_tool_result:
         return False
     if curr_has_tool_result and curr_has_non_tool_result:
         return False
-    if prev_has_tool_result != curr_has_tool_result:
-        return False
-    return True
+    return prev_has_tool_result == curr_has_tool_result
 
 
 def _split_mixed_user_tool_result_messages(
@@ -561,15 +512,9 @@ def _split_mixed_user_tool_result_messages(
             rewritten.append(message)
             continue
 
-        tool_result_blocks = [
-            copy.deepcopy(block)
-            for block in content
-            if _is_tool_result_block(block)
-        ]
+        tool_result_blocks = [copy.deepcopy(block) for block in content if _is_tool_result_block(block)]
         non_tool_result_blocks = [
-            copy.deepcopy(block)
-            for block in content
-            if isinstance(block, dict) and block.get("type") != "tool_result"
+            copy.deepcopy(block) for block in content if isinstance(block, dict) and block.get("type") != "tool_result"
         ]
         if not tool_result_blocks or not non_tool_result_blocks:
             rewritten.append(message)
@@ -595,7 +540,8 @@ def _rewrite_provider_safe_tool_ids(
     *,
     protected_content_identities: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
-    """Rewrite invalid tool IDs to provider-safe IDs and preserve pairings.
+    """
+    Rewrite invalid tool IDs to provider-safe IDs and preserve pairings.
 
     Messages whose content list id() is in protected_content_identities will
     have their content list preserved (not deep-copied). This is used to
@@ -610,13 +556,8 @@ def _rewrite_provider_safe_tool_ids(
             rewritten_messages.append(msg)
             continue
         content = msg.get("content")
-        if id(content) in protected_content_identities and isinstance(
-            content, list
-        ):
-            new_msg = {
-                k: copy.deepcopy(v) if k != "content" else v
-                for k, v in msg.items()
-            }
+        if id(content) in protected_content_identities and isinstance(content, list):
+            new_msg = {k: copy.deepcopy(v) if k != "content" else v for k, v in msg.items()}
             rewritten_messages.append(new_msg)
         else:
             rewritten_messages.append(copy.deepcopy(msg))
@@ -635,15 +576,16 @@ def _rewrite_provider_safe_tool_ids(
             continue
 
         if role == "assistant":
-            assistant_changed, assistant_invalid = (
-                _rewrite_assistant_tool_message(
-                    message,
-                    msg_index,
-                    content,
-                    occupied_ids,
-                    pending_pairs,
-                    signals,
-                )
+            (
+                assistant_changed,
+                assistant_invalid,
+            ) = _rewrite_assistant_tool_message(
+                message,
+                msg_index,
+                content,
+                occupied_ids,
+                pending_pairs,
+                signals,
             )
             changed |= assistant_changed
             invalid_tool_ids_seen += assistant_invalid
@@ -705,17 +647,11 @@ def _rewrite_assistant_tool_message(
             block["id"] = normalized_id
             changed = True
         if disposition == "sanitized":
-            signals["tok_bridge_tool_id_sanitized"] = (
-                signals.get("tok_bridge_tool_id_sanitized", 0) + 1
-            )
+            signals["tok_bridge_tool_id_sanitized"] = signals.get("tok_bridge_tool_id_sanitized", 0) + 1
         elif disposition == "synthesized":
-            signals["tok_bridge_blank_tool_id_synthesized"] = (
-                signals.get("tok_bridge_blank_tool_id_synthesized", 0) + 1
-            )
+            signals["tok_bridge_blank_tool_id_synthesized"] = signals.get("tok_bridge_blank_tool_id_synthesized", 0) + 1
         elif disposition == "deduped":
-            signals["tok_bridge_tool_id_deduped"] = (
-                signals.get("tok_bridge_tool_id_deduped", 0) + 1
-            )
+            signals["tok_bridge_tool_id_deduped"] = signals.get("tok_bridge_tool_id_deduped", 0) + 1
         pending_pairs.append(
             {
                 "raw_id": raw_tool_use_id,
@@ -755,8 +691,7 @@ def _rewrite_user_tool_message(
                 match_index = exact_matches[0]
             elif len(exact_matches) > 1:
                 signals["tok_bridge_tool_result_pairing_ambiguous"] = (
-                    signals.get("tok_bridge_tool_result_pairing_ambiguous", 0)
-                    + 1
+                    signals.get("tok_bridge_tool_result_pairing_ambiguous", 0) + 1
                 )
         else:
             for index, pair in enumerate(pending_pairs):
@@ -765,8 +700,7 @@ def _rewrite_user_tool_message(
                     break
             if match_index is not None:
                 signals["tok_bridge_tool_result_pairing_repaired"] = (
-                    signals.get("tok_bridge_tool_result_pairing_repaired", 0)
-                    + 1
+                    signals.get("tok_bridge_tool_result_pairing_repaired", 0) + 1
                 )
         if match_index is None:
             signals["tok_bridge_tool_result_pairing_unrepaired"] = (
@@ -778,31 +712,19 @@ def _rewrite_user_tool_message(
         normalized_id = str(pending_pairs[match_index]["new_id"])
         if block.get("tool_use_id") != normalized_id:
             block["tool_use_id"] = normalized_id
-            signals["tok_bridge_tool_result_id_rewritten"] = (
-                signals.get("tok_bridge_tool_result_id_rewritten", 0) + 1
-            )
+            signals["tok_bridge_tool_result_id_rewritten"] = signals.get("tok_bridge_tool_result_id_rewritten", 0) + 1
             changed = True
         matched_indices_in_encounter_order.append(match_index)
         reordered_tool_results.append((match_index, block))
 
-    sorted_tool_results = [
-        block
-        for _index, block in sorted(
-            reordered_tool_results, key=lambda item: item[0]
-        )
-    ]
-    reordered_content = (
-        sorted_tool_results + unmatched_tool_results + non_tool_blocks
-    )
+    sorted_tool_results = [block for _index, block in sorted(reordered_tool_results, key=lambda item: item[0])]
+    reordered_content = sorted_tool_results + unmatched_tool_results + non_tool_blocks
     if reordered_content != content:
         message["content"] = reordered_content
         changed = True
-        signals["tok_bridge_tool_result_order_repaired"] = (
-            signals.get("tok_bridge_tool_result_order_repaired", 0) + 1
-        )
+        signals["tok_bridge_tool_result_order_repaired"] = signals.get("tok_bridge_tool_result_order_repaired", 0) + 1
     if matched_indices_in_encounter_order and (
-        matched_indices_in_encounter_order
-        != sorted(matched_indices_in_encounter_order)
+        matched_indices_in_encounter_order != sorted(matched_indices_in_encounter_order)
     ):
         signals["tok_bridge_tool_result_pairing_repaired"] = (
             signals.get("tok_bridge_tool_result_pairing_repaired", 0) + 1
@@ -831,14 +753,8 @@ def bridge_strict_failure_signals(failures: list[str]) -> dict[str, int]:
     return signals
 
 
-def _message_content_without_block_type(
-    content: list[dict[str, Any]], block_type: str
-) -> list[dict[str, Any]]:
-    return [
-        copy.deepcopy(block)
-        for block in content
-        if isinstance(block, dict) and block.get("type") != block_type
-    ]
+def _message_content_without_block_type(content: list[dict[str, Any]], block_type: str) -> list[dict[str, Any]]:
+    return [copy.deepcopy(block) for block in content if isinstance(block, dict) and block.get("type") != block_type]
 
 
 def _assistant_user_tool_exchange_is_broken(
@@ -846,14 +762,10 @@ def _assistant_user_tool_exchange_is_broken(
     user_content: list[dict[str, Any]],
 ) -> bool:
     assistant_tool_blocks = [
-        block
-        for block in assistant_content
-        if isinstance(block, dict) and block.get("type") == "tool_use"
+        block for block in assistant_content if isinstance(block, dict) and block.get("type") == "tool_use"
     ]
     user_tool_result_blocks = [
-        block
-        for block in user_content
-        if isinstance(block, dict) and block.get("type") == "tool_result"
+        block for block in user_content if isinstance(block, dict) and block.get("type") == "tool_result"
     ]
     if not assistant_tool_blocks and not user_tool_result_blocks:
         return False
@@ -872,14 +784,10 @@ def _assistant_user_tool_exchange_is_broken(
         for block in user_tool_result_blocks
     ):
         return True
-    pending_tool_use_ids = [
-        str(block.get("id", "")).strip() for block in assistant_tool_blocks
-    ]
+    pending_tool_use_ids = [str(block.get("id", "")).strip() for block in assistant_tool_blocks]
     seen_tool_use_ids = set(pending_tool_use_ids)
     risks: dict[str, int] = {}
-    _process_user_tool_results(
-        user_content, seen_tool_use_ids, pending_tool_use_ids, risks
-    )
+    _process_user_tool_results(user_content, seen_tool_use_ids, pending_tool_use_ids, risks)
     return bool(risks)
 
 
@@ -902,81 +810,46 @@ def quarantine_invalid_tool_history_messages(
         if role != "assistant" or not isinstance(content, list):
             index += 1
             continue
-        assistant_has_tool_use = any(
-            isinstance(block, dict) and block.get("type") == "tool_use"
-            for block in content
-        )
+        assistant_has_tool_use = any(isinstance(block, dict) and block.get("type") == "tool_use" for block in content)
         if not assistant_has_tool_use:
             index += 1
             continue
 
-        next_message = (
-            quarantined_messages[index + 1]
-            if index + 1 < len(quarantined_messages)
-            else None
-        )
-        next_content = (
-            next_message.get("content")
-            if isinstance(next_message, dict)
-            else None
-        )
+        next_message = quarantined_messages[index + 1] if index + 1 < len(quarantined_messages) else None
+        next_content = next_message.get("content") if isinstance(next_message, dict) else None
         if (
             isinstance(next_message, dict)
             and str(next_message.get("role", "")).strip() == "user"
             and isinstance(next_content, list)
             and _assistant_user_tool_exchange_is_broken(content, next_content)
         ):
-            tool_use_count = sum(
-                1
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "tool_use"
-            )
+            tool_use_count = sum(1 for block in content if isinstance(block, dict) and block.get("type") == "tool_use")
             tool_result_count = sum(
-                1
-                for block in next_content
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") == "tool_result"
-                )
+                1 for block in next_content if (isinstance(block, dict) and block.get("type") == "tool_result")
             )
-            message["content"] = _message_content_without_block_type(
-                content, "tool_use"
-            )
-            next_message["content"] = _message_content_without_block_type(
-                next_content, "tool_result"
-            )
+            message["content"] = _message_content_without_block_type(content, "tool_use")
+            next_message["content"] = _message_content_without_block_type(next_content, "tool_result")
             signals["tok_bridge_invalid_tool_history_quarantined"] = (
-                signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
-                + 1
+                signals.get("tok_bridge_invalid_tool_history_quarantined", 0) + 1
             )
             signals["tok_bridge_quarantined_tool_use_blocks"] = (
-                signals.get("tok_bridge_quarantined_tool_use_blocks", 0)
-                + tool_use_count
+                signals.get("tok_bridge_quarantined_tool_use_blocks", 0) + tool_use_count
             )
             signals["tok_bridge_quarantined_tool_result_blocks"] = (
-                signals.get("tok_bridge_quarantined_tool_result_blocks", 0)
-                + tool_result_count
+                signals.get("tok_bridge_quarantined_tool_result_blocks", 0) + tool_result_count
             )
             changed = True
             index += 2
             continue
 
         if _assistant_user_tool_exchange_is_broken(content, []):
-            tool_use_count = sum(
-                1
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "tool_use"
-            )
-            message["content"] = _message_content_without_block_type(
-                content, "tool_use"
-            )
+            tool_use_count = sum(1 for block in content if isinstance(block, dict) and block.get("type") == "tool_use")
+            message["content"] = _message_content_without_block_type(content, "tool_use")
             signals["tok_bridge_invalid_tool_history_quarantined"] = (
-                signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
-                + 1
+                signals.get("tok_bridge_invalid_tool_history_quarantined", 0) + 1
             )
             signals["tok_bridge_quarantined_tool_use_blocks"] = (
-                signals.get("tok_bridge_quarantined_tool_use_blocks", 0)
-                + tool_use_count
+                signals.get("tok_bridge_quarantined_tool_use_blocks", 0) + tool_use_count
             )
             changed = True
         index += 1
@@ -996,9 +869,7 @@ def quarantine_invalid_tool_history_messages(
         filtered_messages.append(message)
 
     if dropped_messages:
-        signals["tok_bridge_quarantined_empty_messages_dropped"] = (
-            dropped_messages
-        )
+        signals["tok_bridge_quarantined_empty_messages_dropped"] = dropped_messages
     if not filtered_messages:
         signals["tok_bridge_invalid_tool_history_quarantine_exhausted"] = 1
 
@@ -1012,7 +883,8 @@ def _process_bridged_message(
     *,
     preserve_content: bool = False,
 ) -> tuple[dict[str, Any] | None, bool]:
-    """Process a single message for canonicalization.
+    """
+    Process a single message for canonicalization.
 
     When preserve_content is True, the message content is passed through
     unchanged (for the latest assistant message with thinking blocks).
@@ -1030,9 +902,7 @@ def _process_bridged_message(
         changed = True
 
     orig_content = raw_message.get("content")
-    msg, msg_drops = _canonicalize_bridge_message(
-        raw_message, preserve_content=preserve_content
-    )
+    msg, msg_drops = _canonicalize_bridge_message(raw_message, preserve_content=preserve_content)
 
     for b_type, count in msg_drops.items():
         total_drops[b_type] = total_drops.get(b_type, 0) + count
@@ -1052,7 +922,8 @@ def _normalize_assistant_block_order(
     *,
     skip_identities: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Reorder assistant message blocks: non-tool_use first, tool_use contiguous at end.
+    """
+    Reorder assistant message blocks: non-tool_use first, tool_use contiguous at end.
 
     Enforces Anthropic's actual constraint: in every assistant message all
     non-tool_use blocks (text, thinking, redacted_thinking, etc.) must come
@@ -1091,32 +962,26 @@ def _normalize_assistant_block_order(
     return messages, changed
 
 
-def _content_hash(content: Any) -> str:
+def _content_hash(content: list[dict[str, Any]]) -> str:
     if not isinstance(content, list):
         return ""
     try:
-        return hashlib.sha256(
-            json.dumps(content, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()[:16]
+        return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
     except (TypeError, ValueError):
         return ""
 
 
-def _block_type_sequence(content: Any) -> list[str]:
+def _block_type_sequence(content: list[dict[str, Any]]) -> list[str]:
     if not isinstance(content, list):
         return []
-    return [
-        b.get("type", "?") if isinstance(b, dict) else "?" for b in content
-    ]
+    return [b.get("type", "?") if isinstance(b, dict) else "?" for b in content]
 
 
-def _has_thinking_with_signature(content: Any) -> bool:
+def _has_thinking_with_signature(content: list[dict[str, Any]]) -> bool:
     if not isinstance(content, list):
         return False
     return any(
-        isinstance(b, dict)
-        and b.get("type") in {"thinking", "redacted_thinking"}
-        and bool(b.get("signature"))
+        isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} and bool(b.get("signature"))
         for b in content
     )
 
@@ -1134,11 +999,7 @@ def _find_protected_message(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        if any(
-            isinstance(b, dict)
-            and b.get("type") in {"thinking", "redacted_thinking"}
-            for b in content
-        ):
+        if any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
             return id(msg), id(content)
     return None, None
 
@@ -1181,10 +1042,7 @@ def _check_thinking_block_mutation(
             if not isinstance(msg, dict):
                 continue
             content = msg.get("content")
-            if (
-                isinstance(content, list)
-                and id(content) == protected_content_identity
-            ):
+            if isinstance(content, list) and id(content) == protected_content_identity:
                 after_content = content
                 break
     if after_content is None:
@@ -1194,11 +1052,7 @@ def _check_thinking_block_mutation(
             content = msg.get("content")
             if not isinstance(content, list):
                 continue
-            if any(
-                isinstance(b, dict)
-                and b.get("type") in {"thinking", "redacted_thinking"}
-                for b in content
-            ):
+            if any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
                 after_content = content
                 break
     if after_content is not None:
@@ -1209,8 +1063,7 @@ def _check_thinking_block_mutation(
             if seen_mutation_pairs is not None:
                 if mutation_pair in seen_mutation_pairs:
                     logger.debug(
-                        "THINKING_BLOCK_MUTATION_DEDUPLICATED | "
-                        "msg_index=%d | before_hash=%s | after_hash=%s",
+                        "THINKING_BLOCK_MUTATION_DEDUPLICATED | msg_index=%d | before_hash=%s | after_hash=%s",
                         protected_msg_index,
                         before_hash,
                         after_hash,
@@ -1233,8 +1086,7 @@ def _check_thinking_block_mutation(
             signals["thinking_block_mutated"] = 1
         else:
             logger.debug(
-                "thinking_block_preserved | "
-                "msg_index=%d | hash=%s | types=%s | has_signature=%s",
+                "thinking_block_preserved | msg_index=%d | hash=%s | types=%s | has_signature=%s",
                 protected_msg_index,
                 before_hash,
                 ",".join(before_block_types),
@@ -1281,9 +1133,7 @@ def _apply_canonicalization_pipeline(
     if protected_canonical_identity is not None:
         skip_identities = {protected_canonical_identity}
 
-    canonical_path, order_changed = _normalize_assistant_block_order(
-        canonical_path, skip_identities=skip_identities
-    )
+    canonical_path, order_changed = _normalize_assistant_block_order(canonical_path, skip_identities=skip_identities)
     if order_changed:
         changed = True
         signals["tok_bridge_assistant_block_order_normalized"] = (
@@ -1300,9 +1150,7 @@ def _apply_canonicalization_pipeline(
     if split_signals:
         signals.update(split_signals)
 
-    merged_messages, merge_signals = _merge_adjacent_anthropic_messages(
-        canonical_path
-    )
+    merged_messages, merge_signals = _merge_adjacent_anthropic_messages(canonical_path)
     signals.update(merge_signals)
 
     protected_content_identities: set[int] | None = None
@@ -1324,7 +1172,8 @@ def _apply_canonicalization_pipeline(
 def canonicalize_anthropic_bridge_messages(
     messages: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
-    """Canonicalize bridge messages to the Anthropic wire shape.
+    """
+    Canonicalize bridge messages to the Anthropic wire shape.
 
     Returns (canonical_messages, changed, signals).
 
@@ -1345,9 +1194,10 @@ def canonicalize_anthropic_bridge_messages(
     if not isinstance(messages, list):
         return messages, False, {}
 
-    protected_original_identity, protected_content_identity = (
-        _find_protected_message(messages)
-    )
+    (
+        protected_original_identity,
+        protected_content_identity,
+    ) = _find_protected_message(messages)
 
     (
         before_hash,
@@ -1363,16 +1213,16 @@ def canonicalize_anthropic_bridge_messages(
         canonical_path,
         changed,
         protected_canonical_identity,
-    ) = _process_messages_into_canonical_path(
-        messages, protected_original_identity, signals, total_drops
-    )
+    ) = _process_messages_into_canonical_path(messages, protected_original_identity, signals, total_drops)
 
-    merged_messages, pipeline_changed, pipeline_signals = (
-        _apply_canonicalization_pipeline(
-            canonical_path,
-            protected_canonical_identity,
-            protected_content_identity,
-        )
+    (
+        merged_messages,
+        pipeline_changed,
+        pipeline_signals,
+    ) = _apply_canonicalization_pipeline(
+        canonical_path,
+        protected_canonical_identity,
+        protected_content_identity,
     )
     changed = changed or pipeline_changed
     signals.update(pipeline_signals)
@@ -1427,9 +1277,7 @@ def canonicalize_anthropic_bridge_body(
     validation_failures = _validate_canonical_bridge_body_model(new_body)
     if validation_failures:
         non_blocking_failures = [
-            failure
-            for failure in validation_failures
-            if failure in _NON_BLOCKING_OUTGOING_FAILURES
+            failure for failure in validation_failures if failure in _NON_BLOCKING_OUTGOING_FAILURES
         ]
         if len(non_blocking_failures) == len(validation_failures):
             signals["tok_bridge_canonical_validation_nonblocking"] = 1
@@ -1441,7 +1289,7 @@ def canonicalize_anthropic_bridge_body(
 
 
 def _process_assistant_tool_ids(
-    content: Any,
+    content: list[dict[str, Any]],
     seen_tool_use_ids: set[str],
 ) -> list[str]:
     """Extract ordered tool_use IDs from an assistant message."""
@@ -1463,7 +1311,8 @@ def _process_user_tool_results(
     pending_tool_use_ids: list[str],
     risks: dict[str, int],
 ) -> tuple[int, int]:
-    """Check user text/tool_result ordering risks.
+    """
+    Check user text/tool_result ordering risks.
 
     Returns `(tool_result_count, ordered_match_count)` for pending tool uses.
     """
@@ -1482,9 +1331,7 @@ def _process_user_tool_results(
             if str(block.get("text", "")).strip():
                 saw_text_block = True
                 if saw_tool_result_block and not message_has_mixed_violation:
-                    risks[
-                        "tool_result_not_immediately_after_assistant_tool_use"
-                    ] = (
+                    risks["tool_result_not_immediately_after_assistant_tool_use"] = (
                         risks.get(
                             "tool_result_not_immediately_after_assistant_tool_use",
                             0,
@@ -1496,9 +1343,7 @@ def _process_user_tool_results(
 
         if block_type != "tool_result":
             if saw_tool_result_block and not message_has_mixed_violation:
-                risks[
-                    "tool_result_not_immediately_after_assistant_tool_use"
-                ] = (
+                risks["tool_result_not_immediately_after_assistant_tool_use"] = (
                     risks.get(
                         "tool_result_not_immediately_after_assistant_tool_use",
                         0,
@@ -1511,24 +1356,17 @@ def _process_user_tool_results(
         saw_tool_result_block = True
         tool_result_count += 1
         if saw_text_block and not message_has_order_violation:
-            risks["user_tool_result_after_text"] = (
-                risks.get("user_tool_result_after_text", 0) + 1
-            )
+            risks["user_tool_result_after_text"] = risks.get("user_tool_result_after_text", 0) + 1
             message_has_order_violation = True
 
         tool_use_id = str(block.get("tool_use_id", "")).strip()
         if not tool_use_id:
             continue
         if tool_use_id not in seen_tool_use_ids:
-            risks["tool_result_unknown_tool_use_id"] = (
-                risks.get("tool_result_unknown_tool_use_id", 0) + 1
-            )
+            risks["tool_result_unknown_tool_use_id"] = risks.get("tool_result_unknown_tool_use_id", 0) + 1
         if ordered_match_count >= len(pending_tool_use_ids):
             risks["tool_result_not_immediately_after_assistant_tool_use"] = (
-                risks.get(
-                    "tool_result_not_immediately_after_assistant_tool_use", 0
-                )
-                + 1
+                risks.get("tool_result_not_immediately_after_assistant_tool_use", 0) + 1
             )
             continue
         expected_tool_use_id = pending_tool_use_ids[ordered_match_count]
@@ -1536,10 +1374,7 @@ def _process_user_tool_results(
             ordered_match_count += 1
             continue
         risks["tool_result_not_immediately_after_assistant_tool_use"] = (
-            risks.get(
-                "tool_result_not_immediately_after_assistant_tool_use", 0
-            )
-            + 1
+            risks.get("tool_result_not_immediately_after_assistant_tool_use", 0) + 1
         )
     return tool_result_count, ordered_match_count
 
@@ -1557,10 +1392,7 @@ def _flush_pending_tool_uses(
 
 def _has_tool_result_blocks(content: list[dict[str, Any]]) -> bool:
     """Return True if any content block is a tool_result."""
-    return any(
-        isinstance(block, dict) and block.get("type") == "tool_result"
-        for block in content
-    )
+    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
 def _check_fragmentation_risk(
@@ -1571,11 +1403,7 @@ def _check_fragmentation_risk(
     risks: dict[str, int],
 ) -> None:
     """Detect tool_results split across multiple user messages."""
-    if not (
-        awaiting_tool_results_for_message
-        and pending_tool_use_ids
-        and user_already_responded
-    ):
+    if not (awaiting_tool_results_for_message and pending_tool_use_ids and user_already_responded):
         return
     if _has_tool_result_blocks(content):
         risks["tool_results_fragmented_across_user_messages"] = risks.get(
@@ -1598,9 +1426,7 @@ def _evaluate_pending_coverage(
         ) + len(pending_tool_use_ids)
     elif matched_count != len(pending_tool_use_ids):
         risks["assistant_tool_use_incomplete_next_tool_result_coverage"] = (
-            risks.get(
-                "assistant_tool_use_incomplete_next_tool_result_coverage", 0
-            )
+            risks.get("assistant_tool_use_incomplete_next_tool_result_coverage", 0)
             + len(pending_tool_use_ids)
             - matched_count
         )
@@ -1610,7 +1436,8 @@ def _detect_thinking_between_tool_use(
     content: list[dict[str, Any]],
     risks: dict[str, int],
 ) -> None:
-    """Detect thinking/redacted_thinking blocks interleaved between tool_use blocks.
+    """
+    Detect thinking/redacted_thinking blocks interleaved between tool_use blocks.
 
     This is a detection-only signal for telemetry: it catches cases where
     normalization did not run (e.g., raw original body in fail-open path).
@@ -1624,9 +1451,7 @@ def _detect_thinking_between_tool_use(
         if block_type == "tool_use":
             in_tool_run = True
         elif block_type in {"thinking", "redacted_thinking"} and in_tool_run:
-            risks["thinking_between_tool_use"] = (
-                risks.get("thinking_between_tool_use", 0) + 1
-            )
+            risks["thinking_between_tool_use"] = risks.get("thinking_between_tool_use", 0) + 1
 
 
 def _collect_bridge_tool_result_shape_risks(
@@ -1656,9 +1481,7 @@ def _collect_bridge_tool_result_shape_risks(
             _flush_pending_tool_uses(risks, pending_tool_use_ids)
             if isinstance(content, list):
                 _detect_thinking_between_tool_use(content, risks)
-            pending_tool_use_ids = _process_assistant_tool_ids(
-                content, seen_tool_use_ids
-            )
+            pending_tool_use_ids = _process_assistant_tool_ids(content, seen_tool_use_ids)
             awaiting_tool_results_for_message = bool(pending_tool_use_ids)
             user_already_responded_to_current_assistant = False
             continue
@@ -1689,9 +1512,7 @@ def _collect_bridge_tool_result_shape_risks(
         (
             tool_result_count,
             matched_pending_tool_use_count,
-        ) = _process_user_tool_results(
-            content, seen_tool_use_ids, pending_tool_use_ids, risks
-        )
+        ) = _process_user_tool_results(content, seen_tool_use_ids, pending_tool_use_ids, risks)
         _evaluate_pending_coverage(
             risks,
             pending_tool_use_ids,
@@ -1733,46 +1554,26 @@ def _collect_bridge_provider_sensitivity_risks(
         first_tool = tool_positions[0]
         tool_use_count = len(tool_positions)
         has_text_between_or_after_tool_uses = any(
-            isinstance(block, dict)
-            and block.get("type") == "text"
-            and block_index > first_tool
+            isinstance(block, dict) and block.get("type") == "text" and block_index > first_tool
             for block_index, block in enumerate(content)
         )
         if tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD:
-            risks["assistant_large_tool_use_batch"] = (
-                risks.get("assistant_large_tool_use_batch", 0) + 1
-            )
+            risks["assistant_large_tool_use_batch"] = risks.get("assistant_large_tool_use_batch", 0) + 1
         if has_text_between_or_after_tool_uses:
-            risks["assistant_tool_use_text_interleaving"] = (
-                risks.get("assistant_tool_use_text_interleaving", 0) + 1
-            )
-        if (
-            tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD
-            and has_text_between_or_after_tool_uses
-        ):
-            next_message = (
-                messages[index + 1] if index + 1 < len(messages) else None
-            )
-            next_content = (
-                next_message.get("content")
-                if isinstance(next_message, dict)
-                else None
-            )
+            risks["assistant_tool_use_text_interleaving"] = risks.get("assistant_tool_use_text_interleaving", 0) + 1
+        if tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD and has_text_between_or_after_tool_uses:
+            next_message = messages[index + 1] if index + 1 < len(messages) else None
+            next_content = next_message.get("content") if isinstance(next_message, dict) else None
             next_tool_result_count = 0
             if isinstance(next_content, list):
                 next_tool_result_count = sum(
-                    1
-                    for block in next_content
-                    if isinstance(block, dict)
-                    and block.get("type") == "tool_result"
+                    1 for block in next_content if isinstance(block, dict) and block.get("type") == "tool_result"
                 )
             risks["assistant_large_tool_use_text_interleaving"] = (
                 risks.get("assistant_large_tool_use_text_interleaving", 0) + 1
             )
             if next_tool_result_count:
-                risks[
-                    "provider_sensitive_large_tool_use_text_interleaving"
-                ] = (
+                risks["provider_sensitive_large_tool_use_text_interleaving"] = (
                     risks.get(
                         "provider_sensitive_large_tool_use_text_interleaving",
                         0,
@@ -1784,7 +1585,7 @@ def _collect_bridge_provider_sensitivity_risks(
 
 
 def _summarize_message_blocks(
-    content: Any,
+    content: list[dict[str, Any]],
     summary: dict[str, Any],
 ) -> list[str]:
     """Summarize blocks within a message."""
@@ -1846,12 +1647,8 @@ def summarize_message_structure(
         role_seq.append(f"{role}[{','.join(blocks_summary)}]")
 
     summary["sequence"] = role_seq
-    summary["field_shape_risks"] = _collect_bridge_tool_result_shape_risks(
-        messages
-    )
-    summary["provider_sensitivity_risks"] = (
-        _collect_bridge_provider_sensitivity_risks(messages)
-    )
+    summary["field_shape_risks"] = _collect_bridge_tool_result_shape_risks(messages)
+    summary["provider_sensitivity_risks"] = _collect_bridge_provider_sensitivity_risks(messages)
     return summary
 
 
@@ -1877,26 +1674,15 @@ def summarize_bridge_pairing(
         ]
         if not tool_use_ids:
             continue
-        next_message = (
-            messages[index + 1] if index + 1 < len(messages) else None
-        )
-        next_role = (
-            str(next_message.get("role", "")).strip()
-            if isinstance(next_message, dict)
-            else "<none>"
-        )
-        next_content = (
-            next_message.get("content")
-            if isinstance(next_message, dict)
-            else None
-        )
+        next_message = messages[index + 1] if index + 1 < len(messages) else None
+        next_role = str(next_message.get("role", "")).strip() if isinstance(next_message, dict) else "<none>"
+        next_content = next_message.get("content") if isinstance(next_message, dict) else None
         next_tool_result_ids: list[str] = []
         if isinstance(next_content, list):
             next_tool_result_ids = [
                 str(block.get("tool_use_id", "")).strip()
                 for block in next_content
-                if isinstance(block, dict)
-                and block.get("type") == "tool_result"
+                if isinstance(block, dict) and block.get("type") == "tool_result"
             ]
         timeline.append(
             {
@@ -1909,9 +1695,7 @@ def summarize_bridge_pairing(
     return timeline
 
 
-def _validate_tool_use_block(
-    block: dict[str, Any], role: str, failures: list[str]
-) -> None:
+def _validate_tool_use_block(block: dict[str, Any], role: str, failures: list[str]) -> None:
     if role == "user":
         failures.append("user_contains_tool_use")
     if (
@@ -1923,9 +1707,7 @@ def _validate_tool_use_block(
         failures.append("invalid_tool_use_block")
 
 
-def _validate_tool_result_block(
-    block: dict[str, Any], role: str, failures: list[str]
-) -> None:
+def _validate_tool_result_block(block: dict[str, Any], role: str, failures: list[str]) -> None:
     if role == "assistant":
         failures.append("assistant_contains_tool_result")
     if (
@@ -1937,7 +1719,7 @@ def _validate_tool_result_block(
 
 
 def _validate_block(
-    block: Any,
+    block: dict[str, str | dict | list],
     role: str,
     msg_index: int,
     block_index: int,
@@ -1950,9 +1732,7 @@ def _validate_block(
 
     block_type = str(block.get("type", "")).strip()
     if not block_type:
-        failures.append(
-            f"message_{msg_index}_block_{block_index}_missing_type"
-        )
+        failures.append(f"message_{msg_index}_block_{block_index}_missing_type")
         return
 
     if block_type == "text":
@@ -1977,9 +1757,7 @@ def _validate_block(
     failures.append("unsupported_block_type")
 
 
-def _validate_message(
-    message: Any, msg_index: int, failures: list[str]
-) -> None:
+def _validate_message(message: dict[str, Any], msg_index: int, failures: list[str]) -> None:
     """Validate a single message in the bridge body."""
     if not isinstance(message, dict):
         failures.append(f"message_{msg_index}_not_dict")
@@ -2015,18 +1793,20 @@ def validate_anthropic_bridge_body(body: dict[str, Any]) -> list[str]:
 
     if not str(body.get("model", "")).strip():
         failures.append("missing_model")
+        # Missing model means the bridge wire is not valid for upstream send.
+        # This signal is consumed by the gateway preflight to block locally.
+        failures.append("bridge_wire_model_invalid")
 
     messages = body.get("messages")
     if not isinstance(messages, list):
-        return ["messages_not_list"]
+        failures.append("messages_not_list")
+        # Non-list messages cannot be safely canonicalized or validated further.
+        failures.append("bridge_wire_model_invalid")
+        return list(set(failures))  # Unique stable codes
     if not messages:
         return ["empty_messages"]
 
-    first_role = (
-        str(messages[0].get("role", "")).strip()
-        if isinstance(messages[0], dict)
-        else ""
-    )
+    first_role = str(messages[0].get("role", "")).strip() if isinstance(messages[0], dict) else ""
     if first_role != "user":
         failures.append("first_message_not_user")
 
@@ -2038,12 +1818,8 @@ def validate_anthropic_bridge_body(body: dict[str, Any]) -> list[str]:
         failures.append("user_tool_result_after_text")
     if shape_risks.get("assistant_tool_use_missing_next_tool_result"):
         failures.append("assistant_tool_use_missing_next_tool_result")
-    if shape_risks.get(
-        "assistant_tool_use_incomplete_next_tool_result_coverage"
-    ):
-        failures.append(
-            "assistant_tool_use_incomplete_next_tool_result_coverage"
-        )
+    if shape_risks.get("assistant_tool_use_incomplete_next_tool_result_coverage"):
+        failures.append("assistant_tool_use_incomplete_next_tool_result_coverage")
     if shape_risks.get("tool_result_unknown_tool_use_id"):
         failures.append("tool_result_unknown_tool_use_id")
     if shape_risks.get("tool_result_not_immediately_after_assistant_tool_use"):
@@ -2070,23 +1846,15 @@ def validate_anthropic_outgoing_bridge_body(body: dict[str, Any]) -> list[str]:
         failures.append("messages_not_list")
         return failures
     provider_risks = _collect_bridge_provider_sensitivity_risks(messages)
-    if provider_risks.get(
-        "provider_sensitive_large_tool_use_text_interleaving", 0
-    ):
+    if provider_risks.get("provider_sensitive_large_tool_use_text_interleaving", 0):
         failures.append("provider_sensitive_large_tool_use_text_interleaving")
     if provider_risks.get("assistant_tool_use_text_interleaving", 0):
-        failures.append(
-            "provider_sensitive_assistant_tool_use_text_interleaving"
-        )
+        failures.append("provider_sensitive_assistant_tool_use_text_interleaving")
 
     max_tokens = body.get("max_tokens")
     if max_tokens is None:
         failures.append("missing_max_tokens")
-    elif (
-        not isinstance(max_tokens, int)
-        or isinstance(max_tokens, bool)
-        or max_tokens < 1
-    ):
+    elif not isinstance(max_tokens, int) or isinstance(max_tokens, bool) or max_tokens < 1:
         failures.append("invalid_max_tokens")
 
     return failures
@@ -2099,16 +1867,11 @@ def has_provider_sensitive_failures(failures: list[str]) -> bool:
 def has_recoverable_immediate_pairing_failures(
     failures: list[str],
 ) -> bool:
-    return any(
-        failure in _RECOVERABLE_IMMEDIATE_PAIRING_FAILURES
-        for failure in failures
-    )
+    return any(failure in _RECOVERABLE_IMMEDIATE_PAIRING_FAILURES for failure in failures)
 
 
 def has_blocking_outgoing_failures(failures: list[str]) -> bool:
-    return any(
-        failure not in _NON_BLOCKING_OUTGOING_FAILURES for failure in failures
-    )
+    return any(failure not in _NON_BLOCKING_OUTGOING_FAILURES for failure in failures)
 
 
 def _is_valid_content_block(block: object) -> bool:
@@ -2121,15 +1884,13 @@ def _is_valid_content_block(block: object) -> bool:
     if block_type == "text":
         return isinstance(block.get("text", ""), str)
     if block_type == "tool_use":
-        return isinstance(block.get("name", ""), str) and isinstance(
-            block.get("input", {}), dict
-        )
+        return isinstance(block.get("name", ""), str) and isinstance(block.get("input", {}), dict)
     if block_type == "tool_result":
         return isinstance(block.get("tool_use_id", ""), str)
     return True
 
 
-def _validate_message_basic(msg: Any, failures: list[str]) -> bool:
+def _validate_message_basic(msg: dict[str, Any], failures: list[str]) -> bool:
     """Validate a single message basic structure. Returns True if failed."""
     if not isinstance(msg, dict):
         failures.append("message_not_dict")
@@ -2154,7 +1915,8 @@ def _validate_message_basic(msg: Any, failures: list[str]) -> bool:
 
 
 def validate_anthropic_request_body(body: dict[str, Any]) -> list[str]:
-    """Validate the structure of an Anthropic API request body.
+    """
+    Validate the structure of an Anthropic API request body.
 
     Returns a list of failure reason strings, or an empty list if valid.
     """
@@ -2181,10 +1943,9 @@ def validate_anthropic_request_body(body: dict[str, Any]) -> list[str]:
     return failures
 
 
-def detect_prompt_bloat(
-    system_prompt: str | list[dict[str, Any]] | None, user_prompt: str = ""
-) -> bool:
-    """Identify when system prompts are unusually large or contain leaked user content.
+def detect_prompt_bloat(system_prompt: str | list[dict[str, Any]] | None, user_prompt: str = "") -> bool:
+    """
+    Identify when system prompts are unusually large or contain leaked user content.
 
     Returns True if the system prompt exceeds the TOK_PROMPT_BLOAT_THRESHOLD (default 2000)
     or if it appears to contain a substantial portion of the current user prompt.
@@ -2247,18 +2008,18 @@ def should_optimize_prompts(
 
 
 __all__ = [
-    "validate_anthropic_request_body",
-    "canonicalize_anthropic_bridge_messages",
-    "canonicalize_anthropic_bridge_body",
     "bridge_strict_failure_signals",
+    "canonicalize_anthropic_bridge_body",
+    "canonicalize_anthropic_bridge_messages",
+    "detect_prompt_bloat",
+    "has_provider_sensitive_failures",
+    "has_recoverable_immediate_pairing_failures",
     "normalize_tool_use_blocks",
     "quarantine_invalid_tool_history_messages",
-    "has_recoverable_immediate_pairing_failures",
-    "has_provider_sensitive_failures",
-    "summarize_message_structure",
+    "should_optimize_prompts",
     "summarize_bridge_pairing",
+    "summarize_message_structure",
     "validate_anthropic_bridge_body",
     "validate_anthropic_outgoing_bridge_body",
-    "detect_prompt_bloat",
-    "should_optimize_prompts",
+    "validate_anthropic_request_body",
 ]

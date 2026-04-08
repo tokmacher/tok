@@ -2,8 +2,8 @@
 
 Supported workflows, limitations, and the release bar for Tok's first public release.
 
-Tok is released as a Claude-first bridge. OpenRouter and frontier probes are useful
-for validation, but they do not define the public default behavior.
+Tok is released as a Claude-first bridge. OpenRouter and frontier probes are useful for
+validation, but they do not define the public default behavior.
 
 ## Supported Workflows
 
@@ -25,12 +25,12 @@ The default CLI help surface should reinforce that path by centering:
 
 The only supported product path in this release is the bridge-first workflow above.
 
-Python helper APIs such as `tok.wrap(...)` and `tok.process(...)` remain available
-for advanced or experimental integration work, but they are not part of the
-supported 0.1 public release story and should not be documented as canonical.
+Python helper APIs such as `tok.wrap(...)` and `tok.process(...)` remain available for
+advanced or experimental integration work, but they are not part of the supported 0.1
+public release story and should not be documented as canonical.
 
-The release-surface manifest in `src/tok/release_surface.py` is the source of truth
-for what counts as supported, experimental, and internal in this release.
+The release-surface manifest in `src/tok/release_surface.py` is the source of truth for
+what counts as supported, experimental, and internal in this release.
 
 ## Unsupported Paths
 
@@ -46,12 +46,16 @@ The following are explicitly out of scope for the first release:
 
 ## Limitations
 
-- Token savings depend on conversation length; very short sessions may not show clear savings
+- Token savings depend on conversation length; very short sessions may not show clear
+  savings
 - The bridge requires Claude Code to be installed and configured
 - Model families beyond Anthropic, OpenAI, DeepSeek, and Qwen are not yet validated
 - Frontier and OpenRouter probes are experimental validation, not release drivers
-- `src/tok/cli/__init__.py` remains larger than we want for the long term; the extracted helper modules are now the canonical implementation, and further decomposition is deferred until after `0.1.0`
-- Dependency policy for `0.1.0` is lockfile-backed validation plus CI coverage, not blanket upper bounds on every published requirement
+- `src/tok/cli/__init__.py` remains larger than we want for the long term; the extracted
+  helper modules are now the canonical implementation, and further decomposition is
+  deferred until after `0.1.0`
+- Dependency policy for `0.1.0` is lockfile-backed validation plus CI coverage, not
+  blanket upper bounds on every published requirement
 
 ## Release Bar
 
@@ -63,7 +67,8 @@ A public release requires:
 1. Onboarding docs are coherent and tested in a clean-room venv
 1. No known security issues
 1. Coverage for the supported release surface stays at or above 80%
-1. Live Claude validation confirms the bridge-first workflow behaves correctly against a real session
+1. Live Claude validation confirms the bridge-first workflow behaves correctly against a
+   real session
 1. The release shape is narrow, explicit, and defensible
 1. The release candidate is cut from a clean, fully revalidated tree
 
@@ -81,23 +86,32 @@ python -m build
 
 The bounded IDL stress audit now has two required interpretations:
 
-1. A baseline run is the source of truth for protocol-IDL coherence. It decides whether `src/tok/protocol/schema.py` and `src/tok/protocol/models.py` still describe one coherent canonical surface.
-1. A Tok-captured run is a runtime-product audit. It decides whether caching, answer-repair heuristics, or fail-open behavior distort that same bounded audit.
+1. A baseline run is the source of truth for protocol-IDL coherence. It decides whether
+   `src/tok/protocol/schema.py` and `src/tok/protocol/models.py` still describe one
+   coherent canonical surface.
+1. A Tok-captured run is a runtime-product audit. It decides whether caching,
+   answer-repair heuristics, or fail-open behavior distort that same bounded audit.
 
 Release review should classify findings this way:
 
 - Protocol-schema drift: canonical IDL blocker
 - Runtime tool-input drift: derived-contract blocker
 - Bridge transport / canonicalization drift: transport blocker
-- Tok-only capture anomalies: product blocker, but not evidence of a second canonical IDL by themselves
+- Tok-only capture anomalies: product blocker, but not evidence of a second canonical
+  IDL by themselves
 
-The release decision should remain red if a bounded read-only audit still degrades to `watch`
-because of unsupported reread instructions, false answer-ready escalation, repair churn, or
-ambiguous `fail-open compatibility` noise.
+The release decision should remain red if a bounded read-only audit still degrades to
+`watch` because of unsupported reread instructions, false answer-ready escalation,
+repair churn, or ambiguous `fail-open compatibility` noise.
 
 ## Deferred Follow-Ups
 
 These items are intentionally deferred after the first public release:
 
-- Further decomposition of `src/tok/cli/__init__.py`. This is a maintainability improvement, not a release blocker, and further movement right before release would add churn around Typer registration and CLI test seams.
-- Dependency upper bounds across the published requirements. For `0.1.0`, Tok relies on `uv.lock`, CI, and clean-room install checks to validate the tested dependency set. If live-release experience shows resolver churn or upstream breakage, we can add selective upper bounds in a follow-up release.
+- Further decomposition of `src/tok/cli/__init__.py`. This is a maintainability
+  improvement, not a release blocker, and further movement right before release would
+  add churn around Typer registration and CLI test seams.
+- Dependency upper bounds across the published requirements. For `0.1.0`, Tok relies on
+  `uv.lock`, CI, and clean-room install checks to validate the tested dependency set. If
+  live-release experience shows resolver churn or upstream breakage, we can add
+  selective upper bounds in a follow-up release.

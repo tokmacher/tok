@@ -1,5 +1,5 @@
 import re
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import tok.runtime._request_preparation as request_preparation_module
 from tok.runtime.core import RuntimeSession, UniversalTokRuntime
@@ -26,11 +26,11 @@ def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
         }
         for index in range(18)
     ]
-    assistant_content = (
-        tool_uses[:9]
-        + [{"type": "text", "text": "Collecting evidence."}]
-        + tool_uses[9:]
-    )
+    assistant_content = [
+        *tool_uses[:9],
+        {"type": "text", "text": "Collecting evidence."},
+        *tool_uses[9:],
+    ]
     tool_results = [
         {
             "type": "tool_result",
@@ -70,7 +70,7 @@ def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
     ]
 
 
-def test_top_level_tool_result_is_rewritten_and_merged_into_user_blocks():
+def test_top_level_tool_result_is_rewritten_and_merged_into_user_blocks() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Inspect the bridge."},
         {
@@ -84,9 +84,7 @@ def test_top_level_tool_result_is_rewritten_and_merged_into_user_blocks():
         },
     ]
 
-    canonical, changed, signals = canonicalize_anthropic_bridge_messages(
-        messages
-    )
+    canonical, changed, _signals = canonicalize_anthropic_bridge_messages(messages)
 
     assert changed is True
     assert canonical == [
@@ -111,7 +109,7 @@ def test_top_level_tool_result_is_rewritten_and_merged_into_user_blocks():
     ]
 
 
-def test_assistant_tool_use_blocks_remain_assistant_messages():
+def test_assistant_tool_use_blocks_remain_assistant_messages() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -130,7 +128,7 @@ def test_assistant_tool_use_blocks_remain_assistant_messages():
         ],
     }
 
-    canonical, changed, signals = canonicalize_anthropic_bridge_body(body)
+    canonical, changed, _signals = canonicalize_anthropic_bridge_body(body)
 
     assert changed is True
     assert canonical["messages"] == [
@@ -148,7 +146,7 @@ def test_assistant_tool_use_blocks_remain_assistant_messages():
     ]
 
 
-def test_strict_bridge_validation_rejects_empty_messages_after_canonicalization():
+def test_strict_bridge_validation_rejects_empty_messages_after_canonicalization() -> None:
     canonical, _, _ = canonicalize_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -161,7 +159,7 @@ def test_strict_bridge_validation_rejects_empty_messages_after_canonicalization(
     assert failures == ["empty_messages"]
 
 
-def test_canonicalization_falls_back_to_original_on_validation_failure():
+def test_canonicalization_falls_back_to_original_on_validation_failure() -> None:
     body = {
         "model": "claude-sonnet-4",
         "system": 123,
@@ -182,7 +180,7 @@ def test_canonicalization_falls_back_to_original_on_validation_failure():
     assert signals.get("tok_bridge_canonical_validation_failed", 0) == 1
 
 
-def test_strict_bridge_validation_rejects_cross_role_tool_shapes():
+def test_strict_bridge_validation_rejects_cross_role_tool_shapes() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -216,7 +214,7 @@ def test_strict_bridge_validation_rejects_cross_role_tool_shapes():
     assert "assistant_contains_tool_result" in failures
 
 
-def test_strict_bridge_validation_rejects_text_before_tool_result_in_user_message():
+def test_strict_bridge_validation_rejects_text_before_tool_result_in_user_message() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -251,7 +249,7 @@ def test_strict_bridge_validation_rejects_text_before_tool_result_in_user_messag
     assert "user_tool_result_after_text" in failures
 
 
-def test_strict_bridge_validation_rejects_unknown_tool_result_ids():
+def test_strict_bridge_validation_rejects_unknown_tool_result_ids() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -274,7 +272,7 @@ def test_strict_bridge_validation_rejects_unknown_tool_result_ids():
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
 
 
-def test_strict_bridge_validation_rejects_tool_results_separated_from_tool_use():
+def test_strict_bridge_validation_rejects_tool_results_separated_from_tool_use() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -311,7 +309,7 @@ def test_strict_bridge_validation_rejects_tool_results_separated_from_tool_use()
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
 
 
-def test_strict_bridge_validation_rejects_missing_next_turn_tool_results():
+def test_strict_bridge_validation_rejects_missing_next_turn_tool_results() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -338,7 +336,7 @@ def test_strict_bridge_validation_rejects_missing_next_turn_tool_results():
     assert "assistant_tool_use_missing_next_tool_result" in failures
 
 
-def test_strict_bridge_validation_rejects_incomplete_next_turn_tool_results():
+def test_strict_bridge_validation_rejects_incomplete_next_turn_tool_results() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -374,12 +372,10 @@ def test_strict_bridge_validation_rejects_incomplete_next_turn_tool_results():
         }
     )
 
-    assert (
-        "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
-    )
+    assert "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
 
 
-def test_strict_bridge_validation_rejects_out_of_order_next_turn_tool_results():
+def test_strict_bridge_validation_rejects_out_of_order_next_turn_tool_results() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -421,20 +417,16 @@ def test_strict_bridge_validation_rejects_out_of_order_next_turn_tool_results():
     )
 
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
-    assert (
-        "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
-    )
+    assert "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
 
 
-def test_strict_bridge_validation_accepts_alternating_multi_turn_tool_pairs():
+def test_strict_bridge_validation_accepts_alternating_multi_turn_tool_pairs() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": "Inspect concurrency path."}
-                ],
+                "content": [{"type": "text", "text": "Inspect concurrency path."}],
             },
             {
                 "role": "assistant",
@@ -516,7 +508,7 @@ def test_strict_bridge_validation_accepts_alternating_multi_turn_tool_pairs():
     assert timeline[1]["next_tool_result_ids"] == ["tool_b1"]
 
 
-def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
+def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch() -> None:
     body = {
         "model": "claude-sonnet-4",
         "max_tokens": 8192,
@@ -529,7 +521,7 @@ def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
         "provider_sensitive_assistant_tool_use_text_interleaving",
     }
     summary = summarize_message_structure(body["messages"])
-    assert cast(dict[str, Any], summary)["provider_sensitivity_risks"] == {
+    assert cast("dict[str, Any]", summary)["provider_sensitivity_risks"] == {
         "assistant_large_tool_use_batch": 1,
         "assistant_tool_use_text_interleaving": 1,
         "assistant_large_tool_use_text_interleaving": 1,
@@ -537,16 +529,14 @@ def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch():
     }
 
 
-def test_outgoing_bridge_validation_flags_small_interleaved_tool_use_batch():
+def test_outgoing_bridge_validation_flags_small_interleaved_tool_use_batch() -> None:
     body = {
         "model": "claude-sonnet-4",
         "max_tokens": 8192,
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": "Inspect concurrency path."}
-                ],
+                "content": [{"type": "text", "text": "Inspect concurrency path."}],
             },
             {
                 "role": "assistant",
@@ -600,20 +590,16 @@ def test_outgoing_bridge_validation_flags_small_interleaved_tool_use_batch():
         "provider_sensitive_assistant_tool_use_text_interleaving",
     ]
     summary = summarize_message_structure(body["messages"])
-    assert cast(dict[str, Any], summary)["provider_sensitivity_risks"] == {
-        "assistant_tool_use_text_interleaving": 1
-    }
+    assert cast("dict[str, Any]", summary)["provider_sensitivity_risks"] == {"assistant_tool_use_text_interleaving": 1}
 
 
-def test_strict_bridge_validation_rejects_alternating_multi_turn_reordered_first_exchange():
+def test_strict_bridge_validation_rejects_alternating_multi_turn_reordered_first_exchange() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": "Inspect concurrency path."}
-                ],
+                "content": [{"type": "text", "text": "Inspect concurrency path."}],
             },
             {
                 "role": "assistant",
@@ -684,12 +670,12 @@ def test_strict_bridge_validation_rejects_alternating_multi_turn_reordered_first
 
     failures = validate_anthropic_bridge_body(body)
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
-    assert (
-        "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
-    )
+    assert "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
 
 
-def test_bridge_tail_with_adaptive_keep_zero_still_strictly_valid(tmp_path):
+def test_bridge_tail_with_adaptive_keep_zero_still_strictly_valid(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._step_count = 11
@@ -725,12 +711,10 @@ def test_bridge_tail_with_adaptive_keep_zero_still_strictly_valid(tmp_path):
 
 def test_tool_heavy_bridge_request_passes_canonicalization_and_strict_validation(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Help me with these files"}
-    ]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Help me with these files"}]
     messages.extend(
         [
             {
@@ -808,14 +792,9 @@ def test_tool_heavy_bridge_request_passes_canonicalization_and_strict_validation
         ),
         session,
     )
-    canonical, changed, signals = canonicalize_anthropic_bridge_body(
-        prepared.body
-    )
+    canonical, _changed, _signals = canonicalize_anthropic_bridge_body(prepared.body)
 
-    assert (
-        prepared.behavior_signals.get("tok_history_pairing_safety_degraded", 0)
-        == 1
-    )
+    assert prepared.behavior_signals.get("tok_history_pairing_safety_degraded", 0) == 1
     assert prepared.behavior_signals.get("tool_compatible_compression", 0) == 0
     assert validate_anthropic_bridge_body(canonical) == []
     assert {message["role"] for message in canonical["messages"]} <= {
@@ -829,9 +808,7 @@ def test_tool_heavy_bridge_request_passes_canonicalization_and_strict_validation
     )
 
 
-def test_prepare_request_discards_history_rewrite_that_breaks_pairing(
-    tmp_path, monkeypatch
-):
+def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, monkeypatch) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     original_messages = [
@@ -896,9 +873,7 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(
         },
     ]
 
-    def _fake_compress_history(
-        messages, keep_turns=2, profile=None, prune_tool_results=False
-    ):
+    def _fake_compress_history(messages, keep_turns=2, profile=None, prune_tool_results=False):
         del messages, keep_turns, profile, prune_tool_results
         return invalid_recent, "compressed tail"
 
@@ -932,15 +907,11 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(
         session,
     )
 
-    assert (
-        prepared.behavior_signals["tok_history_pairing_safety_degraded"] == 1
-    )
+    assert prepared.behavior_signals["tok_history_pairing_safety_degraded"] == 1
     assert prepared.body["messages"] != invalid_recent
 
 
-def test_prepare_request_applies_stream_recovery_history_floor(
-    tmp_path, monkeypatch
-):
+def test_prepare_request_applies_stream_recovery_history_floor(tmp_path, monkeypatch) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._stream_recovery_history_floor_budget = 1
@@ -967,10 +938,11 @@ def test_prepare_request_applies_stream_recovery_history_floor(
 
     called = {"compress_history": 0}
 
-    def _fail_if_called(*args, **kwargs):
+    def _fail_if_called(*args, **kwargs) -> NoReturn:
         del args, kwargs
         called["compress_history"] += 1
-        raise AssertionError("compress_history should not run with floor")
+        msg = "compress_history should not run with floor"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(
         request_preparation_module,
@@ -989,18 +961,13 @@ def test_prepare_request_applies_stream_recovery_history_floor(
     )
 
     assert called["compress_history"] == 0
-    assert (
-        prepared.behavior_signals["stream_recovery_history_floor_applied"] == 1
-    )
-    assert (
-        prepared.behavior_signals["stream_recovery_history_floor_kept_context"]
-        == 1
-    )
+    assert prepared.behavior_signals["stream_recovery_history_floor_applied"] == 1
+    assert prepared.behavior_signals["stream_recovery_history_floor_kept_context"] == 1
 
 
 def test_stream_recovery_history_floor_leaves_safe_outgoing_body(
     tmp_path,
-):
+) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._stream_recovery_history_floor_budget = 1
     runtime = UniversalTokRuntime()
@@ -1017,9 +984,7 @@ def test_stream_recovery_history_floor_leaves_safe_outgoing_body(
         session,
     )
 
-    assert (
-        prepared.behavior_signals["stream_recovery_history_floor_applied"] == 1
-    )
+    assert prepared.behavior_signals["stream_recovery_history_floor_applied"] == 1
     assert validate_anthropic_outgoing_bridge_body(prepared.body) == [
         "missing_max_tokens",
     ]
@@ -1028,21 +993,17 @@ def test_stream_recovery_history_floor_leaves_safe_outgoing_body(
     assert kept[0]["role"] == "user"
     assert kept[1]["role"] == "assistant"
     assert any(
-        isinstance(block, dict)
-        and block.get("type") == "tool_use"
-        and block.get("id") == "toolu_tail_1"
+        isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id") == "toolu_tail_1"
         for block in kept[1].get("content", [])
     )
     assert kept[2]["role"] == "user"
     assert any(
-        isinstance(block, dict)
-        and block.get("type") == "tool_result"
-        and block.get("tool_use_id") == "toolu_tail_1"
+        isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") == "toolu_tail_1"
         for block in kept[2].get("content", [])
     )
 
 
-def test_canonicalization_preserves_thinking_blocks_in_assistant_message():
+def test_canonicalization_preserves_thinking_blocks_in_assistant_message() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1085,7 +1046,7 @@ def test_canonicalization_preserves_thinking_blocks_in_assistant_message():
     assert signals.get("tok_bridge_unsupported_block_dropped", 0) == 0
 
 
-def test_canonicalization_sanitizes_invalid_tool_ids_and_matching_results():
+def test_canonicalization_sanitizes_invalid_tool_ids_and_matching_results() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1118,19 +1079,15 @@ def test_canonicalization_sanitizes_invalid_tool_ids_and_matching_results():
     assert changed is True
     rewritten_id = canonical["messages"][0]["content"][0]["id"]
     assert re.fullmatch(r"[A-Za-z0-9_-]+", rewritten_id)
-    assert (
-        canonical["messages"][1]["content"][0]["tool_use_id"] == rewritten_id
-    )
+    assert canonical["messages"][1]["content"][0]["tool_use_id"] == rewritten_id
     assert signals["tok_bridge_tool_id_sanitized"] == 1
     assert signals["tok_bridge_invalid_tool_id_seen"] == 1
     assert signals["tok_bridge_tool_result_id_rewritten"] == 1
     assert signals["tok_bridge_tool_result_rewrite_complete"] == 1
-    assert validate_anthropic_bridge_body(canonical) == [
-        "first_message_not_user"
-    ]
+    assert validate_anthropic_bridge_body(canonical) == ["first_message_not_user"]
 
 
-def test_canonicalization_synthesizes_blank_tool_ids_and_repairs_pairing():
+def test_canonicalization_synthesizes_blank_tool_ids_and_repairs_pairing() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1179,12 +1136,10 @@ def test_canonicalization_synthesizes_blank_tool_ids_and_repairs_pairing():
     assert signals["tok_bridge_blank_tool_id_synthesized"] == 2
     assert signals["tok_bridge_tool_result_id_rewritten"] == 2
     assert signals["tok_bridge_tool_result_pairing_repaired"] == 2
-    assert validate_anthropic_bridge_body(canonical) == [
-        "first_message_not_user"
-    ]
+    assert validate_anthropic_bridge_body(canonical) == ["first_message_not_user"]
 
 
-def test_canonicalization_generates_unique_ids_for_multiple_invalid_tool_ids():
+def test_canonicalization_generates_unique_ids_for_multiple_invalid_tool_ids() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1237,7 +1192,7 @@ def test_canonicalization_generates_unique_ids_for_multiple_invalid_tool_ids():
     assert signals["tok_bridge_tool_result_rewrite_complete"] == 1
 
 
-def test_canonicalization_reorders_recoverable_tool_results_to_assistant_order():
+def test_canonicalization_reorders_recoverable_tool_results_to_assistant_order() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1292,18 +1247,14 @@ def test_canonicalization_reorders_recoverable_tool_results_to_assistant_order()
             "content": "grep output",
         },
     ]
-    assert canonical["messages"][2]["content"] == [
-        {"type": "text", "text": "Continue."}
-    ]
+    assert canonical["messages"][2]["content"] == [{"type": "text", "text": "Continue."}]
     assert signals["tok_bridge_tool_result_order_repaired"] == 1
     assert signals["tok_bridge_tool_result_pairing_repaired"] == 1
     assert signals["tok_bridge_user_tool_result_text_split"] == 1
-    assert validate_anthropic_bridge_body(canonical) == [
-        "first_message_not_user"
-    ]
+    assert validate_anthropic_bridge_body(canonical) == ["first_message_not_user"]
 
 
-def test_canonicalization_leaves_unrecoverable_nonempty_tool_result_ids_invalid():
+def test_canonicalization_leaves_unrecoverable_nonempty_tool_result_ids_invalid() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1351,12 +1302,11 @@ def test_canonicalization_leaves_unrecoverable_nonempty_tool_result_ids_invalid(
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
     assert (
         "assistant_tool_use_missing_next_tool_result" in failures
-        or "assistant_tool_use_incomplete_next_tool_result_coverage"
-        in failures
+        or "assistant_tool_use_incomplete_next_tool_result_coverage" in failures
     )
 
 
-def test_quarantine_invalid_tool_history_preserves_surrounding_text():
+def test_quarantine_invalid_tool_history_preserves_surrounding_text() -> None:
     messages: list[dict[str, Any]] = [
         {
             "role": "assistant",
@@ -1383,9 +1333,7 @@ def test_quarantine_invalid_tool_history_preserves_surrounding_text():
         },
     ]
 
-    quarantined, changed, signals = quarantine_invalid_tool_history_messages(
-        messages
-    )
+    quarantined, changed, signals = quarantine_invalid_tool_history_messages(messages)
 
     assert changed is True
     assert quarantined == [
@@ -1408,7 +1356,7 @@ def test_quarantine_invalid_tool_history_preserves_surrounding_text():
     assert signals["tok_bridge_quarantined_tool_result_blocks"] == 1
 
 
-def test_strict_bridge_validation_rejects_invalid_tool_id_shapes():
+def test_strict_bridge_validation_rejects_invalid_tool_id_shapes() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -1442,7 +1390,7 @@ def test_strict_bridge_validation_rejects_invalid_tool_id_shapes():
     assert "invalid_tool_result_block" in failures
 
 
-def test_bridge_strict_failure_signals_classify_invalid_and_pairing_failures():
+def test_bridge_strict_failure_signals_classify_invalid_and_pairing_failures() -> None:
     signals = bridge_strict_failure_signals(
         [
             "invalid_tool_use_block",
@@ -1458,7 +1406,7 @@ def test_bridge_strict_failure_signals_classify_invalid_and_pairing_failures():
     assert signals["tok_bridge_strict_pairing_or_ordering_failure"] == 1
 
 
-def test_assistant_message_with_only_thinking_blocks_is_preserved():
+def test_assistant_message_with_only_thinking_blocks_is_preserved() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1487,7 +1435,7 @@ def test_assistant_message_with_only_thinking_blocks_is_preserved():
     assert signals.get("tok_bridge_unsupported_block_dropped", 0) == 0
 
 
-def test_user_message_retains_supported_blocks_after_filtering():
+def test_user_message_retains_supported_blocks_after_filtering() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1532,7 +1480,7 @@ def test_user_message_retains_supported_blocks_after_filtering():
     assert signals.get("tok_bridge_user_tool_result_text_split", 0) == 1
 
 
-def test_canonicalized_mixed_user_message_is_rejected_by_strict_bridge_validation():
+def test_canonicalized_mixed_user_message_is_rejected_by_strict_bridge_validation() -> None:
     canonical, _, _ = canonicalize_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -1554,7 +1502,7 @@ def test_canonicalized_mixed_user_message_is_rejected_by_strict_bridge_validatio
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
 
 
-def test_canonicalization_splits_mixed_user_message_after_tool_results():
+def test_canonicalization_splits_mixed_user_message_after_tool_results() -> None:
     body = {
         "model": "claude-sonnet-4",
         "messages": [
@@ -1604,12 +1552,10 @@ def test_canonicalization_splits_mixed_user_message_after_tool_results():
             "content": [{"type": "text", "text": "Summarize it."}],
         },
     ]
-    assert validate_anthropic_bridge_body(canonical) == [
-        "first_message_not_user"
-    ]
+    assert validate_anthropic_bridge_body(canonical) == ["first_message_not_user"]
 
 
-def test_canonicalization_splits_interleaved_user_text_and_tool_result_deterministically():
+def test_canonicalization_splits_interleaved_user_text_and_tool_result_deterministically() -> None:
     canonical, changed, signals = canonicalize_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -1660,12 +1606,10 @@ def test_canonicalization_splits_interleaved_user_text_and_tool_result_determini
             {"type": "text", "text": "After"},
         ],
     }
-    assert validate_anthropic_bridge_body(canonical) == [
-        "first_message_not_user"
-    ]
+    assert validate_anthropic_bridge_body(canonical) == ["first_message_not_user"]
 
 
-def test_strict_bridge_validation_rejects_unsupported_block_types():
+def test_strict_bridge_validation_rejects_unsupported_block_types() -> None:
     failures = validate_anthropic_bridge_body(
         {
             "model": "claude-sonnet-4",
@@ -1686,7 +1630,7 @@ def test_strict_bridge_validation_rejects_unsupported_block_types():
     assert "unsupported_block_type" in failures
 
 
-def test_strict_bridge_validation_rejects_invalid_system_blocks():
+def test_strict_bridge_validation_rejects_invalid_system_blocks() -> None:
     """Test that invalid system blocks are caught gracefully."""
     failures = validate_anthropic_bridge_body(
         {
@@ -1709,7 +1653,7 @@ def test_strict_bridge_validation_rejects_invalid_system_blocks():
     assert failures == ["invalid_system_block"]
 
 
-def test_strict_bridge_validation_rejects_malformed_system_blocks():
+def test_strict_bridge_validation_rejects_malformed_system_blocks() -> None:
     """Test that malformed system blocks are caught gracefully."""
     failures = validate_anthropic_bridge_body(
         {
@@ -1733,7 +1677,7 @@ def test_strict_bridge_validation_rejects_malformed_system_blocks():
     assert failures == ["invalid_system_block"]
 
 
-def test_strict_bridge_validation_rejects_malformed_system_blocks_v2():
+def test_strict_bridge_validation_rejects_malformed_system_blocks_v2() -> None:
     """Test that malformed system blocks are caught gracefully."""
     failures = validate_anthropic_bridge_body(
         {
@@ -1769,7 +1713,7 @@ def test_strict_bridge_validation_rejects_malformed_system_blocks_v2():
     assert failures == []
 
 
-def test_summarize_message_structure_includes_unsupported_blocks():
+def test_summarize_message_structure_includes_unsupported_blocks() -> None:
     messages: list[dict[str, Any]] = [
         {
             "role": "assistant",
@@ -1787,7 +1731,7 @@ def test_summarize_message_structure_includes_unsupported_blocks():
         {"role": "user", "content": "ok"},
     ]
 
-    summary = cast(dict[str, Any], summarize_message_structure(messages))
+    summary = cast("dict[str, Any]", summarize_message_structure(messages))
 
     assert summary["unsupported_blocks"] == {}
     assert summary["tool_use_blocks"] == 1

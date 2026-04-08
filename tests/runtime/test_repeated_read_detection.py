@@ -6,9 +6,7 @@ import hashlib
 from typing import Any
 
 from tok.runtime.pipeline._tool_context import build_tool_use_id_to_context
-from tok.runtime.pipeline._tool_repeat_detection import (
-    _make_cache_key,
-)
+from tok.runtime.pipeline._tool_repeat_detection import _make_cache_key
 from tok.runtime.pipeline.tool_processing import collect_behavior_signals
 
 
@@ -39,15 +37,13 @@ def _tool_result(tool_id: str, content: str) -> dict[str, Any]:
     }
 
 
-def _cache_entry(
-    tool_name: str, context: dict[str, Any], content: str
-) -> tuple[str, tuple[str, str]]:
+def _cache_entry(tool_name: str, context: dict[str, Any], content: str) -> tuple[str, tuple[str, str]]:
     key = _make_cache_key(tool_name, context)
     digest = hashlib.sha256(content.encode()).hexdigest()[:8]
     return key, (digest, content)
 
 
-def test_bypass_reacquire_not_counted_as_penalized_repeat():
+def test_bypass_reacquire_not_counted_as_penalized_repeat() -> None:
     file_content = "line1\nline2\nline3\n"
     messages = [
         _tool_use("t1", "Read", file_path="/tmp/foo.py"),
@@ -69,9 +65,7 @@ def test_bypass_reacquire_not_counted_as_penalized_repeat():
     ctx = build_tool_use_id_to_context(messages)
     assert ctx["t2"]["args"].get("tok_bypass_cache") is True
 
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ] = {}
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
     cache_entry = _cache_entry("read", ctx["t1"], file_content)
     result_cache[cache_entry[0]] = cache_entry[1]
 
@@ -80,15 +74,13 @@ def test_bypass_reacquire_not_counted_as_penalized_repeat():
         tool_use_id_to_context=ctx,
         result_cache=result_cache,
     )
-    assert signals.get("bypass_reacquire", 0) >= 1, (
-        f"expected bypass_reacquire >= 1, got {signals}"
-    )
+    assert signals.get("bypass_reacquire", 0) >= 1, f"expected bypass_reacquire >= 1, got {signals}"
     assert signals.get("repeat_file_read", 0) == 0, (
         f"expected no repeat_file_read, got {signals.get('repeat_file_read', 0)}"
     )
 
 
-def test_cross_turn_reread_without_bypass_still_counted():
+def test_cross_turn_reread_without_bypass_still_counted() -> None:
     content_v1 = "version one\n"
     content_v2 = "version two changed\n"
     messages = [
@@ -98,9 +90,7 @@ def test_cross_turn_reread_without_bypass_still_counted():
         _tool_result("t2", content_v2),
     ]
     ctx = build_tool_use_id_to_context(messages)
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ] = {}
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
     cache_entry = _cache_entry("read", ctx["t1"], content_v1)
     result_cache[cache_entry[0]] = cache_entry[1]
 
@@ -115,7 +105,7 @@ def test_cross_turn_reread_without_bypass_still_counted():
     assert signals.get("bypass_reacquire", 0) == 0
 
 
-def test_repeat_without_result_cache_still_counted():
+def test_repeat_without_result_cache_still_counted() -> None:
     content = "same content\n"
     messages = [
         _tool_use("t1", "Read", file_path="/tmp/baz.py"),
@@ -135,7 +125,7 @@ def test_repeat_without_result_cache_still_counted():
     )
 
 
-def test_cached_hit_not_counted_as_repeat():
+def test_cached_hit_not_counted_as_repeat() -> None:
     content = "cached content\n"
     messages = [
         _tool_use("t1", "Read", file_path="/tmp/qux.py"),
@@ -144,9 +134,7 @@ def test_cached_hit_not_counted_as_repeat():
         _tool_result("t2", content),
     ]
     ctx = build_tool_use_id_to_context(messages)
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ] = {}
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
     cache_entry = _cache_entry("read", ctx["t1"], content)
     result_cache[cache_entry[0]] = cache_entry[1]
 
@@ -155,12 +143,8 @@ def test_cached_hit_not_counted_as_repeat():
         tool_use_id_to_context=ctx,
         result_cache=result_cache,
     )
-    assert signals.get("repeat_file_read", 0) == 0, (
-        f"expected no repeat_file_read for cache hit, got {signals}"
-    )
-    assert signals.get("cached_file_read", 0) >= 1, (
-        f"expected cached_file_read >= 1, got {signals}"
-    )
+    assert signals.get("repeat_file_read", 0) == 0, f"expected no repeat_file_read for cache hit, got {signals}"
+    assert signals.get("cached_file_read", 0) >= 1, f"expected cached_file_read >= 1, got {signals}"
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +155,7 @@ def test_cached_hit_not_counted_as_repeat():
 class TestBypassRouting:
     """Test invalid bypass application and routing behavior."""
 
-    def test_bypass_applied_to_non_file_tool_is_invalid(self):
+    def test_bypass_applied_to_non_file_tool_is_invalid(self) -> None:
         """@tok_bypass_next_read applied to bash command is invalid."""
         messages = [
             {
@@ -202,7 +186,7 @@ class TestBypassRouting:
         # Verify invalid_bypass_marker is set in context
         assert ctx["t1"].get("invalid_bypass_marker") is True
 
-    def test_invalid_bypass_signal_emitted_for_non_file_tool(self):
+    def test_invalid_bypass_signal_emitted_for_non_file_tool(self) -> None:
         """Invalid bypass application emits invalid_bypass_marker_application signal."""
         messages = [
             {
@@ -240,7 +224,7 @@ class TestBypassRouting:
             f"expected invalid_bypass_marker_application signal, got {signals}"
         )
 
-    def test_bypass_to_search_tool_is_invalid(self):
+    def test_bypass_to_search_tool_is_invalid(self) -> None:
         """@tok_bypass_next_read applied to grep_search is invalid."""
         messages = [
             {
@@ -271,7 +255,7 @@ class TestBypassRouting:
         # grep_search is not a FILE_LIKE_TOOL, so bypass is invalid
         assert ctx["t1"].get("invalid_bypass_marker") is True
 
-    def test_bypass_applied_to_file_read_is_valid(self):
+    def test_bypass_applied_to_file_read_is_valid(self) -> None:
         """@tok_bypass_next_read applied to file read is valid."""
         file_content = "def foo():\n    pass\n"
         messages = [
@@ -295,7 +279,7 @@ class TestBypassRouting:
         assert ctx["t1"]["args"].get("tok_bypass_cache") is True
         assert ctx["t1"].get("invalid_bypass_marker") is not True
 
-    def test_multiple_tools_after_bypass_only_first_eligible(self):
+    def test_multiple_tools_after_bypass_only_first_eligible(self) -> None:
         """Bypass marker only applies to first eligible file read tool."""
         file_content = "content\n"
         messages = [
@@ -338,7 +322,7 @@ class TestBypassRouting:
         # t3 (second file read) should NOT have bypass cache
         assert ctx["t3"]["args"].get("tok_bypass_cache") is not True
 
-    def test_bypass_to_list_dir_is_invalid(self):
+    def test_bypass_to_list_dir_is_invalid(self) -> None:
         """@tok_bypass_next_read applied to list_dir is invalid."""
         messages = [
             {

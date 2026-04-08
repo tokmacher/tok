@@ -1,4 +1,5 @@
-"""Data models for smoothness scoring.
+"""
+Data models for smoothness scoring.
 
 This module defines the core types used throughout the smoothness layer.
 """

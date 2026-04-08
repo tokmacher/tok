@@ -1,29 +1,19 @@
+from pathlib import Path
 from typing import Any
 
-from tok.runtime.types import (
-    RuntimeRequest,
-)
-from tok.runtime.pipeline.request_validation import (
-    validate_anthropic_request_body,
-)
-from tok.runtime.pipeline.request_preparation import apply_schema_adaptations
-from tok.runtime.pipeline.response_processing import (
-    response_behavior_signals,
-    response_contract,
-    response_contract_for_mode,
-)
+from tok.runtime.config import TOK_READ_PLAN_HINT
 from tok.runtime.core import (
-    RuntimeSession,
     TOOL_COMPAT_MEMORY_PROFILE,
+    RuntimeSession,
     UniversalTokRuntime,
-    compact_structured_answer_memory,
-    extract_structured_answer_memory,
-    ground_structured_answer_memory,
-    reinforce_structured_answer_memory,
     calculate_invisible_pressure,
     calculate_semantic_regression_score,
     collect_transient_error_snippets,
+    compact_structured_answer_memory,
     evaluate_replay_gate,
+    extract_structured_answer_memory,
+    ground_structured_answer_memory,
+    reinforce_structured_answer_memory,
 )
 from tok.runtime.memory.tok_state import (
     _apply_tool_compatible_sticky_fields,
@@ -31,14 +21,23 @@ from tok.runtime.memory.tok_state import (
     _delta_tok_state_fields,
     _parse_tok_state_fields,
 )
+from tok.runtime.pipeline.request_preparation import apply_schema_adaptations
+from tok.runtime.pipeline.request_validation import (
+    validate_anthropic_request_body,
+)
+from tok.runtime.pipeline.response_processing import (
+    response_behavior_signals,
+    response_contract,
+    response_contract_for_mode,
+)
 from tok.runtime.pipeline.tool_processing import (
     build_tool_use_id_to_context,
     collect_behavior_signals,
 )
-from tok.runtime.config import TOK_READ_PLAN_HINT
+from tok.runtime.types import RuntimeRequest
 
 
-def test_runtime_prepare_request_injects_memory_and_collects_signals():
+def test_runtime_prepare_request_injects_memory_and_collects_signals() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(
         fallback_memory=">>> g:fix_gateway|t:3",
@@ -73,17 +72,13 @@ def test_runtime_prepare_request_injects_memory_and_collects_signals():
     assert "=== MODE: TOK-NATIVE ===" in prepared.body["system"]
     assert ">>>" in prepared.body["system"]
     assert prepared.behavior_signals["repeat_file_read"] == 1
-    assert (
-        prepared.normalized_tool_events[0].compressibility_class == "file_read"
-    )
+    assert prepared.normalized_tool_events[0].compressibility_class == "file_read"
 
 
-def test_runtime_prepare_request_injects_read_plan_hint_for_file_burst():
+def test_runtime_prepare_request_injects_read_plan_hint_for_file_burst() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Inspect the bridge request path."}
-    ]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Inspect the bridge request path."}]
     for idx in range(6):
         messages.append(
             {
@@ -112,7 +107,7 @@ def test_runtime_prepare_request_injects_read_plan_hint_for_file_burst():
     assert prepared.behavior_signals.get("read_plan_hint_injected", 0) == 1
 
 
-def test_runtime_prepare_request_translates_result_blocks():
+def test_runtime_prepare_request_translates_result_blocks() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
     request = RuntimeRequest(
@@ -128,12 +123,10 @@ def test_runtime_prepare_request_translates_result_blocks():
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.body["messages"][0]["content"][0]["type"] == "tool_result"
-    assert (
-        prepared.body["messages"][0]["content"][0]["tool_use_id"] == "tool_1"
-    )
+    assert prepared.body["messages"][0]["content"][0]["tool_use_id"] == "tool_1"
 
 
-def test_runtime_prepare_request_preserves_bridge_tail_when_adaptive_history_hits_zero():
+def test_runtime_prepare_request_preserves_bridge_tail_when_adaptive_history_hits_zero() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
     session._step_count = 11
@@ -157,12 +150,10 @@ def test_runtime_prepare_request_preserves_bridge_tail_when_adaptive_history_hit
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.body["messages"]
-    assert "empty_messages" not in validate_anthropic_request_body(
-        prepared.body
-    )
+    assert "empty_messages" not in validate_anthropic_request_body(prepared.body)
 
 
-def test_validate_anthropic_request_body_rejects_invalid_message_shape():
+def test_validate_anthropic_request_body_rejects_invalid_message_shape() -> None:
     failures = validate_anthropic_request_body(
         {
             "model": "claude-sonnet-4",
@@ -173,7 +164,7 @@ def test_validate_anthropic_request_body_rejects_invalid_message_shape():
     assert "invalid_message_content" in failures
 
 
-def test_apply_schema_adaptations_preserves_non_empty_content_guarantee():
+def test_apply_schema_adaptations_preserves_non_empty_content_guarantee() -> None:
     adapted = apply_schema_adaptations(
         [
             {"role": "user", "content": None},
@@ -189,7 +180,7 @@ def test_apply_schema_adaptations_preserves_non_empty_content_guarantee():
     assert [msg["content"] for msg in adapted] == [" ", " ", " ", " "]
 
 
-def test_validate_anthropic_request_body_rejects_empty_messages():
+def test_validate_anthropic_request_body_rejects_empty_messages() -> None:
     failures = validate_anthropic_request_body(
         {
             "model": "claude-sonnet-4",
@@ -202,7 +193,7 @@ def test_validate_anthropic_request_body_rejects_empty_messages():
 
 def test_runtime_prepare_request_skips_history_for_tool_heavy_payload(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -280,23 +271,15 @@ def test_runtime_prepare_request_skips_history_for_tool_heavy_payload(
     prepared = runtime.prepare_request(request, session)
 
     # Tool-heavy bridge turns should stay compressible in tool-compatible mode.
-    assert (
-        prepared.behavior_signals.get("tok_history_compression_skipped", 0)
-        == 0
-    )
-    assert (
-        prepared.behavior_signals.get("tok_soft_tool_use_count_high", 0) == 1
-    )
-    assert (
-        "Plain text. Tool calls only. Omit all headers."
-        in prepared.body["system"]
-    )
+    assert prepared.behavior_signals.get("tok_history_compression_skipped", 0) == 0
+    assert prepared.behavior_signals.get("tok_soft_tool_use_count_high", 0) == 1
+    assert "Plain text. Tool calls only. Omit all headers." in prepared.body["system"]
 
 
 def test_runtime_prepare_request_preserves_prompt_cached_system_list(
     monkeypatch,
-):
-    import tok.compression as compression
+) -> None:
+    from tok import compression
 
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
@@ -311,9 +294,7 @@ def test_runtime_prepare_request_preserves_prompt_cached_system_list(
                 "cache_control": {"type": "ephemeral"},
             }
         ],
-        messages=[
-            {"role": "user", "content": "Inspect the bridge request path."}
-        ],
+        messages=[{"role": "user", "content": "Inspect the bridge request path."}],
     )
 
     monkeypatch.setattr(
@@ -330,8 +311,7 @@ def test_runtime_prepare_request_preserves_prompt_cached_system_list(
     assert any(
         isinstance(block, dict)
         and block.get("type") == "text"
-        and "Plain text. Tool calls only. Omit all headers."
-        in block.get("text", "")
+        and "Plain text. Tool calls only. Omit all headers." in block.get("text", "")
         for block in prepared.body["system"][1:]
     )
     assert prepared.behavior_signals.get("tok_prompt_optimized", 0) == 1
@@ -339,13 +319,11 @@ def test_runtime_prepare_request_preserves_prompt_cached_system_list(
 
 def test_runtime_prepare_request_still_skips_extreme_tool_volume_in_tool_compatible_mode(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     huge_result = "trace line\n" * 600
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Audit the oversized outputs."}
-    ]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Audit the oversized outputs."}]
     for idx in range(6):
         messages.append(
             {
@@ -376,21 +354,16 @@ def test_runtime_prepare_request_still_skips_extreme_tool_volume_in_tool_compati
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("tok_history_compression_skipped", 0)
-        == 1
-    )
+    assert prepared.behavior_signals.get("tok_history_compression_skipped", 0) == 1
     assert prepared.behavior_signals.get("tok_skip_tool_volume_heavy", 0) == 1
 
 
 def test_runtime_tool_heavy_bridge_body_with_thinking_blocks_passes_validation(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Inspect these files."}
-    ]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Inspect these files."}]
     for idx in range(4):
         messages.append(
             {
@@ -428,25 +401,23 @@ def test_runtime_tool_heavy_bridge_body_with_thinking_blocks_passes_validation(
     )
 
     prepared = runtime.prepare_request(request, session)
-    canonical, _, signals = canonicalize_anthropic_bridge_body(prepared.body)
+    canonical, _, _signals = canonicalize_anthropic_bridge_body(prepared.body)
 
     assert validate_anthropic_bridge_body(canonical) == []
     for msg in canonical["messages"]:
         for block in msg.get("content", []):
             if isinstance(block, dict):
-                assert block.get("type") not in {
-                    "redacted_thinking",
-                }
+                assert block.get("type") != "redacted_thinking"
 
 
-def test_runtime_prepare_request_compression_in_tool_compatible_mode(tmp_path):
+def test_runtime_prepare_request_compression_in_tool_compatible_mode(
+    tmp_path,
+) -> None:
     """Test that compression runs in tool-compatible mode with moderate tool usage."""
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     # Create a longer conversation history to trigger compression
-    messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Help me with these files"}
-    ]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Help me with these files"}]
 
     # First turn
     messages.append(
@@ -548,15 +519,12 @@ def test_runtime_prepare_request_compression_in_tool_compatible_mode(tmp_path):
 
     # With 4 tool uses and enough history, compression should run in tool-compatible mode
     assert prepared.behavior_signals.get("tool_compatible_compression", 0) == 1
-    assert (
-        "Plain text. Tool calls only. Omit all headers."
-        in prepared.body["system"]
-    )
+    assert "Plain text. Tool calls only. Omit all headers." in prepared.body["system"]
     # Compression should have happened
     assert len(prepared.body["messages"]) < len(request.messages)
 
 
-def test_natural_first_preserves_semantic_dedup_without_tool_compatible_mode():
+def test_natural_first_preserves_semantic_dedup_without_tool_compatible_mode() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
     large_output = "file content line\n" * 50
@@ -596,15 +564,15 @@ def test_natural_first_preserves_semantic_dedup_without_tool_compatible_mode():
     assert prepared.request_policy == "natural_first"
     assert prepared.effective_tool_compatible is False
     assert prepared.request_policy_escalated is False
-    assert (
-        prepared.behavior_signals.get("request_policy_natural_first", 0) == 1
-    )
+    assert prepared.behavior_signals.get("request_policy_natural_first", 0) == 1
     assert prepared.behavior_signals.get("semantic_dedup_hit", 0) == 1
     assert "Plain text. Tool calls only. Omit all headers." not in system_text
     assert "@stable_result(hash:...)" in system_text
 
 
-def test_natural_first_keeps_tool_dense_history_on_natural_path(tmp_path):
+def test_natural_first_keeps_tool_dense_history_on_natural_path(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -656,16 +624,14 @@ def test_natural_first_keeps_tool_dense_history_on_natural_path(tmp_path):
 
     assert prepared.effective_tool_compatible is False
     assert prepared.request_policy_escalated is False
-    assert (
-        prepared.behavior_signals.get("request_policy_natural_first", 0) == 1
-    )
-    assert (
-        prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 0
-    )
+    assert prepared.behavior_signals.get("request_policy_natural_first", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 0
     assert "Plain text. Tool calls only. Omit all headers." not in system_text
 
 
-def test_natural_first_sticky_escalation_decays_after_quiet_window(tmp_path):
+def test_natural_first_sticky_escalation_decays_after_quiet_window(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     dense_request = RuntimeRequest(
@@ -731,24 +697,13 @@ def test_natural_first_sticky_escalation_decays_after_quiet_window(tmp_path):
     deescalated = runtime.prepare_request(quiet_request, session)
 
     assert sticky_turn.effective_tool_compatible is True
-    assert (
-        sticky_turn.behavior_signals.get("request_policy_held_by_recovery", 0)
-        == 1
-    )
-    assert (
-        sticky_turn.behavior_signals.get(
-            "request_policy_recovery_sticky_continuations", 0
-        )
-        == 1
-    )
+    assert sticky_turn.behavior_signals.get("request_policy_held_by_recovery", 0) == 1
+    assert sticky_turn.behavior_signals.get("request_policy_recovery_sticky_continuations", 0) == 1
     assert deescalated.effective_tool_compatible is False
-    assert (
-        deescalated.behavior_signals.get("request_policy_deescalations", 0)
-        == 1
-    )
+    assert deescalated.behavior_signals.get("request_policy_deescalations", 0) == 1
 
 
-def test_natural_first_escalates_on_stream_recovery_watch(tmp_path):
+def test_natural_first_escalates_on_stream_recovery_watch(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.note_request_policy_stream_recovery()
@@ -768,26 +723,14 @@ def test_natural_first_escalates_on_stream_recovery_watch(tmp_path):
 
     assert prepared.effective_tool_compatible is True
     assert prepared.request_policy_escalated is True
-    assert (
-        prepared.behavior_signals.get(
-            "request_policy_reason_stream_recovery", 0
-        )
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get(
-            "request_policy_escalation_source_stream_recovery", 0
-        )
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 1
-    )
+    assert prepared.behavior_signals.get("request_policy_reason_stream_recovery", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_escalation_source_stream_recovery", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 1
 
 
 def test_request_policy_is_not_held_by_recovery_when_only_cooldown_is_active(
     tmp_path,
-):
+) -> None:
     """Request policy should not be held by recovery when only cooldown is active."""
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
@@ -811,27 +754,16 @@ def test_request_policy_is_not_held_by_recovery_when_only_cooldown_is_active(
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get(
-            "request_policy_reason_stream_recovery", 0
-        )
-        == 0
-    )
-    assert (
-        prepared.behavior_signals.get("request_policy_held_by_recovery", 0)
-        == 0
-    )
-    assert (
-        prepared.behavior_signals.get(
-            "request_policy_recovery_cooldown_suppressed", 0
-        )
-        == 1
-    )
+    assert prepared.behavior_signals.get("request_policy_reason_stream_recovery", 0) == 0
+    assert prepared.behavior_signals.get("request_policy_held_by_recovery", 0) == 0
+    assert prepared.behavior_signals.get("request_policy_recovery_cooldown_suppressed", 0) == 1
 
     assert session._stream_recovery_cooldown_suppressed is False
 
 
-def test_natural_first_escalates_on_invalid_tool_history_recovery(tmp_path):
+def test_natural_first_escalates_on_invalid_tool_history_recovery(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.note_request_policy_tool_mode_recovery()
@@ -851,19 +783,11 @@ def test_natural_first_escalates_on_invalid_tool_history_recovery(tmp_path):
 
     assert prepared.effective_tool_compatible is True
     assert prepared.request_policy_escalated is True
-    assert (
-        prepared.behavior_signals.get("request_policy_reason_tool_recovery", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get(
-            "request_policy_escalation_source_tool_recovery", 0
-        )
-        == 1
-    )
+    assert prepared.behavior_signals.get("request_policy_reason_tool_recovery", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_escalation_source_tool_recovery", 0) == 1
 
 
-def test_record_invalid_tool_history_recovery_tracks_blocked_flag():
+def test_record_invalid_tool_history_recovery_tracks_blocked_flag() -> None:
     """Test that blocked parameter is reflected in emitted signals."""
     session = RuntimeSession()
 
@@ -878,15 +802,11 @@ def test_record_invalid_tool_history_recovery_tracks_blocked_flag():
     assert signals["tok_bridge_invalid_tool_history_blocked"] == 1
 
 
-def test_record_invalid_tool_history_recovery_clears_hot_state_on_repeat():
+def test_record_invalid_tool_history_recovery_clears_hot_state_on_repeat() -> None:
     """Test that repeated recoveries clear specific hot state keys to prevent loops."""
     session = RuntimeSession()
-    session.bridge_memory._upsert(
-        session.bridge_memory.hot, "turns", "2", score_delta=3
-    )
-    session.bridge_memory._upsert(
-        session.bridge_memory.hot, "cmds", "some_cmd", score_delta=1
-    )
+    session.bridge_memory._upsert(session.bridge_memory.hot, "turns", "2", score_delta=3)
+    session.bridge_memory._upsert(session.bridge_memory.hot, "cmds", "some_cmd", score_delta=1)
     session._last_tool_compatible_state = "previous_state"
 
     # First recovery - no reset
@@ -903,7 +823,7 @@ def test_record_invalid_tool_history_recovery_clears_hot_state_on_repeat():
     assert session.bridge_memory.hot.get("cmds", []) == []
 
 
-def test_reset_invalid_tool_history_recovery_clears_counter():
+def test_reset_invalid_tool_history_recovery_clears_counter() -> None:
     """Test that reset clears the recovery counter."""
     session = RuntimeSession()
     session.record_invalid_tool_history_recovery(blocked=False)
@@ -914,7 +834,9 @@ def test_reset_invalid_tool_history_recovery_clears_counter():
     assert session._invalid_tool_history_recovery_count == 0
 
 
-def test_natural_first_escalates_on_repeated_tool_loop_signal(tmp_path):
+def test_natural_first_escalates_on_repeated_tool_loop_signal(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -961,23 +883,13 @@ def test_natural_first_escalates_on_repeated_tool_loop_signal(tmp_path):
 
     assert prepared.effective_tool_compatible is True
     assert prepared.request_policy_escalated is True
-    assert (
-        prepared.behavior_signals.get(
-            "request_policy_reason_structured_tool_loop", 0
-        )
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get(
-            "request_policy_escalation_source_structured_tool_loop", 0
-        )
-        == 1
-    )
+    assert prepared.behavior_signals.get("request_policy_reason_structured_tool_loop", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_escalation_source_structured_tool_loop", 0) == 1
 
 
 def test_runtime_prepare_request_suppresses_unchanged_tool_compatible_state(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -1042,10 +954,7 @@ def test_runtime_prepare_request_suppresses_unchanged_tool_compatible_state(
     first = runtime.prepare_request(request, session)
     second = runtime.prepare_request(request, session)
 
-    assert (
-        "Plain text. Tool calls only. Omit all headers."
-        in first.body["system"]
-    )
+    assert "Plain text. Tool calls only. Omit all headers." in first.body["system"]
     assert (
         first.behavior_signals.get("state_resend_full_turn", 0)
         + first.behavior_signals.get("state_resend_delta_turn", 0)
@@ -1059,18 +968,14 @@ def test_runtime_prepare_request_suppresses_unchanged_tool_compatible_state(
     assert len(second.body["system"]) <= len(first.body["system"])
 
 
-def test_tool_compatible_state_fields_are_canonicalized_for_shorter_wire_state():
+def test_tool_compatible_state_fields_are_canonicalized_for_shorter_wire_state() -> None:
     fields = _canonicalize_tool_compatible_state_fields(
         {
             "turns": ["13"],
             "goal": ["Tool_result_(c5):_1_passed_in_0.05s"],
             "files": ["*B", "src/tok/gateway.py", "src/tok/app.py"],
-            "tests": [
-                "Tool_result_(c3):_FAILED_tests/unit/test_gateway.py::test_route"
-            ],
-            "errs": [
-                "Tool_result_(c3):_FAILED_tests/unit/test_gateway.py::test_route_-_NotImplementedError"
-            ],
+            "tests": ["Tool_result_(c3):_FAILED_tests/unit/test_gateway.py::test_route"],
+            "errs": ["Tool_result_(c3):_FAILED_tests/unit/test_gateway.py::test_route_-_NotImplementedError"],
             "constraints": ["do_not_write"],
         }
     )
@@ -1084,7 +989,7 @@ def test_tool_compatible_state_fields_are_canonicalized_for_shorter_wire_state()
     }
 
 
-def test_tool_compatible_goal_strips_fix_prefix_but_keeps_path_anchor():
+def test_tool_compatible_goal_strips_fix_prefix_but_keeps_path_anchor() -> None:
     fields = _canonicalize_tool_compatible_state_fields(
         {
             "turns": ["1"],
@@ -1096,7 +1001,7 @@ def test_tool_compatible_goal_strips_fix_prefix_but_keeps_path_anchor():
     assert fields["goal"] == ["src/tok/gateway.py"]
 
 
-def test_tool_compatible_canonicalizes_answer_facts():
+def test_tool_compatible_canonicalizes_answer_facts() -> None:
     fields = _canonicalize_tool_compatible_state_fields(
         {
             "turns": ["3"],
@@ -1114,7 +1019,7 @@ def test_tool_compatible_canonicalizes_answer_facts():
     ]
 
 
-def test_parse_tok_state_fields_folds_unknown_answer_keys_into_facts():
+def test_parse_tok_state_fields_folds_unknown_answer_keys_into_facts() -> None:
     fields = _parse_tok_state_fields(
         ">>> files:*A|answer_file:src/tok/compression.py|answer_verification:compress_history function|turns:5"
     )
@@ -1127,7 +1032,7 @@ def test_parse_tok_state_fields_folds_unknown_answer_keys_into_facts():
     ]
 
 
-def test_tool_compatible_sticky_fields_are_carried_forward():
+def test_tool_compatible_sticky_fields_are_carried_forward() -> None:
     previous = {
         "turns": ["10"],
         "files": ["src/tok/gateway.py"],
@@ -1149,7 +1054,7 @@ def test_tool_compatible_sticky_fields_are_carried_forward():
     assert "s:1_passed" not in delta
 
 
-def test_tool_compatible_delta_resends_answer_facts_and_files():
+def test_tool_compatible_delta_resends_answer_facts_and_files() -> None:
     previous = {
         "turns": ["4"],
         "files": ["src/tok/compression.py"],
@@ -1171,15 +1076,12 @@ def test_tool_compatible_delta_resends_answer_facts_and_files():
     delta = _delta_tok_state_fields(previous, current)
 
     assert "f:src/tok/compression.py" in delta
-    assert (
-        "x:answer_file:src/tok/compression.py,answer_verification:compress_history"
-        in delta
-    )
+    assert "x:answer_file:src/tok/compression.py,answer_verification:compress_history" in delta
 
 
 def test_tool_compatible_state_with_answer_facts_suppresses_when_unchanged(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -1234,15 +1136,11 @@ def test_tool_compatible_state_with_answer_facts_suppresses_when_unchanged(
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert (
-        second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
-    )
-    assert (
-        "Reuse existing File=/Verification= facts" not in second.body["system"]
-    )
+    assert second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
+    assert "Reuse existing File=/Verification= facts" not in second.body["system"]
 
 
-def test_tool_compatible_sticky_files_choose_primary_file_from_test_anchor():
+def test_tool_compatible_sticky_files_choose_primary_file_from_test_anchor() -> None:
     previous = {
         "turns": ["10"],
         "goal": ["src/tok/app.py"],
@@ -1260,7 +1158,7 @@ def test_tool_compatible_sticky_files_choose_primary_file_from_test_anchor():
     assert merged["files"] == ["src/tok/gateway.py"]
 
 
-def test_tool_compatible_sticky_files_keep_primary_context_without_strong_anchor():
+def test_tool_compatible_sticky_files_keep_primary_context_without_strong_anchor() -> None:
     previous = {
         "turns": ["4"],
         "goal": ["src/tok/compression.py"],
@@ -1280,9 +1178,7 @@ def test_tool_compatible_sticky_files_keep_primary_context_without_strong_anchor
     ]
 
 
-def test_runtime_prepare_request_reverts_when_mutated_body_fails_preflight(
-    tmp_path, monkeypatch
-):
+def test_runtime_prepare_request_reverts_when_mutated_body_fails_preflight(tmp_path, monkeypatch) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -1330,7 +1226,7 @@ def test_runtime_prepare_request_reverts_when_mutated_body_fails_preflight(
     assert prepared.behavior_signals["tok_preflight_rejected"] >= 1
 
 
-def test_runtime_prepare_request_captures_file_snapshots(tmp_path):
+def test_runtime_prepare_request_captures_file_snapshots(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -1361,7 +1257,7 @@ def test_runtime_prepare_request_captures_file_snapshots(tmp_path):
     assert any("file[src/tok/config.py]:" in entry.value for entry in facts)
 
 
-def test_runtime_prepare_request_captures_search_snapshots(tmp_path):
+def test_runtime_prepare_request_captures_search_snapshots(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -1392,7 +1288,7 @@ def test_runtime_prepare_request_captures_search_snapshots(tmp_path):
     assert any("search[config]:" in entry.value for entry in facts)
 
 
-def test_runtime_process_response_updates_memory_and_family_mode():
+def test_runtime_process_response_updates_memory_and_family_mode() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
 
@@ -1409,7 +1305,7 @@ def test_runtime_process_response_updates_memory_and_family_mode():
     assert processed.family_mode == "tok-universal"
 
 
-def test_response_contract_for_mode_flags_mixed_answer_tool_event():
+def test_response_contract_for_mode_flags_mixed_answer_tool_event() -> None:
     contract = response_contract_for_mode(
         "@tool view_file id:call_1 path:src/tok/gateway.py\n\n"
         "@msg role:assistant\n"
@@ -1418,15 +1314,13 @@ def test_response_contract_for_mode_flags_mixed_answer_tool_event():
         tool_compatible=True,
     )
 
-    assert any(
-        block.get("type") == "tool_use" for block in contract.content_blocks
-    )
+    assert any(block.get("type") == "tool_use" for block in contract.content_blocks)
     assert contract.behavior_signals["mixed_tool_visible_text"] == 1
     assert contract.behavior_signals["mixed_answer_tool_event"] == 1
     assert contract.behavior_signals["tool_contract_failure"] == 1
 
 
-def test_response_contract_for_mode_keeps_non_answer_tool_text_telemetry_only():
+def test_response_contract_for_mode_keeps_non_answer_tool_text_telemetry_only() -> None:
     contract = response_contract_for_mode(
         "@tool view_file id:call_1 path:src/tok/gateway.py\n\n"
         "@msg role:assistant\n"
@@ -1434,9 +1328,7 @@ def test_response_contract_for_mode_keeps_non_answer_tool_text_telemetry_only():
         tool_compatible=True,
     )
 
-    assert any(
-        block.get("type") == "tool_use" for block in contract.content_blocks
-    )
+    assert any(block.get("type") == "tool_use" for block in contract.content_blocks)
     assert contract.behavior_signals["mixed_tool_visible_text"] == 1
     assert "mixed_answer_tool_event" not in contract.behavior_signals
     assert "tool_contract_failure" not in contract.behavior_signals
@@ -1444,7 +1336,7 @@ def test_response_contract_for_mode_keeps_non_answer_tool_text_telemetry_only():
 
 def test_runtime_process_response_treats_mixed_answer_tool_as_contract_failure(
     monkeypatch,
-):
+) -> None:
     emitted: list[tuple[str, dict, str]] = []
 
     def _capture(name: str, payload: dict, *, model: str = "") -> None:
@@ -1468,14 +1360,12 @@ def test_runtime_process_response_treats_mixed_answer_tool_as_contract_failure(
     assert processed.behavior_signals["mixed_answer_tool_event"] == 1
     assert processed.family_mode == "tok-universal"
 
-    protocol_events = [
-        event for event in emitted if event[0] == "protocol_drift"
-    ]
+    protocol_events = [event for event in emitted if event[0] == "protocol_drift"]
     assert protocol_events
     assert protocol_events[-1][1]["signals"]["tool_contract_failure"] == 1
 
 
-def test_runtime_process_response_marks_answer_ready_tool_violation():
+def test_runtime_process_response_marks_answer_ready_tool_violation() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
 
@@ -1489,16 +1379,13 @@ def test_runtime_process_response_marks_answer_ready_tool_violation():
 
     assert processed.behavior_signals["answer_ready_turn"] == 1
     assert processed.behavior_signals["answer_ready_tool_violation"] == 1
-    assert (
-        processed.behavior_signals.get("answer_ready_mixed_turn_violation", 0)
-        == 0
-    )
+    assert processed.behavior_signals.get("answer_ready_mixed_turn_violation", 0) == 0
     assert processed.behavior_signals.get("tool_contract_failure", 0) == 0
 
 
 def test_runtime_process_response_marks_answer_ready_mixed_turn_violation(
     monkeypatch,
-):
+) -> None:
     emitted: list[tuple[str, dict, str]] = []
 
     def _capture(name: str, payload: dict, *, model: str = "") -> None:
@@ -1525,17 +1412,12 @@ def test_runtime_process_response_marks_answer_ready_mixed_turn_violation(
     assert processed.behavior_signals["answer_ready_mixed_turn_violation"] == 1
     assert processed.behavior_signals["tool_contract_failure"] == 1
 
-    protocol_events = [
-        event for event in emitted if event[0] == "protocol_drift"
-    ]
+    protocol_events = [event for event in emitted if event[0] == "protocol_drift"]
     assert protocol_events
-    assert (
-        protocol_events[-1][1]["signals"]["answer_ready_mixed_turn_violation"]
-        == 1
-    )
+    assert protocol_events[-1][1]["signals"]["answer_ready_mixed_turn_violation"] == 1
 
 
-def test_runtime_process_response_marks_answer_ready_failed_to_answer():
+def test_runtime_process_response_marks_answer_ready_failed_to_answer() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
 
@@ -1549,12 +1431,10 @@ def test_runtime_process_response_marks_answer_ready_failed_to_answer():
 
     assert processed.behavior_signals["answer_ready_turn"] == 1
     assert processed.behavior_signals["answer_ready_failed_to_answer"] == 1
-    assert (
-        processed.behavior_signals.get("answer_ready_tool_violation", 0) == 0
-    )
+    assert processed.behavior_signals.get("answer_ready_tool_violation", 0) == 0
 
 
-def test_runtime_process_response_answer_ready_clean_answer_has_no_violation():
+def test_runtime_process_response_answer_ready_clean_answer_has_no_violation() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
 
@@ -1567,19 +1447,14 @@ def test_runtime_process_response_answer_ready_clean_answer_has_no_violation():
     )
 
     assert processed.behavior_signals["answer_ready_turn"] == 1
-    assert (
-        processed.behavior_signals.get("answer_ready_tool_violation", 0) == 0
-    )
-    assert (
-        processed.behavior_signals.get("answer_ready_mixed_turn_violation", 0)
-        == 0
-    )
-    assert (
-        processed.behavior_signals.get("answer_ready_failed_to_answer", 0) == 0
-    )
+    assert processed.behavior_signals.get("answer_ready_tool_violation", 0) == 0
+    assert processed.behavior_signals.get("answer_ready_mixed_turn_violation", 0) == 0
+    assert processed.behavior_signals.get("answer_ready_failed_to_answer", 0) == 0
 
 
-def test_answer_ready_mixed_turn_requests_repair_for_next_turn(tmp_path):
+def test_answer_ready_mixed_turn_requests_repair_for_next_turn(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
@@ -1598,16 +1473,14 @@ def test_answer_ready_mixed_turn_requests_repair_for_next_turn(tmp_path):
     assert session._answer_ready_repair_pending is True
 
 
-def test_prepare_request_activates_answer_ready_repair_once(tmp_path):
+def test_prepare_request_activates_answer_ready_repair_once(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._answer_ready_repair_pending = True
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     prepared = runtime.prepare_request(request, session)
@@ -1617,7 +1490,7 @@ def test_prepare_request_activates_answer_ready_repair_once(tmp_path):
     assert session._answer_ready_repair_active is True
 
 
-def test_late_toolless_fresh_answer_requests_late_repair(tmp_path):
+def test_late_toolless_fresh_answer_requests_late_repair(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
@@ -1633,19 +1506,15 @@ def test_late_toolless_fresh_answer_requests_late_repair(tmp_path):
         },
     )
 
-    assert (
-        processed.behavior_signals["late_answer_assembly_repair_requested"]
-        == 1
-    )
-    assert (
-        processed.behavior_signals["late_freshness_signal_consumed_by_tok"]
-        == 1
-    )
+    assert processed.behavior_signals["late_answer_assembly_repair_requested"] == 1
+    assert processed.behavior_signals["late_freshness_signal_consumed_by_tok"] == 1
     assert session._late_answer_assembly_repair_pending is True
     assert session._late_answer_assembly_repair_mode_pending == "tool_only"
 
 
-def test_prepare_request_activates_late_tool_only_repair_once(tmp_path):
+def test_prepare_request_activates_late_tool_only_repair_once(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_assembly_repair_pending = True
@@ -1654,34 +1523,21 @@ def test_prepare_request_activates_late_tool_only_repair_once(tmp_path):
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("late_answer_assembly_repair_active", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get(
-            "late_answer_assembly_repair_tool_only", 0
-        )
-        == 1
-    )
+    assert prepared.behavior_signals.get("late_answer_assembly_repair_active", 0) == 1
+    assert prepared.behavior_signals.get("late_answer_assembly_repair_tool_only", 0) == 1
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 0
     assert (
-        "Previous turn tried to answer before satisfying the late fresh-evidence contract."
-        in prepared.body["system"]
+        "Previous turn tried to answer before satisfying the late fresh-evidence contract." in prepared.body["system"]
     )
-    assert (
-        "Previous turn failed answer assembly." not in prepared.body["system"]
-    )
+    assert "Previous turn failed answer assembly." not in prepared.body["system"]
 
 
-def test_late_mixed_answer_tool_requests_answer_only_repair(tmp_path):
+def test_late_mixed_answer_tool_requests_answer_only_repair(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
@@ -1699,22 +1555,16 @@ def test_late_mixed_answer_tool_requests_answer_only_repair(tmp_path):
         },
     )
 
-    assert (
-        processed.behavior_signals["late_answer_assembly_repair_requested"]
-        == 1
-    )
-    assert (
-        processed.behavior_signals[
-            "late_answer_assembly_repair_answer_only_requested"
-        ]
-        == 1
-    )
+    assert processed.behavior_signals["late_answer_assembly_repair_requested"] == 1
+    assert processed.behavior_signals["late_answer_assembly_repair_answer_only_requested"] == 1
     assert processed.behavior_signals["late_mixed_signal_consumed_by_tok"] == 1
     assert session._late_answer_assembly_repair_pending is True
     assert session._late_answer_assembly_repair_mode_pending == "answer_only"
 
 
-def test_prepare_request_activates_late_answer_only_repair_once(tmp_path):
+def test_prepare_request_activates_late_answer_only_repair_once(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_assembly_repair_pending = True
@@ -1723,34 +1573,19 @@ def test_prepare_request_activates_late_answer_only_repair_once(tmp_path):
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("late_answer_assembly_repair_active", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get(
-            "late_answer_assembly_repair_answer_only", 0
-        )
-        == 1
-    )
+    assert prepared.behavior_signals.get("late_answer_assembly_repair_active", 0) == 1
+    assert prepared.behavior_signals.get("late_answer_assembly_repair_answer_only", 0) == 1
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 0
-    assert (
-        "Previous turn failed final answer assembly after evidence was available."
-        in prepared.body["system"]
-    )
-    assert (
-        "Previous turn failed answer assembly." not in prepared.body["system"]
-    )
+    assert "Previous turn failed final answer assembly after evidence was available." in prepared.body["system"]
+    assert "Previous turn failed answer assembly." not in prepared.body["system"]
 
 
-def test_late_answer_only_repair_resolves_after_clean_answer(tmp_path):
+def test_late_answer_only_repair_resolves_after_clean_answer(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_assembly_repair_pending = True
@@ -1758,9 +1593,7 @@ def test_late_answer_only_repair_resolves_after_clean_answer(tmp_path):
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     runtime.prepare_request(request, session)
@@ -1772,22 +1605,12 @@ def test_late_answer_only_repair_resolves_after_clean_answer(tmp_path):
         behavior_signals={"late_staged_retry_context": 1},
     )
 
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_resolved", 0
-        )
-        == 1
-    )
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_answer_only_resolved", 0
-        )
-        == 1
-    )
+    assert processed.behavior_signals.get("late_answer_assembly_repair_resolved", 0) == 1
+    assert processed.behavior_signals.get("late_answer_assembly_repair_answer_only_resolved", 0) == 1
     assert session._late_answer_assembly_repair_pending is False
 
 
-def test_late_answer_only_repair_failure_is_tracked(tmp_path):
+def test_late_answer_only_repair_failure_is_tracked(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_assembly_repair_pending = True
@@ -1795,9 +1618,7 @@ def test_late_answer_only_repair_failure_is_tracked(tmp_path):
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     runtime.prepare_request(request, session)
@@ -1815,29 +1636,16 @@ def test_late_answer_only_repair_failure_is_tracked(tmp_path):
         },
     )
 
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_requested", 0
-        )
-        == 1
-    )
-    assert (
-        processed.behavior_signals.get("late_answer_assembly_repair_failed", 0)
-        == 1
-    )
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_answer_only_failed", 0
-        )
-        == 1
-    )
+    assert processed.behavior_signals.get("late_answer_assembly_repair_requested", 0) == 1
+    assert processed.behavior_signals.get("late_answer_assembly_repair_failed", 0) == 1
+    assert processed.behavior_signals.get("late_answer_assembly_repair_answer_only_failed", 0) == 1
     assert session._late_answer_assembly_repair_pending is False
     assert session._late_answer_assembly_repair_mode_pending == ""
 
 
 def test_genuine_freshness_miss_still_wins_over_mixed_for_late_repair_mode(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
@@ -1857,29 +1665,19 @@ def test_genuine_freshness_miss_still_wins_over_mixed_for_late_repair_mode(
         },
     )
 
-    assert (
-        processed.behavior_signals["late_answer_assembly_repair_requested"]
-        == 1
-    )
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_answer_only_requested", 0
-        )
-        == 0
-    )
+    assert processed.behavior_signals["late_answer_assembly_repair_requested"] == 1
+    assert processed.behavior_signals.get("late_answer_assembly_repair_answer_only_requested", 0) == 0
     assert session._late_answer_assembly_repair_mode_pending == "tool_only"
 
 
-def test_answer_ready_repair_resolved_after_clean_answer(tmp_path):
+def test_answer_ready_repair_resolved_after_clean_answer(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._answer_ready_repair_pending = True
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     runtime.prepare_request(request, session)
@@ -1891,15 +1689,13 @@ def test_answer_ready_repair_resolved_after_clean_answer(tmp_path):
         behavior_signals={"answer_ready_turn": 1},
     )
 
-    assert (
-        processed.behavior_signals.get("answer_ready_repair_resolved", 0) == 1
-    )
+    assert processed.behavior_signals.get("answer_ready_repair_resolved", 0) == 1
     assert session._answer_ready_repair_pending is False
 
 
 def test_late_answer_assembly_repair_resolved_after_clean_tool_only_turn(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_assembly_repair_pending = True
@@ -1907,9 +1703,7 @@ def test_late_answer_assembly_repair_resolved_after_clean_tool_only_turn(
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     runtime.prepare_request(request, session)
@@ -1921,17 +1715,14 @@ def test_late_answer_assembly_repair_resolved_after_clean_tool_only_turn(
         behavior_signals={"late_staged_retry_context": 1},
     )
 
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_resolved", 0
-        )
-        == 1
-    )
+    assert processed.behavior_signals.get("late_answer_assembly_repair_resolved", 0) == 1
     assert session._late_answer_assembly_repair_pending is False
     assert session._late_answer_followthrough_pending is False
 
 
-def test_prepare_request_activates_late_answer_followthrough_once(tmp_path):
+def test_prepare_request_activates_late_answer_followthrough_once(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_followthrough_pending = True
@@ -1941,42 +1732,31 @@ def test_prepare_request_activates_late_answer_followthrough_once(tmp_path):
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("late_answer_followthrough_active", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get("late_answer_assembly_repair_active", 0)
-        == 0
-    )
+    assert prepared.behavior_signals.get("late_answer_followthrough_active", 0) == 1
+    assert prepared.behavior_signals.get("late_answer_assembly_repair_active", 0) == 0
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 0
-    assert (
-        "Previous turn gathered the required evidence. In this turn, do not call tools."
-        in prepared.body["system"]
-    )
+    assert "Previous turn gathered the required evidence. In this turn, do not call tools." in prepared.body["system"]
     assert (
         "Previous turn tried to answer before satisfying the late fresh-evidence contract."
         not in prepared.body["system"]
     )
 
 
-def test_late_answer_followthrough_resolves_after_clean_answer(tmp_path):
+def test_late_answer_followthrough_resolves_after_clean_answer(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_followthrough_pending = True
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     runtime.prepare_request(request, session)
@@ -1988,27 +1768,19 @@ def test_late_answer_followthrough_resolves_after_clean_answer(tmp_path):
         behavior_signals={"late_staged_retry_context": 1},
     )
 
-    assert (
-        processed.behavior_signals.get("late_answer_followthrough_resolved", 0)
-        == 1
-    )
-    assert (
-        processed.behavior_signals.get("late_answer_followthrough_failed", 0)
-        == 0
-    )
+    assert processed.behavior_signals.get("late_answer_followthrough_resolved", 0) == 1
+    assert processed.behavior_signals.get("late_answer_followthrough_failed", 0) == 0
     assert session._late_answer_followthrough_pending is False
 
 
-def test_late_answer_followthrough_failure_is_tracked(tmp_path):
+def test_late_answer_followthrough_failure_is_tracked(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_followthrough_pending = True
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     runtime.prepare_request(request, session)
@@ -2020,33 +1792,22 @@ def test_late_answer_followthrough_failure_is_tracked(tmp_path):
         behavior_signals={"late_staged_retry_context": 1},
     )
 
-    assert (
-        processed.behavior_signals.get("late_answer_followthrough_failed", 0)
-        == 1
-    )
-    assert (
-        processed.behavior_signals.get("late_answer_followthrough_resolved", 0)
-        == 0
-    )
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_requested", 0
-        )
-        == 0
-    )
+    assert processed.behavior_signals.get("late_answer_followthrough_failed", 0) == 1
+    assert processed.behavior_signals.get("late_answer_followthrough_resolved", 0) == 0
+    assert processed.behavior_signals.get("late_answer_assembly_repair_requested", 0) == 0
     assert session._late_answer_followthrough_pending is False
 
 
-def test_answer_ready_repair_failed_on_second_answer_ready_miss(tmp_path):
+def test_answer_ready_repair_failed_on_second_answer_ready_miss(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._answer_ready_repair_pending = True
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     runtime.prepare_request(request, session)
@@ -2062,7 +1823,9 @@ def test_answer_ready_repair_failed_on_second_answer_ready_miss(tmp_path):
     assert session._answer_ready_repair_pending is False
 
 
-def test_late_answer_assembly_repair_failed_on_second_late_miss(tmp_path):
+def test_late_answer_assembly_repair_failed_on_second_late_miss(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._late_answer_assembly_repair_pending = True
@@ -2070,9 +1833,7 @@ def test_late_answer_assembly_repair_failed_on_second_late_miss(tmp_path):
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     runtime.prepare_request(request, session)
@@ -2088,17 +1849,14 @@ def test_late_answer_assembly_repair_failed_on_second_late_miss(tmp_path):
         },
     )
 
-    assert (
-        processed.behavior_signals.get("late_answer_assembly_repair_failed", 0)
-        == 1
-    )
+    assert processed.behavior_signals.get("late_answer_assembly_repair_failed", 0) == 1
     assert session._late_answer_assembly_repair_pending is False
     assert session._late_answer_assembly_repair_mode_pending == ""
 
 
 def test_answer_ready_repair_not_triggered_for_non_answer_ready_tool_turn(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
@@ -2109,15 +1867,13 @@ def test_answer_ready_repair_not_triggered_for_non_answer_ready_tool_turn(
         tool_compatible=True,
     )
 
-    assert (
-        processed.behavior_signals.get("answer_ready_repair_requested", 0) == 0
-    )
+    assert processed.behavior_signals.get("answer_ready_repair_requested", 0) == 0
     assert session._answer_ready_repair_pending is False
 
 
 def test_late_answer_assembly_repair_not_triggered_for_unsupported_or_bad_args(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
@@ -2135,22 +1891,14 @@ def test_late_answer_assembly_repair_not_triggered_for_unsupported_or_bad_args(
         },
     )
 
-    assert (
-        processed.behavior_signals.get(
-            "late_answer_assembly_repair_requested", 0
-        )
-        == 0
-    )
-    assert (
-        processed.behavior_signals.get(
-            "late_freshness_signal_consumed_by_tok", 0
-        )
-        == 0
-    )
+    assert processed.behavior_signals.get("late_answer_assembly_repair_requested", 0) == 0
+    assert processed.behavior_signals.get("late_freshness_signal_consumed_by_tok", 0) == 0
     assert session._late_answer_assembly_repair_pending is False
 
 
-def test_mixed_turn_keeps_telemetry_without_requesting_repair(tmp_path):
+def test_mixed_turn_keeps_telemetry_without_requesting_repair(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
@@ -2165,57 +1913,44 @@ def test_mixed_turn_keeps_telemetry_without_requesting_repair(tmp_path):
     )
 
     assert processed.behavior_signals.get("mixed_answer_tool_event", 0) == 1
-    assert (
-        processed.behavior_signals.get("mixed_turn_repair_requested", 0) == 0
-    )
+    assert processed.behavior_signals.get("mixed_turn_repair_requested", 0) == 0
 
 
-def test_prepare_request_does_not_activate_mixed_turn_repair(tmp_path):
+def test_prepare_request_does_not_activate_mixed_turn_repair(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("mixed_turn_repair_active", 0) == 0
-    assert (
-        "Previous turn mixed tool use with a final answer."
-        not in prepared.body["system"]
-    )
+    assert "Previous turn mixed tool use with a final answer." not in prepared.body["system"]
 
 
-def test_answer_ready_repair_keeps_single_repair_block(tmp_path):
+def test_answer_ready_repair_keeps_single_repair_block(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._answer_ready_repair_pending = True
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 1
-    assert (
-        prepared.body["system"].count("Previous turn failed answer assembly.")
-        == 1
-    )
-    assert (
-        "Previous turn mixed tool use with a final answer."
-        not in prepared.body["system"]
-    )
+    assert prepared.body["system"].count("Previous turn failed answer assembly.") == 1
+    assert "Previous turn mixed tool use with a final answer." not in prepared.body["system"]
 
 
-def test_mixed_turn_telemetry_not_triggered_for_plain_tool_turn(tmp_path):
+def test_mixed_turn_telemetry_not_triggered_for_plain_tool_turn(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     processed = runtime.process_response(
@@ -2228,14 +1963,12 @@ def test_mixed_turn_telemetry_not_triggered_for_plain_tool_turn(tmp_path):
     assert processed.behavior_signals.get("mixed_answer_tool_event", 0) == 0
 
 
-def test_tool_contract_failure_contributes_to_runtime_pressure_metrics():
+def test_tool_contract_failure_contributes_to_runtime_pressure_metrics() -> None:
     assert calculate_invisible_pressure({"tool_contract_failure": 1}) == 1
-    assert (
-        calculate_semantic_regression_score({"tool_contract_failure": 1}) == 1
-    )
+    assert calculate_semantic_regression_score({"tool_contract_failure": 1}) == 1
 
 
-def test_extract_structured_answer_memory_promotes_file_and_verification():
+def test_extract_structured_answer_memory_promotes_file_and_verification() -> None:
     fields = extract_structured_answer_memory(
         "File=src/tok/compression.py\n"
         "Verification=compress_history function with keep_turns support\n"
@@ -2244,17 +1977,11 @@ def test_extract_structured_answer_memory_promotes_file_and_verification():
 
     assert fields["files"] == ["src/tok/compression.py"]
     assert "answer_file:src/tok/compression.py" in fields["facts"]
-    assert any(
-        fact.startswith("answer_verification:compress_history function")
-        for fact in fields["facts"]
-    )
-    assert any(
-        fact.startswith("answer_related:src/tok/bridge_memory.py")
-        for fact in fields["facts"]
-    )
+    assert any(fact.startswith("answer_verification:compress_history function") for fact in fields["facts"])
+    assert any(fact.startswith("answer_related:src/tok/bridge_memory.py") for fact in fields["facts"])
 
 
-def test_extract_structured_answer_memory_parses_freeform_entrypoint_reply():
+def test_extract_structured_answer_memory_parses_freeform_entrypoint_reply() -> None:
     fields = extract_structured_answer_memory(
         "The main implementation entry is `compress_history` in `src/tok/compression.py` (line 30)."
     )
@@ -2266,7 +1993,7 @@ def test_extract_structured_answer_memory_parses_freeform_entrypoint_reply():
 
 def test_ground_structured_answer_memory_rejects_unguarded_file_guess(
     tmp_path,
-):
+) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory.record_file_snapshot(
         "src/tok/compression.py",
@@ -2293,7 +2020,7 @@ def test_ground_structured_answer_memory_rejects_unguarded_file_guess(
 
 def test_ground_structured_answer_memory_normalizes_to_exact_seen_path(
     tmp_path,
-):
+) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory.record_file_snapshot(
         "src/tok/compression.py",
@@ -2314,7 +2041,7 @@ def test_ground_structured_answer_memory_normalizes_to_exact_seen_path(
 
 def test_reinforce_structured_answer_memory_carries_forward_prior_file(
     tmp_path,
-):
+) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory._upsert(
         session.bridge_memory.hot,
@@ -2334,7 +2061,7 @@ def test_reinforce_structured_answer_memory_carries_forward_prior_file(
 
 def test_reinforce_structured_answer_memory_prefers_more_specific_verification(
     tmp_path,
-):
+) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory._upsert(
         session.bridge_memory.hot,
@@ -2348,13 +2075,10 @@ def test_reinforce_structured_answer_memory_prefers_more_specific_verification(
         {"facts": ["answer_verification:compress function"]},
     )
 
-    assert (
-        reinforced["facts"][0]
-        == "answer_verification:compress_history function"
-    )
+    assert reinforced["facts"][0] == "answer_verification:compress_history function"
 
 
-def test_compact_structured_answer_memory_trims_answer_payloads():
+def test_compact_structured_answer_memory_trims_answer_payloads() -> None:
     compacted = compact_structured_answer_memory(
         {
             "files": ["src/tok/compression.py"],
@@ -2372,7 +2096,7 @@ def test_compact_structured_answer_memory_trims_answer_payloads():
     ]
 
 
-def test_compact_structured_answer_memory_preserves_symbol_after_def_keyword():
+def test_compact_structured_answer_memory_preserves_symbol_after_def_keyword() -> None:
     compacted = compact_structured_answer_memory(
         {
             "facts": [
@@ -2388,7 +2112,7 @@ def test_compact_structured_answer_memory_preserves_symbol_after_def_keyword():
 
 def test_runtime_process_response_stores_structured_tool_compatible_answers(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory.record_search_snapshot(
@@ -2396,24 +2120,18 @@ def test_runtime_process_response_stores_structured_tool_compatible_answers(
     )
 
     processed = runtime.process_response(
-        "File=src/tok/compression.py\n"
-        "Verification=compress_history function with keep_turns support",
+        "File=src/tok/compression.py\nVerification=compress_history function with keep_turns support",
         model="deepseek/deepseek-v3.2",
         session=session,
         tool_compatible=True,
     )
 
     assert processed.mode == "tool-compatible"
-    assert "src/tok/compression.py" in [
-        entry.value for entry in session.bridge_memory.hot.get("files", [])
-    ]
+    assert "src/tok/compression.py" in [entry.value for entry in session.bridge_memory.hot.get("files", [])]
     assert any(
-        entry.value == "answer_verification:compress_history"
-        for entry in session.bridge_memory.hot.get("facts", [])
+        entry.value == "answer_verification:compress_history" for entry in session.bridge_memory.hot.get("facts", [])
     )
-    assert "src/tok/compression.py" in [
-        entry.value for entry in session.bridge_memory.durable.get("files", [])
-    ]
+    assert "src/tok/compression.py" in [entry.value for entry in session.bridge_memory.durable.get("files", [])]
     assert any(
         entry.value == "answer_verification:compress_history"
         for entry in session.bridge_memory.durable.get("facts", [])
@@ -2422,7 +2140,7 @@ def test_runtime_process_response_stores_structured_tool_compatible_answers(
 
 def test_structured_answers_survive_hot_replacement_via_durable_memory(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory.record_search_snapshot(
@@ -2436,9 +2154,7 @@ def test_structured_answers_survive_hot_replacement_via_durable_memory(
         tool_compatible=True,
     )
 
-    session.bridge_memory.replace_hot_from_wire_state(
-        ">>> g:related_prompt|t:2"
-    )
+    session.bridge_memory.replace_hot_from_wire_state(">>> g:related_prompt|t:2")
     wire = session.bridge_memory.wire_state(TOOL_COMPAT_MEMORY_PROFILE)
 
     assert "answer_file:src/tok/compression.py" in wire
@@ -2448,13 +2164,12 @@ def test_structured_answers_survive_hot_replacement_via_durable_memory(
 
 def test_runtime_process_response_does_not_write_healed_tool_compatible_memory(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
 
     processed = runtime.process_response(
-        "Verification=compress_history function in the codebase\n"
-        "I have confirmed the result.",
+        "Verification=compress_history function in the codebase\nI have confirmed the result.",
         model="deepseek/deepseek-v3.2",
         session=session,
         tool_compatible=True,
@@ -2464,7 +2179,9 @@ def test_runtime_process_response_does_not_write_healed_tool_compatible_memory(
     assert session.fallback_memory == ""
 
 
-def test_runtime_session_loads_persisted_fallback_memory_on_startup(tmp_path):
+def test_runtime_session_loads_persisted_fallback_memory_on_startup(
+    tmp_path,
+) -> None:
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
     (memory_dir / "memory.tok").write_text(">>> g:stale_raw|t:1\n")
@@ -2474,31 +2191,27 @@ def test_runtime_session_loads_persisted_fallback_memory_on_startup(tmp_path):
 
     session = RuntimeSession(memory_dir=memory_dir)
 
-    assert (
-        session.load_memory(model="claude-sonnet-4") == ">>> t:2|g:fresh_hot"
-    )
+    assert session.load_memory(model="claude-sonnet-4") == ">>> t:2|g:fresh_hot"
     signals = session.consume_behavior_signals()
     assert signals.get("cold_start_structured_memory", 0) == 1
     assert signals.get("cold_start_wire_fallback", 0) == 0
 
 
-def test_runtime_session_write_memory_persists_fallback_memory(tmp_path):
+def test_runtime_session_write_memory_persists_fallback_memory(
+    tmp_path,
+) -> None:
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
 
     session = RuntimeSession(memory_dir=memory_dir)
 
-    updated = session.write_memory(
-        ">>> g:keep_bridge_warm|t:4\n@msg role:assistant\n  |> ok"
-    )
+    updated = session.write_memory(">>> g:keep_bridge_warm|t:4\n@msg role:assistant\n  |> ok")
 
     assert updated == ">>> g:keep_bridge_warm|t:4"
-    assert (
-        memory_dir / "memory.tok"
-    ).read_text() == ">>> g:keep_bridge_warm|t:4\n"
+    assert (memory_dir / "memory.tok").read_text() == ">>> g:keep_bridge_warm|t:4\n"
 
 
-def test_collect_behavior_signals_matches_bridge_contract():
+def test_collect_behavior_signals_matches_bridge_contract() -> None:
     import hashlib
     import json
 
@@ -2565,9 +2278,7 @@ def test_collect_behavior_signals_matches_bridge_contract():
         raw_key = f"{tool_name}:{args_str}"
         return hashlib.sha256(raw_key.encode()).hexdigest()[:12]
 
-    file_cache_key = _make_cache_key(
-        "view_file", {"path": "src/tok/gateway.py"}
-    )
+    file_cache_key = _make_cache_key("view_file", {"path": "src/tok/gateway.py"})
     search_cache_key = _make_cache_key("grep", {"query": "create_app"})
 
     file_content = "def route(request):\n    return request\n"
@@ -2596,7 +2307,9 @@ def test_collect_behavior_signals_matches_bridge_contract():
     assert signals.get("search_reacquisition_cost_tokens", 0) == 0
 
 
-def test_prepare_request_distinguishes_answer_ready_reacquisition(tmp_path):
+def test_prepare_request_distinguishes_answer_ready_reacquisition(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory._upsert(
@@ -2643,24 +2356,13 @@ def test_prepare_request_distinguishes_answer_ready_reacquisition(tmp_path):
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get("answer_ready_reacquisition_attempt", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get("repair_phase_reacquisition_attempt", 0)
-        == 0
-    )
-    assert (
-        prepared.behavior_signals.get("benign_reverification_attempt", 0) == 0
-    )
+    assert prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0) == 1
+    assert prepared.behavior_signals.get("answer_ready_reacquisition_attempt", 0) == 1
+    assert prepared.behavior_signals.get("repair_phase_reacquisition_attempt", 0) == 0
+    assert prepared.behavior_signals.get("benign_reverification_attempt", 0) == 0
 
 
-def test_prepare_request_distinguishes_benign_reverification(tmp_path):
+def test_prepare_request_distinguishes_benign_reverification(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory._upsert(
@@ -2704,8 +2406,7 @@ def test_prepare_request_distinguishes_benign_reverification(tmp_path):
             {
                 "role": "user",
                 "content": (
-                    "If fresh evidence is required, use the read-only tools first. "
-                    "Confirm the gateway entry point."
+                    "If fresh evidence is required, use the read-only tools first. Confirm the gateway entry point."
                 ),
             },
         ],
@@ -2713,20 +2414,14 @@ def test_prepare_request_distinguishes_benign_reverification(tmp_path):
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get("benign_reverification_attempt", 0) == 1
-    )
-    assert (
-        prepared.behavior_signals.get("answer_ready_reacquisition_attempt", 0)
-        == 0
-    )
+    assert prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0) == 1
+    assert prepared.behavior_signals.get("benign_reverification_attempt", 0) == 1
+    assert prepared.behavior_signals.get("answer_ready_reacquisition_attempt", 0) == 0
 
 
-def test_prepare_request_distinguishes_repair_phase_reacquisition(tmp_path):
+def test_prepare_request_distinguishes_repair_phase_reacquisition(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session._answer_ready_repair_pending = True
@@ -2771,8 +2466,7 @@ def test_prepare_request_distinguishes_repair_phase_reacquisition(tmp_path):
             {
                 "role": "user",
                 "content": (
-                    "If fresh evidence is required, use the read-only tools first. "
-                    "Confirm the gateway entry point."
+                    "If fresh evidence is required, use the read-only tools first. Confirm the gateway entry point."
                 ),
             },
         ],
@@ -2780,23 +2474,13 @@ def test_prepare_request_distinguishes_repair_phase_reacquisition(tmp_path):
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get("repair_phase_reacquisition_attempt", 0)
-        == 1
-    )
-    assert (
-        prepared.behavior_signals.get("benign_reverification_attempt", 0) == 0
-    )
+    assert prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0) == 1
+    assert prepared.behavior_signals.get("repair_phase_reacquisition_attempt", 0) == 1
+    assert prepared.behavior_signals.get("benign_reverification_attempt", 0) == 0
 
 
-def test_response_contract_detects_tok_native_and_fail_open_modes():
-    native = response_contract(
-        ">>> goal:fix|turns:1\n@msg role:assistant\n  |> ok"
-    )
+def test_response_contract_detects_tok_native_and_fail_open_modes() -> None:
+    native = response_contract(">>> goal:fix|turns:1\n@msg role:assistant\n  |> ok")
     compat = response_contract("## heading\nPlain response")
 
     assert native.mode == "tok-native"
@@ -2808,14 +2492,12 @@ def test_response_contract_detects_tok_native_and_fail_open_modes():
     assert compat.behavior_signals["fail_open_compat_response"] == 1
 
 
-def test_response_behavior_signals_detect_non_tok_output():
-    assert response_behavior_signals("## hello\nplain markdown") == {
-        "non_tok_response": 1
-    }
+def test_response_behavior_signals_detect_non_tok_output() -> None:
+    assert response_behavior_signals("## hello\nplain markdown") == {"non_tok_response": 1}
     assert response_behavior_signals("@msg role:assistant\n  |> ok") == {}
 
 
-def test_process_response_no_drift_in_tool_compatible_mode():
+def test_process_response_no_drift_in_tool_compatible_mode() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
     prose = (
@@ -2832,7 +2514,7 @@ def test_process_response_no_drift_in_tool_compatible_mode():
     assert "non_tok_response" not in result.behavior_signals
 
 
-def test_process_response_still_detects_drift_in_tok_native_mode():
+def test_process_response_still_detects_drift_in_tok_native_mode() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
     prose = (
@@ -2848,7 +2530,7 @@ def test_process_response_still_detects_drift_in_tok_native_mode():
     assert result.behavior_signals.get("semantic_drift_detected") == 1
 
 
-def test_replay_gate_evaluates_pressure_and_failures():
+def test_replay_gate_evaluates_pressure_and_failures() -> None:
     result = evaluate_replay_gate(
         {
             "min_savings_pct": 20.0,
@@ -2883,7 +2565,7 @@ def test_replay_gate_evaluates_pressure_and_failures():
     assert "max_repeat_file_read" in result.failed_checks
 
 
-def test_select_resend_strategy():
+def test_select_resend_strategy() -> None:
     """_select_resend_strategy: verified-current suppresses; new answer anchor full; else delta."""
     from tok.runtime.core import _select_resend_reason, _select_resend_strategy
 
@@ -2901,27 +2583,16 @@ def test_select_resend_strategy():
     }
 
     # unchanged answer-bearing state → suppress
-    assert (
-        _select_resend_strategy(answer_fields, answer_fields, True)
-        == "suppress"
-    )
-    assert (
-        _select_resend_reason(answer_fields, answer_fields, True)
-        == "verified_current_state"
-    )
+    assert _select_resend_strategy(answer_fields, answer_fields, True) == "suppress"
+    assert _select_resend_reason(answer_fields, answer_fields, True) == "verified_current_state"
 
     # new answer-bearing state → full
     assert _select_resend_strategy(answer_fields, {}, True) == "full"
-    assert (
-        _select_resend_reason(answer_fields, {}, True) == "new_answer_anchor"
-    )
+    assert _select_resend_reason(answer_fields, {}, True) == "new_answer_anchor"
 
     # identical non-answer fields → suppress
     assert _select_resend_strategy(fields, fields, False) == "suppress"
-    assert (
-        _select_resend_reason(fields, fields, False)
-        == "verified_current_state"
-    )
+    assert _select_resend_reason(fields, fields, False) == "verified_current_state"
 
     # changed fields, no answer facts → delta
     assert _select_resend_strategy(fields, {}, False) == "delta"
@@ -2932,41 +2603,26 @@ def test_select_resend_strategy():
     # empty previous with non-empty current → delta (not suppress)
     assert _select_resend_strategy(fields, {}, False) == "delta"
     # changed answer-bearing state after first appearance → delta
-    assert (
-        _select_resend_strategy(changed_answer_fields, answer_fields, True)
-        == "delta"
-    )
-    assert (
-        _select_resend_reason(changed_answer_fields, answer_fields, True)
-        == "changed_state_delta"
-    )
+    assert _select_resend_strategy(changed_answer_fields, answer_fields, True) == "delta"
+    assert _select_resend_reason(changed_answer_fields, answer_fields, True) == "changed_state_delta"
 
 
-def test_should_persist_to_durable():
+def test_should_persist_to_durable() -> None:
     """_should_persist_to_durable returns True for files and answer_ facts only."""
     from tok.runtime.core import _should_persist_to_durable
 
     assert _should_persist_to_durable("files", "src/tok/gateway.py") is True
-    assert (
-        _should_persist_to_durable("facts", "answer_file:src/tok/gateway.py")
-        is True
-    )
-    assert (
-        _should_persist_to_durable(
-            "facts", "answer_verification:compress_history"
-        )
-        is True
-    )
+    assert _should_persist_to_durable("facts", "answer_file:src/tok/gateway.py") is True
+    assert _should_persist_to_durable("facts", "answer_verification:compress_history") is True
     assert _should_persist_to_durable("facts", "goal:fix the bug") is False
-    assert (
-        _should_persist_to_durable("facts", "test:tests/unit/test_gateway.py")
-        is False
-    )
+    assert _should_persist_to_durable("facts", "test:tests/unit/test_gateway.py") is False
     assert _should_persist_to_durable("goal", "fix the bug") is False
     assert _should_persist_to_durable("turns", "5") is False
 
 
-def test_answer_anchor_present_signal_set_when_answer_facts_in_state(tmp_path):
+def test_answer_anchor_present_signal_set_when_answer_facts_in_state(
+    tmp_path,
+) -> None:
     """answer_anchor_present=1 when state contains answer_file or answer_verification."""
     from tok.runtime.core import (
         RuntimeRequest,
@@ -2997,15 +2653,12 @@ def test_answer_anchor_present_signal_set_when_answer_facts_in_state(tmp_path):
     assert prepared.behavior_signals.get("answer_anchor_present", 0) == 1, (
         "answer_anchor_present must be set when answer facts are in state"
     )
-    assert (
-        prepared.behavior_signals.get(
-            "state_resend_reason_answer_anchor_present_kept_full", 0
-        )
-        == 1
-    )
+    assert prepared.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 1
 
 
-def test_answer_anchor_present_can_suppress_when_state_is_unchanged(tmp_path):
+def test_answer_anchor_present_can_suppress_when_state_is_unchanged(
+    tmp_path,
+) -> None:
     from tok.runtime.core import (
         RuntimeRequest,
         RuntimeSession,
@@ -3038,18 +2691,11 @@ def test_answer_anchor_present_can_suppress_when_state_is_unchanged(tmp_path):
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
     assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
-    assert (
-        second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
-    )
-    assert (
-        second.behavior_signals.get(
-            "state_resend_reason_answer_anchor_present_kept_full", 0
-        )
-        == 0
-    )
+    assert second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
+    assert second.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 0
 
 
-def test_answer_anchor_present_can_delta_when_state_changes(tmp_path):
+def test_answer_anchor_present_can_delta_when_state_changes(tmp_path) -> None:
     from tok.runtime.core import (
         RuntimeRequest,
         RuntimeSession,
@@ -3101,15 +2747,12 @@ def test_answer_anchor_present_can_delta_when_state_changes(tmp_path):
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
     assert second.behavior_signals.get("state_resend_delta_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_delta_allowed", 0) == 1
-    assert (
-        second.behavior_signals.get(
-            "state_resend_reason_answer_anchor_present_kept_full", 0
-        )
-        == 0
-    )
+    assert second.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 0
 
 
-def test_answer_anchor_present_signal_absent_without_answer_facts(tmp_path):
+def test_answer_anchor_present_signal_absent_without_answer_facts(
+    tmp_path,
+) -> None:
     """answer_anchor_present is not set when no answer facts are present."""
     from tok.runtime.core import (
         RuntimeRequest,
@@ -3136,7 +2779,9 @@ def test_answer_anchor_present_signal_absent_without_answer_facts(tmp_path):
     )
 
 
-def test_prepare_request_emits_resend_reason_for_suppressed_or_delta(tmp_path):
+def test_prepare_request_emits_resend_reason_for_suppressed_or_delta(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -3149,22 +2794,14 @@ def test_prepare_request_emits_resend_reason_for_suppressed_or_delta(tmp_path):
     prepared = runtime.prepare_request(request, session)
 
     if prepared.behavior_signals.get("state_resend_delta_turn", 0):
-        assert (
-            prepared.behavior_signals.get(
-                "state_resend_reason_delta_selected", 0
-            )
-            == 1
-        )
+        assert prepared.behavior_signals.get("state_resend_reason_delta_selected", 0) == 1
     if prepared.behavior_signals.get("state_resend_suppressed_turn", 0):
-        assert (
-            prepared.behavior_signals.get(
-                "state_resend_reason_state_suppressed", 0
-            )
-            == 1
-        )
+        assert prepared.behavior_signals.get("state_resend_reason_state_suppressed", 0) == 1
 
 
-def test_prepare_request_marks_full_resend_when_delta_not_smaller(tmp_path):
+def test_prepare_request_marks_full_resend_when_delta_not_smaller(
+    tmp_path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     # Previous state has minimal content
@@ -3201,17 +2838,12 @@ def test_prepare_request_marks_full_resend_when_delta_not_smaller(tmp_path):
 
     # When delta is not smaller (most content is new), use full resend
     assert prepared.behavior_signals.get("state_resend_full_turn", 0) == 1
-    assert (
-        prepared.behavior_signals.get(
-            "state_resend_reason_delta_not_smaller", 0
-        )
-        == 1
-    )
+    assert prepared.behavior_signals.get("state_resend_reason_delta_not_smaller", 0) == 1
 
 
 def test_prepare_request_emits_answer_anchor_reacquisition_hint_and_signal(
     tmp_path,
-):
+) -> None:
     from tok.runtime.core import (
         RuntimeRequest,
         RuntimeSession,
@@ -3287,19 +2919,13 @@ def test_prepare_request_emits_answer_anchor_reacquisition_hint_and_signal(
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert (
-        prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0)
-        == 1
-    )
-    assert (
-        "Reuse existing File=/Verification= facts"
-        not in prepared.body["system"]
-    )
+    assert prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0) == 1
+    assert "Reuse existing File=/Verification= facts" not in prepared.body["system"]
 
 
 def test_prepare_request_emits_answer_now_directive_when_answer_ready_from_anchor(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory._upsert(
@@ -3317,23 +2943,18 @@ def test_prepare_request_emits_answer_now_directive_when_answer_ready_from_ancho
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
-    assert (
-        "Answer now using the existing File=/Verification= evidence."
-        in prepared.body["system"]
-    )
+    assert "Answer now using the existing File=/Verification= evidence." in prepared.body["system"]
 
 
 def test_prepare_request_does_not_emit_answer_now_directive_when_fresh_evidence_still_required(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory._upsert(
@@ -3355,8 +2976,7 @@ def test_prepare_request_does_not_emit_answer_now_directive_when_fresh_evidence_
             {
                 "role": "user",
                 "content": (
-                    "If fresh evidence is required, use the read-only tools first. "
-                    "Confirm the gateway entry point."
+                    "If fresh evidence is required, use the read-only tools first. Confirm the gateway entry point."
                 ),
             }
         ],
@@ -3365,15 +2985,12 @@ def test_prepare_request_does_not_emit_answer_now_directive_when_fresh_evidence_
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 0
-    assert (
-        "Answer now using the existing File=/Verification= evidence."
-        not in prepared.body["system"]
-    )
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
 
 
 def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -3400,15 +3017,12 @@ def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
-    assert (
-        "Answer now using the existing File=/Verification= evidence."
-        in prepared.body["system"]
-    )
+    assert "Answer now using the existing File=/Verification= evidence." in prepared.body["system"]
 
 
 def test_prepare_request_tool_results_only_do_not_trigger_answer_ready(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     request = RuntimeRequest(
@@ -3432,15 +3046,12 @@ def test_prepare_request_tool_results_only_do_not_trigger_answer_ready(
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 0
     assert session._late_answer_followthrough_pending is False
-    assert (
-        "Answer now using the existing File=/Verification= evidence."
-        not in prepared.body["system"]
-    )
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
 
 
 def test_prepare_request_read_only_audit_turn_suppresses_answer_repairs(
     tmp_path,
-):
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory._upsert(
@@ -3473,21 +3084,15 @@ def test_prepare_request_read_only_audit_turn_suppresses_answer_repairs(
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 0
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 0
-    assert (
-        prepared.behavior_signals.get("late_answer_followthrough_active", 0)
-        == 0
-    )
+    assert prepared.behavior_signals.get("late_answer_followthrough_active", 0) == 0
     assert session._answer_ready_repair_pending is False
     assert session._late_answer_followthrough_pending is False
-    assert (
-        "Answer now using the existing File=/Verification= evidence."
-        not in prepared.body["system"]
-    )
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
 
 
 def test_prepare_request_does_not_emit_answer_anchor_reacquisition_without_anchor(
     tmp_path,
-):
+) -> None:
     from tok.runtime.core import (
         RuntimeRequest,
         RuntimeSession,
@@ -3529,19 +3134,13 @@ def test_prepare_request_does_not_emit_answer_anchor_reacquisition_without_ancho
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_anchor_present", 0) == 0
-    assert (
-        prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0)
-        == 0
-    )
-    assert (
-        "Reuse existing File=/Verification= facts"
-        not in prepared.body["system"]
-    )
+    assert prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0) == 0
+    assert "Reuse existing File=/Verification= facts" not in prepared.body["system"]
 
 
 def test_prepare_request_does_not_emit_answer_anchor_hint_on_clean_turn(
     tmp_path,
-):
+) -> None:
     from tok.runtime.core import (
         RuntimeRequest,
         RuntimeSession,
@@ -3565,27 +3164,19 @@ def test_prepare_request_does_not_emit_answer_anchor_hint_on_clean_turn(
     request = RuntimeRequest(
         model="claude-sonnet-4",
         tool_compatible=True,
-        messages=[
-            {"role": "user", "content": "confirm the gateway entry point"}
-        ],
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
     )
 
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert (
-        prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0)
-        == 0
-    )
-    assert (
-        "Reuse existing File=/Verification= facts"
-        not in prepared.body["system"]
-    )
+    assert prepared.behavior_signals.get("answer_anchor_reacquisition_attempt", 0) == 0
+    assert "Reuse existing File=/Verification= facts" not in prepared.body["system"]
 
 
-def test_record_fallback_event_increments_and_degrades():
+def test_record_fallback_event_increments_and_degrades() -> None:
     """record_fallback_event increments counter and sets _baseline_only at threshold."""
-    from tok.runtime.core import RuntimeSession, _FALLBACK_THRESHOLD
+    from tok.runtime.core import _FALLBACK_THRESHOLD, RuntimeSession
 
     session = RuntimeSession()
     assert session._consecutive_fallback_count == 0
@@ -3593,16 +3184,14 @@ def test_record_fallback_event_increments_and_degrades():
 
     for i in range(_FALLBACK_THRESHOLD - 1):
         session.record_fallback_event()
-        assert not session._baseline_only, (
-            f"should not degrade before threshold at i={i}"
-        )
+        assert not session._baseline_only, f"should not degrade before threshold at i={i}"
 
     session.record_fallback_event()
     assert session._baseline_only, "should degrade at threshold"
     assert session._consecutive_fallback_count == _FALLBACK_THRESHOLD
 
 
-def test_reset_fallback_count_clears_counter():
+def test_reset_fallback_count_clears_counter() -> None:
     """reset_fallback_count resets the consecutive counter but not _baseline_only."""
     from tok.runtime.core import RuntimeSession
 
@@ -3612,7 +3201,7 @@ def test_reset_fallback_count_clears_counter():
     assert session._consecutive_fallback_count == 0
 
 
-def test_cost_usd_computed_when_pricing_provided():
+def test_cost_usd_computed_when_pricing_provided() -> None:
     """LiveBenchmarkRunner computes cost_usd when pricing dict is provided."""
     from unittest.mock import MagicMock, patch
 
@@ -3622,9 +3211,7 @@ def test_cost_usd_computed_when_pricing_provided():
     )
 
     pricing = {"prompt": 1.0, "completion": 3.0}
-    runner = LiveBenchmarkRunner(
-        model="test/model", pricing=pricing, client=MagicMock()
-    )
+    runner = LiveBenchmarkRunner(model="test/model", pricing=pricing, client=MagicMock())
 
     definition = load_benchmark_definition("coding-loop-5")
 
@@ -3650,7 +3237,7 @@ def test_cost_usd_computed_when_pricing_provided():
     # 1000 * 1.0 / 1e6 + 500 * 3.0 / 1e6 = 0.001 + 0.0015 = 0.0025\n    assert abs(result.provider_usage.cost_usd - 0.0025) < 1e-10
 
 
-def test_cost_usd_none_when_no_pricing():
+def test_cost_usd_none_when_no_pricing() -> None:
     """LiveBenchmarkRunner leaves cost_usd as None when no pricing is provided."""
     from unittest.mock import MagicMock, patch
 
@@ -3682,7 +3269,7 @@ def test_cost_usd_none_when_no_pricing():
     assert result.provider_usage.cost_usd is None
 
 
-def test_collect_transient_error_snippets_returns_transient_errors():
+def test_collect_transient_error_snippets_returns_transient_errors() -> None:
     """collect_transient_error_snippets must return snippets for ImportError etc."""
     messages = [
         {"role": "user", "content": "ImportError: no module named 'tok'"},
@@ -3696,15 +3283,11 @@ def test_collect_transient_error_snippets_returns_transient_errors():
     errs = collect_transient_error_snippets(messages)
 
     assert isinstance(errs, list)
-    assert len(errs) >= 1, (
-        f"Expected at least 1 transient error snippet, got: {errs}"
-    )
-    assert not any("blocked on" in e.lower() for e in errs), (
-        f"Hard blocker phrase leaked into errs: {errs}"
-    )
+    assert len(errs) >= 1, f"Expected at least 1 transient error snippet, got: {errs}"
+    assert not any("blocked on" in e.lower() for e in errs), f"Hard blocker phrase leaked into errs: {errs}"
 
 
-def test_collect_transient_error_snippets_empty_when_no_transient_errors():
+def test_collect_transient_error_snippets_empty_when_no_transient_errors() -> None:
     """collect_transient_error_snippets must return [] when no transient-error phrases present."""
     messages = [
         {"role": "user", "content": "everything looks good, running tests"},
@@ -3715,7 +3298,7 @@ def test_collect_transient_error_snippets_empty_when_no_transient_errors():
     assert errs == [], f"Expected empty list for clean messages, got: {errs}"
 
 
-def test_collect_behavior_signals_values_are_all_ints():
+def test_collect_behavior_signals_values_are_all_ints() -> None:
     """collect_behavior_signals must only return int-valued keys (safe for arithmetic)."""
     messages = [
         {"role": "user", "content": "ImportError: no module named 'tok'"},
@@ -3723,12 +3306,12 @@ def test_collect_behavior_signals_values_are_all_ints():
 
     signals = collect_behavior_signals(messages)
     for key, value in signals.items():
-        assert isinstance(value, int), (
-            f"collect_behavior_signals returned non-int value for '{key}': {value!r}"
-        )
+        assert isinstance(value, int), f"collect_behavior_signals returned non-int value for '{key}': {value!r}"
 
 
-def test_prepare_request_injects_transient_errors_into_hot_errs(tmp_path):
+def test_prepare_request_injects_transient_errors_into_hot_errs(
+    tmp_path,
+) -> None:
     """prepare_request must upsert transient error snippets into session.bridge_memory.hot['errs']."""
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
@@ -3746,13 +3329,12 @@ def test_prepare_request_injects_transient_errors_into_hot_errs(tmp_path):
     runtime.prepare_request(request, session)
 
     errs = [e.value for e in session.bridge_memory.hot.get("errs", [])]
-    assert any(
-        "ModuleNotFoundError" in e or "no module named" in e.lower()
-        for e in errs
-    ), f"Expected transient error in hot['errs'], got: {errs}"
+    assert any("ModuleNotFoundError" in e or "no module named" in e.lower() for e in errs), (
+        f"Expected transient error in hot['errs'], got: {errs}"
+    )
 
 
-def test_no_cut_session_continues_functioning(tmp_path):
+def test_no_cut_session_continues_functioning(tmp_path) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     messages = [
@@ -3829,21 +3411,16 @@ def test_no_cut_session_continues_functioning(tmp_path):
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("tok_history_cut_point_missing", 0) == 1
-    )
+    assert prepared.behavior_signals.get("tok_history_cut_point_missing", 0) == 1
     assert "tok_history_cut_blocked_tool_result" in prepared.behavior_signals
-    assert (
-        prepared.behavior_signals.get("tok_history_compression_skipped", 0)
-        == 0
-    )
+    assert prepared.behavior_signals.get("tok_history_compression_skipped", 0) == 0
     assert len(prepared.body["messages"]) == len(messages)
-    assert "empty_messages" not in validate_anthropic_request_body(
-        prepared.body
-    )
+    assert "empty_messages" not in validate_anthropic_request_body(prepared.body)
 
 
-def test_skip_history_and_cut_point_missing_are_distinguishable(tmp_path):
+def test_skip_history_and_cut_point_missing_are_distinguishable(
+    tmp_path: Path,
+) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     messages = [
@@ -3899,11 +3476,6 @@ def test_skip_history_and_cut_point_missing_are_distinguishable(tmp_path):
 
     prepared = runtime.prepare_request(request, session)
 
-    assert (
-        prepared.behavior_signals.get("tok_history_compression_skipped", 0)
-        == 0
-    )
-    assert (
-        prepared.behavior_signals.get("tok_history_cut_point_missing", 0) == 1
-    )
+    assert prepared.behavior_signals.get("tok_history_compression_skipped", 0) == 0
+    assert prepared.behavior_signals.get("tok_history_cut_point_missing", 0) == 1
     assert "tok_history_cut_blocked_tool_result" in prepared.behavior_signals

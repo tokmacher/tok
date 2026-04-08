@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -58,10 +60,13 @@ STATS_KEY_MAP_INV = {
 
 
 def default_savings_file() -> str:
-    return os.getenv("TOK_SAVINGS_FILE", f"/tmp/{SESSION_STATS_FILENAME}")
+    """Return the default path for savings statistics file."""
+    default_path = os.path.join(tempfile.gettempdir(), SESSION_STATS_FILENAME)
+    return os.getenv("TOK_SAVINGS_FILE", default_path)
 
 
 def default_ledger_path() -> Path:
+    """Return the default path for the global savings ledger."""
     tok_dir = os.getenv("TOK_PROJECT_DIR", "")
     if tok_dir:
         return Path(tok_dir) / GLOBAL_LEDGER_FILENAME
@@ -69,6 +74,7 @@ def default_ledger_path() -> Path:
 
 
 def legacy_ledger_path() -> Path:
+    """Return the legacy path for the savings ledger."""
     tok_dir = os.getenv("TOK_PROJECT_DIR", "")
     if tok_dir:
         return Path(tok_dir) / "savings.tok"
@@ -76,18 +82,18 @@ def legacy_ledger_path() -> Path:
 
 
 def parse_kv_string(s: str) -> dict[str, int]:
+    """Parse a key=value comma-separated string into a dictionary."""
     pairs: dict[str, int] = {}
     for pair in s.split(","):
         if "=" in pair:
             k, v = pair.split("=", 1)
-            try:
+            with contextlib.suppress(ValueError):
                 pairs[k] = int(v)
-            except ValueError:
-                pass
     return pairs
 
 
 def parse_model_line(line: str) -> tuple[str, dict[str, Any]]:
+    """Parse a model statistics line from the savings file."""
     parts = line.split(" m:", 1)[1].strip().split("|")
     model_name = parts[0]
     model_stats: dict[str, Any] = {
@@ -103,15 +109,12 @@ def parse_model_line(line: str) -> tuple[str, dict[str, Any]]:
         elif key == "signals":
             model_stats["behavior_signals"] = parse_kv_string(value)
         elif key in STATS_KEY_MAP:
-            model_stats[STATS_KEY_MAP[key]] = (
-                float(value)
-                if "." in value or key in ("act", "base")
-                else int(value)
-            )
+            model_stats[STATS_KEY_MAP[key]] = float(value) if "." in value or key in ("act", "base") else int(value)
     return model_name, model_stats
 
 
 def empty_stats() -> dict[str, Any]:
+    """Return an empty statistics dictionary with session timestamp."""
     return {
         "session_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "models": {},

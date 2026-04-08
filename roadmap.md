@@ -13,8 +13,10 @@ If you are trying Tok for the first time, start with [`README.md`](README.md) an
 
 Tok is now bridge-first in practice, not just in intent:
 
-- [`src/tok/universal_runtime.py`](src/tok/universal_runtime.py) owns the runtime semantics
-- [`src/tok/gateway/__init__.py`](src/tok/gateway/__init__.py) is the primary production adapter
+- [`src/tok/universal_runtime.py`](src/tok/universal_runtime.py) owns the runtime
+  semantics
+- [`src/tok/gateway/__init__.py`](src/tok/gateway/__init__.py) is the primary production
+  adapter
 - `tok-tool-compatible` is the validated product path
 - savings + invisibility remain the acceptance criteria
 
@@ -22,7 +24,8 @@ Tok's philosophy should be read in this order:
 
 - near-term: invisible user-to-agent bridge
 - medium-term: reliable agent-to-agent context handoff across surfaces
-- long-term: universal runtime communication contract, if and only if the bridge path first becomes trusted infrastructure
+- long-term: universal runtime communication contract, if and only if the bridge path
+  first becomes trusted infrastructure
 
 This file is the canonical maintainer roadmap. Public onboarding docs should summarize
 it, not replace it.
@@ -55,8 +58,7 @@ Long-term ambition:
   - `tok bridge status`
   - `tok doctor`
   - `tok bridge stop`
-  - `tok stats`
-    now make the runtime legible in normal usage
+  - `tok stats` now make the runtime legible in normal usage
 
 ### What Is Ready
 
@@ -80,7 +82,8 @@ Long-term ambition:
 - inventing more 5-turn benchmark mechanics
 - making `tok-native` the default path
 - treating `tok-minimal` as a production target
-- presenting Tok primarily as a syntax or protocol before the bridge path is broadly trusted
+- presenting Tok primarily as a syntax or protocol before the bridge path is broadly
+  trusted
 
 ## Completed Foundations
 
@@ -102,20 +105,23 @@ Long-term ambition:
 
 #### Verification
 
-- [x] `tok gate-check ... --stability-dir tests/fixtures/stability` is sufficient for the internal-RC release check
+- [x] `tok gate-check ... --stability-dir tests/fixtures/stability` is sufficient for
+  the internal-RC release check
 - [x] CI blocks required replay or stability regressions on the same contract
 
 ______________________________________________________________________
 
 ### Plan 3 – Telemetry Gates, Replay, Billing Discipline
 
-**Goal:** Extend confidence beyond the validated benchmark core while making the gate noisy.
+**Goal:** Extend confidence beyond the validated benchmark core while making the gate
+noisy.
 
 **Status:** ✅ COMPLETED (2026-03-24)
 
 #### Tasks
 
-- [x] Expand replay fixtures for coding loops, repeat reads/searches, malformed-response drift, recovery transitions
+- [x] Expand replay fixtures for coding loops, repeat reads/searches, malformed-response
+  drift, recovery transitions
 - [x] Integrate CICD gates with configurable thresholds
 - [x] Trend dashboards & billing deltas
 - [x] High-fidelity simulation infrastructure
@@ -144,11 +150,13 @@ ______________________________________________________________________
 
 #### Tasks
 
-- [x] Pattern Reactor Core (IR layer, Miner, Planner, Distiller, Integration, Monitor, Metrics, Memory, LLM Clients)
+- [x] Pattern Reactor Core (IR layer, Miner, Planner, Distiller, Integration, Monitor,
+  Metrics, Memory, LLM Clients)
 - [x] Macro Provenance Tracking
 - [x] Global Macro Persistence
 - [x] Protocol Consolidation (31% savings baseline, lazy Tok support)
-- [x] Benchmarking & Verification (85% cumulative savings on 10-turn Tok-Tool-Compatible mode)
+- [x] Benchmarking & Verification (85% cumulative savings on 10-turn Tok-Tool-Compatible
+  mode)
 
 ## Remaining Phases Before First Public Release
 
@@ -162,12 +170,12 @@ real work.
 #### Tasks
 
 - [ ] run recurring real-session capture on actual coding-agent workflows
-- [ ] use `capture-review` and `evidence-gap` to rank repeated `watch` and
-  `investigate` classes
+- [ ] use `capture-review` and `evidence-gap` to rank repeated `watch` and `investigate`
+  classes
 - [ ] harden the top repeated degradation class first, especially fallback,
   reacquisition, or response-contract drift
-- [ ] keep the internal-RC contract frozen unless required replay or stability
-  evidence shows it is wrong
+- [ ] keep the internal-RC contract frozen unless required replay or stability evidence
+  shows it is wrong
 - [ ] keep tightening operator clarity so bridge behavior is self-explaining
 
 #### Verification
@@ -192,12 +200,16 @@ release gate noisy.
   - [x] recovery / retry
   - [x] repeat-search / repeat-file-read
   - [~] cache-sensitivity / prompt-volatility
-- [x] prefer replay-promotion candidates that come from repeated real-session capture or stress evidence, not speculative coverage
+- [x] prefer replay-promotion candidates that come from repeated real-session capture or
+  stress evidence, not speculative coverage
 - [x] add replay-level bridge/orchestrator parity evidence
-- [ ] keep aligning bridge/runtime/orchestrator semantics so future agent-to-agent handoff stays grounded in one canonical runtime contract
+- [ ] keep aligning bridge/runtime/orchestrator semantics so future agent-to-agent
+  handoff stays grounded in one canonical runtime contract
 - [ ] extend real-session review into longer, noisier, more tool-heavy coding workflows
-- [ ] keep `stress-language` advisory, but use it to prioritize proof gaps and hardening work
-- [ ] decide which exploratory green fixtures are stable enough to promote after a clean internal-RC rehearsal
+- [ ] keep `stress-language` advisory, but use it to prioritize proof gaps and hardening
+  work
+- [ ] decide which exploratory green fixtures are stable enough to promote after a clean
+  internal-RC rehearsal
 
 #### Verification
 
@@ -222,16 +234,20 @@ without deep repo knowledge.
   - current session
   - last completed session
   - recent sessions
-- [x] make captured real sessions part of the normal operator workflow and use them as the preferred source for future replay-fixture promotion candidates
+- [x] make captured real sessions part of the normal operator workflow and use them as
+  the preferred source for future replay-fixture promotion candidates
 - [x] continue repo/docs consolidation so canonical docs are obvious
 - [ ] improve the SDK/decorator story after the bridge and release path settle
 - [ ] define the smallest credible wrapper/SDK recipe for intentional adoption
-- [ ] keep the product language bridge-first and invisible-first, so the future standard-contract story never outruns operator trust
+- [ ] keep the product language bridge-first and invisible-first, so the future
+  standard-contract story never outruns operator trust
 
 #### Verification
 
-- [ ] a new user can understand savings, fallback, and bridge state without reading deep docs
-- [ ] operator actions for `keep on`, `watch`, and `investigate` are consistent across surfaces
+- [ ] a new user can understand savings, fallback, and bridge state without reading deep
+  docs
+- [ ] operator actions for `keep on`, `watch`, and `investigate` are consistent across
+  surfaces
 - [ ] the wrapper path has a minimal, tested, readable recipe
 
 ### Phase 4 – Public Release Decision And Packaging
@@ -249,7 +265,8 @@ publicly as a bridge-first product.
 
 #### Verification
 
-- [ ] `roadmap.md`, [`docs/production-readiness.md`](docs/production-readiness.md), and onboarding docs tell the same release story
+- [ ] `roadmap.md`, [`docs/production-readiness.md`](docs/production-readiness.md), and
+  onboarding docs tell the same release story
 - [ ] the public release shape is narrow, explicit, and defensible
 - [ ] the release decision is recorded against evidence, not intuition
 
@@ -260,11 +277,13 @@ publicly as a bridge-first product.
 - broad new runtime modes
 - long-horizon benchmark invention as the primary workstream
 - visual dashboards before recent-window stats exist
-- treating Tok as a universal protocol product before the default bridge path is trusted on real work
+- treating Tok as a universal protocol product before the default bridge path is trusted
+  on real work
 - broader agent-to-agent handoff as a primary product focus
 - true cross-surface runtime expansion beyond what current parity proof can support
 - universal communication contract or standardization branding
-- broad document/artifact ingestion as a platform feature beyond what directly strengthens the current wedge
+- broad document/artifact ingestion as a platform feature beyond what directly
+  strengthens the current wedge
 
 ______________________________________________________________________
 
@@ -274,9 +293,12 @@ ______________________________________________________________________
 
 **Objective:** Use history as a heuristic for proactive state management.
 
-**Mechanic:** Analyze the `rolling_cmds` and `hot_files` buckets to predict the next 2-3 likely file dependencies or search queries. Preemptively load these into the `@hot` memory projection or prime the `ResultCache`.
+**Mechanic:** Analyze the `rolling_cmds` and `hot_files` buckets to predict the next 2-3
+likely file dependencies or search queries. Preemptively load these into the `@hot`
+memory projection or prime the `ResultCache`.
 
-**Benefit:** Ensures that when the LLM makes its next tool request, the context is already "warm," preventing wait-states and cache-miss "reacquisition" costs.
+**Benefit:** Ensures that when the LLM makes its next tool request, the context is
+already "warm," preventing wait-states and cache-miss "reacquisition" costs.
 
 **Status:** 📋 PENDING
 
@@ -284,9 +306,14 @@ ______________________________________________________________________
 
 **Objective:** Shield the bridge from model-driven schema drift.
 
-**Mechanic:** Enhance `BridgeMemoryState.from_tok` with fuzzy-matching and semantic redirection. If a model generates non-canonical headers (e.g., `@files:` instead of `@f:` or `@history:` instead of `@c:`), the parser should autonomously map these back to the canonical bridge state.
+**Mechanic:** Enhance `BridgeMemoryState.from_tok` with fuzzy-matching and semantic
+redirection. If a model generates non-canonical headers (e.g., `@files:` instead of
+`@f:` or `@history:` instead of `@c:`), the parser should autonomously map these back to
+the canonical bridge state.
 
-**Benefit:** Allows Tok to remain stable across a wider variety of models (including smaller, faster models that may struggle with strict protocol adherence) without losing state integrity.
+**Benefit:** Allows Tok to remain stable across a wider variety of models (including
+smaller, faster models that may struggle with strict protocol adherence) without losing
+state integrity.
 
 **Status:** 📋 PENDING
 
@@ -295,8 +322,12 @@ ______________________________________________________________________
 1. finish `Phase 1 – Production-Trusted Wedge`
 1. continue into `Phase 2 – Broader Production Proof`
 1. use `Phase 3 – Internal Productization` to prepare the actual public-release shape
-1. make the public release decision only after `Phase 4 – Public Release Decision And Packaging`
+1. make the public release decision only after
+   `Phase 4 – Public Release Decision And Packaging`
 
-That is now the shortest path from “bridge works well internally” to “we have a narrow, trustworthy first public release.”
+That is now the shortest path from “bridge works well internally” to “we have a narrow,
+trustworthy first public release.”
 
-The philosophy behind that recommendation is deliberate: Tok should first win as an invisible bridge between users and agents, then extend into reliable agent-to-agent handoff, and only later claim universal-standard territory.
+The philosophy behind that recommendation is deliberate: Tok should first win as an
+invisible bridge between users and agents, then extend into reliable agent-to-agent
+handoff, and only later claim universal-standard territory.

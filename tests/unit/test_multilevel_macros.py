@@ -1,4 +1,5 @@
-"""Test multi-level macro resolution up to 4 layers deep.
+"""
+Test multi-level macro resolution up to 4 layers deep.
 
 Architecture:
   Layer 0 (Primitives): add, mul, filter, sort — raw IR ops
@@ -10,18 +11,18 @@ Architecture:
 Expected: @hex(3) = 3 * 16 = 48
 """
 
-import sys
 import os
+import sys
 
 # Ensure project root is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from tok.neuro.ir import (
     Instruction,
-    TokIR,
     Macro,
     MacroProvenance,
     MacroRegistry,
+    TokIR,
     execute_ir,
 )
 
@@ -104,39 +105,35 @@ def build_layered_registry() -> MacroRegistry:
 
 
 def test_layer_1() -> None:
-    """@double(5) = 10"""
+    """@double(5) = 10."""
     registry = build_layered_registry()
     ir = TokIR(instructions=(Instruction(op="@double", args=(5,)),))
     result = execute_ir(ir, {}, registry)
     assert result == 10, f"Expected 10, got {result}"
-    print(f"  ✅ Layer 1: @double(5) = {result}")
 
 
 def test_layer_2() -> None:
-    """@quad(5) = 20"""
+    """@quad(5) = 20."""
     registry = build_layered_registry()
     ir = TokIR(instructions=(Instruction(op="@quad", args=(5,)),))
     result = execute_ir(ir, {}, registry)
     assert result == 20, f"Expected 20, got {result}"
-    print(f"  ✅ Layer 2: @quad(5) = {result}")
 
 
 def test_layer_3() -> None:
-    """@octet(5) = 40"""
+    """@octet(5) = 40."""
     registry = build_layered_registry()
     ir = TokIR(instructions=(Instruction(op="@octet", args=(5,)),))
     result = execute_ir(ir, {}, registry)
     assert result == 40, f"Expected 40, got {result}"
-    print(f"  ✅ Layer 3: @octet(5) = {result}")
 
 
 def test_layer_4() -> None:
-    """@hex(5) = 80"""
+    """@hex(5) = 80."""
     registry = build_layered_registry()
     ir = TokIR(instructions=(Instruction(op="@hex", args=(5,)),))
     result = execute_ir(ir, {}, registry)
     assert result == 80, f"Expected 80, got {result}"
-    print(f"  ✅ Layer 4: @hex(5) = {result}")
 
 
 def test_provenance_chain() -> None:
@@ -155,25 +152,15 @@ def test_provenance_chain() -> None:
     assert hex_macro.provenance is not None
     assert "octet" in hex_macro.provenance.composed_of
     assert "double" in hex_macro.provenance.composed_of
-    print(
-        f"  ✅ Provenance: @hex composed_of = {hex_macro.provenance.composed_of}"
-    )
 
     assert octet_macro.provenance is not None
     assert "quad" in octet_macro.provenance.composed_of
-    print(
-        f"  ✅ Provenance: @octet composed_of = {octet_macro.provenance.composed_of}"
-    )
 
     assert quad_macro.provenance is not None
     assert "double" in quad_macro.provenance.composed_of
-    print(
-        f"  ✅ Provenance: @quad composed_of = {quad_macro.provenance.composed_of}"
-    )
 
     assert double_macro.provenance is not None
     assert double_macro.provenance.composed_of == ()
-    print("  ✅ Provenance: @double is a leaf macro (no composition)")
 
 
 def test_mixed_ir_with_macros() -> None:
@@ -191,7 +178,6 @@ def test_mixed_ir_with_macros() -> None:
     )
     result = execute_ir(ir, {}, registry)
     assert result == 13, f"Expected 13, got {result}"
-    print(f"  ✅ Mixed IR: @quad(3) + 1 = {result}")
 
 
 def test_deep_chain_with_variable_input() -> None:
@@ -207,7 +193,6 @@ def test_deep_chain_with_variable_input() -> None:
     )
     result = execute_ir(ir, {}, registry)
     assert result == 112, f"Expected 112 (7*16), got {result}"
-    print(f"  ✅ Deep chain with variable: const(7) -> @hex = {result}")
 
 
 def test_serialization_round_trip() -> None:
@@ -220,25 +205,20 @@ def test_serialization_round_trip() -> None:
 
     # Serialize to tok format
     tok_text = state.to_tok()
-    print("\n  --- Serialized Tok (macros section): ---")
     for line in tok_text.splitlines():
         if "@macro" in line.lower() or "|>" in line:
-            print(f"    {line}")
+            pass
 
     # Deserialize
     restored = BridgeMemoryState.from_tok(tok_text, load_global_macros=False)
     assert len(restored.macro_registry.macros) == len(registry.macros), (
         f"Expected {len(registry.macros)} macros, got {len(restored.macro_registry.macros)}"
     )
-    print(
-        f"\n  ✅ Round-trip: {len(restored.macro_registry.macros)} macros survived serialization"
-    )
 
     # Verify we can still execute after round-trip
     ir = TokIR(instructions=(Instruction(op="@double", args=(5,)),))
     result = execute_ir(ir, {}, restored.macro_registry)
     assert result == 10, f"Expected 10 after round-trip, got {result}"
-    print(f"  ✅ Round-trip execution: @double(5) = {result}")
 
 
 if __name__ == "__main__":
@@ -253,22 +233,17 @@ if __name__ == "__main__":
         ("Serialization Round-Trip", test_serialization_round_trip),
     ]
 
-    print("\n=== Multi-Level Macro Test Suite ===\n")
     passed = 0
     failed = 0
-    for name, fn in tests:
+    for _name, fn in tests:
         try:
-            print(f"[{name}]")
             fn()
             passed += 1
-        except Exception as e:
-            print(f"  ❌ FAILED: {e}")
+        except Exception:
             import traceback
 
             traceback.print_exc()
             failed += 1
-        print()
 
-    print(f"=== Results: {passed}/{passed + failed} passed ===")
     if failed:
         sys.exit(1)

@@ -1,4 +1,5 @@
-"""Smoothness scoring and control layer for Tok.
+"""
+Smoothness scoring and control layer for Tok.
 
 This module provides a passive scoring system that tracks interaction quality
 without changing compression behavior in Phase 1.

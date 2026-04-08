@@ -4,7 +4,7 @@ from tok.universal_runtime import (
 )
 
 
-def test_normalize_tool_events_classification():
+def test_normalize_tool_events_classification() -> None:
     messages = [
         {
             "role": "assistant",
@@ -67,7 +67,7 @@ def test_normalize_tool_events_classification():
     assert events[4].compressibility_class == "tool_result"
 
 
-def test_normalize_tool_events_path_variations():
+def test_normalize_tool_events_path_variations() -> None:
     cases = [
         ({"path": "p1"}, "p1"),
         ({"file_path": "p2"}, "p2"),
@@ -93,7 +93,7 @@ def test_normalize_tool_events_path_variations():
         assert events[0].path == expected_path
 
 
-def test_response_contract_malformed_tok_cases():
+def test_response_contract_malformed_tok_cases() -> None:
     # Incomplete @ block
     text = "@thought\nTesting"
     contract = response_contract_for_mode(text, tool_compatible=False)
@@ -112,12 +112,9 @@ def test_response_contract_malformed_tok_cases():
     assert contract.content_blocks[0]["text"].strip() == "Visible text"
 
 
-def test_response_contract_rejects_hybrid_tool_json_text_pattern():
+def test_response_contract_rejects_hybrid_tool_json_text_pattern() -> None:
     text = (
-        ">>> t:1|usr:test|agt:reply|state:active\n"
-        '@Tool(json={"command": "pytest -q"})\n'
-        "@msg role:assistant\n"
-        "  |> done"
+        '>>> t:1|usr:test|agt:reply|state:active\n@Tool(json={"command": "pytest -q"})\n@msg role:assistant\n  |> done'
     )
     contract = response_contract_for_mode(text, tool_compatible=False)
 
@@ -127,12 +124,8 @@ def test_response_contract_rejects_hybrid_tool_json_text_pattern():
     assert contract.behavior_signals["malformed_tok_hybrid_tool"] == 1
 
 
-def test_response_contract_rejects_non_inverted_assistant_message():
-    text = (
-        ">>> t:1|usr:test|agt:reply|state:active\n"
-        "@msg role:assistant\n"
-        "Plain text without inversion"
-    )
+def test_response_contract_rejects_non_inverted_assistant_message() -> None:
+    text = ">>> t:1|usr:test|agt:reply|state:active\n@msg role:assistant\nPlain text without inversion"
     contract = response_contract_for_mode(text, tool_compatible=False)
 
     assert contract.mode == "tok"
@@ -141,7 +134,7 @@ def test_response_contract_rejects_non_inverted_assistant_message():
     assert contract.behavior_signals["fail_open_compat_response"] == 1
 
 
-def test_response_contract_rejects_markdown_after_tok_header():
+def test_response_contract_rejects_markdown_after_tok_header() -> None:
     text = ">>> t:1|usr:test|agt:reply|state:active\n## Result\nPlain markdown"
     contract = response_contract_for_mode(text, tool_compatible=False)
 
@@ -151,7 +144,7 @@ def test_response_contract_rejects_markdown_after_tok_header():
     assert contract.behavior_signals["fail_open_compat_response"] == 1
 
 
-def test_response_contract_rejects_bad_tok_header_shape():
+def test_response_contract_rejects_bad_tok_header_shape() -> None:
     text = ">>> turns|goal:fix\n@msg role:assistant\n  |> ok"
     contract = response_contract_for_mode(text, tool_compatible=False)
 
@@ -161,13 +154,10 @@ def test_response_contract_rejects_bad_tok_header_shape():
     assert contract.behavior_signals["fail_open_compat_response"] == 1
 
 
-def test_response_contract_tool_compatible_preserves_malformed_signals():
+def test_response_contract_tool_compatible_preserves_malformed_signals() -> None:
     """Malformed Tok signals must not be silently dropped in tool-compatible mode."""
     text = (
-        ">>> t:1|usr:test|agt:reply|state:active\n"
-        '@Tool(json={"command": "pytest -q"})\n'
-        "@msg role:assistant\n"
-        "  |> done"
+        '>>> t:1|usr:test|agt:reply|state:active\n@Tool(json={"command": "pytest -q"})\n@msg role:assistant\n  |> done'
     )
     contract = response_contract_for_mode(text, tool_compatible=True)
 
@@ -177,7 +167,7 @@ def test_response_contract_tool_compatible_preserves_malformed_signals():
     assert contract.behavior_signals.get("fail_open_compat_response") == 1
 
 
-def test_translate_response_tools_complex_nesting():
+def test_translate_response_tools_complex_nesting() -> None:
     from tok.universal_runtime import translate_response_tools
 
     # Correct Tok tool syntax: @Tool label {attrs}

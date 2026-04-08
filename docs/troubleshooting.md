@@ -26,7 +26,8 @@ tok doctor
 
 - Start it again with `tok bridge start`.
 - Re-run `tok bridge status` or `tok doctor` immediately after startup.
-- If it still fails, use `tok bridge start --foreground` so errors stay in the current terminal.
+- If it still fails, use `tok bridge start --foreground` so errors stay in the current
+  terminal.
 - Inspect recent bridge logs with `tok bridge logs 100`.
 
 ## Runtime Diagnosis
@@ -61,9 +62,12 @@ Recommended next steps:
 
 ### Savings are not obvious yet
 
-Very short sessions (under 10-15 turns) may not show clear savings. Tok's compression benefits accumulate over longer conversations where repeated file reads, tool outputs, and context build up.
+Very short sessions (under 10-15 turns) may not show clear savings. Tok's compression
+benefits accumulate over longer conversations where repeated file reads, tool outputs,
+and context build up.
 
-For verification, sessions of 50+ turns typically show the validated 45-55% savings range. Shorter sessions may show lower or inconsistent savings due to:
+For verification, sessions of 50+ turns typically show the validated 45-55% savings
+range. Shorter sessions may show lower or inconsistent savings due to:
 
 - Less opportunity for semantic deduplication
 - Fewer repeated tool calls to cache
@@ -109,8 +113,8 @@ When validating a release candidate from a repo checkout, run:
 python scripts/run_release_smoke.py
 ```
 
-This bounded sweep checks the public CLI help surfaces, public import shims,
-one focused bridge/runtime/compression path, and a packaging build smoke.
+This bounded sweep checks the public CLI help surfaces, public import shims, one focused
+bridge/runtime/compression path, and a packaging build smoke.
 
 ## When To Use Baseline
 

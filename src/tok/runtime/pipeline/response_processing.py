@@ -8,15 +8,16 @@ import re
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from ...protocol.models import TokNode
-from ...protocol.parser import TokParser, serialize
-from ...runtime.policy.translator import IS_TOK, postprocess_response
+from tok.protocol.models import TokNode
+from tok.protocol.parser import TokParser, serialize
+from tok.runtime.memory.answer_memory import extract_structured_answer_memory
+from tok.runtime.policy.translator import IS_TOK, postprocess_response
+from tok.runtime.types import ProcessedRuntimeResponse
+
 from .request_validation import normalize_tool_use_blocks
-from ..types import ProcessedRuntimeResponse
-from ..memory.answer_memory import extract_structured_answer_memory
 
 if TYPE_CHECKING:
-    from ..core import RuntimeSession
+    from tok.runtime.core import RuntimeSession
 
 logger = logging.getLogger("tok.runtime")
 
@@ -30,25 +31,19 @@ def heal_drift(
     """Wrap raw prose drift in a Tok envelope to ensure protocol adherence."""
     if tool_compatible:
         return text
-    if behavior_signals.get("semantic_drift_detected") or behavior_signals.get(
-        "non_tok_response"
-    ):
+    if behavior_signals.get("semantic_drift_detected") or behavior_signals.get("non_tok_response"):
         if ">>>" not in text:
             header = ">>> t:1|s:drift_healed"
             lines = text.strip().splitlines()
             if len(lines) > 1:
-                body = "@msg role:assistant\n" + "\n".join(
-                    f"  |> {ln}" for ln in lines
-                )
+                body = "@msg role:assistant\n" + "\n".join(f"  |> {ln}" for ln in lines)
             else:
                 body = f"@msg role:assistant\n  |> {text.strip()}"
             return f"{header}\n{body}"
     return text
 
 
-def response_behavior_signals(
-    text: str, *, tool_compatible: bool = False
-) -> dict[str, int]:
+def response_behavior_signals(text: str, *, tool_compatible: bool = False) -> dict[str, int]:
     """Detect response-side protocol drift."""
     if not tool_compatible and text.strip() and not IS_TOK.search(text):
         return {"non_tok_response": 1}
@@ -73,9 +68,7 @@ def _is_answer_like_visible_text(text: str) -> bool:
         return True
     fields = extract_structured_answer_memory(text)
     return bool(fields.get("files")) or any(
-        fact.startswith("answer_file:")
-        or fact.startswith("answer_verification:")
-        for fact in fields.get("facts", [])
+        fact.startswith(("answer_file:", "answer_verification:")) for fact in fields.get("facts", [])
     )
 
 
@@ -133,9 +126,7 @@ def has_non_inverted_assistant_message(text: str) -> bool:
             block_is_inverted = False
             continue
         if stripped.startswith("@"):
-            in_msg_assistant = (
-                stripped.startswith("@msg") and "role:assistant" in stripped
-            )
+            in_msg_assistant = stripped.startswith("@msg") and "role:assistant" in stripped
             block_is_inverted = False
             continue
 
@@ -224,9 +215,7 @@ def has_well_formed_tok_blocks(content_blocks: list[dict[str, Any]]) -> bool:
             if input_data is not None and not isinstance(input_data, dict):
                 return False
             # File operations should have path attribute
-            if tool_name in {"edit", "write", "read"} and not (
-                input_data and input_data.get("path")
-            ):
+            if tool_name in {"edit", "write", "read"} and not (input_data and input_data.get("path")):
                 return False
         elif block_type == "text":
             # Text blocks should have non-empty content
@@ -237,9 +226,7 @@ def has_well_formed_tok_blocks(content_blocks: list[dict[str, Any]]) -> bool:
             return False
 
     # If we have tool blocks, at least one should be well-formed
-    return has_tool_blocks or any(
-        b.get("type") == "text" for b in content_blocks
-    )
+    return has_tool_blocks or any(b.get("type") == "text" for b in content_blocks)
 
 
 def translate_request_results(
@@ -260,13 +247,9 @@ def translate_request_results(
                 for node in nodes:
                     if node.type.lower() == "result":
                         if last_text.strip():
-                            new_content.append(
-                                {"type": "text", "text": last_text.strip()}
-                            )
+                            new_content.append({"type": "text", "text": last_text.strip()})
                             last_text = ""
-                        tool_id = (
-                            node.attrs.get("id") or node.label or "unknown"
-                        )
+                        tool_id = node.attrs.get("id") or node.label or "unknown"
                         new_content.append(
                             {
                                 "type": "tool_result",
@@ -278,15 +261,10 @@ def translate_request_results(
                         last_text += serialize([node]) + "\n"
 
                 if last_text.strip():
-                    new_content.append(
-                        {"type": "text", "text": last_text.strip()}
-                    )
+                    new_content.append({"type": "text", "text": last_text.strip()})
 
                 if new_content:
-                    if (
-                        len(new_content) == 1
-                        and new_content[0].get("type") == "text"
-                    ):
+                    if len(new_content) == 1 and new_content[0].get("type") == "text":
                         msg["content"] = new_content[0].get("text", "")
                     else:
                         msg["content"] = new_content
@@ -296,17 +274,11 @@ def translate_request_results(
 
 
 def _parse_json_tool_data(data: dict[str, Any]) -> TokNode:
-    name = (
-        data.get("name") or data.get("tool") or data.get("action") or "unknown"
-    ).lower()
+    name = (data.get("name") or data.get("tool") or data.get("action") or "unknown").lower()
     args = (
         data.get("arguments")
         or data.get("input")
-        or {
-            k: v
-            for k, v in data.items()
-            if k not in ("name", "tool", "action")
-        }
+        or {k: v for k, v in data.items() if k not in ("name", "tool", "action")}
     )
     return TokNode(type="tool", label=name, attrs=args, text="")
 
@@ -332,11 +304,7 @@ def _parse_inline_json(text: str) -> list[TokNode]:
     nodes = []
     for line in text.splitlines():
         line = line.strip()
-        if (
-            line.startswith("{")
-            and line.endswith("}")
-            and any(k in line for k in ('"name"', '"tool"', '"action"'))
-        ):
+        if line.startswith("{") and line.endswith("}") and any(k in line for k in ('"name"', '"tool"', '"action"')):
             try:
                 data = json.loads(line)
                 if isinstance(data, dict):
@@ -350,9 +318,7 @@ def _parse_hybrid_tools(text: str) -> list[TokNode]:
     import json
 
     nodes = []
-    hybrid_matches = re.finditer(
-        r"@Tool\s+([a-zA-Z0-9_-]+)\s*(\{.*?\})", text, re.DOTALL
-    )
+    hybrid_matches = re.finditer(r"@Tool\s+([a-zA-Z0-9_-]+)\s*(\{.*?\})", text, re.DOTALL)
     for match in hybrid_matches:
         name = match.group(1).lower()
         if name == "readfile":
@@ -369,14 +335,10 @@ def _parse_hybrid_tools(text: str) -> list[TokNode]:
             args = json.loads(json_str)
         except (json.JSONDecodeError, ValueError):
             try:
-                repaired = re.sub(
-                    r"([{,]\s*)([a-zA-Z0-9_-]+):", r'\1"\2":', json_str
-                )
+                repaired = re.sub(r"([{,]\s*)([a-zA-Z0-9_-]+):", r'\1"\2":', json_str)
                 args = json.loads(repaired)
             except Exception:
-                logger.debug(
-                    "Failed to repair hybrid tool JSON: %s", json_str[:80]
-                )
+                logger.debug("Failed to repair hybrid tool JSON: %s", json_str[:80])
                 continue
 
         if isinstance(args, dict):
@@ -395,21 +357,16 @@ def _extract_json_tools(text: str) -> list[TokNode]:
 
 def _preprocess_cleaned_text(text: str) -> str:
     cleaned = re.sub(r"```json\s*(\{.*?\})\s*```", "", text, flags=re.DOTALL)
-    cleaned = re.sub(
-        r"@Tool\s+[a-zA-Z0-9_-]+\s*\{.*?\}", "", cleaned, flags=re.DOTALL
-    )
+    cleaned = re.sub(r"@Tool\s+[a-zA-Z0-9_-]+\s*\{.*?\}", "", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
     cleaned = re.sub(r"```[\w]*\n?(.*?)```", r"\1", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"```[\w]*\n?", "", cleaned)
 
-    if not IS_TOK.search(text) or (
-        not re.search(r"^>>>", cleaned, re.MULTILINE)
-        and not re.search(r"^@msg", cleaned, re.MULTILINE)
-    ):
-        if cleaned.strip().startswith("@Tool") or cleaned.strip().startswith(
-            "|>"
-        ):
-            cleaned = "@msg role:assistant\n  " + cleaned.replace("\n", "\n  ")
+    if (
+        not IS_TOK.search(text)
+        or (not re.search(r"^>>>", cleaned, re.MULTILINE) and not re.search(r"^@msg", cleaned, re.MULTILINE))
+    ) and (cleaned.strip().startswith("@Tool") or cleaned.strip().startswith("|>")):
+        cleaned = "@msg role:assistant\n  " + cleaned.replace("\n", "\n  ")
     return cleaned
 
 
@@ -434,9 +391,7 @@ def _apply_drift_guard(node: TokNode, tool_input: dict[str, Any]) -> None:
         node.text = re.sub(r"^>\s*", "", node.text, flags=re.MULTILINE)
 
 
-def _cleanup_edit_tool_children(
-    node: TokNode, tool_input: dict[str, Any]
-) -> None:
+def _cleanup_edit_tool_children(node: TokNode, tool_input: dict[str, Any]) -> None:
     if not node.children:
         return
     for child in node.children:
@@ -449,9 +404,7 @@ def _cleanup_edit_tool_children(
             child._processed_as_attr = True
 
 
-def _cleanup_tool_input(
-    node: TokNode, tool_name: str, tool_input: dict[str, Any]
-) -> None:
+def _cleanup_tool_input(node: TokNode, tool_name: str, tool_input: dict[str, Any]) -> None:
     for key in ("id", "name", "trust"):
         tool_input.pop(key, None)
 
@@ -496,18 +449,12 @@ def _process_tool_node(
                 "input": tool_input,
             }
         )
-    elif ntype in {"thought", "end"}:
-        pass
-    elif getattr(node, "_processed_as_attr", False):
+    elif ntype in {"thought", "end"} or getattr(node, "_processed_as_attr", False):
         pass
     else:
         node_text = node.text.strip()
         if node_text:
-            lines = [
-                line
-                for line in node_text.split("\n")
-                if not line.strip().startswith(">>")
-            ]
+            lines = [line for line in node_text.split("\n") if not line.strip().startswith(">>")]
             if lines:
                 current_text.append("\n".join(lines))
 
@@ -541,9 +488,7 @@ def translate_response_tools(text: str) -> list[dict[str, Any]]:
         if full_text:
             content_blocks.append({"type": "text", "text": full_text})
 
-    normalized_blocks, _ = normalize_tool_use_blocks(
-        content_blocks, seed_prefix="toolu_rsp"
-    )
+    normalized_blocks, _ = normalize_tool_use_blocks(content_blocks, seed_prefix="toolu_rsp")
     return normalized_blocks
 
 
@@ -588,13 +533,11 @@ def response_contract_for_mode(
 
     # Ignore REPL prompts embedded in fenced code blocks when deciding whether
     # the response is trying to speak Tok protocol.
-    contract_text = re.sub(r"```.*?```", "", text, flags=re.S)
+    contract_text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     tok_detection_text = contract_text if contract_text.strip() else ""
     has_tok_protocol = bool(IS_TOK.search(tok_detection_text))
 
-    tok_blocks, malformed_signals, fallback_mode = parse_tok_response(
-        tok_detection_text, session=session
-    )
+    tok_blocks, malformed_signals, fallback_mode = parse_tok_response(tok_detection_text, session=session)
     visible_text = ""
     mode = ""
     signals: dict[str, int] = {}
@@ -614,9 +557,7 @@ def response_contract_for_mode(
         ) = _tok_native_path(tok_blocks, tool_compatible=tool_compatible)
     else:
         readable, fallback_mode = postprocess_response(text)
-        fallback_blocks: list[dict[str, Any]] = (
-            [{"type": "text", "text": readable}] if readable else []
-        )
+        fallback_blocks: list[dict[str, Any]] = [{"type": "text", "text": readable}] if readable else []
         if tool_compatible:
             (
                 visible_text,
@@ -653,9 +594,7 @@ def response_contract_for_mode(
 
     return ProcessedRuntimeResponse(
         content_blocks=content_blocks,
-        output_saved_tokens=max(
-            0, count_tokens(text) - count_tokens(visible_text)
-        ),
+        output_saved_tokens=max(0, count_tokens(text) - count_tokens(visible_text)),
         behavior_signals=signals,
         mode=mode,
         family_mode="",
@@ -667,14 +606,8 @@ def _tok_native_path(
     tok_blocks: list[dict[str, Any]],
     tool_compatible: bool,
 ) -> tuple[str, dict[str, int], list[dict[str, Any]], str]:
-    visible_text = "".join(
-        block.get("text", "")
-        for block in tok_blocks
-        if block.get("type") == "text"
-    )
-    contract_signals = _tool_compatible_mixed_turn_signals(
-        tok_blocks, visible_text, tool_compatible=tool_compatible
-    )
+    visible_text = "".join(block.get("text", "") for block in tok_blocks if block.get("type") == "text")
+    contract_signals = _tool_compatible_mixed_turn_signals(tok_blocks, visible_text, tool_compatible=tool_compatible)
     signals = {"tok_native_response": 1, **contract_signals}
     return visible_text, signals, tok_blocks, "tok-native"
 
@@ -686,9 +619,7 @@ def _tool_compatible_path(
     has_tok_protocol: bool,
     tool_compatible: bool,
 ) -> tuple[str, dict[str, int], list[dict[str, Any]], str]:
-    has_tool_blocks = any(
-        block.get("type") == "tool_use" for block in tok_blocks
-    )
+    has_tool_blocks = any(block.get("type") == "tool_use" for block in tok_blocks)
     content_blocks = tok_blocks if has_tool_blocks else fallback_blocks
     visible_text = _visible_text_from_content_blocks(content_blocks)
 
@@ -696,20 +627,12 @@ def _tool_compatible_path(
         contract_signals = _tool_compatible_mixed_turn_signals(
             tok_blocks, visible_text, tool_compatible=tool_compatible
         )
-        signals = (
-            {"tool_compatible_response": 1, **contract_signals}
-            if content_blocks
-            else contract_signals
-        )
+        signals = {"tool_compatible_response": 1, **contract_signals} if content_blocks else contract_signals
     else:
         signals = dict(malformed_signals) if malformed_signals else {}
         if signals and fallback_blocks:
             signals["fail_open_compat_response"] = 1
-        signals.update(
-            _tool_compatible_mixed_turn_signals(
-                tok_blocks, visible_text, tool_compatible=tool_compatible
-            )
-        )
+        signals.update(_tool_compatible_mixed_turn_signals(tok_blocks, visible_text, tool_compatible=tool_compatible))
     return visible_text, signals, content_blocks, "tool-compatible"
 
 
@@ -731,11 +654,7 @@ def _standard_fallback_path(
             signals["fail_open_compat_response"] = 1
 
     content_blocks = fallback_blocks or tok_blocks
-    visible_text = "".join(
-        block.get("text", "")
-        for block in content_blocks
-        if block.get("type") == "text"
-    )
+    visible_text = "".join(block.get("text", "") for block in content_blocks if block.get("type") == "text")
 
     mode = fallback_mode
     if has_tok_protocol and malformed_signals:

@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from tok.runtime.core import RuntimeSession
 from tok.runtime.pipeline.response_processing import response_contract_for_mode
+
 from .models import (
-    StressTask,
-    StressBreakpoint,
-    StressObservation,
-    StressHarnessConfig,
-    LATE_STAGED_RETRY_PHASES,
-    LATE_FOLLOWTHROUGH_MIN_EVIDENCE_CHARS,
-    PRE_PRESSURE_MIN_EVIDENCE_CHARS,
     EXCLUDED_GROUNDED_PATH_FRAGMENTS,
+    LATE_FOLLOWTHROUGH_MIN_EVIDENCE_CHARS,
+    LATE_STAGED_RETRY_PHASES,
+    PRE_PRESSURE_MIN_EVIDENCE_CHARS,
+    StressBreakpoint,
+    StressHarnessConfig,
+    StressObservation,
+    StressTask,
 )
-from .utils import (
-    _extract_labeled_fields,
-    _render_visible_text,
-)
+from .utils import _extract_labeled_fields, _render_visible_text
+
+if TYPE_CHECKING:
+    from tok.runtime.core import RuntimeSession
 
 
 def inferred_cause_for_class(breakpoint_class: str) -> str:
@@ -27,9 +27,7 @@ def inferred_cause_for_class(breakpoint_class: str) -> str:
         "protocol_drift": (
             "Grounded task pressure still allowed confident structured answers to drift away from supported repo facts."
         ),
-        "retention_loss": (
-            "Previously grounded answer anchors were not carried forward reliably across later turns."
-        ),
+        "retention_loss": ("Previously grounded answer anchors were not carried forward reliably across later turns."),
         "reacquisition_loop": (
             "The language re-opened validated facts with new tools instead of reusing bridged memory."
         ),
@@ -78,9 +76,7 @@ def _late_tool_contract_grace_kind(
         return None
     if not payload_pressure_ready:
         return None
-    if input_signals.get(
-        "validated_target_exact_reacquired"
-    ) or input_signals.get("validated_target_reacquired"):
+    if input_signals.get("validated_target_exact_reacquired") or input_signals.get("validated_target_reacquired"):
         return None
     if output_signals.get("unsupported_tool_event"):
         return None
@@ -102,9 +98,7 @@ def _fallback_pressure_cause(
     input_signals: dict[str, int],
     output_signals: dict[str, int],
 ) -> str | None:
-    if input_signals.get(
-        "validated_target_exact_reacquired"
-    ) or input_signals.get("validated_target_reacquired"):
+    if input_signals.get("validated_target_exact_reacquired") or input_signals.get("validated_target_reacquired"):
         return "exact_reacquisition"
     if output_signals.get("unsupported_tool_event"):
         return "unsupported_tool"
@@ -130,11 +124,7 @@ def _retry_prompt_shape(
     unsupported_tool_event: bool,
     bad_tool_args_event: bool,
 ) -> str:
-    if (
-        task.phase_name == "tool-contract"
-        and target_already_validated
-        and payload_pressure_ready
-    ):
+    if task.phase_name == "tool-contract" and target_already_validated and payload_pressure_ready:
         if validated_target_exact_reacquired:
             return "exact_target_reread"
         if mixed_answer_tool_event:
@@ -164,26 +154,13 @@ def _late_retry_contract_stage(
 ) -> str | None:
     if prompt_shape != "generic_retry":
         return None
-    if (
-        not payload_pressure_ready
-        or task.phase_name not in LATE_STAGED_RETRY_PHASES
-    ):
+    if not payload_pressure_ready or task.phase_name not in LATE_STAGED_RETRY_PHASES:
         return None
-    if (
-        validated_target_exact_reacquired
-        or unsupported_tool_event
-        or bad_tool_args_event
-    ):
+    if validated_target_exact_reacquired or unsupported_tool_event or bad_tool_args_event:
         return None
-    if (
-        current_turn_was_tool_only_retry
-        and current_turn_satisfied_tool_only_stage
-    ):
+    if current_turn_was_tool_only_retry and current_turn_satisfied_tool_only_stage:
         return "answer_only"
-    if (
-        task.require_fresh_evidence
-        and not prior_turn_has_valid_supporting_tool_backing
-    ):
+    if task.require_fresh_evidence and not prior_turn_has_valid_supporting_tool_backing:
         return "tool_only"
     return "answer_only"
 
@@ -204,18 +181,12 @@ def _early_retry_contract_stage(
         return None
     if validated_target_exact_reacquired or unsupported_tool_event:
         return None
-    if (
-        current_turn_was_tool_only_retry
-        and current_turn_satisfied_tool_only_stage
-    ):
+    if current_turn_was_tool_only_retry and current_turn_satisfied_tool_only_stage:
         return "answer_only"
     if bad_tool_args_event:
         return "tool_only_bad_args"
     if mixed_answer_tool_event:
-        if (
-            task.require_fresh_evidence
-            and not prior_turn_has_valid_supporting_tool_backing
-        ):
+        if task.require_fresh_evidence and not prior_turn_has_valid_supporting_tool_backing:
             return "tool_only_mixed"
         return "answer_only_mixed"
     return None
@@ -262,10 +233,7 @@ def _followthrough_evidence_sufficient(
         return False
 
     successful_tools = [
-        r
-        for r in tool_results
-        if not r.get("is_error")
-        and not str(r.get("content", "")).startswith("ERROR:")
+        r for r in tool_results if not r.get("is_error") and not str(r.get("content", "")).startswith("ERROR:")
     ]
     return len(successful_tools) >= min_tools
 
@@ -283,13 +251,9 @@ def _preprocess_runtime_contract_signals(
         return {}
     contract = response_contract_for_mode(raw_response, tool_compatible=True)
     tool_uses = [
-        block
-        for block in contract.content_blocks
-        if isinstance(block, dict) and block.get("type") == "tool_use"
+        block for block in contract.content_blocks if isinstance(block, dict) and block.get("type") == "tool_use"
     ]
-    fields = _extract_labeled_fields(
-        _render_visible_text(contract.content_blocks), session=session
-    )
+    fields = _extract_labeled_fields(_render_visible_text(contract.content_blocks), session=session)
     signals: dict[str, int] = {}
     if request_behavior_signals.get("late_staged_retry_context"):
         signals["late_staged_retry_context"] = 1
@@ -299,17 +263,14 @@ def _preprocess_runtime_contract_signals(
         signals["late_retry_contract_stage_answer_only"] = 1
     if payload_pressure_ready:
         signals["payload_pressure_ready"] = 1
-    late_context = payload_pressure_ready or signals.get(
-        "late_staged_retry_context"
-    )
+    late_context = payload_pressure_ready or signals.get("late_staged_retry_context")
     if tool_uses and fields and late_context:
         signals["mixed_answer_tool_event"] = 1
         signals["late_mixed_signal_promoted"] = 1
     if (
         task.require_fresh_evidence
         and fields
-        and attempt_tool_count_before_turn + len(tool_uses)
-        < max(task.require_tool_count, 1)
+        and attempt_tool_count_before_turn + len(tool_uses) < max(task.require_tool_count, 1)
     ):
         signals["toolless_fresh_answer_event"] = 1
         signals["late_freshness_signal_promoted"] = 1
@@ -369,18 +330,11 @@ def classify_breakpoints(
         "retention-probe",
     }:
         expected_file = observation.expected_fields.get("file", "").lower()
-        expected_verification = observation.expected_fields.get(
-            "verification", ""
-        ).lower()
+        expected_verification = observation.expected_fields.get("verification", "").lower()
         observed_file = observation.observed_fields.get("file", "").lower()
-        observed_verification = observation.observed_fields.get(
-            "verification", ""
-        ).lower()
-        if (
-            expected_file
-            and expected_file not in observed_file
-            or expected_verification
-            and expected_verification not in observed_verification
+        observed_verification = observation.observed_fields.get("verification", "").lower()
+        if (expected_file and expected_file not in observed_file) or (
+            expected_verification and expected_verification not in observed_verification
         ):
             candidates.append("retention_loss")
     if observation.retention_latest_substitution:
@@ -391,8 +345,7 @@ def classify_breakpoints(
         and observation.expected_fields
         and observation.phase in {"checkpoint", "late-recovery"}
         and (
-            observation.input_behavior_signals.get("answer_anchor_present", 1)
-            == 0
+            observation.input_behavior_signals.get("answer_anchor_present", 1) == 0
             or (
                 observation.state_payload_chars
                 and observation.state_payload_chars < 100
@@ -418,12 +371,8 @@ def classify_breakpoints(
                 prompt=observation.prompt,
                 visible_response=observation.visible_response,
                 active_tools=observation.active_tools,
-                input_behavior_signals=dict(
-                    observation.input_behavior_signals
-                ),
-                output_behavior_signals=dict(
-                    observation.output_behavior_signals
-                ),
+                input_behavior_signals=dict(observation.input_behavior_signals),
+                output_behavior_signals=dict(observation.output_behavior_signals),
                 state_payload_chars=observation.state_payload_chars,
                 resend_mode=observation.resend_mode,
                 transcript_slice=list(observation.transcript_slice),
@@ -467,24 +416,18 @@ def should_stop_run(
 ) -> bool:
     del breakpoint_count
     return (
-        required_class_coverage(seen_classes, config.required_classes)[
-            "complete"
-        ]
+        required_class_coverage(seen_classes, config.required_classes)["complete"]
         or baseline_only
         or tasks_completed >= config.max_tasks
     )
 
 
-def required_class_coverage(
-    seen_classes: set[str] | list[str], required_classes: tuple[str, ...]
-) -> dict[str, Any]:
+def required_class_coverage(seen_classes: set[str] | list[str], required_classes: tuple[str, ...]) -> dict[str, Any]:
     seen = set(seen_classes)
     covered: list[str] = []
     missing: list[str] = []
     for item in required_classes:
-        options = [
-            option.strip() for option in item.split("|") if option.strip()
-        ]
+        options = [option.strip() for option in item.split("|") if option.strip()]
         if any(option in seen for option in options):
             covered.append(item)
         else:
@@ -494,6 +437,4 @@ def required_class_coverage(
 
 def _is_excluded_grounded_path(path: str) -> bool:
     normalized = path.strip()
-    return any(
-        fragment in normalized for fragment in EXCLUDED_GROUNDED_PATH_FRAGMENTS
-    )
+    return any(fragment in normalized for fragment in EXCLUDED_GROUNDED_PATH_FRAGMENTS)

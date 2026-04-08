@@ -3,21 +3,19 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..utils.telemetry import emit_event_sync
+from tok.utils.telemetry import emit_event_sync
 
 if TYPE_CHECKING:
-    from ..runtime.core import RuntimeSession
+    from tok.runtime.core import RuntimeSession
 
 logger = logging.getLogger("tok.runtime")
 
 
-def calculate_usage_cost(
-    prompt_tokens: int, completion_tokens: int, pricing: dict[str, float]
-) -> float:
+def calculate_usage_cost(prompt_tokens: int, completion_tokens: int, pricing: dict[str, float]) -> float:
     """Compute USD cost for a given token usage and pricing model."""
-    return (prompt_tokens / 1_000_000) * pricing.get("prompt", 0) + (
-        completion_tokens / 1_000_000
-    ) * pricing.get("completion", 0)
+    return (prompt_tokens / 1_000_000) * pricing.get("prompt", 0) + (completion_tokens / 1_000_000) * pricing.get(
+        "completion", 0
+    )
 
 
 def report_protocol_drift(
@@ -30,8 +28,8 @@ def report_protocol_drift(
     """Orchestrate protocol drift telemetry events."""
     from .policy.semantic_validation import (
         calculate_invisible_pressure,
-        calculate_semantic_regression_score,
         calculate_memory_lift,
+        calculate_semantic_regression_score,
     )
 
     signals_to_report = {
@@ -81,20 +79,14 @@ def report_protocol_drift(
             "signals": signals_to_report,
             "mode": mode,
             "tool_density": getattr(session, "_current_tool_density", 0),
-            "context_char_count": getattr(
-                session, "_current_context_char_count", 0
-            ),
+            "context_char_count": getattr(session, "_current_context_char_count", 0),
             "invisible_pressure": calculate_invisible_pressure(merged_signals),
-            "semantic_regression": calculate_semantic_regression_score(
-                merged_signals
-            ),
+            "semantic_regression": calculate_semantic_regression_score(merged_signals),
             "memory_lift": calculate_memory_lift(merged_signals),
             "reasoning_depth": session.reasoning_depth_per_token(),
             "active_tools": getattr(session, "_active_tools", []),
             "current_tools": [
-                block["name"]
-                for block in content_blocks
-                if block.get("type") == "tool_use" and block.get("name")
+                block["name"] for block in content_blocks if block.get("type") == "tool_use" and block.get("name")
             ],
         },
         model=model,

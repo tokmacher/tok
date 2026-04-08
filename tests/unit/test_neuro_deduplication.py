@@ -1,13 +1,13 @@
 from typing import cast
 
-from tok.neuro.ir import Instruction, Macro, MacroRegistry
 from tok.neuro.distill import MemoryDistiller
+from tok.neuro.ir import Instruction, Macro, MacroRegistry
 from tok.neuro.llm_clients import StubClient
-from tok.neuro.metrics import estimated_token_count
 from tok.neuro.memory import EpisodeMemory, LessonMemory
+from tok.neuro.metrics import estimated_token_count
 
 
-def test_production_macro_registry_deduplication():
+def test_production_macro_registry_deduplication() -> None:
     registry = MacroRegistry()
 
     # Define two macros with same instructions but different names
@@ -23,20 +23,12 @@ def test_production_macro_registry_deduplication():
     assert len(registry.macros) == 1
 
 
-def test_op_sequence_deduplication_across_args():
+def test_op_sequence_deduplication_across_args() -> None:
     """Macros with the same op sequence but different concrete args are op-seq duplicates."""
     registry = MacroRegistry()
 
-    ins1 = (
-        Instruction(
-            op="grep", args=("parse_error", "src/tok/parser.py"), target=None
-        ),
-    )
-    ins2 = (
-        Instruction(
-            op="grep", args=("other_term", "src/tok/lexer.py"), target=None
-        ),
-    )
+    ins1 = (Instruction(op="grep", args=("parse_error", "src/tok/parser.py"), target=None),)
+    ins2 = (Instruction(op="grep", args=("other_term", "src/tok/lexer.py"), target=None),)
     m1 = Macro(name="macro_session_1", instructions=ins1, inputs=("p0", "p1"))
     m2 = Macro(name="macro_session_2", instructions=ins2, inputs=("p0", "p1"))
 
@@ -49,7 +41,7 @@ def test_op_sequence_deduplication_across_args():
     assert len(registry.macros) == 1
 
 
-def test_production_distiller_compaction():
+def test_production_distiller_compaction() -> None:
     class MockLLM(StubClient):
         def chat(self, system: str, user: str) -> str:
             return "Rule: Distilled Skill"
@@ -71,7 +63,7 @@ def test_production_distiller_compaction():
         )
 
     initial_tokens = estimated_token_count(memory)
-    typed_memory = cast(list[EpisodeMemory], memory)
+    typed_memory = cast("list[EpisodeMemory]", memory)
     new_memory = distiller.compress(typed_memory)
     final_tokens = estimated_token_count(new_memory)
 

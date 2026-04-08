@@ -11,27 +11,25 @@ from tok.universal_runtime import NormalizedToolEvent
 class TestRuntimeToolExecutor:
     """Test the shared runtime tool executor."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         """Set up test environment."""
         self.temp_dir = tempfile.mkdtemp()
         self.executor = RuntimeToolExecutor(workspace_root=self.temp_dir)
 
-    def teardown_method(self):
+    def teardown_method(self) -> None:
         """Clean up test environment."""
         import shutil
 
         runtime_tools._default_executor = None
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def test_execute_read_file_success(self):
+    def test_execute_read_file_success(self) -> None:
         """Test successful file reading."""
         # Create a test file
         test_file = Path(self.temp_dir) / "test.txt"
         test_file.write_text("Hello, World!")
 
-        event = NormalizedToolEvent(
-            id="test_read", name="read", path=str(test_file)
-        )
+        event = NormalizedToolEvent(id="test_read", name="read", path=str(test_file))
 
         result = self.executor.execute_normalized_tool(event)
 
@@ -39,19 +37,17 @@ class TestRuntimeToolExecutor:
         assert "Hello, World!" in result["message"]
         assert f"Read {test_file}" in result["message"]
 
-    def test_execute_read_file_not_found(self):
+    def test_execute_read_file_not_found(self) -> None:
         """Test reading non-existent file."""
         missing_file = Path(self.temp_dir) / "missing.txt"
-        event = NormalizedToolEvent(
-            id="test_read_missing", name="read", path=str(missing_file)
-        )
+        event = NormalizedToolEvent(id="test_read_missing", name="read", path=str(missing_file))
 
         result = self.executor.execute_normalized_tool(event)
 
         assert result["status"] == "ERROR"
         assert "Not found" in result["message"]
 
-    def test_execute_read_file_with_range(self):
+    def test_execute_read_file_with_range(self) -> None:
         """Test reading file with line range."""
         # Create a test file with multiple lines
         test_file = Path(self.temp_dir) / "multiline.txt"
@@ -73,7 +69,7 @@ class TestRuntimeToolExecutor:
         assert "Line 1" not in result["message"]
         assert "Line 5" not in result["message"]
 
-    def test_execute_write_file_success(self):
+    def test_execute_write_file_success(self) -> None:
         """Test successful file writing."""
         test_file = Path(self.temp_dir) / "write_test.txt"
         content = "Test content for writing"
@@ -91,7 +87,7 @@ class TestRuntimeToolExecutor:
         assert test_file.exists()
         assert test_file.read_text() == content
 
-    def test_execute_write_file_creates_directories(self):
+    def test_execute_write_file_creates_directories(self) -> None:
         """Test that write creates parent directories."""
         nested_file = Path(self.temp_dir) / "subdir" / "nested" / "file.txt"
         content = "Nested file content"
@@ -109,7 +105,7 @@ class TestRuntimeToolExecutor:
         assert nested_file.exists()
         assert nested_file.read_text() == content
 
-    def test_execute_write_file_invalid_name(self):
+    def test_execute_write_file_invalid_name(self) -> None:
         """Test writing with invalid filename."""
         event = NormalizedToolEvent(
             id="test_write_invalid",
@@ -123,7 +119,7 @@ class TestRuntimeToolExecutor:
         assert result["status"] == "ERROR"
         assert "Invalid filename" in result["message"]
 
-    def test_execute_edit_file_success(self):
+    def test_execute_edit_file_success(self) -> None:
         """Test successful file editing."""
         # Create a test file
         test_file = Path(self.temp_dir) / "edit_test.txt"
@@ -144,7 +140,7 @@ class TestRuntimeToolExecutor:
         assert "Hello Tok" in updated_content
         assert "Hello World" not in updated_content
 
-    def test_execute_edit_file_not_found(self):
+    def test_execute_edit_file_not_found(self) -> None:
         """Test editing non-existent file."""
         missing_file = Path(self.temp_dir) / "missing.txt"
         event = NormalizedToolEvent(
@@ -159,7 +155,7 @@ class TestRuntimeToolExecutor:
         assert result["status"] == "ERROR"
         assert "Not found" in result["message"]
 
-    def test_execute_edit_file_search_not_found(self):
+    def test_execute_edit_file_search_not_found(self) -> None:
         """Test editing when search string not found."""
         test_file = Path(self.temp_dir) / "edit_search_test.txt"
         test_file.write_text("Different content")
@@ -176,11 +172,9 @@ class TestRuntimeToolExecutor:
         assert result["status"] == "ERROR"
         assert "Search string not found" in result["message"]
 
-    def test_execute_run_command_success(self):
+    def test_execute_run_command_success(self) -> None:
         """Test successful command execution."""
-        event = NormalizedToolEvent(
-            id="test_run", name="run", command="echo 'Hello from command'"
-        )
+        event = NormalizedToolEvent(id="test_run", name="run", command="echo 'Hello from command'")
 
         result = self.executor.execute_normalized_tool(event)
 
@@ -188,7 +182,7 @@ class TestRuntimeToolExecutor:
         assert "Hello from command" in result["message"]
         assert result["returncode"] == 0
 
-    def test_execute_run_command_failure(self):
+    def test_execute_run_command_failure(self) -> None:
         """Test command execution that fails."""
         event = NormalizedToolEvent(
             id="test_run_fail",
@@ -201,7 +195,7 @@ class TestRuntimeToolExecutor:
         assert result["status"] == "FAILURE"
         assert result["returncode"] == 1
 
-    def test_execute_delta_tool(self):
+    def test_execute_delta_tool(self) -> None:
         """Test delta tool execution (if available)."""
         event = NormalizedToolEvent(
             id="test_delta",
@@ -215,18 +209,16 @@ class TestRuntimeToolExecutor:
         # Delta tool should handle gracefully even with fake paths
         assert result["status"] in ["SUCCESS", "ERROR"]
 
-    def test_execute_unknown_tool(self):
+    def test_execute_unknown_tool(self) -> None:
         """Test execution of unknown tool."""
-        event = NormalizedToolEvent(
-            id="test_unknown", name="unknown_tool", args={}
-        )
+        event = NormalizedToolEvent(id="test_unknown", name="unknown_tool", args={})
 
         result = self.executor.execute_normalized_tool(event)
 
         assert result["status"] == "ERROR"
         assert "Unknown tool" in result["message"]
 
-    def test_pending_deltas_management(self):
+    def test_pending_deltas_management(self) -> None:
         """Test pending deltas tracking."""
         # Initially should be empty
         assert self.executor.get_pending_deltas() == []
@@ -250,24 +242,20 @@ class TestRuntimeToolExecutor:
         self.executor.clear_pending_deltas()
         assert self.executor.get_pending_deltas() == []
 
-    def test_convenience_function(self):
+    def test_convenience_function(self) -> None:
         """Test the convenience function execute_normalized_tool."""
         test_file = Path(self.temp_dir) / "convenience_test.txt"
         test_file.write_text("Original content")
-        runtime_tools._default_executor = RuntimeToolExecutor(
-            workspace_root=self.temp_dir
-        )
+        runtime_tools._default_executor = RuntimeToolExecutor(workspace_root=self.temp_dir)
 
-        event = NormalizedToolEvent(
-            id="test_convenience", name="read", path=str(test_file)
-        )
+        event = NormalizedToolEvent(id="test_convenience", name="read", path=str(test_file))
 
         result = execute_normalized_tool(event)
 
         assert result["status"] == "SUCCESS"
         assert "Original content" in result["message"]
 
-    def test_security_methods(self):
+    def test_security_methods(self) -> None:
         """Test security methods."""
         safe_file = str(Path(self.temp_dir) / "safe.txt")
         outside_file = "/any/path"
@@ -276,6 +264,4 @@ class TestRuntimeToolExecutor:
         assert not self.executor._is_safe_path(outside_file)
         assert not self.executor._is_safe_path("../../../etc/passwd")
         assert not self.executor._is_safe_rm("rm -rf /")
-        assert self.executor._is_safe_rm(
-            f"rm -rf {Path(self.temp_dir) / 'scratch'}"
-        )
+        assert self.executor._is_safe_rm(f"rm -rf {Path(self.temp_dir) / 'scratch'}")

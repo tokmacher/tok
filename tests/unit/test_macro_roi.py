@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+
 import pytest
 
 from tok.neuro.ir import Instruction, Macro, MacroRegistry
@@ -10,13 +11,9 @@ from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 
 
 @pytest.fixture(autouse=True)
-def isolate_macro_registry(monkeypatch):
-    monkeypatch.setattr(
-        MacroRegistry, "load_global", lambda self, *a, **kw: None
-    )
-    monkeypatch.setattr(
-        MacroRegistry, "save_global", lambda self, *a, **kw: None
-    )
+def isolate_macro_registry(monkeypatch) -> None:
+    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **kw: None)
+    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +21,7 @@ def isolate_macro_registry(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_macro_roi_fields_round_trip():
+def test_macro_roi_fields_round_trip() -> None:
     """lifetime_savings and avg_tokens_per_use survive to_dict / from_dict."""
     macro = Macro(
         name="m0",
@@ -38,7 +35,7 @@ def test_macro_roi_fields_round_trip():
     assert restored.avg_tokens_per_use == 40.0
 
 
-def test_macro_roi_defaults_to_zero():
+def test_macro_roi_defaults_to_zero() -> None:
     """Macros loaded without ROI data default to zero without error."""
     data = {
         "name": "m1",
@@ -58,7 +55,7 @@ def test_macro_roi_defaults_to_zero():
 # ---------------------------------------------------------------------------
 
 
-def test_record_savings_accumulates():
+def test_record_savings_accumulates() -> None:
     registry = MacroRegistry()
     macro = Macro(
         name="m0",
@@ -77,12 +74,12 @@ def test_record_savings_accumulates():
     assert macro.avg_tokens_per_use == 30.0  # 90 / 3
 
 
-def test_record_savings_ignores_unknown_macro():
+def test_record_savings_ignores_unknown_macro() -> None:
     registry = MacroRegistry()
     registry.record_savings("nonexistent", 50)  # must not raise
 
 
-def test_record_savings_ignores_non_positive():
+def test_record_savings_ignores_non_positive() -> None:
     registry = MacroRegistry()
     macro = Macro(
         name="m0",
@@ -102,9 +99,7 @@ def test_record_savings_ignores_non_positive():
 
 def _old_macro(name: str, hits: int, savings: int = 0) -> Macro:
     """Helper: create a macro that looks stale (last_seen 30 days ago)."""
-    stale_date = (
-        datetime.datetime.now() - datetime.timedelta(days=30)
-    ).isoformat()
+    stale_date = (datetime.datetime.now() - datetime.timedelta(days=30)).isoformat()
     return Macro(
         name=name,
         instructions=(Instruction(op="view", args=()),),
@@ -115,28 +110,24 @@ def _old_macro(name: str, hits: int, savings: int = 0) -> Macro:
     )
 
 
-def test_apply_decay_prunes_low_roi_stale_macro():
+def test_apply_decay_prunes_low_roi_stale_macro() -> None:
     registry = MacroRegistry()
     registry.macros["stale"] = _old_macro("stale", hits=1, savings=0)
     registry.apply_decay(max_age_days=7, min_hits=3)
     assert "stale" not in registry.macros
 
 
-def test_apply_decay_spares_high_roi_stale_macro():
+def test_apply_decay_spares_high_roi_stale_macro() -> None:
     """A macro that saved >= ROI_PROTECTION_THRESHOLD tokens must survive decay."""
     registry = MacroRegistry()
-    registry.macros["valuable"] = _old_macro(
-        "valuable", hits=1, savings=MacroRegistry.ROI_PROTECTION_THRESHOLD
-    )
+    registry.macros["valuable"] = _old_macro("valuable", hits=1, savings=MacroRegistry.ROI_PROTECTION_THRESHOLD)
     registry.apply_decay(max_age_days=7, min_hits=3)
     assert "valuable" in registry.macros
 
 
-def test_apply_decay_spares_durable_macro_regardless_of_roi():
+def test_apply_decay_spares_durable_macro_regardless_of_roi() -> None:
     registry = MacroRegistry()
-    stale_date = (
-        datetime.datetime.now() - datetime.timedelta(days=30)
-    ).isoformat()
+    stale_date = (datetime.datetime.now() - datetime.timedelta(days=30)).isoformat()
     macro = Macro(
         name="durable_m",
         instructions=(Instruction(op="cat", args=()),),
@@ -156,9 +147,11 @@ def test_apply_decay_spares_durable_macro_regardless_of_roi():
 # ---------------------------------------------------------------------------
 
 
-def test_hypothesis_promotion_clears_answered_question():
-    """A fact with high word-overlap to a question should promote fact to durable
-    and remove the question from hot memory."""
+def test_hypothesis_promotion_clears_answered_question() -> None:
+    """
+    A fact with high word-overlap to a question should promote fact to durable
+    and remove the question from hot memory.
+    """
     state = BridgeMemoryState()
 
     # Add a question about the release_summary export path
@@ -183,13 +176,11 @@ def test_hypothesis_promotion_clears_answered_question():
     # Question should be cleared from hot
     assert "questions" not in state.hot or not state.hot["questions"]
     # Fact should be promoted to durable
-    assert any(
-        "release_summary" in e.value for e in state.durable.get("facts", [])
-    )
+    assert any("release_summary" in e.value for e in state.durable.get("facts", []))
     assert metrics.get("hypothesis_promotions", 0) >= 1
 
 
-def test_hypothesis_promotion_preserves_unanswered_questions():
+def test_hypothesis_promotion_preserves_unanswered_questions() -> None:
     """Questions with no matching fact must remain in hot."""
     state = BridgeMemoryState()
     state.hot["questions"] = [
@@ -213,7 +204,7 @@ def test_hypothesis_promotion_preserves_unanswered_questions():
     assert len(state.hot["questions"]) == 1
 
 
-def test_hypothesis_promotion_via_ingest_wire_state():
+def test_hypothesis_promotion_via_ingest_wire_state() -> None:
     """End-to-end: ingest_wire_state triggers promotion when a fact answers a question."""
     state = BridgeMemoryState()
     # Pre-load a question
@@ -226,12 +217,7 @@ def test_hypothesis_promotion_via_ingest_wire_state():
     ]
 
     # Ingest a wire state that includes a fact answering the question
-    state.ingest_wire_state(
-        ">>> t:2|g:refactor|"
-        "facts:gateway compression logic lives in src/tok/compression.py"
-    )
+    state.ingest_wire_state(">>> t:2|g:refactor|facts:gateway compression logic lives in src/tok/compression.py")
 
     # Question should be resolved
-    assert not state.hot.get("questions"), (
-        "Question should be cleared after fact answers it"
-    )
+    assert not state.hot.get("questions"), "Question should be cleared after fact answers it"

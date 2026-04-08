@@ -4,22 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 from tok.neuro.integration import distill_bridge_history
 from tok.neuro.ir import MacroRegistry
+from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 
 
 @pytest.fixture(autouse=True)
-def isolate_macro_registry(monkeypatch):
-    monkeypatch.setattr(
-        MacroRegistry, "load_global", lambda self, *a, **kw: None
-    )
-    monkeypatch.setattr(
-        MacroRegistry, "save_global", lambda self, *a, **kw: None
-    )
+def isolate_macro_registry(monkeypatch) -> None:
+    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **kw: None)
+    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
 
 
-def test_parameterized_macro_uses_placeholder_for_path_args():
+def test_parameterized_macro_uses_placeholder_for_path_args() -> None:
     """Miner should replace path-like args (containing '/') with $p0, $p1, etc."""
     state = BridgeMemoryState()
 
@@ -43,18 +39,14 @@ def test_parameterized_macro_uses_placeholder_for_path_args():
 
     # At least one arg should be a $pN placeholder
     all_args = [arg for ins in macro.instructions for arg in ins.args]
-    placeholders = [
-        a for a in all_args if isinstance(a, str) and a.startswith("$p")
-    ]
+    placeholders = [a for a in all_args if isinstance(a, str) and a.startswith("$p")]
     assert placeholders, f"Expected $pN placeholders in args, got: {all_args}"
 
     # Inputs tuple should be populated (not empty as with the old hardcoded logic)
-    assert len(macro.inputs) > 0, (
-        f"Expected non-empty inputs, got: {macro.inputs}"
-    )
+    assert len(macro.inputs) > 0, f"Expected non-empty inputs, got: {macro.inputs}"
 
 
-def test_non_path_args_are_not_parameterized():
+def test_non_path_args_are_not_parameterized() -> None:
     """Short args and args without '/' should stay literal (not replaced with $pN)."""
     state = BridgeMemoryState()
 
@@ -73,10 +65,6 @@ def test_non_path_args_are_not_parameterized():
     if discovered:
         macro = discovered[0]
         all_args = [arg for ins in macro.instructions for arg in ins.args]
-        placeholders = [
-            a for a in all_args if isinstance(a, str) and a.startswith("$p")
-        ]
+        placeholders = [a for a in all_args if isinstance(a, str) and a.startswith("$p")]
         # No path-like args → no placeholders expected
-        assert not placeholders, (
-            f"Unexpected $pN placeholders for non-path args: {all_args}"
-        )
+        assert not placeholders, f"Unexpected $pN placeholders for non-path args: {all_args}"

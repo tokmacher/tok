@@ -6,13 +6,12 @@ import logging
 import random
 import string
 import xml.etree.ElementTree as ET
-from typing import Any
 from collections.abc import Callable
-
-from .protocol import SerializationProtocol
+from typing import Any, cast
 
 from .encoder import TokEncoder
 from .models import TokNode
+from .protocol import SerializationProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class Bridge(SerializationProtocol):
     """The Invisible Bridge: JSON/XML/MD <-> Tok with JIT Activation."""
 
     @staticmethod
-    def dispatch_async_v7(callback_id: str, _payload: Any) -> str:
+    def dispatch_async_v7(callback_id: str, _payload: object) -> str:
         """V7 asynchronous dispatch."""
         return f"v7_async_{callback_id}"
 
@@ -42,9 +41,7 @@ class Bridge(SerializationProtocol):
     def __init__(self) -> None:
         pass
 
-    def __call__(
-        self, arg: Callable[..., Any] | str | dict[str, Any] | list[Any]
-    ) -> Any:
+    def __call__(self, arg: Callable[..., Any] | str | dict[str, Any] | list[Any]) -> Any:
         """Dual-mode entry: decorator OR direct conversion."""
         if callable(arg) and not isinstance(arg, str | dict | list):
             return self._decorator(arg)
@@ -58,22 +55,18 @@ class Bridge(SerializationProtocol):
                 input_val = new_args[0]
                 if isinstance(input_val, dict):
                     new_args[0] = Bridge.json(json.dumps(input_val))
-                elif isinstance(input_val, str) and (
-                    input_val.strip().startswith(("{", "[", "<", "|"))
-                ):
+                elif isinstance(input_val, str) and (input_val.strip().startswith(("{", "[", "<", "|"))):
                     new_args[0] = self.detect_and_convert(input_val)
 
             tok_response = func(*tuple(new_args), **kwargs)
 
-            if isinstance(tok_response, str) and (
-                tok_response.startswith("@") or tok_response.startswith("|")
-            ):
+            if isinstance(tok_response, str) and (tok_response.startswith(("@", "|"))):
                 return json.loads(Bridge.to_json(tok_response))
             return tok_response
 
         return wrapper
 
-    def detect_and_convert(self, payload: Any) -> str:
+    def detect_and_convert(self, payload: str | dict[str, Any] | list[Any]) -> str:
         """Auto-detect format and convert to Tok."""
         if not isinstance(payload, str):
             if isinstance(payload, dict):
@@ -83,7 +76,7 @@ class Bridge(SerializationProtocol):
         s = payload.strip()
         if not s:
             return ""
-        if s.startswith("{") or s.startswith("["):
+        if s.startswith(("{", "[")):
             result = self.json(s)
             if result:
                 return result
@@ -100,15 +93,8 @@ class Bridge(SerializationProtocol):
     @staticmethod
     def raw(content: str, role: str = "user") -> str:
         """Wrap any messy string in a Verbatim Tok block."""
-        session_hash = "".join(
-            random.choices(string.ascii_uppercase + string.digits, k=5)
-        )
-        return (
-            f"@msg role:{role}\n"
-            f"  |#{session_hash}>\n"
-            f"{content.strip()}\n"
-            f"  |#{session_hash}"
-        )
+        session_hash = "".join(random.choices(string.ascii_uppercase + string.digits, k=5))
+        return f"@msg role:{role}\n  |#{session_hash}>\n{content.strip()}\n  |#{session_hash}"
 
     @staticmethod
     def execute(
@@ -120,9 +106,7 @@ class Bridge(SerializationProtocol):
         json_payload = json.dumps(payload)
         if Bridge.should_upgrade(json_payload):
             tok_input = MINIMAL_TOK_MANUAL + "\n" + Bridge.json(json_payload)
-            logger.debug(
-                "Bridge upgrade: Tok + Manual (%d chars)", len(tok_input)
-            )
+            logger.debug("Bridge upgrade: Tok + Manual (%d chars)", len(tok_input))
         else:
             tok_input = json_payload
             logger.debug("Bridge standard: JSON (%d chars)", len(tok_input))
@@ -130,12 +114,11 @@ class Bridge(SerializationProtocol):
         response_tok = llm_callable(tok_input)
 
         if isinstance(response_tok, str) and (
-            response_tok.strip().startswith("@")
-            or response_tok.strip().startswith("|")
+            response_tok.strip().startswith("@") or response_tok.strip().startswith("|")
         ):
-            return json.loads(Bridge.to_json(response_tok))
+            return cast("dict[str, Any]", json.loads(Bridge.to_json(response_tok)))
         try:
-            return json.loads(response_tok)
+            return cast("dict[str, Any]", json.loads(response_tok))
         except (json.JSONDecodeError, TypeError, ValueError):
             return {"raw_response": response_tok}
 
@@ -185,16 +168,12 @@ class Bridge(SerializationProtocol):
         is_external: bool = True,
     ) -> dict[str, Any]:
         """Hand off task to agent with tiered grammar bootstrapping."""
-        from ..analysis.prompt import get_grammar_snippet
+        from tok.analysis.prompt import get_grammar_snippet
 
         if agent_id in Bridge.verified_agents:
             active_level = None
         else:
-            active_level = (
-                "full"
-                if is_external and bootstrap == "essentials"
-                else bootstrap
-            )
+            active_level = "full" if is_external and bootstrap == "essentials" else bootstrap
 
         grammar = get_grammar_snippet(active_level) if active_level else ""
         if active_level:
@@ -210,31 +189,22 @@ class Bridge(SerializationProtocol):
         try:
             result = llm_callable(prompt)
 
-            if isinstance(result, tuple):
-                response = result[0]
-            else:
-                response = result
+            response = result[0] if isinstance(result, tuple) else result
 
             if not Bridge.is_valid_tok_response(response):
                 full_grammar = get_grammar_snippet("full")
                 retry_prompt = (
-                    f"[PROTOCOL ERROR] Use Tok format.\n"
-                    f"{full_grammar}\n\n"
-                    f"@Delegate agent:{agent_id}\n"
-                    f"  task: {task}"
+                    f"[PROTOCOL ERROR] Use Tok format.\n{full_grammar}\n\n@Delegate agent:{agent_id}\n  task: {task}"
                 )
                 result = llm_callable(retry_prompt)
 
-                if isinstance(result, tuple):
-                    response = result[0]
-                else:
-                    response = result
+                response = result[0] if isinstance(result, tuple) else result
 
                 if not Bridge.is_valid_tok_response(response):
                     return {"error": "protocol_mismatch", "raw": response}
 
             Bridge.verified_agents.add(agent_id)
-            return json.loads(Bridge.to_json(response))
+            return cast("dict[str, Any]", json.loads(Bridge.to_json(response)))
 
         except Exception as e:
             return {"error": "transport_failure", "details": str(e)}
@@ -246,7 +216,7 @@ class Bridge(SerializationProtocol):
         except json.JSONDecodeError:
             return ""
 
-        def _to_nodes(name: str, value: Any) -> TokNode:
+        def _to_nodes(name: str, value: str | dict[str, Any] | list[Any] | None) -> TokNode:
             if isinstance(value, dict):
                 if not value:
                     return TokNode(type=name, attrs={"_empty_dict": True})
@@ -257,14 +227,14 @@ class Bridge(SerializationProtocol):
                     else:
                         node.attrs[k] = v
                 return node
-            elif isinstance(value, list):
+            if isinstance(value, list):
                 if not value:
                     return TokNode(type=name, attrs={"_empty_list": True})
 
                 if all(isinstance(i, dict) for i in value):
                     first_keys = set(value[0].keys())
                     if all(set(i.keys()) == first_keys for i in value):
-                        headers = sorted(list(first_keys))
+                        headers = sorted(first_keys)
                         node = TokNode(type=name, headers=headers)
                         for i in value:
                             node.rows.append([i[h] for h in headers])
@@ -275,12 +245,9 @@ class Bridge(SerializationProtocol):
                     if isinstance(item, dict | list):
                         container.children.append(_to_nodes("item", item))
                     else:
-                        container.children.append(
-                            TokNode(type="item", text=str(item))
-                        )
+                        container.children.append(TokNode(type="item", text=str(item)))
                 return container
-            else:
-                return TokNode(type=name, text=str(value))
+            return TokNode(type=name, text=str(value))
 
         root = _to_nodes("data", data)
         return TokEncoder.encode([root])
@@ -289,9 +256,7 @@ class Bridge(SerializationProtocol):
     def xml(xml_str: str) -> str:
         try:
             root = ET.fromstring(xml_str)
-            node = TokNode(
-                type=root.tag, attrs=root.attrib, text=root.text or ""
-            )
+            node = TokNode(type=root.tag, attrs=root.attrib, text=root.text or "")
             for child in root:
                 node.children.append(
                     TokNode(
@@ -306,9 +271,7 @@ class Bridge(SerializationProtocol):
 
     @staticmethod
     def md(md_str: str, table_name: str = "result") -> str:
-        lines = [
-            line.strip() for line in md_str.strip().split("\n") if line.strip()
-        ]
+        lines = [line.strip() for line in md_str.strip().split("\n") if line.strip()]
         if not lines:
             return ""
         headers = [h.strip() for h in lines[0].split("|") if h.strip()]
@@ -347,9 +310,7 @@ class Bridge(SerializationProtocol):
                 return {}
 
             if node.headers and node.rows:
-                return [
-                    dict(zip(node.headers, r, strict=True)) for r in node.rows
-                ]
+                return [dict(zip(node.headers, r, strict=True)) for r in node.rows]
 
             if node.children:
                 if all(child.type == "item" for child in node.children):
@@ -432,25 +393,32 @@ class Bridge(SerializationProtocol):
             lines.append("| " + " | ".join(map(str, row)) + " |")
         return "\n".join(lines)
 
-    def encode(self, data: Any) -> str:
-        """Encode data to Tok text. Satisfies SerializationProtocol.
+    def encode(self, data: object) -> str:
+        """
+        Encode data to Tok text. Satisfies SerializationProtocol.
 
         Args:
             data: Any data to encode (dict, str, list, etc.)
 
         Returns:
             Serialized Tok text
+
         """
+        # Type assertion to handle the generic object parameter
+        if not isinstance(data, (str, dict, list)):
+            raise TypeError(f"Expected str, dict, or list, got {type(data)}")
         return Bridge().detect_and_convert(data)
 
     def decode(self, text: str) -> Any:
-        """Decode Tok text to data. Satisfies SerializationProtocol.
+        """
+        Decode Tok text to data. Satisfies SerializationProtocol.
 
         Args:
             text: Tok text to decode
 
         Returns:
             Deserialized data (typically dict or list)
+
         """
         result = Bridge.to_json(text)
         if not result:

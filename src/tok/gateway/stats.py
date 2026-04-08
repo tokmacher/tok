@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from ..utils.savings_tracker import (  # noqa: F401 — re-export for backward compat
+from tok.utils.savings_tracker import (
     BASELINE_ONLY_SIGNAL,
     FALLBACK_SIGNAL,
     GLOBAL_LEDGER_FILENAME,
@@ -34,10 +34,9 @@ __all__ = [
 ]
 
 
-def calculate_reasoning_depth_per_token(
-    step_count: int, tool_diversity: int, token_count: int
-) -> float:
-    """Dual-axis metric: reasoning diversity per token consumed.
+def calculate_reasoning_depth_per_token(step_count: int, tool_diversity: int, token_count: int) -> float:
+    """
+    Dual-axis metric: reasoning diversity per token consumed.
 
     step_count      — number of assistant response steps in the session
     tool_diversity  — number of distinct tool names used

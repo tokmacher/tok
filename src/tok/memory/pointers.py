@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..utils.event_logging import log_pointer_created
+from tok.utils.event_logging import log_pointer_created
 
 
 class PointerRegistry:

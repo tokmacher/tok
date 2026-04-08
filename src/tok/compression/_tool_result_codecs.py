@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Content-family codecs for compressed tool results."""
+
+from __future__ import annotations
 
 import json
 import os
@@ -27,9 +27,7 @@ __all__ = [
     "truncate_large_result",
 ]
 
-_CODE_PATTERNS = re.compile(
-    r"\bdef \b|\bclass \b|\bimport \b|\basync def \b|\bfunction \b"
-)
+_CODE_PATTERNS = re.compile(r"\bdef \b|\bclass \b|\bimport \b|\basync def \b|\bfunction \b")
 
 # Thresholds for search-cost advisory
 _GREP_ADVISORY_MATCH_THRESHOLD = 50
@@ -55,7 +53,8 @@ def _build_search_advisory(
     query_identity: str | None = None,
     current_turn: int = 0,
 ) -> str:
-    """Build advisory footer for expensive search results.
+    """
+    Build advisory footer for expensive search results.
 
     The advisory is purely informational - it does not affect evidence policy
     or compression behavior. It simply alerts the model to consider narrowing
@@ -71,6 +70,7 @@ def _build_search_advisory(
 
     Returns:
         Advisory footer string, or empty string if no advisory warranted.
+
     """
     # Check cooldown first
     if query_identity and query_identity in _advisory_cooldown:
@@ -132,33 +132,22 @@ def _detect_tool_content_type(text: str) -> str:
     """Detect the content type of a tool result."""
     if "Traceback (most recent call last):" in text or "at new " in text:
         return "stack_trace"
-    if re.search(r"\b(PASSED|FAILED)\b", text) and re.search(
-        r"\d+ (passed|failed)( in | ,)", text
-    ):
+    if re.search(r"\b(PASSED|FAILED)\b", text) and re.search(r"\d+ (passed|failed)( in | ,)", text):
         return "pytest"
     if re.search(r"^diff --git ", text, re.MULTILINE) or (
-        re.search(r"^--- a/", text, re.MULTILINE)
-        and re.search(r"^\+\+\+ b/", text, re.MULTILINE)
+        re.search(r"^--- a/", text, re.MULTILINE) and re.search(r"^\+\+\+ b/", text, re.MULTILINE)
     ):
         return "git_diff"
-    if (
-        re.match(r"^(USER\s+PID\s+%CPU|UID\s+PID\s+PPID)", text)
-        or "COMMAND" in text[:200]
-    ):
+    if re.match(r"^(USER\s+PID\s+%CPU|UID\s+PID\s+PPID)", text) or "COMMAND" in text[:200]:
         return "ps_output"
-    if (
-        re.match(r"^(HOME|PATH|SHELL|USER|LANG)=", text, re.MULTILINE)
-        and "=" in text
-    ):
+    if re.match(r"^(HOME|PATH|SHELL|USER|LANG)=", text, re.MULTILINE) and "=" in text:
         return "env_output"
 
     lines = text.splitlines()
-    non_empty = [l for l in lines if l.strip()]
+    non_empty = [line for line in lines if line.strip()]
 
     if len(non_empty) >= 4:
-        grep_c_matches = sum(
-            1 for l in non_empty if re.match(r"^[^\s-][^-]*-(\d+)-", l)
-        )
+        grep_c_matches = sum(1 for line in non_empty if re.match(r"^[^\s-][^-]*-(\d+)-", line))
         if grep_c_matches / len(non_empty) > 0.6:
             return "grep_context"
 
@@ -167,45 +156,29 @@ def _detect_tool_content_type(text: str) -> str:
         return "json_skeleton"
 
     if len(non_empty) >= 2:
-        if sum(1 for l in non_empty if _GIT_LOG_COMMIT_RE.match(l)) >= 2:
+        if sum(1 for line in non_empty if _GIT_LOG_COMMIT_RE.match(line)) >= 2:
             return "git_log"
-        oneline_matches = sum(
-            1 for l in non_empty if _GIT_LOG_ONELINE_RE.match(l.strip())
-        )
+        oneline_matches = sum(1 for line in non_empty if _GIT_LOG_ONELINE_RE.match(line.strip()))
         if oneline_matches >= 4 and oneline_matches / len(non_empty) > 0.4:
             return "git_log"
 
     if len(non_empty) >= 8:
-        la_lines = sum(1 for l in non_empty if re.match(r"^[dl-][rwx-]{9}", l))
+        la_lines = sum(1 for line in non_empty if re.match(r"^[dl-][rwx-]{9}", line))
         plain_file_lines = sum(
-            1
-            for l in non_empty
-            if re.match(r"^\S+\.\w{1,6}$", l.strip())
-            or re.match(r"^\S+/$", l.strip())
+            1 for line in non_empty if re.match(r"^\S+\.\w{1,6}$", line.strip()) or re.match(r"^\S+/$", line.strip())
         )
-        glob_lines = sum(
-            1 for l in non_empty if re.match(r"^(/[^/ ]+)+$", l.strip())
-        )
-        if (
-            la_lines >= 6
-            or plain_file_lines / len(non_empty) > 0.7
-            or glob_lines / len(non_empty) > 0.7
-        ):
+        glob_lines = sum(1 for line in non_empty if re.match(r"^(/[^/ ]+)+$", line.strip()))
+        if la_lines >= 6 or plain_file_lines / len(non_empty) > 0.7 or glob_lines / len(non_empty) > 0.7:
             return "ls"
 
     if len(non_empty) >= 6:
-        install_lines = sum(
-            1 for l in non_empty if _INSTALL_PROGRESS_RE.match(l)
-        )
+        install_lines = sum(1 for line in non_empty if _INSTALL_PROGRESS_RE.match(line))
         if install_lines >= 5:
             return "install"
 
     if len(non_empty) >= 3:
         grep_matches = sum(
-            1
-            for l in non_empty
-            if re.match(r"^[^\s:][^:]*:\d+:", l)
-            or re.match(r"^[^\s:][^:]*:[^\n]+$", l)
+            1 for line in non_empty if re.match(r"^[^\s:][^:]*:\d+:", line) or re.match(r"^[^\s:][^:]*:[^\n]+$", line)
         )
         if grep_matches / len(non_empty) > 0.7:
             return "grep"
@@ -216,27 +189,8 @@ def _detect_tool_content_type(text: str) -> str:
     if len(lines) >= 5:
         for i in range(len(lines) - 4):
             prefix = re.split(r"[/: ]", lines[i].rstrip())[0]
-            if prefix and all(
-                lines[i + j].rstrip().startswith(prefix) for j in range(1, 5)
-            ):
+            if prefix and all(lines[i + j].rstrip().startswith(prefix) for j in range(1, 5)):
                 return "repetitive"
-
-    if text.strip().startswith("[") and text.strip().endswith("]"):
-        try:
-            data = json.loads(text)
-            if isinstance(data, list) and len(data) >= 3:
-                if all(isinstance(x, dict) for x in data[:3]):
-                    return "search_results"
-        except Exception:
-            pass
-
-    if text.strip().startswith("{") and text.strip().endswith("}"):
-        try:
-            data = json.loads(text)
-            if isinstance(data, dict) and len(data) >= 5:
-                return "config_json"
-        except Exception:
-            pass
 
     return "raw"
 
@@ -290,19 +244,11 @@ def _compress_pytest(text: str, command: str = "") -> str:
             in_failure = True
             result.append(line)
             continue
-        if line.startswith("=") or line.startswith("_"):
-            in_failure = (
-                line.startswith("_ FAILURES") or "FAILED" in line or in_failure
-            )
+        if line.startswith(("=", "_")):
+            in_failure = line.startswith("_ FAILURES") or "FAILED" in line or in_failure
             result.append(line)
             continue
-        if in_failure:
-            result.append(line)
-        elif (
-            line.startswith("collected ")
-            or line.startswith("platform ")
-            or line.startswith("rootdir")
-        ):
+        if in_failure or (line.startswith(("collected ", "platform ", "rootdir"))):
             result.append(line)
 
     header = f">>> tool:pytest|passed:{passed}|failed:{failed}"
@@ -311,15 +257,11 @@ def _compress_pytest(text: str, command: str = "") -> str:
     if failed:
         failure_count = "1 failed" if failed == 1 else f"{failed} failed"
         if command and first_failed:
-            verification_line = (
-                f"verification: {command} -> {first_failed} ({failure_count})"
-            )
+            verification_line = f"verification: {command} -> {first_failed} ({failure_count})"
         elif command:
             verification_line = f"verification: {command} ({failure_count})"
         elif first_failed:
-            verification_line = (
-                f"verification: {first_failed} ({failure_count})"
-            )
+            verification_line = f"verification: {first_failed} ({failure_count})"
         else:
             verification_line = f"verification: {failure_count}"
     elif passed:
@@ -370,15 +312,12 @@ def _compress_grep(text: str) -> str:
         snippets = by_file[key]
         first = snippets[0][:80]
         suffix = f" ({len(snippets)} matches)" if len(snippets) > 1 else ""
-        result.append(
-            f"{key}: {len(snippets)} match{'es' if len(snippets) > 1 else ''} \u2014 {first}{suffix}"
-        )
+        result.append(f"{key}: {len(snippets)} match{'es' if len(snippets) > 1 else ''} \u2014 {first}{suffix}")
 
     # Add advisory footer for expensive searches
     # Detect if search was scoped (single directory or specific path pattern)
     has_scope = file_count == 1 or (
-        len(order) > 0
-        and all("/" in k or "\\" in k for k in order[:3] if k != "__other__")
+        len(order) > 0 and all("/" in k or "\\" in k for k in order[:3] if k != "__other__")
     )
     estimated_tokens = _estimate_tokens(text)
     advisory = _build_search_advisory(
@@ -501,13 +440,11 @@ def _compress_git_diff(text: str) -> str:
     deletions = 0
 
     for line in lines:
-        if line.startswith("diff --git") or line.startswith("index "):
+        if line.startswith(("diff --git", "index ")):
             if line.startswith("diff --git"):
                 files += 1
             result.append(line)
-        elif line.startswith("---") or line.startswith("+++"):
-            result.append(line)
-        elif line.startswith("@@"):
+        elif line.startswith(("---", "+++", "@@")):
             result.append(line)
         elif line.startswith("+") and not line.startswith("+++"):
             insertions += 1
@@ -574,16 +511,12 @@ def _choose_line_boundary(
     if candidates:
         return min(candidates)[2]
 
-    return min(
-        range(1, len(lines)), key=lambda idx: abs(offsets[idx] - target_chars)
-    )
+    return min(range(1, len(lines)), key=lambda idx: abs(offsets[idx] - target_chars))
 
 
 def _compress_ls(text: str) -> str:
     lines = [line for line in text.splitlines() if line.strip()]
-    is_la = any(
-        re.match(r"^(total\s+\d+|[dl-][rwx-]{9})", line) for line in lines
-    )
+    is_la = any(re.match(r"^(total\s+\d+|[dl-][rwx-]{9})", line) for line in lines)
 
     names: list[str] = []
     dirs: list[str] = []
@@ -612,21 +545,13 @@ def _compress_ls(text: str) -> str:
         else:
             unusual.append(name)
 
-    result_lines = [
-        f">>> tool:ls|total:{len(names) + len(dirs)}|dirs:{len(dirs)}"
-    ]
+    result_lines = [f">>> tool:ls|total:{len(names) + len(dirs)}|dirs:{len(dirs)}"]
     for ext, count in sorted(ext_counts.items(), key=lambda item: -item[1]):
         result_lines.append(f"  .{ext}: {count}")
     if dirs:
-        result_lines.append(
-            f"  dirs: {', '.join(dirs[:10])}"
-            + (" ..." if len(dirs) > 10 else "")
-        )
+        result_lines.append(f"  dirs: {', '.join(dirs[:10])}" + (" ..." if len(dirs) > 10 else ""))
     if unusual:
-        result_lines.append(
-            f"  other: {', '.join(unusual[:10])}"
-            + (" ..." if len(unusual) > 10 else "")
-        )
+        result_lines.append(f"  other: {', '.join(unusual[:10])}" + (" ..." if len(unusual) > 10 else ""))
 
     result = "\n".join(result_lines)
     if len(result) >= len(text):
@@ -641,9 +566,7 @@ _INSTALL_PROGRESS_RE = re.compile(
     r"|Prepared|Uninstalled|Built)",
     re.IGNORECASE,
 )
-_INSTALL_ERROR_RE = re.compile(
-    r"\b(error|warning|failed|conflict)\b", re.IGNORECASE
-)
+_INSTALL_ERROR_RE = re.compile(r"\b(error|warning|failed|conflict)\b", re.IGNORECASE)
 _INSTALL_SUMMARY_RE = re.compile(
     r"(Successfully installed|installed \d+|added \d+|in \d+\.\d+s|\d+ packages?)",
     re.IGNORECASE,
@@ -689,11 +612,7 @@ _GIT_LOG_ONELINE_RE = re.compile(r"^([0-9a-f]{7,40})\s+(.+)")
 def _compress_git_log(text: str) -> str:
     lines = text.splitlines()
 
-    oneline = all(
-        not line.strip() or _GIT_LOG_ONELINE_RE.match(line)
-        for line in lines
-        if line.strip()
-    )
+    oneline = all(not line.strip() or _GIT_LOG_ONELINE_RE.match(line) for line in lines if line.strip())
     if oneline:
         entries: list[str] = []
         for line in lines:
@@ -716,9 +635,7 @@ def _compress_git_log(text: str) -> str:
         match = _GIT_LOG_COMMIT_RE.match(line)
         if match:
             if current.get("hash"):
-                entries.append(
-                    f"{current.get('hash', '')} {current.get('subject', '')[:40]}"
-                )
+                entries.append(f"{current.get('hash', '')} {current.get('subject', '')[:40]}")
             current = {
                 "hash": match.group(1)[:8],
                 "author": "",
@@ -737,19 +654,12 @@ def _compress_git_log(text: str) -> str:
             in_body = False
             continue
         stripped = line.strip()
-        if (
-            stripped
-            and not in_body
-            and current.get("hash")
-            and not current["subject"]
-        ):
+        if stripped and not in_body and current.get("hash") and not current["subject"]:
             current["subject"] = stripped[:72]
             in_body = True
 
     if current.get("hash"):
-        entries.append(
-            f"{current.get('hash', '')} {current.get('subject', '')[:40]}"
-        )
+        entries.append(f"{current.get('hash', '')} {current.get('subject', '')[:40]}")
 
     if not entries:
         return text
@@ -772,25 +682,14 @@ def _compress_search_results(text: str) -> str:
         if not isinstance(sample, dict):
             return text
 
-        common_keys = [
-            key
-            for key in sample.keys()
-            if all(key in item for item in data[:5])
-        ]
+        common_keys = [key for key in sample if all(key in item for item in data[:5])]
         evidence_keys = {
-            key
-            for key in common_keys
-            if key
-            in {"line", "snippet", "content", "text", "match", "context"}
+            key for key in common_keys if key in {"line", "snippet", "content", "text", "match", "context"}
         }
         if not evidence_keys:
             return text
 
-        header_keys = [
-            key
-            for key in ("path", "file", "name", "title", "line", "id")
-            if key in common_keys
-        ]
+        header_keys = [key for key in ("path", "file", "name", "title", "line", "id") if key in common_keys]
         if not header_keys:
             header_keys = common_keys[:3]
 
@@ -813,14 +712,9 @@ def _compress_search_results(text: str) -> str:
             return text
 
         result_count = len(data)
-        result = [
-            f">>> tool:search_results|count:{result_count}|keys:{','.join(header_keys)}"
-        ]
+        result = [f">>> tool:search_results|count:{result_count}|keys:{','.join(header_keys)}"]
         for item in data:
-            vals = [
-                str(item.get(key, ""))[:80].replace("\n", " ")
-                for key in value_keys
-            ]
+            vals = [str(item.get(key, ""))[:80].replace("\n", " ") for key in value_keys]
             if not any(val.strip() for val in vals):
                 continue
             result.append(":".join(vals))
@@ -844,7 +738,7 @@ def _compress_search_results(text: str) -> str:
 
 def _compress_stack_traces(text: str) -> str:
     lines = text.splitlines()
-    result = []
+    result: list[str] = []
     lib_patterns = re.compile(
         r"(node_modules|site-packages|dist-packages|/lib/python|/usr/lib|/usr/include|/Library/Frameworks|/usr/local/Cellar)"
     )
@@ -853,9 +747,7 @@ def _compress_stack_traces(text: str) -> str:
     common_prefix = ""
     if len(paths) >= 2:
         try:
-            common_prefix = (
-                os.path.commonpath(paths) if hasattr(os, "commonpath") else ""
-            )
+            common_prefix = os.path.commonpath(paths) if hasattr(os, "commonpath") else ""
             if common_prefix and len(common_prefix) < 10:
                 common_prefix = ""
         except ValueError:
@@ -900,20 +792,15 @@ def _compress_stack_traces(text: str) -> str:
     if hidden_count > 0:
         result.insert(0, f"  [... filtered {hidden_count} library frames]")
 
-    header = (
-        f">>> tool:stack_trace|lines:{len(lines)}|hidden_frames:{hidden_count}"
-    )
+    header = f">>> tool:stack_trace|lines:{len(lines)}|hidden_frames:{hidden_count}"
     return header + "\n" + "\n".join(result)
 
 
-def _compress_json_response(data: Any, depth: int = 0) -> Any:
+def _compress_json_response(data: str | dict[str, Any] | list[Any], depth: int = 0) -> str | dict[str, Any] | list[Any]:
     if isinstance(data, dict):
         if len(data) > 20 and depth > 1:
             return f"{{... {len(data)} keys}}"
-        return {
-            key: _compress_json_response(value, depth + 1)
-            for key, value in data.items()
-        }
+        return {key: _compress_json_response(value, depth + 1) for key, value in data.items()}
     if isinstance(data, list):
         if len(data) > 10:
             return [
@@ -999,20 +886,14 @@ def _compress_env_ps(text: str, kind: str) -> str:
     if kind == "ps_output":
         kept = [lines[0]] if lines else []
         for line in lines[1:]:
-            if (
-                "/System/" in line
-                or "/usr/libexec/" in line
-                or "kernel_task" in line
-            ):
+            if "/System/" in line or "/usr/libexec/" in line or "kernel_task" in line:
                 continue
             kept.append(line)
 
         if len(kept) > 20:
-            kept = kept[:20] + [f"... {len(kept) - 20} more active processes"]
+            kept = [*kept[:20], f"... {len(kept) - 20} more active processes"]
 
-        header = (
-            f">>> tool:ps|total_lines:{len(lines)}|interesting:{len(kept) - 1}"
-        )
+        header = f">>> tool:ps|total_lines:{len(lines)}|interesting:{len(kept) - 1}"
         return header + "\n" + "\n".join(kept)
 
     if kind == "env_output":
@@ -1030,13 +911,7 @@ def _compress_env_ps(text: str, kind: str) -> str:
         for line in lines:
             if "=" in line:
                 key = line.split("=", 1)[0]
-                if (
-                    key in interesting
-                    or "API" in key
-                    or "TOKEN" in key
-                    or "URL" in key
-                    or "PORT" in key
-                ):
+                if key in interesting or "API" in key or "TOKEN" in key or "URL" in key or "PORT" in key:
                     kept.append(line)
 
         header = f">>> tool:env|total_vars:{len(lines)}|displayed:{len(kept)}"
@@ -1057,9 +932,7 @@ def _compress_config_json(text: str) -> str:
         return text
 
 
-def _tighten_compressed_output(
-    kind: str, compressed: str, compression_level: str
-) -> str:
+def _tighten_compressed_output(kind: str, compressed: str, compression_level: str) -> str:
     if compression_level != "aggressive":
         return compressed
     if kind not in {
@@ -1079,11 +952,11 @@ def _tighten_compressed_output(
     limit = 4
     if len(body) <= limit:
         return compressed
-    trimmed = (
-        [header]
-        + body[:limit]
-        + [f"... {len(body) - limit} more lines omitted"]
-    )
+    trimmed = [
+        header,
+        *body[:limit],
+        f"... {len(body) - limit} more lines omitted",
+    ]
     candidate = "\n".join(trimmed)
     return candidate if len(candidate) < len(compressed) else compressed
 
@@ -1106,9 +979,7 @@ def truncate_large_result(text: str, limit: int = 1200) -> str:
         important_line = ""
         for line in middle.splitlines():
             if signals.search(line):
-                important_line = (
-                    f"\n... [SIGNAL FOUND] {line.strip()[:100]} ..."
-                )
+                important_line = f"\n... [SIGNAL FOUND] {line.strip()[:100]} ..."
                 break
 
         omitted = len(text) - (limit // 2 * 2)
@@ -1122,12 +993,8 @@ def truncate_large_result(text: str, limit: int = 1200) -> str:
     head_target = max(1, limit // 2)
     tail_target = max(head_target + 1, len(text) - (limit // 2))
 
-    head_idx = _choose_line_boundary(
-        lines, offsets, head_target, search_window_chars
-    )
-    tail_idx = _choose_line_boundary(
-        lines, offsets, tail_target, search_window_chars
-    )
+    head_idx = _choose_line_boundary(lines, offsets, head_target, search_window_chars)
+    tail_idx = _choose_line_boundary(lines, offsets, tail_target, search_window_chars)
     if head_idx >= tail_idx:
         tail_idx = min(len(lines), max(head_idx + 1, tail_idx))
     if head_idx >= tail_idx:
@@ -1171,6 +1038,4 @@ def truncate_large_result(text: str, limit: int = 1200) -> str:
             break
 
     omitted = len(text) - (limit // 2 * 2)
-    return (
-        f"{head}\n... [TRUNCATED {omitted} CHARS] ...{important_line}\n{tail}"
-    )
+    return f"{head}\n... [TRUNCATED {omitted} CHARS] ...{important_line}\n{tail}"

@@ -4,7 +4,7 @@ from tok.universal_runtime import SemanticValidator
 
 
 class TestPointerRegistry:
-    def test_basic_pointers(self):
+    def test_basic_pointers(self) -> None:
         reg = PointerRegistry()
         p1 = reg.get_pointer("/path/to/very/long/file/name.py")
         assert p1 == "*A"
@@ -16,13 +16,13 @@ class TestPointerRegistry:
         # Redundant call returns same pointer
         assert reg.get_pointer("/path/to/very/long/file/name.py") == "*A"
 
-    def test_extension(self):
+    def test_extension(self) -> None:
         reg = PointerRegistry()
         for i in range(30):
             reg.get_pointer(f"path_{i}")
         assert "*A1" in reg.map  # Should have wrapped or extended
 
-    def test_serialization(self):
+    def test_serialization(self) -> None:
         reg = PointerRegistry()
         reg.get_pointer("long_path_1")
         reg.get_pointer("long_path_2")
@@ -36,13 +36,13 @@ class TestPointerRegistry:
 
 
 class TestSemanticValidator:
-    def test_redundant_prose_detection(self):
+    def test_redundant_prose_detection(self) -> None:
         validator = SemanticValidator()
         text = "I have successfully read the file. Here is the content of the file you requested."
         signals = validator.validate_drift(text, {})
         assert signals.get("semantic_drift_detected")
 
-    def test_protocol_reinforcement(self):
+    def test_protocol_reinforcement(self) -> None:
         validator = SemanticValidator()
         text = "### Analysis\nThe code looks good."  # Raw markdown header
         signals = validator.validate_drift(text, {})
@@ -50,7 +50,7 @@ class TestSemanticValidator:
 
 
 class TestBridgeMemoryPointers:
-    def test_wire_state_with_pointers(self):
+    def test_wire_state_with_pointers(self) -> None:
         state = BridgeMemoryState()
         long_path = "src/tok/universal_runtime.py"
         state.hot["files"] = [MemoryEntry(value=long_path)]

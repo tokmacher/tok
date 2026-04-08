@@ -2,21 +2,19 @@ from typing import Any, cast
 
 from tok.runtime.pipeline.request_validation import (
     canonicalize_anthropic_bridge_messages,
-    validate_anthropic_bridge_body,
     summarize_message_structure,
+    validate_anthropic_bridge_body,
 )
 
 
-def test_top_level_tool_result_rewritten_and_merged():
+def test_top_level_tool_result_rewritten_and_merged() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Start work."},
         {"role": "tool_result", "tool_use_id": "t1", "content": "result 1"},
         {"role": "tool_result", "tool_use_id": "t2", "content": "result 2"},
         {"role": "user", "content": "Continue work."},
     ]
-    canonical, changed, signals = canonicalize_anthropic_bridge_messages(
-        messages
-    )
+    canonical, changed, signals = canonicalize_anthropic_bridge_messages(messages)
 
     assert changed is True
     assert signals["tok_bridge_top_level_tool_result_rewritten"] == 2
@@ -36,25 +34,21 @@ def test_top_level_tool_result_rewritten_and_merged():
     }
 
 
-def test_assistant_tool_use_preserved():
+def test_assistant_tool_use_preserved() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Action!"},
         {
             "role": "assistant",
-            "content": [
-                {"type": "tool_use", "id": "t1", "name": "test", "input": {}}
-            ],
+            "content": [{"type": "tool_use", "id": "t1", "name": "test", "input": {}}],
         },
     ]
-    canonical, changed, signals = canonicalize_anthropic_bridge_messages(
-        messages
-    )
+    canonical, changed, _signals = canonicalize_anthropic_bridge_messages(messages)
     assert changed is True
     assert len(canonical) == 2
     assert canonical[1]["role"] == "assistant"
 
 
-def test_invalid_tool_ids_are_sanitized_after_adjacent_user_merge():
+def test_invalid_tool_ids_are_sanitized_after_adjacent_user_merge() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Start work."},
         {
@@ -75,9 +69,7 @@ def test_invalid_tool_ids_are_sanitized_after_adjacent_user_merge():
         },
         {"role": "user", "content": "Continue work."},
     ]
-    canonical, changed, signals = canonicalize_anthropic_bridge_messages(
-        messages
-    )
+    canonical, changed, signals = canonicalize_anthropic_bridge_messages(messages)
 
     assert changed is True
     assert signals["tok_bridge_tool_id_sanitized"] == 1
@@ -86,7 +78,7 @@ def test_invalid_tool_ids_are_sanitized_after_adjacent_user_merge():
     assert rewritten_id == canonical[2]["content"][0]["tool_use_id"]
 
 
-def test_validator_rejects_invalid_roles():
+def test_validator_rejects_invalid_roles() -> None:
     body = {
         "model": "claude-3-5",
         "messages": [{"role": "system", "content": "oops"}],
@@ -95,7 +87,7 @@ def test_validator_rejects_invalid_roles():
     assert "invalid_top_level_role" in failures
 
 
-def test_validator_rejects_cross_role_blocks():
+def test_validator_rejects_cross_role_blocks() -> None:
     # User message with tool_use
     body1 = {
         "model": "claude-3-5",
@@ -136,7 +128,7 @@ def test_validator_rejects_cross_role_blocks():
     assert "assistant_contains_tool_result" in failures2
 
 
-def test_validator_rejects_empty_content():
+def test_validator_rejects_empty_content() -> None:
     body: dict[str, Any] = {
         "model": "claude-3-5",
         "messages": [{"role": "user", "content": []}],
@@ -144,7 +136,7 @@ def test_validator_rejects_empty_content():
     assert "empty_content_blocks" in validate_anthropic_bridge_body(body)
 
 
-def test_validator_rejects_user_tool_result_after_text():
+def test_validator_rejects_user_tool_result_after_text() -> None:
     body = {
         "model": "claude-3-5",
         "messages": [
@@ -178,7 +170,7 @@ def test_validator_rejects_user_tool_result_after_text():
     assert "user_tool_result_after_text" in failures
 
 
-def test_validator_rejects_unknown_tool_use_ids():
+def test_validator_rejects_unknown_tool_use_ids() -> None:
     body = {
         "model": "claude-3-5",
         "messages": [
@@ -201,7 +193,7 @@ def test_validator_rejects_unknown_tool_use_ids():
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
 
 
-def test_validator_rejects_tool_results_not_immediately_after_assistant_tool_use():
+def test_validator_rejects_tool_results_not_immediately_after_assistant_tool_use() -> None:
     body = {
         "model": "claude-3-5",
         "messages": [
@@ -235,23 +227,19 @@ def test_validator_rejects_tool_results_not_immediately_after_assistant_tool_use
     assert "tool_result_not_immediately_after_assistant_tool_use" in failures
 
 
-def test_summarize_structure():
+def test_summarize_structure() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Hello"},
         {
             "role": "assistant",
-            "content": [
-                {"type": "tool_use", "id": "t1", "name": "t", "input": {}}
-            ],
+            "content": [{"type": "tool_use", "id": "t1", "name": "t", "input": {}}],
         },
         {
             "role": "user",
-            "content": [
-                {"type": "tool_result", "tool_use_id": "t1", "content": "res"}
-            ],
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "res"}],
         },
     ]
-    summary = cast(dict[str, Any], summarize_message_structure(messages))
+    summary = cast("dict[str, Any]", summarize_message_structure(messages))
     assert summary["count"] == 3
     assert summary["user_msgs"] == 2
     assert summary["assistant_msgs"] == 1

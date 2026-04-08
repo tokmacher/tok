@@ -1,8 +1,8 @@
 # CLI Reference
 
-This page summarizes the supported Tok CLI surface for the first public release.
-The default `tok --help` output intentionally highlights only the bridge-first
-onboarding path plus the `tok savings` compatibility alias.
+This page summarizes the supported Tok CLI surface for the first public release. The
+default `tok --help` output intentionally highlights only the bridge-first onboarding
+path plus the `tok savings` compatibility alias.
 
 If you are new to Tok, start with [`README.md`](../README.md) or the full workflow in
 [`docs/bridge.md`](./bridge.md).
@@ -51,8 +51,8 @@ Use:
 - `tok stats` for current, last-session, recent, and lifetime savings views
 - `tok savings` only as a compatibility alias for `tok stats`
 
-Advanced maintainer utilities remain available, but they are intentionally hidden
-from the default help surface in `0.1.0` so new users land on one clear workflow.
+Advanced maintainer utilities remain available, but they are intentionally hidden from
+the default help surface in `0.1.0` so new users land on one clear workflow.
 
 ## Capture And Evidence Review
 
@@ -64,8 +64,8 @@ tok evidence-gap DIR [--stress-dir DIR]
 ```
 
 These commands are for diagnosing repeated degradation classes and ranking replay
-coverage opportunities. They are useful for advanced operators and maintainers, not
-for the default first-run flow.
+coverage opportunities. They are useful for advanced operators and maintainers, not for
+the default first-run flow.
 
 ## Release Gate
 

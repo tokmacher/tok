@@ -1,3 +1,5 @@
+"""CLI commands for memory management and capture analysis."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,17 +7,18 @@ from typing import Annotated, Any, cast
 
 import typer
 
-from ..analysis.evidence_review import (
+from tok.analysis.evidence_review import (
     build_coverage_report,
     load_stress_evidence,
     rank_candidates,
     review_capture_dir,
     summarize_capture_file,
 )
-from ..runtime.memory.bridge_memory import (
+from tok.runtime.memory.bridge_memory import (
     BridgeMemoryState,
     clean_system_context,
 )
+
 from ._cli_support import console, memory_root, render_stats_panel
 
 
@@ -29,10 +32,8 @@ def memory_snap(
     memory_file = memory_root() / "bridge_memory.tok"
 
     if not memory_file.exists():
-        console.print(
-            "[yellow]No bridge memory file found — nothing to snap.[/yellow]"
-        )
-        raise typer.Exit()
+        console.print("[yellow]No bridge memory file found — nothing to snap.[/yellow]")
+        raise typer.Exit
 
     if not yes:
         confirm = typer.confirm(
@@ -41,7 +42,7 @@ def memory_snap(
         )
         if not confirm:
             console.print("[dim]Aborted.[/dim]")
-            raise typer.Exit()
+            raise typer.Exit
 
     state = BridgeMemoryState.from_tok(memory_file.read_text())
 
@@ -59,9 +60,7 @@ def memory_snap(
     memory_file.write_text(state.to_tok())
 
     kept_fields = sorted(preserved.keys())
-    console.print(
-        f"[green]Memory snapped.[/green] Preserved durable fields: {kept_fields or ['(none)']}"
-    )
+    console.print(f"[green]Memory snapped.[/green] Preserved durable fields: {kept_fields or ['(none)']}")
 
 
 def optimize_prompts(
@@ -77,29 +76,23 @@ def optimize_prompts(
 
     if not memory_file.exists():
         console.print("[yellow]No bridge memory file found.[/yellow]")
-        raise typer.Exit()
+        raise typer.Exit
 
     state = BridgeMemoryState.from_tok(memory_file.read_text())
 
     if fallback_file.exists():
         fallback_text = fallback_file.read_text()
         if len(fallback_text) > 2000:
-            console.print(
-                f"[yellow]Bloated fallback memory detected ({len(fallback_text)} chars).[/yellow]"
-            )
+            console.print(f"[yellow]Bloated fallback memory detected ({len(fallback_text)} chars).[/yellow]")
             if not yes and not typer.confirm("Apply automatic optimization?"):
-                raise typer.Exit()
+                raise typer.Exit
 
             cleaned = clean_system_context(state, fallback_text)
             memory_file.write_text(state.to_tok())
-            fallback_file.write_text(cast(str, cleaned) + "\n")
-            console.print(
-                f"[green]Optimized fallback memory to {len(cleaned)} chars.[/green]"
-            )
+            fallback_file.write_text(cast("str", cleaned) + "\n")
+            console.print(f"[green]Optimized fallback memory to {len(cleaned)} chars.[/green]")
         else:
-            console.print(
-                f"[green]Fallback memory is lean ({len(fallback_text)} chars).[/green]"
-            )
+            console.print(f"[green]Fallback memory is lean ({len(fallback_text)} chars).[/green]")
     else:
         console.print("[dim]No fallback memory file found.[/dim]")
 
@@ -110,18 +103,14 @@ def optimize_prompts(
                 bloated_fields.append((field, entry))
 
     if bloated_fields:
-        console.print(
-            f"[yellow]Found {len(bloated_fields)} bloated fields in durable memory.[/yellow]"
-        )
+        console.print(f"[yellow]Found {len(bloated_fields)} bloated fields in durable memory.[/yellow]")
         if yes or typer.confirm("Compress bloated fields?"):
-            from ..compression import compress_user_prompt
+            from tok.compression import compress_user_prompt
 
             for field, entry in bloated_fields:
                 old_len = len(entry.value)
                 entry.value = compress_user_prompt(entry.value)
-                console.print(
-                    f"  - {field}: {old_len} -> {len(entry.value)} chars"
-                )
+                console.print(f"  - {field}: {old_len} -> {len(entry.value)} chars")
             memory_file.write_text(state.to_tok())
             console.print("[green]Durable memory optimized.[/green]")
     else:
@@ -129,9 +118,7 @@ def optimize_prompts(
 
 
 def capture_summary(
-    session_file: Annotated[
-        str, typer.Argument(help="Path to .jsonl capture file")
-    ],
+    session_file: Annotated[str, typer.Argument(help="Path to .jsonl capture file")],
 ) -> None:
     """Summarize a captured bridge session without mutating any artifacts."""
     capture_path = Path(session_file)
@@ -153,13 +140,9 @@ def capture_summary(
         ("Suggested verdict", str(summary["verdict"])),
     ]
     if str(summary["degradation_reason"]).strip():
-        rows.append(
-            ("Last degradation reason", str(summary["degradation_reason"]))
-        )
+        rows.append(("Last degradation reason", str(summary["degradation_reason"])))
     if float(summary["savings_pct"]) > 0:
-        rows.append(
-            ("Session savings", f"{float(summary['savings_pct']):.1f}%")
-        )
+        rows.append(("Session savings", f"{float(summary['savings_pct']):.1f}%"))
 
     console.print(
         render_stats_panel(
@@ -174,20 +157,14 @@ def capture_summary(
 
 
 def capture_review(
-    capture_dir: Annotated[
-        str, typer.Argument(help="Directory containing captured session files")
-    ],
+    capture_dir: Annotated[str, typer.Argument(help="Directory containing captured session files")],
     verdict: Annotated[
         str | None,
-        typer.Option(
-            "--verdict", help="Filter to clean, watch, or investigate sessions"
-        ),
+        typer.Option("--verdict", help="Filter to clean, watch, or investigate sessions"),
     ] = None,
     reason: Annotated[
         str | None,
-        typer.Option(
-            "--reason", help="Filter sessions by degradation-reason substring"
-        ),
+        typer.Option("--reason", help="Filter sessions by degradation-reason substring"),
     ] = None,
     limit: Annotated[
         int | None,
@@ -195,9 +172,7 @@ def capture_review(
     ] = None,
     json_out: Annotated[
         Path | None,
-        typer.Option(
-            "--json", help="Write structured review output to a JSON file"
-        ),
+        typer.Option("--json", help="Write structured review output to a JSON file"),
     ] = None,
     candidates: Annotated[
         bool,
@@ -212,15 +187,11 @@ def capture_review(
     ] = False,
     stress_dir: Annotated[
         Path | None,
-        typer.Option(
-            "--stress-dir", help="Optional stress-language artifact directory"
-        ),
+        typer.Option("--stress-dir", help="Optional stress-language artifact directory"),
     ] = None,
     fixtures_dir: Annotated[
         Path,
-        typer.Option(
-            "--fixtures-dir", help="Replay-fixture metadata directory"
-        ),
+        typer.Option("--fixtures-dir", help="Replay-fixture metadata directory"),
     ] = Path("tests/fixtures/replay"),
     gate_config: Annotated[
         Path,
@@ -263,17 +234,11 @@ def capture_review(
             rows=[
                 (
                     "Fallback sessions",
-                    str(
-                        review["aggregate"]["sessions_with_fallback_activity"]
-                    ),
+                    str(review["aggregate"]["sessions_with_fallback_activity"]),
                 ),
                 (
                     "Reacquisition sessions",
-                    str(
-                        review["aggregate"][
-                            "sessions_with_reacquisition_pressure"
-                        ]
-                    ),
+                    str(review["aggregate"]["sessions_with_reacquisition_pressure"]),
                 ),
             ],
             border_style="cyan",
@@ -308,9 +273,7 @@ def capture_review(
             )
         console.print(table)
     else:
-        console.print(
-            "[dim]No captured sessions matched the requested filters.[/dim]"
-        )
+        console.print("[dim]No captured sessions matched the requested filters.[/dim]")
 
     if candidates and candidate_rows:
         from rich.table import Table
@@ -337,8 +300,7 @@ def capture_review(
         from rich.table import Table
 
         console.print(
-            "[bold]Coverage candidates:[/bold] "
-            + ", ".join(str(item["candidate"]) for item in coverage_rows)
+            "[bold]Coverage candidates:[/bold] " + ", ".join(str(item["candidate"]) for item in coverage_rows)
         )
         table = Table(title="Evidence Coverage")
         table.add_column("Candidate")
@@ -371,26 +333,18 @@ def capture_review(
 
 
 def evidence_gap(
-    capture_dir: Annotated[
-        str, typer.Argument(help="Directory containing captured session files")
-    ],
+    capture_dir: Annotated[str, typer.Argument(help="Directory containing captured session files")],
     stress_dir: Annotated[
         Path | None,
-        typer.Option(
-            "--stress-dir", help="Optional stress-language artifact directory"
-        ),
+        typer.Option("--stress-dir", help="Optional stress-language artifact directory"),
     ] = None,
     json_out: Annotated[
         Path | None,
-        typer.Option(
-            "--json", help="Write structured coverage output to JSON"
-        ),
+        typer.Option("--json", help="Write structured coverage output to JSON"),
     ] = None,
     fixtures_dir: Annotated[
         Path,
-        typer.Option(
-            "--fixtures-dir", help="Replay-fixture metadata directory"
-        ),
+        typer.Option("--fixtures-dir", help="Replay-fixture metadata directory"),
     ] = Path("tests/fixtures/replay"),
     gate_config: Annotated[
         Path,
@@ -438,6 +392,7 @@ def evidence_gap(
 
 
 def register(app: typer.Typer) -> None:
+    """Register memory commands with the CLI app."""
     app.command("memory-snap", hidden=True)(memory_snap)
     app.command("optimize-prompts", hidden=True)(optimize_prompts)
     app.command("capture-summary", hidden=True)(capture_summary)

@@ -10,8 +10,7 @@ import os
 import re
 import time as time_module
 from dataclasses import dataclass
-from typing import Any, cast, TypeAlias
-from collections.abc import Mapping, MutableMapping
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
@@ -21,7 +20,10 @@ from pydantic import (
     model_validator,
 )
 
-from ..utils.event_logging import log_delta_compress
+from tok.utils.event_logging import log_delta_compress
+
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
 
 __all__ = [
     "TOOL_COMPRESS_THRESHOLD",
@@ -55,7 +57,8 @@ class StableResultPayload(BaseModel):
     def _semantic_hash_must_not_be_blank(cls, value: str) -> str:
         normalized = str(value or "").strip()
         if not normalized:
-            raise ValueError("blank semantic hash")
+            msg = "blank semantic hash"
+            raise ValueError(msg)
         return normalized
 
     @field_validator("summary", "skeleton")
@@ -69,9 +72,11 @@ class StableResultPayload(BaseModel):
     @model_validator(mode="after")
     def _reject_precision_payloads(self) -> StableResultPayload:
         if self.precision_read:
-            raise ValueError("precision reads must stay verbatim")
+            msg = "precision reads must stay verbatim"
+            raise ValueError(msg)
         if not self.summary and not self.skeleton:
-            raise ValueError("stable payload requires summary or skeleton")
+            msg = "stable payload requires summary or skeleton"
+            raise ValueError(msg)
         return self
 
     def render(self) -> str:
@@ -84,26 +89,20 @@ class StableResultPayload(BaseModel):
             payload_lines.append(f"@stable_skeleton |> {self.skeleton}")
         payload = "\n".join(payload_lines)
         if self.replayed_cached_bytes:
-            payload = (
-                ">>> replayed_cached_bytes|verified_unchanged\n" + payload
-            )
+            payload = ">>> replayed_cached_bytes|verified_unchanged\n" + payload
         return payload
 
 
 # Type alias for result cache entries (supports legacy formats)
 # Format: (content_hash, raw_content, timestamp) or legacy 2-tuple/1-tuple
-ResultCacheEntry: TypeAlias = (
-    tuple[str, str, float] | tuple[str, str] | tuple[str]
-)
+ResultCacheEntry: TypeAlias = tuple[str, str, float] | tuple[str, str] | tuple[str]
 
 # Maximum number of entries in the result cache
 RESULT_CACHE_MAX_SIZE = 256
 
 # ---------------------------------------------------------------------------
 
-_CUT_REJECTION_REASONS = frozenset(
-    {"non_user", "top_level_tool_result", "user_contains_tool_result_block"}
-)
+_CUT_REJECTION_REASONS = frozenset({"non_user", "top_level_tool_result", "user_contains_tool_result_block"})
 
 
 def classify_cut_eligibility(msg: dict[str, Any]) -> CutEligibility:
@@ -115,10 +114,7 @@ def classify_cut_eligibility(msg: dict[str, Any]) -> CutEligibility:
     if isinstance(content, str):
         return CutEligibility(True, "eligible")
     if isinstance(content, list):
-        if any(
-            isinstance(b, dict) and b.get("type") == "tool_result"
-            for b in content
-        ):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
             return CutEligibility(False, "user_contains_tool_result_block")
         return CutEligibility(True, "eligible")
     return CutEligibility(True, "eligible")
@@ -165,56 +161,76 @@ EDIT_LIKE_TOOLS = frozenset(
 
 _ERROR_EQUIVALENCE_PATTERNS = [
     (
-        re.compile(r"no such file|file not found|does not exist|enoent", re.I),
+        re.compile(r"no such file|file not found|does not exist|enoent", re.IGNORECASE),
         "enoent",
     ),
-    (re.compile(r"permission denied|access denied|eacces", re.I), "eacces"),
-    (re.compile(r"not found|cannot find|could not find", re.I), "not_found"),
     (
-        re.compile(r"regex.*error|error.*regex|invalid regex|bad regex", re.I),
+        re.compile(r"permission denied|access denied|eacces", re.IGNORECASE),
+        "eacces",
+    ),
+    (
+        re.compile(r"not found|cannot find|could not find", re.IGNORECASE),
+        "not_found",
+    ),
+    (
+        re.compile(r"regex.*error|error.*regex|invalid regex|bad regex", re.IGNORECASE),
         "regex_error",
     ),
     (
         re.compile(
             r"importerror|modulenotfounderror|no module named|import error",
-            re.I,
+            re.IGNORECASE,
         ),
         "import_error",
     ),
     (
-        re.compile(r"syntaxerror|parse.?error|parse error", re.I),
+        re.compile(r"syntaxerror|parse.?error|parse error", re.IGNORECASE),
         "syntax_error",
     ),
     (
         re.compile(
             r"attributeerror|has no attribute|no attribute|attribute error",
-            re.I,
+            re.IGNORECASE,
         ),
         "attr_error",
     ),
     (
-        re.compile(r"typeerror|incompatible type|type error", re.I),
+        re.compile(r"typeerror|incompatible type|type error", re.IGNORECASE),
         "type_error",
     ),
-    (re.compile(r"valueerror|invalid value|value error", re.I), "value_error"),
-    (re.compile(r"timeout|timed out|deadline exceeded", re.I), "timeout"),
+    (
+        re.compile(r"valueerror|invalid value|value error", re.IGNORECASE),
+        "value_error",
+    ),
+    (
+        re.compile(r"timeout|timed out|deadline exceeded", re.IGNORECASE),
+        "timeout",
+    ),
     (
         re.compile(
-            r"connection.*refused|connection.*reset|network.*error", re.I
+            r"connection.*refused|connection.*reset|network.*error",
+            re.IGNORECASE,
         ),
         "network_error",
     ),
     (
-        re.compile(r"command failed|exit code [0-9]+|non-zero exit", re.I),
+        re.compile(r"command failed|exit code [0-9]+|non-zero exit", re.IGNORECASE),
         "command_failed",
     ),
-    (re.compile(r"already exists|file exists", re.I), "already_exists"),
-    (re.compile(r"empty|zero bytes|no such", re.I), "empty_or_missing"),
+    (
+        re.compile(r"already exists|file exists", re.IGNORECASE),
+        "already_exists",
+    ),
+    (
+        re.compile(r"empty|zero bytes|no such", re.IGNORECASE),
+        "empty_or_missing",
+    ),
 ]
 
 
 def _normalize_error_content(raw: str) -> str | None:
-    """Extract canonical error type from raw error content.
+    """
+    Extract canonical error type from raw error content.
 
     Returns normalized error string like '|err:enoent|' or None if no pattern matches.
     """
@@ -302,9 +318,7 @@ QUESTION_PREFIXES = (
     "did ",
 )
 
-TOK_PROTOCOL_LAW = (
-    "[Tok law] No JSON, no prose. Use @Tool name=: body. SNAP: SNAP\n"
-)
+TOK_PROTOCOL_LAW = "[Tok law] No JSON, no prose. Use @Tool name=: body. SNAP: SNAP\n"
 
 TOK_OUTPUT_DIRECTIVE = """\
 [Tok Mode] Natural responses allowed. No special formatting required.
@@ -313,9 +327,7 @@ Reply normally using plain text. Use tools naturally when needed.
 
 TOK_TOOL_COMPAT_DIRECTIVE = "Plain text. Tool calls only. Omit all headers.\n"
 
-TOK_OUTPUT_DIRECTIVE_MINIMAL = (
-    "[Tok Mode] Natural responses allowed. No special formatting required.\n"
-)
+TOK_OUTPUT_DIRECTIVE_MINIMAL = "[Tok Mode] Natural responses allowed. No special formatting required.\n"
 
 TOK_OUTPUT_DIRECTIVE_REINFORCED = """\
 [Tok — PROTOCOL REINFORCEMENT]
@@ -356,9 +368,7 @@ _SEMANTIC_HASH_MIN_CHARS = int(os.getenv("TOK_SEMANTIC_HASH_MIN_CHARS", "200"))
 
 def _compute_semantic_hash(content: str) -> str:
     """Return a short SHA-256 hex digest of the content."""
-    return hashlib.sha256(
-        content.encode("utf-8", errors="replace")
-    ).hexdigest()[:16]
+    return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
 def text_of(content: str | list[dict[str, Any]]) -> str:
@@ -454,7 +464,8 @@ def _summarize_causal_failures(
     error_scores: dict[str, int],
     blocker_scores: dict[str, int],
 ) -> None:
-    """Augment error/blocker scores with causal context from tool_result pairs.
+    """
+    Augment error/blocker scores with causal context from tool_result pairs.
 
     For each tool_use/tool_result pair whose result contains an error signal,
     records "cmd→error" so errs/blockers reflect *why* the failure happened.
@@ -468,10 +479,7 @@ def _summarize_causal_failures(
         if not isinstance(content, list):
             continue
         for block in content:
-            if (
-                not isinstance(block, dict)
-                or block.get("type") != "tool_result"
-            ):
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
             tool_id = str(block.get("tool_use_id", ""))
             raw = block.get("content", "")
@@ -492,7 +500,8 @@ def _summarize_decision_hypotheses(
     next_scores: dict[str, int],
     _question_scores: dict[str, int],
 ) -> None:
-    """Augment next/questions scores with decision+rationale snippets.
+    """
+    Augment next/questions scores with decision+rationale snippets.
 
     Looks for assistant lines that state a reason for the planned action
     (e.g., "next step because …") and promotes them in next_scores.
@@ -511,10 +520,7 @@ def _summarize_decision_hypotheses(
         for line in msg_text.splitlines():
             stripped = line.strip()
             lowered = stripped.lower()
-            if any(
-                lowered.startswith(p)
-                for p in ("next", "i will", "i'll", "plan", "then")
-            ):
+            if any(lowered.startswith(p) for p in ("next", "i will", "i'll", "plan", "then")):
                 for trigger in rationale_triggers:
                     if trigger in lowered:
                         snippet = re.sub(r"\s+", "_", stripped[:60])
@@ -604,7 +610,8 @@ def _apply_result_cache(
     bypass_cache: bool = False,
     ttl_seconds: int = 1800,
 ) -> tuple[str, int]:
-    """Apply general result cache dedup for any tool result.
+    """
+    Apply general result cache dedup for any tool result.
 
     Returns (compressed_text, chars_saved).
     """
@@ -644,9 +651,7 @@ def _apply_result_cache(
             prefer_normalized_error=True,
         )
 
-    cached_hash, cached_raw, timestamp, entry_length = _unpack_cache_entry(
-        cached_entry
-    )
+    cached_hash, cached_raw, timestamp, entry_length = _unpack_cache_entry(cached_entry)
 
     # Check staleness for entries with timestamps (3-tuple) or legacy entries (1/2-tuple)
     if _is_cache_entry_stale(timestamp, ttl_seconds):
@@ -695,7 +700,73 @@ def _apply_result_cache(
     )
 
 
-def _build_cache_key(tool_name: Any, context: dict[str, Any]) -> str:
+def _process_cache_hit(
+    raw: str,
+    raw_text: str,
+    context: dict[str, Any],
+    tool_name: str | None,
+    normalized_tool_name: str,
+    is_precision_read: bool,
+    is_file_like: bool,
+    result_cache: MutableMapping[str, ResultCacheEntry],
+    cache_key: str,
+    entry_length: int,
+    cached_hash: str,
+    cached_raw: str,
+    cached_raw_text: str,
+    compression_level: str,
+) -> tuple[str, int]:
+    """Process a cache hit and return compressed result."""
+    if _is_content_hash_match(raw_text, cached_raw_text):
+        _update_cache_after_hit(
+            result_cache,
+            cache_key,
+            host_stub_replayed=False,
+            entry_length=entry_length,
+            cached_hash=cached_hash,
+            cached_raw=cached_raw,
+            content_hash=cached_hash,
+            raw=raw,
+        )
+        return _serve_cached_content_hash_match(
+            raw,
+            raw_text,
+            context,
+            tool_name,
+            normalized_tool_name,
+            is_precision_read,
+            is_file_like,
+            result_cache,
+            cache_key,
+            entry_length,
+            cached_hash,
+            cached_raw,
+            host_stub_replayed=False,
+            compression_level=compression_level,
+        )
+
+    # Content changed - need to compute diff
+    diff_lines = _compute_diff_lines(cached_raw_text, raw_text)
+    if diff_lines is None or len(diff_lines) > 1000:
+        return _handle_diff_result(
+            raw_text,
+            cached_raw_text,
+            hashlib.sha256(raw_text.encode()).hexdigest()[:8],
+            cached_hash,
+            _normalize_error_content(raw_text),
+            tool_name,
+            compression_level,
+            context,
+        )
+    return _build_diff_result(
+        raw_text,
+        tool_name,
+        normalized_tool_name,
+        diff_lines,
+    )
+
+
+def _build_cache_key(tool_name: str | None, context: dict[str, Any]) -> str:
     serialized_args = context.get("args")
     args_str = json.dumps(serialized_args, sort_keys=True, default=str)
     raw_cache_key = f"{tool_name or ''}:{args_str}"
@@ -709,7 +780,7 @@ def _store_cache_entry(
     raw: str,
     is_file_like: bool,
     context: dict[str, Any],
-    tool_name: Any,
+    tool_name: str | None,
     compression_level: str,
     prefer_normalized_error: bool,
 ) -> tuple[str, int]:
@@ -732,7 +803,8 @@ def _store_cache_entry(
 def _evict_cache_entry(
     result_cache: MutableMapping[str, ResultCacheEntry],
 ) -> None:
-    """Evict oldest cache entry when cache exceeds size limit.
+    """
+    Evict oldest cache entry when cache exceeds size limit.
 
     Note: This operation is not atomic. If thread-safety is required,
     callers must ensure external synchronization of result_cache.
@@ -740,9 +812,7 @@ def _evict_cache_entry(
     while len(result_cache) > RESULT_CACHE_MAX_SIZE:
         try:
             oldest = next(iter(result_cache))
-            logger.debug(
-                "result_cache_evict: key=%s size=%d", oldest, len(result_cache)
-            )
+            logger.debug("result_cache_evict: key=%s size=%d", oldest, len(result_cache))
             del result_cache[oldest]
         except StopIteration:
             break
@@ -756,7 +826,7 @@ def _unpack_cache_entry(
         return (
             str(entry[0]),
             str(entry[1]),
-            cast(float | None, entry[2]),
+            cast("float | None", entry[2]),
             entry_length,
         )
     if entry_length == 2:
@@ -772,9 +842,7 @@ def _is_cache_entry_stale(timestamp: float | None, ttl_seconds: int) -> bool:
     return time_module.time() - timestamp > ttl_seconds
 
 
-def _is_file_mtime_changed(
-    context: dict[str, Any], cached_timestamp: float | None
-) -> bool:
+def _is_file_mtime_changed(context: dict[str, Any], cached_timestamp: float | None) -> bool:
     """Check if a file's mtime changed since the cache entry was stored."""
     if cached_timestamp is None:
         return False
@@ -784,13 +852,7 @@ def _is_file_mtime_changed(
     tool_name = str(context.get("name", "")).lower()
     if tool_name not in FILE_LIKE_TOOLS:
         return False
-    path = str(
-        args.get("path")
-        or args.get("file_path")
-        or args.get("AbsolutePath")
-        or args.get("TargetFile")
-        or ""
-    )
+    path = str(args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or "")
     if not path:
         return False
     try:
@@ -838,11 +900,23 @@ def _update_cache_after_hit(
 
 def _count_changed_lines(diff_lines: list[str]) -> int:
     """Count the number of changed lines in a unified diff."""
-    return sum(
-        1
-        for l in diff_lines
-        if l.startswith(("+", "-")) and not l.startswith(("+++", "---"))
+    return sum(1 for line in diff_lines if line.startswith(("+", "-")) and not line.startswith(("+++", "---")))
+
+
+def _compute_diff_lines(old_text: str, new_text: str) -> list[str] | None:
+    """Compute unified diff between two texts."""
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+    diff = list(
+        difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile="old",
+            tofile="new",
+            lineterm="",
+        )
     )
+    return diff if diff else None
 
 
 def _should_strip_diff_whitespace(normalized_tool_name: str) -> bool:
@@ -866,7 +940,7 @@ def _handle_hash_mismatch_result(
     content_hash: str,
     cached_hash: str,
     normalized_error: str | None,
-    tool_name: Any,
+    tool_name: str | None,
     compression_level: str,
     context: dict[str, Any],
 ) -> tuple[str, int]:
@@ -892,13 +966,13 @@ def _handle_diff_result(
     content_hash: str,
     cached_hash: str,
     normalized_error: str | None,
-    tool_name: Any,
+    tool_name: str | None,
     compression_level: str,
     context: dict[str, Any],
 ) -> tuple[str, int]:
     """Handle the case when diff is empty or too large."""
     # Content differs but diff is empty (edge case with trailing newlines)
-    if not content_hash != cached_hash:
+    if content_hash == cached_hash:
         pass  # Treat as changed content
     elif normalized_error:
         stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
@@ -917,7 +991,7 @@ def _handle_diff_result(
 
 def _build_diff_result(
     raw_text: str,
-    tool_name: Any,
+    tool_name: str | None,
     normalized_tool_name: str,
     diff_lines: list[str],
 ) -> tuple[str, int]:
@@ -926,105 +1000,13 @@ def _build_diff_result(
     header = f">>> tool:{tool_name}|delta|changed_lines:{changed_lines}"
     diff_text = "".join(diff_lines)
     if _should_strip_diff_whitespace(normalized_tool_name):
-        stripped_diff = [l for l in diff_lines if not l.startswith(" ")]
+        stripped_diff = [line for line in diff_lines if not line.startswith(" ")]
         diff_text = "".join(stripped_diff)
     result = header + "\n" + diff_text
     saved = len(raw_text) - len(result)
     if saved > 0:
         log_delta_compress(str(tool_name), len(raw_text), len(result))
     return result, saved
-
-
-def _process_cache_hit(
-    raw: str,
-    raw_text: str,
-    context: dict[str, Any],
-    tool_name: Any,
-    normalized_tool_name: str,
-    is_precision_read: bool,
-    is_file_like: bool,
-    result_cache: MutableMapping[str, ResultCacheEntry],
-    cache_key: str,
-    entry_length: int,
-    cached_hash: str,
-    cached_raw: str,
-    cached_raw_text: str,
-    compression_level: str,
-) -> tuple[str, int]:
-    stub_text = raw_text.strip()
-    host_stub_replayed = False
-    if _should_replay_host_stub(
-        is_file_like,
-        cached_raw_text,
-        stub_text,
-        raw_text,
-    ):
-        host_stub_replayed = True
-        raw = cached_raw
-        raw_text = cached_raw_text
-
-    if _is_content_hash_match(raw_text, cached_raw_text):
-        return _serve_cached_content_hash_match(
-            raw,
-            raw_text,
-            context,
-            tool_name,
-            normalized_tool_name,
-            is_precision_read,
-            is_file_like,
-            result_cache,
-            cache_key,
-            entry_length,
-            cached_hash,
-            cached_raw,
-            host_stub_replayed,
-            compression_level,
-        )
-
-    normalized_error = _normalize_error_content(raw_text)
-    content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
-
-    if normalized_error:
-        cached_normalized = _normalize_error_content(cached_raw_text)
-        if cached_normalized and cached_normalized == normalized_error:
-            stub = f">>> tool:{tool_name}|err:{normalized_error[5:-1]}|cached"
-            return stub, len(raw_text) - len(stub)
-
-    old_lines = cached_raw_text.splitlines(keepends=True)
-    new_lines = raw_text.splitlines(keepends=True)
-    diff_lines = list(difflib.unified_diff(old_lines, new_lines))
-    diff_text = "".join(diff_lines)
-
-    _update_cache_after_hit(
-        result_cache,
-        cache_key,
-        host_stub_replayed,
-        entry_length,
-        cached_hash,
-        cached_raw,
-        content_hash,
-        raw,
-    )
-
-    if not diff_lines or len(diff_text) >= 0.7 * len(raw_text):
-        if not diff_lines and content_hash == cached_hash:
-            stub = f">>> tool:{tool_name}|unchanged|cached"
-            log_delta_compress(str(tool_name), len(raw_text), len(stub))
-            return stub, len(raw_text) - len(stub)
-        return _handle_diff_result(
-            raw_text,
-            cached_raw_text,
-            content_hash,
-            cached_hash,
-            normalized_error,
-            tool_name,
-            compression_level,
-            context,
-        )
-
-    return _build_diff_result(
-        raw_text, tool_name, normalized_tool_name, diff_lines
-    )
 
 
 def _should_replay_host_stub(
@@ -1039,16 +1021,14 @@ def _should_replay_host_stub(
         return True
     if "unchanged since last read" in stub_text.lower():
         return True
-    if len(raw_text) < 80 and len(cached_raw_text) > 200:
-        return True
-    return False
+    return bool(len(raw_text) < 80 and len(cached_raw_text) > 200)
 
 
 def _serve_cached_content_hash_match(
     raw: str,
     raw_text: str,
     context: dict[str, Any],
-    tool_name: Any,
+    tool_name: str | None,
     normalized_tool_name: str,
     is_precision_read: bool,
     is_file_like: bool,
@@ -1088,22 +1068,19 @@ def _serve_cached_content_hash_match(
 
 def _build_stable_result_payload(
     raw_text: str,
-    tool_name: Any,
+    tool_name: str | None,
     host_stub_replayed: bool,
 ) -> str:
     try:
-        from ..runtime.repeat_targets import (
+        from tok.runtime.repeat_targets import (
             build_file_skeleton,
             build_file_summary,
         )
 
         stable_hash = _compute_semantic_hash(raw_text)
-        summary = (
-            build_file_summary(raw_text, max_chars=280, max_lines=12)
-            or " ".join(raw_text.split())[:280]
-        )
+        summary = build_file_summary(raw_text, max_chars=280, max_lines=12) or " ".join(raw_text.split())[:280]
         skeleton = build_file_skeleton(raw_text, max_chars=280, max_lines=14)
-        payload = StableResultPayload.model_validate(
+        return StableResultPayload.model_validate(
             {
                 "semantic_hash": stable_hash,
                 "verified_unchanged": True,
@@ -1112,14 +1089,11 @@ def _build_stable_result_payload(
                 "replayed_cached_bytes": host_stub_replayed,
             }
         ).render()
-        return payload
     except ValidationError:
         logger.debug("stable_payload_validation_failed for tool %s", tool_name)
         return f">>> tool:{tool_name}|stable_payload_validation_failed"
     except Exception as e:
-        logger.debug(
-            "stable_payload_build_failed for tool %s: %s", tool_name, e
-        )
+        logger.debug("stable_payload_build_failed for tool %s: %s", tool_name, e)
         return f">>> tool:{tool_name}|stable_payload_build_failed"
 
 
@@ -1133,9 +1107,7 @@ def _apply_file_cache(
     return _apply_result_cache(raw, context, file_cache)
 
 
-def _make_semantic_cache_key(
-    context: dict[str, Any] | None, _raw: str
-) -> str | None:
+def _make_semantic_cache_key(context: dict[str, Any] | None, _raw: str) -> str | None:
     """Return a stable cache key for (tool_name, args) if context is available."""
     if not context:
         return None
@@ -1172,11 +1144,7 @@ def _make_semantic_cache_key(
         context.get("path")
         or (raw_args.get("path") if isinstance(raw_args, dict) else None)
         or (raw_args.get("file_path") if isinstance(raw_args, dict) else None)
-        or (
-            raw_args.get("AbsolutePath")
-            if isinstance(raw_args, dict)
-            else None
-        )
+        or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
         or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
     )
     raw_query = (
@@ -1190,7 +1158,7 @@ def _make_semantic_cache_key(
     normalized_path = ""
     if raw_path:
         try:
-            from ..runtime.repeat_targets import normalize_path_target
+            from tok.runtime.repeat_targets import normalize_path_target
 
             normalized_path = normalize_path_target(str(raw_path))
         except Exception:
@@ -1203,19 +1171,14 @@ def _make_semantic_cache_key(
         "args": args_for_hash,
     }
     args_hash = hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8", errors="replace"
-        )
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8", errors="replace")
     ).hexdigest()[:16]
     return f"{tool_name}:{args_hash}"
 
 
 def compress_tool_results(
     messages: list[dict[str, Any]],
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None = None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
@@ -1273,9 +1236,7 @@ def inject_system_additions(
     )
 
 
-def _should_include_tok_state(
-    tok_state: str | None, *, tool_compatible: bool
-) -> bool:
+def _should_include_tok_state(tok_state: str | None, *, tool_compatible: bool) -> bool:
     if not tok_state:
         return False
     stripped = tok_state.strip()
@@ -1292,9 +1253,7 @@ def _should_include_tok_state(
     return stripped.startswith(">>> ") and len(stripped) > len(">>> ")
 
 
-RECENT_WINDOW_THRESHOLD = (
-    8_000  # chars — compress recent-window results larger than this
-)
+RECENT_WINDOW_THRESHOLD = 8_000  # chars — compress recent-window results larger than this
 RECENT_WINDOW_EVIDENCE_THRESHOLD = 1_200  # chars — file/search-like recent evidence should compress much sooner
 
 
@@ -1332,8 +1291,7 @@ def _extract_goal_from_line(line: str) -> str | None:
     ):
         return line[:60]
     if line.startswith(("- ", "* ", "1. ")) and any(
-        keyword in lower
-        for keyword in ("should", "must", "need to", "implement")
+        keyword in lower for keyword in ("should", "must", "need to", "implement")
     ):
         return re.sub(r"^[-*1.\s]+", "", line)[:60]
     return None
@@ -1342,10 +1300,7 @@ def _extract_goal_from_line(line: str) -> str | None:
 def _extract_constraint_from_line(line: str) -> str | None:
     """Extract constraint from a single line if it matches constraint patterns."""
     lower = line.lower()
-    if any(
-        keyword in lower
-        for keyword in ("avoid", "don't", "do not", "never", "only")
-    ):
+    if any(keyword in lower for keyword in ("avoid", "don't", "do not", "never", "only")):
         return line[:60]
     return None
 
@@ -1369,10 +1324,7 @@ def _filter_prompt_lines(lines: list[str]) -> list[str]:
         if (
             line.startswith(">>>")
             or "optimized task context" in lower
-            or any(
-                line.startswith(prefix)
-                for prefix in ("goal:", "files:", "constraints:")
-            )
+            or any(line.startswith(prefix) for prefix in ("goal:", "files:", "constraints:"))
         ):
             continue
         filtered.append(line)
@@ -1382,7 +1334,8 @@ def _filter_prompt_lines(lines: list[str]) -> list[str]:
 def _extract_prompt_content(
     filtered_lines: list[str],
 ) -> tuple[list[str], list[str], set[str]]:
-    """Extract goals, constraints, and files from filtered lines.
+    """
+    Extract goals, constraints, and files from filtered lines.
 
     Returns (goals, constraints, files).
     """
@@ -1433,11 +1386,7 @@ def compress_user_prompt(prompt: str) -> str:
     filtered_lines = _filter_prompt_lines(lines)
 
     if not filtered_lines and "optimized task context" in prompt.lower():
-        return re.sub(
-            r"### Optimized Task Context\n", "", prompt, flags=re.I
-        ).strip()
+        return re.sub(r"### Optimized Task Context\n", "", prompt, flags=re.IGNORECASE).strip()
 
     goals, constraints, files = _extract_prompt_content(filtered_lines)
-    return _build_prompt_result(
-        goals, constraints, files, filtered_lines, prompt
-    )
+    return _build_prompt_result(goals, constraints, files, filtered_lines, prompt)

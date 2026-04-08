@@ -1,4 +1,5 @@
-"""Pure scoring functions for smoothness calculation.
+"""
+Pure scoring functions for smoothness calculation.
 
 This module contains the penalty/bonus tables and pure functions for computing
 smoothness scores. No runtime state or I/O here.
@@ -42,7 +43,8 @@ def score_turn(
     task_id: str,
     events: list[SmoothnessEvent],
 ) -> TurnSmoothnessReport:
-    """Compute smoothness score for a single turn.
+    """
+    Compute smoothness score for a single turn.
 
     Args:
         turn_id: Unique identifier for this turn
@@ -51,6 +53,7 @@ def score_turn(
 
     Returns:
         TurnSmoothnessReport with score clamped to 0-100
+
     """
     score = TURN_START_SCORE
 
@@ -78,7 +81,8 @@ def score_task(
     task_id: str,
     turn_reports: list[TurnSmoothnessReport],
 ) -> TaskSmoothnessReport:
-    """Aggregate smoothness scores across multiple turns in a task.
+    """
+    Aggregate smoothness scores across multiple turns in a task.
 
     Args:
         task_id: Unique identifier for this task
@@ -86,6 +90,7 @@ def score_task(
 
     Returns:
         TaskSmoothnessReport with aggregated metrics
+
     """
     if not turn_reports:
         return TaskSmoothnessReport(
@@ -124,22 +129,22 @@ def score_task(
 
 
 def _compute_labour_index(events: list[SmoothnessEvent]) -> int:
-    """Compute labour index for a turn.
+    """
+    Compute labour index for a turn.
 
     Labour index = stream recoveries + repeated reads + (thinking mutations * 2) + user interruptions
     """
     labour = 0
 
     for event in events:
-        if event.event_type == SmoothnessEventType.STREAM_RECOVERY_STARTED:
-            labour += 1
-        elif event.event_type == SmoothnessEventType.REPEATED_ACTIVE_FILE_READ:
+        if event.event_type in (
+            SmoothnessEventType.STREAM_RECOVERY_STARTED,
+            SmoothnessEventType.REPEATED_ACTIVE_FILE_READ,
+        ):
             labour += 1
         elif event.event_type == SmoothnessEventType.THINKING_BLOCK_MUTATION:
             labour += 2
-        elif (
-            event.event_type == SmoothnessEventType.USER_INTERRUPT_REDIRECTION
-        ):
+        elif event.event_type == SmoothnessEventType.USER_INTERRUPT_REDIRECTION:
             labour += 1
 
     return labour

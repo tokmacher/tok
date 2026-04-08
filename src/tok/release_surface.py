@@ -1,13 +1,26 @@
-"""Release-surface manifest for Tok 0.1."""
+"""
+Release-surface manifest for Tok 0.1.
+
+This manifest defines the defended 0.1.0 public surface.
+Anything not listed here is explicitly not part of the defended surface.
+"""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 SUPPORTED_ROOT_EXPORTS: tuple[str, ...] = (
+    # Defended 0.1.0 surface - promoted per Plan 10C.1
     "Bridge",
+)
+
+CANDIDATE_PENDING_PROOF: tuple[str, ...] = (
+    # Demoted from SUPPORTED_ROOT_EXPORTS - pending smoke gate completion
+    # Re-promotion order defined in hardening_ledger.md Plan 10C
     "BlockSchema",
     "BridgeUnavailableError",
     "CompressionError",
@@ -75,7 +88,7 @@ EXPERIMENTAL_CLI_ROOT_COMMANDS: tuple[str, ...] = (
 )
 
 
-def _collect_visible_cli_names(root_app: Any | None) -> set[str]:
+def _collect_visible_cli_names(root_app: object | None) -> set[str]:
     """Extract visible CLI command/group names from root app."""
     visible: set[str] = set()
     if root_app is None:
@@ -105,7 +118,7 @@ def validate_release_surface(
     *,
     exported_names: Iterable[str],
     cli_help_output: str,
-    root_app: Any | None = None,
+    root_app: object | None = None,
 ) -> list[str]:
     """Return release-surface violations for supported public entrypoints."""
     failures: list[str] = []

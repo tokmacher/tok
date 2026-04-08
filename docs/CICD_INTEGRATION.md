@@ -4,7 +4,8 @@ Using Tok with continuous integration and delivery pipelines.
 
 ## Running Tok in CI
 
-Tok is designed for local development with Claude Code. It is not currently designed to run as a CI service. However, you can use Tok's test and release gate tooling in CI:
+Tok is designed for local development with Claude Code. It is not currently designed to
+run as a CI service. However, you can use Tok's test and release gate tooling in CI:
 
 ### Release Gate Check
 
@@ -31,16 +32,16 @@ pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
 python -m build
 ```
 
-`python -m build` is still the canonical release check. If you are validating in
-an offline or sandboxed environment that already has build requirements installed,
+`python -m build` is still the canonical release check. If you are validating in an
+offline or sandboxed environment that already has build requirements installed,
 `python -m build --no-isolation` is an acceptable fallback for local verification.
 
-Tag pushes (`v*`) trigger the release workflow, which builds the package, publishes
-to PyPI using GitHub trusted publishing, and creates a GitHub Release with the built
+Tag pushes (`v*`) trigger the release workflow, which builds the package, publishes to
+PyPI using GitHub trusted publishing, and creates a GitHub Release with the built
 artifacts attached.
 
-The security workflow runs dependency review on pull requests and CodeQL on `main`
-plus a weekly schedule.
+The security workflow runs dependency review on pull requests and CodeQL on `main` plus
+a weekly schedule.
 
 ## CI Status Badges
 
@@ -59,5 +60,5 @@ pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
 python -m build
 ```
 
-For the release candidate itself, use the same sequence and then verify the built
-wheel includes the bundled shell integration script and other package data.
+For the release candidate itself, use the same sequence and then verify the built wheel
+includes the bundled shell integration script and other package data.

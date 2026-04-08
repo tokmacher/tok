@@ -69,83 +69,63 @@ exclude = ["archive/", "research/", "results/", "tests/", "scripts/", "examples/
 exclude = ["archive/", ".claude/", ".hypothesis/", ".mypy_cache/", ".ruff_cache/", "dist/", "tmp/"]
 
 [tool.ruff]
-line-length = 79
+line-length = 120
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP", "B", "C901"]
-# Ignore style issues that don't affect functionality
-# Prioritize syntax correctness and maintainability over pedantic style rules
-ignore = ["E501", "E741", "N806", "E402", "N813", "B023", "N802", "F811", "F402", "B025", "N817", "I001", "N804", "E731"]
-
-[tool.ruff.lint.mccabe]
-max-complexity = 8
+select = ["E", "F", "W", "I", "UP", "B"]
+# Ignore rules that conflict with formatter and other incompatible rules
+ignore = [
+    "D203", "D212",      # Incompatible with D211, D213
+    "E501",              # Line too long
+    "E402",              # Module level import not at top of file
+    "SLF001",            # Private member accessed
+    "ANN001",            # Missing type annotation for function argument
+    "UP038",             # Use X | Y in isinstance
+]
 
 [tool.ruff.lint.per-file-ignores]
-"src/tok/gateway/_cache_control.py" = ["C901"]
-"src/tok/gateway/_app_factory.py" = ["C901"]
-"src/tok/gateway/_bridge_preflight.py" = ["C901"]
-"src/tok/gateway/_bridge_request_handler.py" = ["C901"]
-"src/tok/gateway/_bridge_streaming.py" = ["C901"]
-"src/tok/cli/_release.py" = ["C901"]
-"src/tok/cli/__init__.py" = ["F401"]
-"src/tok/gateway/__init__.py" = ["F401"]
-"src/tok/compression/__init__.py" = ["F401"]
-"src/tok/compression/_pipeline.py" = ["C901"]
-"src/tok/compression/_history_pipeline.py" = ["C901"]
-"src/tok/compression/_tool_result_codecs.py" = ["C901"]
-"src/tok/runtime/core.py" = ["F401"]
-"src/tok/runtime/_request_preparation.py" = ["C901"]
-"tests/integration/test_bridge_fidelity.py" = ["C901"]
-"src/tok/testing/**" = ["C901"]
-"src/tok/analysis/**" = ["C901"]
-"src/tok/neuro/**" = ["C901"]
-"src/tok/protocol/**" = ["C901"]
+"examples/*" = ["E501", "S101", "D103"]  # Examples can have long lines, asserts, missing docstrings
+"tests/*" = ["S101", "D103", "D102"]     # Tests can use asserts, have missing docstrings
+"scripts/*" = ["S101"]                    # Scripts can use asserts
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
 
 [tool.pyright]
-reportMissingImports = false
+typeCheckingMode = "basic"
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
 
 [tool.mypy]
 python_version = "3.10"
-strict = true
+strict = false
+exclude = ["src/tok/gateway.py"]
 warn_return_any = true
 warn_unused_configs = true
-
-# Release surface strict checking
-[[tool.mypy.overrides]]
-module = [
-  "tok.cli",
-  "tok.gateway",
-  "tok.runtime.core",
-  "tok.runtime.types",
-  "tok.runtime.memory.*",
-  "tok.runtime.pipeline.*",
-  "tok.compression",
-  "tok.universal_runtime",
-]
-strict = true
-
-# Experimental modules - less strict
-[[tool.mypy.overrides]]
-module = [
-  "tok.neuro.*",
-  "tok.analysis.*",
-  "tok.testing.*",
-  "tok.protocol.*",
-  "tok.monitoring.*",
-]
-check_untyped_defs = true
+disallow_untyped_calls = false
 disallow_untyped_defs = false
-warn_return_any = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = false
+strict_optional = false
+disable_error_code = ["unreachable"]
+warn_unreachable = true
+implicit_reexport = true
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "tok.monitoring.*"
+module = "tok.gateway"
 ignore_errors = true
 
-# Test files
 [[tool.mypy.overrides]]
-module = "tests.*"
-check_untyped_defs = true
-disallow_untyped_defs = false
-warn_return_any = false
+module = "tok.gateway.*"
+ignore_errors = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

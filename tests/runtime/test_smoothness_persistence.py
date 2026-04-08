@@ -1,18 +1,16 @@
-"""Tests for smoothness data persistence in session state.
+"""
+Tests for smoothness data persistence in session state.
 
 These tests verify that smoothness reports flow correctly through
 RuntimeSession and are accessible for policy decisions.
 """
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.smoothness.models import (
-    SmoothnessEventType,
-    TokMode,
-)
+from tok.runtime.smoothness.models import SmoothnessEventType, TokMode
 from tok.runtime.smoothness.tracker import SmoothnessTracker
 
 
-def test_finished_turn_updates_session_state():
+def test_finished_turn_updates_session_state() -> None:
     """Confirm finish_turn() updates RuntimeSession smoothness fields."""
     session = RuntimeSession()
     tracker = SmoothnessTracker()
@@ -42,7 +40,7 @@ def test_finished_turn_updates_session_state():
     assert session.smoothness_event_counts.get("stream_read_error") == 1
 
 
-def test_current_task_score_updates_across_turns():
+def test_current_task_score_updates_across_turns() -> None:
     """Confirm task report updates across multiple turns."""
     session = RuntimeSession()
     tracker = SmoothnessTracker()
@@ -92,7 +90,7 @@ def test_current_task_score_updates_across_turns():
     assert session.smoothness_event_counts.get("stream_read_error") == 1
 
 
-def test_labour_index_updates_correctly():
+def test_labour_index_updates_correctly() -> None:
     """Confirm labour index is tracked correctly in session state."""
     session = RuntimeSession()
     tracker = SmoothnessTracker()
@@ -118,7 +116,7 @@ def test_labour_index_updates_correctly():
     assert session.latest_turn_labour_index == 3
 
 
-def test_tok_mode_updates_correctly():
+def test_tok_mode_updates_correctly() -> None:
     """Confirm Tok mode is tracked correctly in session state."""
     session = RuntimeSession()
     tracker = SmoothnessTracker()

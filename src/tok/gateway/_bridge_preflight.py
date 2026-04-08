@@ -1,18 +1,19 @@
-from __future__ import annotations
-
 """Preflight helpers for bridge request validation and local recovery."""
 
+from __future__ import annotations
+
+import contextlib
 import copy
 import json
 from typing import Any
 
 from fastapi import Response
 
-from ..runtime._request_preparation import (
+from tok.runtime._request_preparation import (
     _restore_latest_assistant_thinking,
     _snapshot_latest_assistant_thinking,
 )
-from ..runtime.pipeline.request_validation import (
+from tok.runtime.pipeline.request_validation import (
     bridge_strict_failure_signals,
     canonicalize_anthropic_bridge_body,
     has_blocking_outgoing_failures,
@@ -24,7 +25,8 @@ from ..runtime.pipeline.request_validation import (
     validate_anthropic_bridge_body,
     validate_anthropic_outgoing_bridge_body,
 )
-from ..runtime.smoothness.models import SmoothnessEventType
+from tok.runtime.smoothness.models import SmoothnessEventType
+
 from . import (
     BridgeSession,
     _log_bridge_body_structure,
@@ -59,10 +61,7 @@ _LOCAL_INVALID_TOOL_HISTORY_FAILURES = frozenset(
 def _should_block_invalid_tool_history_locally(
     strict_failures: list[str],
 ) -> bool:
-    return any(
-        failure in _LOCAL_INVALID_TOOL_HISTORY_FAILURES
-        for failure in strict_failures
-    )
+    return any(failure in _LOCAL_INVALID_TOOL_HISTORY_FAILURES for failure in strict_failures)
 
 
 def _should_return_read_burst_hint(failures: list[str]) -> bool:
@@ -147,11 +146,7 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
         segments = _assistant_tool_use_text_segments(content)
         if len(segments) == 1 and segments[0].get("suffix_text"):
             reordered = copy.deepcopy(message)
-            reordered["content"] = (
-                segments[0]["prefix_text"]
-                + segments[0]["suffix_text"]
-                + segments[0]["tool_uses"]
-            )
+            reordered["content"] = segments[0]["prefix_text"] + segments[0]["suffix_text"] + segments[0]["tool_uses"]
             rewritten_messages.append(reordered)
             changed = True
             signals["tok_bridge_tool_use_suffix_text_reordered"] = (
@@ -164,9 +159,7 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
             index += 1
             continue
 
-        next_message = (
-            messages[index + 1] if index + 1 < len(messages) else None
-        )
+        next_message = messages[index + 1] if index + 1 < len(messages) else None
         if not (
             isinstance(next_message, dict)
             and str(next_message.get("role", "")).strip() == "user"
@@ -183,9 +176,7 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
             for block in next_content
             if isinstance(block, dict) and block.get("type") == "tool_result"
         ]
-        if len(user_tool_result_blocks) != sum(
-            len(segment["tool_uses"]) for segment in segments
-        ):
+        if len(user_tool_result_blocks) != sum(len(segment["tool_uses"]) for segment in segments):
             rewritten_messages.append(copy.deepcopy(message))
             index += 1
             continue
@@ -201,18 +192,12 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
         result_index = 0
         for segment in segments:
             assistant_message = copy.deepcopy(message)
-            assistant_message["content"] = (
-                segment["prefix_text"]
-                + segment["suffix_text"]
-                + segment["tool_uses"]
-            )
+            assistant_message["content"] = segment["prefix_text"] + segment["suffix_text"] + segment["tool_uses"]
             rewritten_messages.append(assistant_message)
             segment_tool_use_count = len(segment["tool_uses"])
             if segment_tool_use_count:
                 user_message = copy.deepcopy(next_message)
-                user_message["content"] = user_tool_result_blocks[
-                    result_index : result_index + segment_tool_use_count
-                ]
+                user_message["content"] = user_tool_result_blocks[result_index : result_index + segment_tool_use_count]
                 rewritten_messages.append(user_message)
                 result_index += segment_tool_use_count
         index += 2
@@ -265,9 +250,7 @@ def _large_file_read_burst_response(message: str) -> Response:
     )
 
 
-def _merge_signal_counts(
-    target: dict[str, int], extra: dict[str, int] | None
-) -> None:
+def _merge_signal_counts(target: dict[str, int], extra: dict[str, int] | None) -> None:
     if not extra:
         return
     for key, value in extra.items():
@@ -288,16 +271,10 @@ def _capture_outgoing_guard_forensics(
         "event": event,
         "strict_failures": failures,
         "behavior_signals": behavior_signals,
-        "prepared_summary": summarize_message_structure(
-            body.get("messages", [])
-        ),
+        "prepared_summary": summarize_message_structure(body.get("messages", [])),
         "prepared_pairing": summarize_bridge_pairing(body.get("messages", [])),
-        "provider_safe_summary": summarize_message_structure(
-            original_body.get("messages", [])
-        ),
-        "provider_safe_pairing": summarize_bridge_pairing(
-            original_body.get("messages", [])
-        ),
+        "provider_safe_summary": summarize_message_structure(original_body.get("messages", [])),
+        "provider_safe_pairing": summarize_bridge_pairing(original_body.get("messages", [])),
     }
     if payload_source:
         payload_event["payload_source"] = payload_source
@@ -307,9 +284,7 @@ def _capture_outgoing_guard_forensics(
 def _is_assistant_tool_use_text_interleaving_failure(
     failures: list[str],
 ) -> bool:
-    return (
-        "provider_sensitive_assistant_tool_use_text_interleaving" in failures
-    )
+    return "provider_sensitive_assistant_tool_use_text_interleaving" in failures
 
 
 def _provider_sensitive_payload_source(
@@ -331,9 +306,11 @@ def _attempt_quarantine_invalid_tool_history(
     messages = body.get("messages")
     if not isinstance(messages, list):
         return body, False, {}, validate_anthropic_bridge_body(body)
-    quarantined_messages, changed, signals = (
-        quarantine_invalid_tool_history_messages(messages)
-    )
+    (
+        quarantined_messages,
+        changed,
+        signals,
+    ) = quarantine_invalid_tool_history_messages(messages)
     if not changed:
         return body, False, signals, validate_anthropic_bridge_body(body)
     quarantined_body = copy.deepcopy(body)
@@ -367,34 +344,27 @@ def _tool_history_repair_summary(
 
 
 def _count_user_messages_with_mixed_tool_result_content(
-    messages: Any,
+    messages: list[dict[str, Any]],
 ) -> int:
     if not isinstance(messages, list):
         return 0
     mixed_count = 0
     for message in messages:
-        if (
-            not isinstance(message, dict)
-            or str(message.get("role", "")).strip() != "user"
-        ):
+        if not isinstance(message, dict) or str(message.get("role", "")).strip() != "user":
             continue
         content = message.get("content")
         if not isinstance(content, list):
             continue
-        has_tool_result = any(
-            isinstance(block, dict) and block.get("type") == "tool_result"
-            for block in content
-        )
-        has_non_tool_result = any(
-            isinstance(block, dict) and block.get("type") != "tool_result"
-            for block in content
-        )
+        has_tool_result = any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+        has_non_tool_result = any(isinstance(block, dict) and block.get("type") != "tool_result" for block in content)
         if has_tool_result and has_non_tool_result:
             mixed_count += 1
     return mixed_count
 
 
-def _count_user_tool_result_split_boundaries(messages: Any) -> int:
+def _count_user_tool_result_split_boundaries(
+    messages: list[dict[str, Any]],
+) -> int:
     if not isinstance(messages, list):
         return 0
     boundaries = 0
@@ -410,27 +380,18 @@ def _count_user_tool_result_split_boundaries(messages: Any) -> int:
             continue
         current_content = current.get("content")
         following_content = following.get("content")
-        if not isinstance(current_content, list) or not isinstance(
-            following_content, list
-        ):
+        if not isinstance(current_content, list) or not isinstance(following_content, list):
             continue
         current_has_tool_result = any(
-            isinstance(block, dict) and block.get("type") == "tool_result"
-            for block in current_content
+            isinstance(block, dict) and block.get("type") == "tool_result" for block in current_content
         )
         current_has_non_tool_result = any(
-            isinstance(block, dict) and block.get("type") != "tool_result"
-            for block in current_content
+            isinstance(block, dict) and block.get("type") != "tool_result" for block in current_content
         )
         following_has_tool_result = any(
-            isinstance(block, dict) and block.get("type") == "tool_result"
-            for block in following_content
+            isinstance(block, dict) and block.get("type") == "tool_result" for block in following_content
         )
-        if (
-            current_has_tool_result
-            and not current_has_non_tool_result
-            and not following_has_tool_result
-        ):
+        if current_has_tool_result and not current_has_non_tool_result and not following_has_tool_result:
             boundaries += 1
     return boundaries
 
@@ -456,85 +417,57 @@ def _run_bridge_preflight(
     reset_recovery_state: bool = True,
 ) -> tuple[dict[str, Any], dict[str, int], bool, Response | None]:
     """Canonicalize, validate, and recover bridge tool history before send."""
-    _thinking_snapshot = _snapshot_latest_assistant_thinking(
-        original_body.get("messages", [])
-    )
+    _thinking_snapshot = _snapshot_latest_assistant_thinking(original_body.get("messages", []))
     (
         canonical_body,
         bridge_canonicalized,
         bridge_signals,
     ) = canonicalize_anthropic_bridge_body(body)
     if bridge_signals.get("thinking_block_mutated"):
-        try:
+        with contextlib.suppress(Exception):
             session.smoothness_tracker.record(
                 SmoothnessEventType.THINKING_BLOCK_MUTATION,
-                {
-                    "msg_index": bridge_signals.get(
-                        "thinking_block_mutated_msg_index"
-                    )
-                },
+                {"msg_index": bridge_signals.get("thinking_block_mutated_msg_index")},
             )
-        except Exception:
-            pass
     _restore_performed = False
     if _thinking_snapshot:
-        _restore_performed = _restore_latest_assistant_thinking(
-            canonical_body.get("messages", []), _thinking_snapshot
-        )
+        _restore_performed = _restore_latest_assistant_thinking(canonical_body.get("messages", []), _thinking_snapshot)
     if _restore_performed and bridge_signals.get("thinking_block_mutated"):
         bridge_signals.pop("thinking_block_mutated", None)
         bridge_signals["thinking_block_mutation_restored"] = 1
-        logger.debug(
-            "thinking_block_mutation_restored | "
-            "snapshot restore succeeded; penalized signal cleared"
-        )
-        try:
+        logger.debug("thinking_block_mutation_restored | snapshot restore succeeded; penalized signal cleared")
+        with contextlib.suppress(Exception):
             session.smoothness_tracker.record(
                 SmoothnessEventType.THINKING_BLOCK_MUTATION_RESTORED,
             )
-        except Exception:
-            pass
     tool_history_recovery_applied = False
     invalid_tool_history_unrecoverable = False
     strict_failures = validate_anthropic_bridge_body(canonical_body)
-    request_fingerprint = _request_fingerprint_diff(
-        headers, canonical_body, original_body
-    )
-    should_log_preflight = bool(
-        compressed or bridge_canonicalized or strict_failures
-    )
+    request_fingerprint = _request_fingerprint_diff(headers, canonical_body, original_body)
+    should_log_preflight = bool(compressed or bridge_canonicalized or strict_failures)
     _merge_signal_counts(behavior_signals, bridge_signals)
-    tool_history_repaired, pairing_repaired = _tool_history_repair_summary(
-        bridge_signals
-    )
+    tool_history_repaired, pairing_repaired = _tool_history_repair_summary(bridge_signals)
     if tool_history_repaired:
         behavior_signals["tok_bridge_tool_history_repaired"] = 1
     if pairing_repaired:
         behavior_signals["tok_bridge_tool_history_pairing_repaired"] = 1
     if (
         request_fingerprint.get("messages_changed")
-        and behavior_signals.get(
-            "request_policy_reason_structured_tool_loop", 0
-        )
-        > 0
+        and behavior_signals.get("request_policy_reason_structured_tool_loop", 0) > 0
     ):
-        try:
+        with contextlib.suppress(Exception):
             session.smoothness_tracker.record(
                 SmoothnessEventType.MESSAGES_CHANGED_OPEN_TOOL_LOOP,
             )
-        except Exception:
-            pass
     if (
         request_fingerprint["prompt_caching"]
         and request_fingerprint["body_materially_differs"]
-        and (
-            request_fingerprint["messages_changed"]
-            or request_fingerprint["system_changed"]
-        )
+        and (request_fingerprint["messages_changed"] or request_fingerprint["system_changed"])
         and request_fingerprint["cache_topology_changed"]
     ):
-        strict_failures = list(strict_failures) + [
-            "prompt_caching_request_mutated"
+        strict_failures = [
+            *list(strict_failures),
+            "prompt_caching_request_mutated",
         ]
     _merge_signal_counts(
         behavior_signals,
@@ -554,9 +487,7 @@ def _run_bridge_preflight(
             logger.warning(
                 "bridge_preflight_pairing_degraded_to_provider_safe: prepared request violated immediate tool-result pairing; sending provider-safe uncompressed body"
             )
-            behavior_signals[
-                "tok_bridge_pairing_degraded_to_provider_safe"
-            ] = 1
+            behavior_signals["tok_bridge_pairing_degraded_to_provider_safe"] = 1
             behavior_signals["tok_bridge_prepared_pairing_rejected_local"] = 1
             session.capture_event(
                 {
@@ -586,13 +517,9 @@ def _run_bridge_preflight(
             ) = _attempt_quarantine_invalid_tool_history(canonical_body)
             _merge_signal_counts(behavior_signals, quarantine_signals)
             if quarantine_valid:
-                recovery_signals = session.runtime_session.record_invalid_tool_history_recovery(
-                    blocked=False
-                )
+                recovery_signals = session.runtime_session.record_invalid_tool_history_recovery(blocked=False)
                 _merge_signal_counts(behavior_signals, recovery_signals)
-                if recovery_signals.get(
-                    "tok_bridge_invalid_tool_history_session_reset", 0
-                ):
+                if recovery_signals.get("tok_bridge_invalid_tool_history_session_reset", 0):
                     logger.warning(
                         "bridge_invalid_tool_history_session_reset: cleared hot session state after repeated repair attempts"
                     )
@@ -606,13 +533,9 @@ def _run_bridge_preflight(
                 bridge_canonicalized = True
                 strict_failures = []
                 tool_history_recovery_applied = True
-                if emit_ready_log and (
-                    should_log_preflight or quarantine_signals
-                ):
+                if emit_ready_log and (should_log_preflight or quarantine_signals):
                     _log_bridge_body_structure(
-                        _preflight_event_name(
-                            "bridge_preflight_repaired_quarantined", path
-                        ),
+                        _preflight_event_name("bridge_preflight_repaired_quarantined", path),
                         body=canonical_body,
                         headers=headers,
                         original_body=original_body,
@@ -627,9 +550,7 @@ def _run_bridge_preflight(
                     )
                     session.capture_event(
                         {
-                            "event": _preflight_event_name(
-                                "bridge_preflight_repaired_quarantined", path
-                            ),
+                            "event": _preflight_event_name("bridge_preflight_repaired_quarantined", path),
                             "behavior_signals": behavior_signals,
                         }
                     )
@@ -641,19 +562,10 @@ def _run_bridge_preflight(
                     behavior_signals,
                     bridge_strict_failure_signals(strict_failures),
                 )
-        if (
-            _should_block_invalid_tool_history_locally(strict_failures)
-            or invalid_tool_history_unrecoverable
-        ):
-            recovery_signals = (
-                session.runtime_session.record_invalid_tool_history_recovery(
-                    blocked=True
-                )
-            )
+        if _should_block_invalid_tool_history_locally(strict_failures) or invalid_tool_history_unrecoverable:
+            recovery_signals = session.runtime_session.record_invalid_tool_history_recovery(blocked=True)
             _merge_signal_counts(behavior_signals, recovery_signals)
-            if recovery_signals.get(
-                "tok_bridge_invalid_tool_history_session_reset", 0
-            ):
+            if recovery_signals.get("tok_bridge_invalid_tool_history_session_reset", 0):
                 logger.warning(
                     "bridge_invalid_tool_history_session_reset: cleared hot session state after repeated blocked tool-history failures"
                 )
@@ -664,9 +576,7 @@ def _run_bridge_preflight(
                     }
                 )
             _log_bridge_body_structure(
-                _preflight_event_name(
-                    "bridge_preflight_rejected_blocked_local", path
-                ),
+                _preflight_event_name("bridge_preflight_rejected_blocked_local", path),
                 body=canonical_body,
                 headers=headers,
                 original_body=original_body,
@@ -683,9 +593,7 @@ def _run_bridge_preflight(
             session._bump_signals(behavior_signals)
             session.capture_event(
                 {
-                    "event": _preflight_event_name(
-                        "bridge_preflight_rejected_blocked_local", path
-                    ),
+                    "event": _preflight_event_name("bridge_preflight_rejected_blocked_local", path),
                     "strict_failures": strict_failures,
                     "behavior_signals": behavior_signals,
                 }
@@ -706,9 +614,7 @@ def _run_bridge_preflight(
             )
         if strict_failures and has_blocking_outgoing_failures(strict_failures):
             _log_bridge_body_structure(
-                _preflight_event_name(
-                    "bridge_preflight_rejected_reverted_to_original", path
-                ),
+                _preflight_event_name("bridge_preflight_rejected_reverted_to_original", path),
                 body=canonical_body,
                 headers=headers,
                 original_body=original_body,
@@ -726,9 +632,7 @@ def _run_bridge_preflight(
             return (
                 copy.deepcopy(original_body),
                 behavior_signals,
-                tool_history_repaired
-                or pairing_repaired
-                or tool_history_recovery_applied,
+                tool_history_repaired or pairing_repaired or tool_history_recovery_applied,
                 None,
             )
 
@@ -748,29 +652,19 @@ def _run_bridge_preflight(
             bridge_strict_failure_signals(outgoing_failures),
         )
         if _should_return_read_burst_hint(outgoing_failures):
-            rewritten_body, rewritten_changed, rewrite_signals = (
-                _rewrite_provider_sensitive_large_tool_use_text_interleaving(
-                    canonical_body
-                )
-            )
+            (
+                rewritten_body,
+                rewritten_changed,
+                rewrite_signals,
+            ) = _rewrite_provider_sensitive_large_tool_use_text_interleaving(canonical_body)
             if rewritten_changed:
-                rewritten_failures = validate_anthropic_outgoing_bridge_body(
-                    rewritten_body
-                )
+                rewritten_failures = validate_anthropic_outgoing_bridge_body(rewritten_body)
                 if not rewritten_failures:
                     behavior_signals.update(rewrite_signals)
-                    behavior_signals[
-                        "tok_bridge_provider_sensitive_degraded_to_provider_safe"
-                    ] = 1
-                    behavior_signals[
-                        "tok_bridge_prepared_pairing_rejected_local"
-                    ] = 1
-                    behavior_signals[
-                        "tok_bridge_assistant_tool_use_text_interleaving_blocked"
-                    ] = 1
-                    behavior_signals[
-                        "request_policy_interleaving_downgrades"
-                    ] = 1
+                    behavior_signals["tok_bridge_provider_sensitive_degraded_to_provider_safe"] = 1
+                    behavior_signals["tok_bridge_prepared_pairing_rejected_local"] = 1
+                    behavior_signals["tok_bridge_assistant_tool_use_text_interleaving_blocked"] = 1
+                    behavior_signals["request_policy_interleaving_downgrades"] = 1
                     behavior_signals["preflight_block_rewritten_payload"] = 1
                     event_name = _preflight_event_name(
                         "bridge_preflight_large_file_read_burst_rewritten",
@@ -816,15 +710,9 @@ def _run_bridge_preflight(
             json.dumps(canonical_body).encode(),
             json.dumps(original_body).encode(),
         ):
-            degraded_failures = validate_anthropic_outgoing_bridge_body(
-                original_body
-            )
+            degraded_failures = validate_anthropic_outgoing_bridge_body(original_body)
             if not has_blocking_outgoing_failures(degraded_failures):
-                interleaving_failure = (
-                    _is_assistant_tool_use_text_interleaving_failure(
-                        outgoing_failures
-                    )
-                )
+                interleaving_failure = _is_assistant_tool_use_text_interleaving_failure(outgoing_failures)
                 event_name = _preflight_event_name(
                     (
                         "bridge_preflight_assistant_tool_use_text_interleaving_degraded_to_provider_safe"
@@ -834,32 +722,18 @@ def _run_bridge_preflight(
                     path,
                 )
                 if has_provider_sensitive_failures(outgoing_failures):
-                    behavior_signals[
-                        "tok_bridge_provider_sensitive_degraded_to_provider_safe"
-                    ] = 1
+                    behavior_signals["tok_bridge_provider_sensitive_degraded_to_provider_safe"] = 1
                 else:
-                    behavior_signals[
-                        "tok_bridge_pairing_degraded_to_provider_safe"
-                    ] = 1
-                behavior_signals[
-                    "tok_bridge_prepared_pairing_rejected_local"
-                ] = 1
+                    behavior_signals["tok_bridge_pairing_degraded_to_provider_safe"] = 1
+                behavior_signals["tok_bridge_prepared_pairing_rejected_local"] = 1
                 if interleaving_failure:
-                    behavior_signals[
-                        "tok_bridge_assistant_tool_use_text_interleaving_blocked"
-                    ] = 1
-                    behavior_signals[
-                        "request_policy_interleaving_downgrades"
-                    ] = 1
+                    behavior_signals["tok_bridge_assistant_tool_use_text_interleaving_blocked"] = 1
+                    behavior_signals["request_policy_interleaving_downgrades"] = 1
                 behavior_signals["preflight_block_rewritten_payload"] = 1
                 logger.warning(
                     "%s: prepared request failed final outgoing validation%s; sending provider-safe body (payload_source=rewritten)",
                     event_name,
-                    (
-                        " due to assistant text interleaved within tool_use batch"
-                        if interleaving_failure
-                        else ""
-                    ),
+                    (" due to assistant text interleaved within tool_use batch" if interleaving_failure else ""),
                 )
                 session.capture_event(
                     {
@@ -894,9 +768,7 @@ def _run_bridge_preflight(
                     None,
                 )
 
-        event_name = _preflight_event_name(
-            "bridge_preflight_rejected_outgoing_guard_local", path
-        )
+        event_name = _preflight_event_name("bridge_preflight_rejected_outgoing_guard_local", path)
         _log_bridge_body_structure(
             event_name,
             body=canonical_body,
@@ -913,15 +785,11 @@ def _run_bridge_preflight(
         )
         behavior_signals["tok_bridge_preflight_failed_local"] = 1
         behavior_signals["tok_bridge_provider_sensitive_blocked_local"] = 1
-        behavior_signals[
-            f"preflight_block_{outgoing_payload_source}_payload"
-        ] = 1
+        behavior_signals[f"preflight_block_{outgoing_payload_source}_payload"] = 1
         if has_provider_sensitive_failures(outgoing_failures):
             behavior_signals["tok_bridge_provider_pairing_risk_detected"] = 1
         if _is_assistant_tool_use_text_interleaving_failure(outgoing_failures):
-            behavior_signals[
-                "tok_bridge_assistant_tool_use_text_interleaving_blocked"
-            ] = 1
+            behavior_signals["tok_bridge_assistant_tool_use_text_interleaving_blocked"] = 1
             behavior_signals["request_policy_interleaving_downgrades"] = 1
         session._bump_signals(behavior_signals)
         _capture_outgoing_guard_forensics(
@@ -954,30 +822,22 @@ def _run_bridge_preflight(
     if tool_history_repaired and emit_repair_logs:
         logger.info(
             "%s: repaired historical tool IDs before send",
-            _preflight_event_name(
-                "bridge_preflight_repaired_tool_history", path
-            ),
+            _preflight_event_name("bridge_preflight_repaired_tool_history", path),
         )
         session.capture_event(
             {
-                "event": _preflight_event_name(
-                    "bridge_preflight_repaired_tool_history", path
-                ),
+                "event": _preflight_event_name("bridge_preflight_repaired_tool_history", path),
                 "behavior_signals": behavior_signals,
             }
         )
     if pairing_repaired and emit_repair_logs:
         logger.info(
             "%s: repaired tool-result pairing before send",
-            _preflight_event_name(
-                "bridge_preflight_repaired_tool_result_pairing", path
-            ),
+            _preflight_event_name("bridge_preflight_repaired_tool_result_pairing", path),
         )
         session.capture_event(
             {
-                "event": _preflight_event_name(
-                    "bridge_preflight_repaired_tool_result_pairing", path
-                ),
+                "event": _preflight_event_name("bridge_preflight_repaired_tool_result_pairing", path),
                 "behavior_signals": behavior_signals,
             }
         )
@@ -995,8 +855,6 @@ def _run_bridge_preflight(
     return (
         body,
         behavior_signals,
-        tool_history_repaired
-        or pairing_repaired
-        or tool_history_recovery_applied,
+        tool_history_repaired or pairing_repaired or tool_history_recovery_applied,
         None,
     )

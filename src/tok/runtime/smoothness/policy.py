@@ -1,4 +1,5 @@
-"""Pure policy functions for Tok mode selection.
+"""
+Pure policy functions for Tok mode selection.
 
 This module contains declarative policy logic for choosing Tok modes
 based on smoothness scores and event overrides. All functions are pure
@@ -19,7 +20,8 @@ def choose_tok_mode(
     turn_report: TurnSmoothnessReport,
     task_report: TaskSmoothnessReport | None,
 ) -> TokMode:
-    """Choose Tok mode based on smoothness scores and event overrides.
+    """
+    Choose Tok mode based on smoothness scores and event overrides.
 
     This is a pure policy function that maps smoothness reports to Tok modes.
     It applies score-based thresholds first, then applies hard overrides based on
@@ -31,6 +33,7 @@ def choose_tok_mode(
 
     Returns:
         TokMode selected for the next request
+
     """
     # First, check hard overrides that force at least SMOOTH_MODE
     override_mode = _check_mode_overrides(turn_report, task_report)
@@ -45,7 +48,8 @@ def _check_mode_overrides(
     turn_report: TurnSmoothnessReport,
     task_report: TaskSmoothnessReport | None,
 ) -> TokMode | None:
-    """Check for event-based overrides that force a minimum mode.
+    """
+    Check for event-based overrides that force a minimum mode.
 
     Hard overrides take precedence over score-based thresholds. These events
     indicate serious degradation risks that require conservative behavior.
@@ -56,6 +60,7 @@ def _check_mode_overrides(
 
     Returns:
         TokMode if an override is triggered, None otherwise
+
     """
     turn_event_types = {e.event_type for e in turn_report.events}
 
@@ -66,9 +71,7 @@ def _check_mode_overrides(
     # Override 2: Two STREAM_RECOVERY_STARTED events within 5 turns
     # Check both current turn and task report for stream recoveries
     stream_recovery_count_in_turn = sum(
-        1
-        for e in turn_report.events
-        if e.event_type == SmoothnessEventType.STREAM_RECOVERY_STARTED
+        1 for e in turn_report.events if e.event_type == SmoothnessEventType.STREAM_RECOVERY_STARTED
     )
 
     if stream_recovery_count_in_turn >= 2:
@@ -76,17 +79,12 @@ def _check_mode_overrides(
 
     # Check task report for stream recovery history
     if task_report is not None:
-        total_stream_recoveries = task_report.event_counts.get(
-            "stream_recovery_started", 0
-        )
+        total_stream_recoveries = task_report.event_counts.get("stream_recovery_started", 0)
         if total_stream_recoveries >= 2:
             return TokMode.SMOOTH_MODE
 
     # Override 3: One UPSTREAM_400_AFTER_PREPARED_PAYLOAD → at least SMOOTH_MODE
-    if (
-        SmoothnessEventType.UPSTREAM_400_AFTER_PREPARED_PAYLOAD
-        in turn_event_types
-    ):
+    if SmoothnessEventType.UPSTREAM_400_AFTER_PREPARED_PAYLOAD in turn_event_types:
         return TokMode.SMOOTH_MODE
 
     # No overrides triggered
@@ -94,7 +92,8 @@ def _check_mode_overrides(
 
 
 def _choose_mode_by_score(score: int) -> TokMode:
-    """Choose Tok mode based on score thresholds.
+    """
+    Choose Tok mode based on score thresholds.
 
     Score thresholds:
         score >= 70 → FULL_TOK (maximum compression)
@@ -107,12 +106,12 @@ def _choose_mode_by_score(score: int) -> TokMode:
 
     Returns:
         TokMode based on score thresholds
+
     """
     if score >= 70:
         return TokMode.FULL_TOK
-    elif score >= 55:
+    if score >= 55:
         return TokMode.GUARDED_TOK
-    elif score >= 40:
+    if score >= 40:
         return TokMode.SMOOTH_MODE
-    else:
-        return TokMode.LOSSLESS_TASK_MODE
+    return TokMode.LOSSLESS_TASK_MODE

@@ -1,36 +1,48 @@
 """Helper functions for preparing runtime requests."""
 
+from __future__ import annotations
+
 import shlex
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
 from pydantic import BaseModel, ConfigDict
-from ...compression import FILE_LIKE_TOOLS, text_of, inject_system_additions
-from ..config import (
+
+from tok.compression import FILE_LIKE_TOOLS, inject_system_additions, text_of
+from tok.runtime.config import (
     _TOOL_REQUIRED_PROMPT_PATTERNS,
-    ANSWER_READY_RUNTIME_HINT,
     ANSWER_READY_REPAIR_HINT,
-    LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT,
+    ANSWER_READY_RUNTIME_HINT,
     LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
+    LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT,
     LATE_ANSWER_FOLLOWTHROUGH_HINT,
 )
+
+if TYPE_CHECKING:
+    from tok.runtime.core import RuntimeSession
+
+from tok.runtime.repeat_targets import (
+    SEARCH_LIKE_TOOLS,
+    EvidenceIntent,
+    evidence_identity_key,
+    extract_git_history_path,
+    extract_metadata_probe,
+    extract_shell_file_read_path,
+    extract_shell_search_params,
+    resolve_evidence_intent,
+)
+
+from .request_validation import validate_anthropic_request_body
 from .tool_processing import (
     _HARD_BLOCKER_PHRASES_SET,
     _TRANSIENT_ERROR_PHRASES_SET,
     _iter_tool_results,
 )
-from ..repeat_targets import (
-    SEARCH_LIKE_TOOLS,
-    extract_git_history_path,
-    extract_metadata_probe,
-    extract_shell_file_read_path,
-    extract_shell_search_params,
-    evidence_identity_key,
-    resolve_evidence_intent,
-)
-from .request_validation import validate_anthropic_request_body
 
 
-def _process_content_list(content: list[Any]) -> Any:
+def _process_content_list(
+    content: list[dict[str, Any]],
+) -> str | list[dict[str, Any]]:
     """Process a list content block and return adapted content."""
     if not content:
         return " "
@@ -44,7 +56,8 @@ def _process_content_list(content: list[Any]) -> Any:
 def apply_schema_adaptations(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Ensure message list is compatible with strict providers (Bedrock, Gemini).
+    """
+    Ensure message list is compatible with strict providers (Bedrock, Gemini).
 
     1. Flattens single-item or text-only arrays into strings.
     2. Ensures no message has empty content (injects a placeholder).
@@ -73,9 +86,7 @@ def apply_schema_adaptations(
     return adapted
 
 
-def mutation_signals(
-    original_body: dict[str, Any], mutated_body: dict[str, Any]
-) -> dict[str, int]:
+def mutation_signals(original_body: dict[str, Any], mutated_body: dict[str, Any]) -> dict[str, int]:
     """Identify structural mutations between original and prepared request bodies."""
     signals: dict[str, int] = {}
     original_failures = validate_anthropic_request_body(original_body)
@@ -84,15 +95,14 @@ def mutation_signals(
         signals["tok_preflight_rejected"] = 1
     original_messages = original_body.get("messages", [])
     mutated_messages = mutated_body.get("messages", [])
-    if isinstance(original_messages, list) and isinstance(
-        mutated_messages, list
+    if (
+        isinstance(original_messages, list)
+        and isinstance(mutated_messages, list)
+        and len(original_messages) != len(mutated_messages)
     ):
-        if len(original_messages) != len(mutated_messages):
-            signals["tok_structural_mutation"] = 1
+        signals["tok_structural_mutation"] = 1
     if original_body.get("system") != mutated_body.get("system"):
-        signals["tok_structural_mutation"] = (
-            signals.get("tok_structural_mutation", 0) + 1
-        )
+        signals["tok_structural_mutation"] = signals.get("tok_structural_mutation", 0) + 1
     return signals
 
 
@@ -109,9 +119,7 @@ def collect_transient_error_snippets(
             lowered = stripped.lower()
             if any(phrase in lowered for phrase in _HARD_BLOCKER_PHRASES_SET):
                 continue
-            if any(
-                phrase in lowered for phrase in _TRANSIENT_ERROR_PHRASES_SET
-            ):
+            if any(phrase in lowered for phrase in _TRANSIENT_ERROR_PHRASES_SET):
                 snippet = stripped[:96]
                 if snippet and snippet not in seen:
                     seen.add(snippet)
@@ -136,10 +144,7 @@ def _message_has_tool_results(message: dict[str, Any] | None) -> bool:
     content = message.get("content")
     if not isinstance(content, list):
         return False
-    return any(
-        isinstance(block, dict) and block.get("type") == "tool_result"
-        for block in content
-    )
+    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
 def _message_user_text(message: dict[str, Any] | None) -> str:
@@ -153,11 +158,7 @@ def _message_user_text(message: dict[str, Any] | None) -> str:
         return ""
     parts: list[str] = []
     for block in content:
-        if (
-            isinstance(block, dict)
-            and block.get("type") == "text"
-            and str(block.get("text", "")).strip()
-        ):
+        if isinstance(block, dict) and block.get("type") == "text" and str(block.get("text", "")).strip():
             parts.append(str(block.get("text", "")).strip())
     return "\n".join(parts)
 
@@ -200,11 +201,7 @@ class AuditTurnIntent(BaseModel):
 
     @property
     def is_read_only_audit(self) -> bool:
-        return self.no_answer or (
-            self.read_only
-            and self.audit_scope
-            and (self.no_network or self.tool_budget)
-        )
+        return self.no_answer or (self.read_only and self.audit_scope and (self.no_network or self.tool_budget))
 
 
 def _audit_turn_intent(messages: list[dict[str, Any]]) -> AuditTurnIntent:
@@ -218,9 +215,7 @@ def _audit_turn_intent(messages: list[dict[str, Any]]) -> AuditTurnIntent:
         no_answer=any(pattern in lowered for pattern in _NO_ANSWER_PATTERNS),
         no_network="no network" in lowered,
         tool_budget="tool budget" in lowered,
-        audit_scope=any(
-            pattern in lowered for pattern in _READ_ONLY_AUDIT_SCOPE_PATTERNS
-        ),
+        audit_scope=any(pattern in lowered for pattern in _READ_ONLY_AUDIT_SCOPE_PATTERNS),
     )
 
 
@@ -233,9 +228,7 @@ def _is_read_only_audit_turn(messages: list[dict[str, Any]]) -> bool:
     intent = _audit_turn_intent(messages)
     if intent.is_read_only_audit:
         return True
-    has_read_only_contract = any(
-        pattern in lowered for pattern in _READ_ONLY_AUDIT_HINT_PATTERNS
-    )
+    has_read_only_contract = any(pattern in lowered for pattern in _READ_ONLY_AUDIT_HINT_PATTERNS)
     return has_read_only_contract and intent.audit_scope
 
 
@@ -259,9 +252,7 @@ def _has_unresolved_tool_required_conditions(
     if not latest_user or _message_has_tool_results(latest_user):
         return False
     lowered = text_of(latest_user.get("content", "")).lower()
-    return any(
-        pattern in lowered for pattern in _TOOL_REQUIRED_PROMPT_PATTERNS
-    )
+    return any(pattern in lowered for pattern in _TOOL_REQUIRED_PROMPT_PATTERNS)
 
 
 def _is_answer_ready_turn(
@@ -331,9 +322,7 @@ def _runtime_hints_for_turn(
     if late_answer_followthrough_active:
         return _late_answer_followthrough_hints(active=True)
     if late_answer_assembly_repair_mode:
-        return _late_answer_assembly_repair_hints(
-            repair_mode=late_answer_assembly_repair_mode
-        )
+        return _late_answer_assembly_repair_hints(repair_mode=late_answer_assembly_repair_mode)
     if answer_ready_repair_active:
         return _answer_ready_repair_hints(repair_active=True)
     if answer_ready:
@@ -383,13 +372,11 @@ def _looks_like_shell_read_error(command: str, text: str) -> bool:
         "is a directory",
         "usage:",
     )
-    return any(
-        lowered.startswith(prefix) or prefix in lowered for prefix in prefixes
-    )
+    return any(lowered.startswith(prefix) or prefix in lowered for prefix in prefixes)
 
 
 def _process_single_tool_snapshot(
-    session: Any,
+    session: RuntimeSession,
     tool_name: str,
     path: str | None,
     query: str | None,
@@ -401,13 +388,9 @@ def _process_single_tool_snapshot(
 ) -> dict[str, int]:
     """Helper to process a single tool result snapshot."""
     signals: dict[str, int] = {}
-    shell_file_path = (
-        extract_shell_file_read_path(command or "") if command else None
-    )
+    shell_file_path = extract_shell_file_read_path(command or "") if command else None
 
-    evidence_intent = resolve_evidence_intent(
-        tool_name, path=path, query=query, command=command
-    )
+    evidence_intent = resolve_evidence_intent(tool_name, path=path, query=query, command=command)
 
     if evidence_intent:
         _apply_evidence_intent_snapshot(
@@ -459,8 +442,8 @@ def _process_single_tool_snapshot(
 
 
 def _apply_evidence_intent_snapshot(
-    session: Any,
-    evidence_intent: Any,
+    session: RuntimeSession,
+    evidence_intent: EvidenceIntent,
     path: str | None,
     query: str | None,
     command: str | None,
@@ -491,13 +474,11 @@ def _apply_evidence_intent_snapshot(
         )
         return
     if evidence_intent.domain == "search":
-        _record_search_snapshot(
-            session, query, command, snippet, evidence_intent, captured
-        )
+        _record_search_snapshot(session, query, command, snippet, evidence_intent, captured)
 
 
 def _apply_default_snapshots(
-    session: Any,
+    session: RuntimeSession,
     tool_name: str,
     path: str | None,
     query: str | None,
@@ -513,28 +494,21 @@ def _apply_default_snapshots(
         shell_file_path
         and tool_name in {"bash", "sh", "run_terminal", "computer"}
         and not _looks_like_shell_read_error(command or "", snippet)
-    ):
-        if session.record_file_snapshot(shell_file_path, snippet):
-            captured[0] += 1
-            captured[2] += 1
+    ) and session.record_file_snapshot(shell_file_path, snippet):
+        captured[0] += 1
+        captured[2] += 1
     if tool_name in SEARCH_LIKE_TOOLS and query:
         if session.record_search_snapshot(query, snippet):
             captured[1] += 1
 
 
-def _record_file_history_snapshot(
-    session: Any, command: str, snippet: str, captured: list[int]
-) -> None:
+def _record_file_history_snapshot(session: RuntimeSession, command: str, snippet: str, captured: list[int]) -> None:
     git_path, git_rev = extract_git_history_path(command)
-    if git_path and session.record_history_snapshot(
-        git_path, git_rev, snippet
-    ):
+    if git_path and session.record_history_snapshot(git_path, git_rev, snippet):
         captured[0] += 1
 
 
-def _record_file_metadata_snapshot(
-    session: Any, path: str | None, command: str, snippet: str
-) -> None:
+def _record_file_metadata_snapshot(session: RuntimeSession, path: str | None, command: str, snippet: str) -> None:
     meta_subtype = extract_metadata_probe(command)
     if meta_subtype:
         meta_path = path or ""
@@ -542,8 +516,8 @@ def _record_file_metadata_snapshot(
 
 
 def _record_file_current_snapshot(
-    session: Any,
-    evidence_intent: Any,
+    session: RuntimeSession,
+    evidence_intent: EvidenceIntent,
     path: str | None,
     command: str | None,
     snippet: str,
@@ -557,21 +531,16 @@ def _record_file_current_snapshot(
             if evidence_intent.variant == "copy":
                 _apply_temp_copy_alias(session, path, snippet, signals)
     elif (
-        shell_file_path
-        and command
-        and not _looks_like_shell_read_error(command, snippet)
-    ):
-        if session.record_file_snapshot(shell_file_path, snippet):
-            captured[0] += 1
-            captured[2] += 1
-            if evidence_intent.source_kind == "temp_copy":
-                _apply_temp_copy_alias(
-                    session, shell_file_path, snippet, signals
-                )
+        shell_file_path and command and not _looks_like_shell_read_error(command, snippet)
+    ) and session.record_file_snapshot(shell_file_path, snippet):
+        captured[0] += 1
+        captured[2] += 1
+        if evidence_intent.source_kind == "temp_copy":
+            _apply_temp_copy_alias(session, shell_file_path, snippet, signals)
 
 
 def _apply_temp_copy_alias(
-    session: Any,
+    session: RuntimeSession,
     path: str,
     snippet: str,
     signals: dict[str, int],
@@ -583,11 +552,11 @@ def _apply_temp_copy_alias(
 
 
 def _record_search_snapshot(
-    session: Any,
+    session: RuntimeSession,
     query: str | None,
     command: str | None,
     snippet: str,
-    evidence_intent: Any,
+    evidence_intent: EvidenceIntent,
     captured: list[int],
 ) -> None:
     search_query = query
@@ -602,14 +571,12 @@ def _record_search_snapshot(
 def _capture_repeat_target_snapshots(
     messages: list[dict[str, Any]],
     id_to_context: dict[str, dict[str, Any]],
-    session: Any,
+    session: RuntimeSession,
 ) -> dict[str, int]:
     """Scan tool_results and record bounded snapshots for repeat-target control."""
     captured = [0, 0, 0]  # file, search, shell_file
     signals: dict[str, int] = {}
-    blocker_rediscovery = bool(
-        session.pending_behavior_signals.get("blocker_rediscovery", 0)
-    )
+    blocker_rediscovery = bool(session.pending_behavior_signals.get("blocker_rediscovery", 0))
 
     for tool_id, snippet in _iter_tool_results(messages):
         context = id_to_context.get(tool_id)
@@ -619,9 +586,7 @@ def _capture_repeat_target_snapshots(
         path = str(context.get("path") or "").strip() or None
         query = str(context.get("query") or "").strip() or None
         args = context.get("args") or {}
-        command = (
-            str(args.get("command") or args.get("cmd") or "").strip() or None
-        )
+        command = str(args.get("command") or args.get("cmd") or "").strip() or None
 
         step_signals = _process_single_tool_snapshot(
             session,
@@ -658,9 +623,7 @@ def _annotate_full_turn_resend(
 ) -> None:
     """Helper for applying full turn resend diagnostics."""
     if resend_reason == "new_answer_anchor":
-        behavior_signals[
-            "state_resend_reason_answer_anchor_present_kept_full"
-        ] = 1
+        behavior_signals["state_resend_reason_answer_anchor_present_kept_full"] = 1
         behavior_signals["answer_anchor_forced_full_resend"] = 1
         return
     if resend_signals.get("state_resend_reason_delta_not_smaller"):
@@ -672,9 +635,7 @@ def _annotate_full_turn_resend(
     if tok_history_cut_point_missing:
         behavior_signals["tok_history_cut_point_missing"] = 1
     if tool_compatible_compression:
-        behavior_signals[
-            "state_resend_reason_tool_compatible_compression_without_resend_change"
-        ] = 1
+        behavior_signals["state_resend_reason_tool_compatible_compression_without_resend_change"] = 1
         return
     behavior_signals["state_resend_reason_full_default"] = 1
 
@@ -707,9 +668,7 @@ def _apply_tool_compatible_resend_diagnostics(
             1  # Changed: state is verified current, not "suppressed"
         )
         if has_answer_anchor:
-            behavior_signals["answer_anchor_verified_current"] = (
-                1  # Changed: verified current, not "suppressed"
-            )
+            behavior_signals["answer_anchor_verified_current"] = 1  # Changed: verified current, not "suppressed"
         return
 
     if resend_signals.get("state_resend_full_turn"):
@@ -740,14 +699,13 @@ def _inject_system(
     # Memory Serialization: Handle BridgeMemoryState objects
     tok_state: str | Any = current_memory
     if hasattr(current_memory, "wire_state"):
-        from ..config import TOOL_COMPAT_MEMORY_PROFILE
         from typing import cast
 
-        tok_state = cast(Any, current_memory).wire_state(
+        from tok.runtime.config import TOOL_COMPAT_MEMORY_PROFILE
+
+        tok_state = cast("Any", current_memory).wire_state(
             profile=TOOL_COMPAT_MEMORY_PROFILE if tool_compatible else None,
-            markers=behavior_signals.get(
-                "_project_markers_proxy"
-            ),  # Type-safe access
+            markers=behavior_signals.get("_project_markers_proxy"),  # Type-safe access
         )
 
     kwargs: dict[str, Any] = {

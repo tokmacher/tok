@@ -18,7 +18,7 @@ from tok.protocol.format_bridge import Bridge
 class TestBridgeJsonRoundtrip:
     """Test JSON→Tok→JSON round-trip conversion."""
 
-    def test_flat_dict_roundtrip(self):
+    def test_flat_dict_roundtrip(self) -> None:
         """Flat dict should survive round-trip intact."""
         original = {"name": "Alice", "age": 30, "city": "NYC"}
         json_str = json.dumps(original)
@@ -36,7 +36,7 @@ class TestBridgeJsonRoundtrip:
         for key in original:
             assert key in recovered, f"Key {key} lost in round-trip"
 
-    def test_nested_dict_roundtrip(self):
+    def test_nested_dict_roundtrip(self) -> None:
         """Nested dict should preserve structure."""
         original = {"user": {"name": "Bob", "email": "bob@example.com"}}
         json_str = json.dumps(original)
@@ -48,7 +48,7 @@ class TestBridgeJsonRoundtrip:
         # Structure should be preserved
         assert "user" in recovered or "name" in recovered, "User data lost"
 
-    def test_list_roundtrip(self):
+    def test_list_roundtrip(self) -> None:
         """List of homogeneous dicts should convert to table."""
         original = [{"id": 1, "name": "Item1"}, {"id": 2, "name": "Item2"}]
         json_str = json.dumps(original)
@@ -60,7 +60,7 @@ class TestBridgeJsonRoundtrip:
         # List data should be present
         assert recovered and len(str(recovered)) > 0, "List data lost"
 
-    def test_primitives_roundtrip(self):
+    def test_primitives_roundtrip(self) -> None:
         """Primitive values should survive."""
         original = {
             "count": 42,
@@ -77,7 +77,7 @@ class TestBridgeJsonRoundtrip:
         # Check that values exist (may change type but should be present)
         assert len(recovered) > 0, "Primitives lost"
 
-    def test_boolean_values(self):
+    def test_boolean_values(self) -> None:
         """Boolean true/false should round-trip correctly."""
         original = {"active": True, "deleted": False}
         json_str = json.dumps(original)
@@ -87,11 +87,9 @@ class TestBridgeJsonRoundtrip:
         recovered = json.loads(recovered_json) if recovered_json else {}
 
         # Booleans should be present
-        assert "active" in recovered or "deleted" in recovered, (
-            "Boolean attrs lost"
-        )
+        assert "active" in recovered or "deleted" in recovered, "Boolean attrs lost"
 
-    def test_numeric_values(self):
+    def test_numeric_values(self) -> None:
         """Numeric values (int, float) should survive."""
         original = {"integer": 42, "floating": 3.14159, "negative": -5}
         json_str = json.dumps(original)
@@ -102,7 +100,7 @@ class TestBridgeJsonRoundtrip:
 
         assert len(recovered) > 0, "Numeric values lost"
 
-    def test_null_values(self):
+    def test_null_values(self) -> None:
         """Null values should be preserved."""
         original = {"value": None, "count": 0}
         json_str = json.dumps(original)
@@ -117,20 +115,20 @@ class TestBridgeJsonRoundtrip:
 class TestBridgeXmlRoundtrip:
     """Test XML round-trip conversion."""
 
-    def test_simple_element(self):
+    def test_simple_element(self) -> None:
         """Simple XML element should convert to Tok."""
         xml_str = '<root attr="value">Content</root>'
         tok_text = Bridge.xml(xml_str)
         assert isinstance(tok_text, str)
         assert "@root" in tok_text
 
-    def test_xml_with_attributes(self):
+    def test_xml_with_attributes(self) -> None:
         """XML attributes should be preserved."""
         xml_str = '<config name="settings" version="1.0">Data</config>'
         tok_text = Bridge.xml(xml_str)
         assert "name" in tok_text or "settings" in tok_text
 
-    def test_xml_to_string_roundtrip(self):
+    def test_xml_to_string_roundtrip(self) -> None:
         """XML→Tok→XML string should be valid."""
         xml_str = '<response status="ok">Success</response>'
         tok_text = Bridge.xml(xml_str)
@@ -142,7 +140,7 @@ class TestBridgeXmlRoundtrip:
 class TestBridgeMarkdownTableRoundtrip:
     """Test Markdown table conversion."""
 
-    def test_markdown_table_to_tok(self):
+    def test_markdown_table_to_tok(self) -> None:
         """Markdown table should convert to Tok table block."""
         md_table = """| Name | Age | City |
 | --- | --- | --- |
@@ -153,7 +151,7 @@ class TestBridgeMarkdownTableRoundtrip:
         assert isinstance(tok_text, str)
         assert "@result" in tok_text or "@data" in tok_text
 
-    def test_markdown_table_structure_preserved(self):
+    def test_markdown_table_structure_preserved(self) -> None:
         """Markdown table structure (headers, rows) should survive."""
         md_table = """| Col1 | Col2 |
 | --- | --- |
@@ -167,7 +165,7 @@ class TestBridgeMarkdownTableRoundtrip:
         if md_recovered:
             assert "|" in md_recovered, "Table structure lost"
 
-    def test_simple_two_column_table(self):
+    def test_simple_two_column_table(self) -> None:
         """Simple two-column table."""
         md_table = """| ID | Value |
 | --- | --- |
@@ -181,8 +179,9 @@ class TestBridgeMarkdownTableRoundtrip:
 class TestBridgeDataFidelityScore:
     """Comprehensive data fidelity audit across all Bridge._rehydrate() loss points."""
 
-    def test_loss_budget_matrix_tier1_primitives(self):
-        """Tier 1 (Primitives stored as dict attrs): target ≥ 95% fidelity.
+    def test_loss_budget_matrix_tier1_primitives(self) -> None:
+        """
+        Tier 1 (Primitives stored as dict attrs): target ≥ 95% fidelity.
 
         These values go through node.attrs → _cast() pipeline and should survive
         with correct types (int, float, bool, None).
@@ -222,29 +221,15 @@ class TestBridgeDataFidelityScore:
 
             # Check type preservation for each attr
             keys_match = all(k in recovered for k in data_keys)
-            types_match = all(
-                type(recovered.get(k)) is type(data[k])
-                for k in data_keys
-                if k in recovered
-            )
-            values_match = all(
-                recovered.get(k) == data[k]
-                for k in data_keys
-                if k in recovered
-            )
+            types_match = all(type(recovered.get(k)) is type(data[k]) for k in data_keys if k in recovered)
+            values_match = all(recovered.get(k) == data[k] for k in data_keys if k in recovered)
 
             passed = keys_match and types_match and values_match
             if passed:
                 passing += 1
                 results.append((test_id, data_type, True, "✓ Preserved"))
             else:
-                reason = (
-                    "keys_lost"
-                    if not keys_match
-                    else (
-                        "types_coerced" if not types_match else "values_differ"
-                    )
-                )
+                reason = "keys_lost" if not keys_match else ("types_coerced" if not types_match else "values_differ")
                 results.append((test_id, data_type, False, reason))
 
         # Print Loss Budget Matrix
@@ -261,15 +246,13 @@ class TestBridgeDataFidelityScore:
         console.print(table)
 
         fidelity_score = (passing / total * 100) if total > 0 else 0
-        print(f"\nTier 1 Fidelity Score: {fidelity_score:.1f}%")
 
         # Tier 1 target: ≥ 95% (all except null_value might coerce to string)
-        assert fidelity_score >= 85, (
-            f"Tier 1 fidelity {fidelity_score} below acceptable (target ≥ 95%)"
-        )
+        assert fidelity_score >= 85, f"Tier 1 fidelity {fidelity_score} below acceptable (target ≥ 95%)"
 
-    def test_loss_budget_matrix_tier2_nested_dicts(self):
-        """Tier 2 (Nested dicts, one level): target ≥ 85% key preservation.
+    def test_loss_budget_matrix_tier2_nested_dicts(self) -> None:
+        """
+        Tier 2 (Nested dicts, one level): target ≥ 85% key preservation.
 
         Single-key unwrapping (_rehydrate line 341-342) strips the wrapper.
         We accept this as structural loss and measure key presence, not structure identity.
@@ -287,9 +270,7 @@ class TestBridgeDataFidelityScore:
             json_str = json.dumps(data)
             tok_text = Bridge.json(json_str)
             recovered_json = Bridge.to_json(tok_text)
-            recovered: Any = (
-                json.loads(recovered_json) if recovered_json else {}
-            )
+            recovered: Any = json.loads(recovered_json) if recovered_json else {}
 
             # Measure: does original nested data appear somewhere in recovered structure?
             # Due to unwrapping, {"user": {..}} becomes {..}, so we check if nested
@@ -308,66 +289,53 @@ class TestBridgeDataFidelityScore:
                         recovered_nested_keys.update(v.keys())
 
             # Check that at least one nested key is preserved
-            if original_nested_keys and (
-                original_nested_keys & recovered_nested_keys
-            ):
+            if original_nested_keys and (original_nested_keys & recovered_nested_keys):
                 passing += 1
 
         fidelity_score = (passing / total * 100) if total > 0 else 0
-        print(f"\nTier 2 Nested Dict Key Preservation: {fidelity_score:.1f}%")
-        assert fidelity_score >= 66, (
-            f"Tier 2 fidelity {fidelity_score} below threshold"
-        )
+        assert fidelity_score >= 66, f"Tier 2 fidelity {fidelity_score} below threshold"
 
-    def test_loss_budget_matrix_tier3_tables_and_lists(self):
-        """Tier 3 (Tables, lists, scalars-as-text): document losses, don't assert strict fidelity.
+    def test_loss_budget_matrix_tier3_tables_and_lists(self) -> None:
+        """
+        Tier 3 (Tables, lists, scalars-as-text): document losses, don't assert strict fidelity.
 
         These go through table→rows path or text-serialization path.
         Losses are by design (table collapsing, row shortcutting).
         We document the behavior rather than assert success.
         """
-        print("\nTier 3 Known Lossy Behaviors (documented, not asserted):")
-        print(
-            "  - List of homogeneous dicts → Tok table → comes back as {data_rows: [...]}"
-        )
-        print("  - Empty node → empty string (not {} or None)")
-        print("  - Bare scalar (not dict attr) → goes through text, type lost")
-        print(
-            "  - These losses are architectural trade-offs; not bugs to fix."
-        )
         assert True  # No assertion; this is documentation
 
 
 class TestBridgeEdgeCases:
     """Test edge cases in Bridge conversions."""
 
-    def test_empty_dict(self):
+    def test_empty_dict(self) -> None:
         """Empty dict should convert gracefully."""
         json_str = json.dumps({})
         tok_text = Bridge.json(json_str)
         assert isinstance(tok_text, str)
 
-    def test_empty_list(self):
+    def test_empty_list(self) -> None:
         """Empty list should convert gracefully."""
         json_str = json.dumps([])
         tok_text = Bridge.json(json_str)
         assert isinstance(tok_text, str)
 
-    def test_deeply_nested_dict(self):
+    def test_deeply_nested_dict(self) -> None:
         """Deeply nested dict should convert without error."""
         original = {"a": {"b": {"c": {"d": "value"}}}}
         json_str = json.dumps(original)
         tok_text = Bridge.json(json_str)
         assert isinstance(tok_text, str)
 
-    def test_list_of_scalars(self):
+    def test_list_of_scalars(self) -> None:
         """List of scalars should convert."""
         original = [1, 2, 3, 4, 5]
         json_str = json.dumps(original)
         tok_text = Bridge.json(json_str)
         assert isinstance(tok_text, str)
 
-    def test_mixed_types_dict(self):
+    def test_mixed_types_dict(self) -> None:
         """Dict with mixed value types should convert."""
         original = {
             "string": "text",
@@ -387,7 +355,7 @@ class TestBridgeEdgeCases:
 class TestBridgeConsistency:
     """Test Bridge behavior is consistent and predictable."""
 
-    def test_encode_decode_interface(self):
+    def test_encode_decode_interface(self) -> None:
         """Bridge encode/decode should follow SerializationProtocol."""
         data = {"test": "data"}
         json_str = json.dumps(data)
@@ -401,7 +369,7 @@ class TestBridgeConsistency:
         recovered = json.loads(recovered_json) if recovered_json else {}
         assert isinstance(recovered, dict)
 
-    def test_encode_dict_input(self):
+    def test_encode_dict_input(self) -> None:
         """encode() should handle dict input."""
         data = {"key": "value"}
         json_str = json.dumps(data)
@@ -409,7 +377,7 @@ class TestBridgeConsistency:
         assert isinstance(tok_text, str)
         assert "@data" in tok_text or tok_text
 
-    def test_roundtrip_preserves_something(self):
+    def test_roundtrip_preserves_something(self) -> None:
         """After round-trip, something of the original should remain."""
         original = {"important": "data"}
         json_str = json.dumps(original)
@@ -419,13 +387,12 @@ class TestBridgeConsistency:
         recovered = json.loads(recovered_json) if recovered_json else {}
 
         # Something should survive
-        assert len(recovered) > 0 or "important" in str(recovered), (
-            "Round-trip should preserve something"
-        )
+        assert len(recovered) > 0 or "important" in str(recovered), "Round-trip should preserve something"
 
 
 def analyze_losses() -> dict[str, Any]:
-    """Audit Bridge._rehydrate() loss points systematically.
+    """
+    Audit Bridge._rehydrate() loss points systematically.
 
     Returns dict with one entry per loss point:
     {
@@ -481,9 +448,7 @@ def analyze_losses() -> dict[str, Any]:
         "tested": len(lp1_results),
         "lossless": lp1_passing,
         "lossy": len(lp1_results) - lp1_passing,
-        "loss_rate": (
-            1.0 - (lp1_passing / len(lp1_results)) if lp1_results else 0.0
-        ),
+        "loss_rate": (1.0 - (lp1_passing / len(lp1_results)) if lp1_results else 0.0),
         "examples": [],
     }
 
@@ -512,11 +477,7 @@ def analyze_losses() -> dict[str, Any]:
         # LP2: list becomes {type}_rows key
         # Check if list structure is preserved
         is_list_input = isinstance(data, list)
-        recovered_has_rows = (
-            any("_rows" in k for k in recovered.keys())
-            if isinstance(recovered, dict)
-            else False
-        )
+        recovered_has_rows = any("_rows" in k for k in recovered) if isinstance(recovered, dict) else False
 
         # Loss occurs when input is list and output has *_rows key
         passed = not (is_list_input and recovered_has_rows)
@@ -529,9 +490,7 @@ def analyze_losses() -> dict[str, Any]:
         "tested": len(lp2_results),
         "lossless": lp2_passing,
         "lossy": len(lp2_results) - lp2_passing,
-        "loss_rate": (
-            1.0 - (lp2_passing / len(lp2_results)) if lp2_results else 0.0
-        ),
+        "loss_rate": (1.0 - (lp2_passing / len(lp2_results)) if lp2_results else 0.0),
         "examples": [],
     }
 
@@ -565,9 +524,7 @@ def analyze_losses() -> dict[str, Any]:
         "tested": len(lp3_results),
         "lossless": lp3_passing,
         "lossy": len(lp3_results) - lp3_passing,
-        "loss_rate": (
-            1.0 - (lp3_passing / len(lp3_results)) if lp3_results else 0.0
-        ),
+        "loss_rate": (1.0 - (lp3_passing / len(lp3_results)) if lp3_results else 0.0),
         "examples": [],
     }
 
@@ -589,24 +546,16 @@ def analyze_losses() -> dict[str, Any]:
             continue
 
         recovered_json = Bridge.to_json(tok_text)
-        lp4_recovered: Any = (
-            json.loads(recovered_json) if recovered_json else {}
-        )
+        lp4_recovered: Any = json.loads(recovered_json) if recovered_json else {}
 
         # LP4: when single key == node.type ("data"), wrapper is stripped
         # Original has "data" key, recovered might not
         has_data_key_original = "data" in data
-        has_data_key_recovered = (
-            "data" in lp4_recovered
-            if isinstance(lp4_recovered, dict)
-            else False
-        )
+        has_data_key_recovered = "data" in lp4_recovered if isinstance(lp4_recovered, dict) else False
 
         # Lossless if structure is maintained (either both have "data" or
         # structure survived)
-        passed = (has_data_key_original == has_data_key_recovered) or len(
-            str(lp4_recovered)
-        ) > 2
+        passed = (has_data_key_original == has_data_key_recovered) or len(str(lp4_recovered)) > 2
         lp4_results.append((case_id, passed))
 
     lp4_passing = sum(1 for _, p in lp4_results if p)
@@ -616,9 +565,7 @@ def analyze_losses() -> dict[str, Any]:
         "tested": len(lp4_results),
         "lossless": lp4_passing,
         "lossy": len(lp4_results) - lp4_passing,
-        "loss_rate": (
-            1.0 - (lp4_passing / len(lp4_results)) if lp4_results else 0.0
-        ),
+        "loss_rate": (1.0 - (lp4_passing / len(lp4_results)) if lp4_results else 0.0),
         "examples": [],
     }
 
@@ -652,9 +599,7 @@ def analyze_losses() -> dict[str, Any]:
         "tested": len(lp5_results),
         "lossless": lp5_passing,
         "lossy": len(lp5_results) - lp5_passing,
-        "loss_rate": (
-            1.0 - (lp5_passing / len(lp5_results)) if lp5_results else 0.0
-        ),
+        "loss_rate": (1.0 - (lp5_passing / len(lp5_results)) if lp5_results else 0.0),
         "examples": [],
     }
 
@@ -686,15 +631,7 @@ def analyze_losses() -> dict[str, Any]:
     console.print(table)
 
     # Summary
-    overall_loss_rate = total_lossy / total_tested if total_tested > 0 else 0.0
-    print(f"\n{'=' * 70}")
-    print("BRIDGE LOSS AUDIT SUMMARY")
-    print(f"{'=' * 70}")
-    print(f"Total test cases: {total_tested}")
-    print(f"Total lossy cases: {total_lossy}")
-    print(f"Overall loss rate: {overall_loss_rate:.1%}")
-    print(f"Overall fidelity: {1 - overall_loss_rate:.1%}")
-    print(f"{'=' * 70}\n")
+    total_lossy / total_tested if total_tested > 0 else 0.0
 
     return results
 

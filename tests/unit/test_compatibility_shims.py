@@ -8,15 +8,9 @@ from tok.utils._savings_persistence import (
 
 
 def test_stats_modules_re_export_canonical_symbols() -> None:
-    assert (
-        gateway_stats.SavingsTracker
-        is canonical_savings_tracker.SavingsTracker
-    )
+    assert gateway_stats.SavingsTracker is canonical_savings_tracker.SavingsTracker
 
-    assert (
-        gateway_stats.GLOBAL_LEDGER_FILENAME
-        == CANONICAL_GLOBAL_LEDGER_FILENAME
-    )
+    assert gateway_stats.GLOBAL_LEDGER_FILENAME == CANONICAL_GLOBAL_LEDGER_FILENAME
 
 
 def test_stats_modules_share_quality_helpers() -> None:

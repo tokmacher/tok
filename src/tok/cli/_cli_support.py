@@ -1,7 +1,8 @@
-from __future__ import annotations
-
 """Shared CLI constants, display helpers, and process utilities."""
 
+from __future__ import annotations
+
+import contextlib
 import logging
 import os
 import socket
@@ -9,12 +10,14 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
-from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ RUNTIME_WARNING_SIGNALS = (
 
 
 def bridge_url(port: int | None = None, path: str = "") -> str:
+    """Build the bridge server URL."""
     host = os.getenv("TOK_BRIDGE_HOST", "localhost")
     if port is None:
         port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
@@ -46,12 +50,14 @@ def bridge_url(port: int | None = None, path: str = "") -> str:
 
 
 def collector_url(path: str = "") -> str:
+    """Build the collector server URL."""
     host = os.getenv("TOK_COLLECTOR_HOST", "localhost")
     port = int(os.getenv("TOK_COLLECTOR_PORT", "8000"))
     return f"http://{host}:{port}{path}"
 
 
 def msg_text(msg: dict[str, Any]) -> str:
+    """Extract text content from a message dict."""
     content = msg.get("content", "")
     if isinstance(content, str):
         return content
@@ -74,10 +80,8 @@ def read_pid() -> int | None:
         return pid
     except (ValueError, ProcessLookupError, PermissionError):
         pass
-    try:
+    with contextlib.suppress(PermissionError):
         PID_FILE.unlink(missing_ok=True)
-    except PermissionError:
-        pass
     return None
 
 
@@ -150,12 +154,9 @@ def find_pids_on_port(port: int) -> list[int]:
                     # Skip non-numeric output
                     continue
             return pids
-        else:
-            # Log non-zero exit codes for debugging
-            if result.returncode != 0:
-                logger.debug(
-                    f"lsof failed with exit code {result.returncode} for port {port}"
-                )
+        # Log non-zero exit codes for debugging
+        if result.returncode != 0:
+            logger.debug(f"lsof failed with exit code {result.returncode} for port {port}")
 
     except (subprocess.SubprocessError, ValueError, TypeError) as e:
         logger.debug(f"Subprocess error checking port {port}: {e}")
@@ -194,10 +195,8 @@ def read_collector_pid() -> int | None:
         return pid
     except (ValueError, ProcessLookupError, PermissionError):
         pass
-    try:
+    with contextlib.suppress(PermissionError):
         COLLECTOR_PID_FILE.unlink(missing_ok=True)
-    except PermissionError:
-        pass
     return None
 
 
@@ -285,9 +284,7 @@ def render_stats_panel(
     grid.add_row(f"[dim]{subhead}[/dim]", "")
     for label, value in rows:
         grid.add_row(f"[bold]{label}[/bold]", value)
-    return Panel.fit(
-        grid, title=title, border_style=border_style, padding=(0, 1)
-    )
+    return Panel.fit(grid, title=title, border_style=border_style, padding=(0, 1))
 
 
 def savings_verdict(pct: float) -> str:
@@ -333,9 +330,7 @@ def runtime_verdict(
 
 def session_signals_text(payload: dict[str, Any]) -> str:
     parts: list[str] = []
-    reacq_count = int(payload.get("repeat_search_count", 0)) + int(
-        payload.get("repeat_file_read_count", 0)
-    )
+    reacq_count = int(payload.get("repeat_search_count", 0)) + int(payload.get("repeat_file_read_count", 0))
     signal_map = (
         ("fallback", int(payload.get("fallback_count", 0))),
         ("drift", int(payload.get("semantic_drift_count", 0))),
@@ -388,31 +383,15 @@ def savings_headline(
 ) -> tuple[str, str, str]:
     if summary is None:
         pct = 0.0 if savings_pct is None else savings_pct
-        token_text = (
-            "No session savings recorded yet"
-            if tokens_saved is None
-            else f"{tokens_saved:,} tokens avoided"
-        )
+        token_text = "No session savings recorded yet" if tokens_saved is None else f"{tokens_saved:,} tokens avoided"
         return ("Saved $0.0000", f"{pct:.1f}% saved", token_text)
 
     savings_pct_val = summary["savings_pct"]
     cost_saved_val = summary["cost_saved_usd"]
     tokens_saved_val = summary["tokens_saved"]
-    pct = (
-        float(savings_pct_val)
-        if isinstance(savings_pct_val, int | float | str)
-        else 0.0
-    )
-    saved_usd = (
-        float(cost_saved_val)
-        if isinstance(cost_saved_val, int | float | str)
-        else 0.0
-    )
-    tokens_saved = (
-        int(tokens_saved_val)
-        if isinstance(tokens_saved_val, int | float | str)
-        else 0
-    )
+    pct = float(savings_pct_val) if isinstance(savings_pct_val, int | float | str) else 0.0
+    saved_usd = float(cost_saved_val) if isinstance(cost_saved_val, int | float | str) else 0.0
+    tokens_saved = int(tokens_saved_val) if isinstance(tokens_saved_val, int | float | str) else 0
     return (
         f"Saved ${saved_usd:.4f}",
         f"{pct:.1f}% saved",
@@ -438,22 +417,13 @@ def session_status_rows(
         baseline_only=baseline_only,
         mode=mode,
         tokens_saved=tokens_saved,
-        session_quality=session_quality
-        or (
-            str(summary.get("session_quality", ""))
-            if summary is not None
-            else None
-        ),
+        session_quality=session_quality or (str(summary.get("session_quality", "")) if summary is not None else None),
     )
     rows = [
         ("Verdict", verdict),
         (
             "Tok active",
-            (
-                "yes"
-                if tok_active and mode != "baseline" and not baseline_only
-                else "no"
-            ),
+            ("yes" if tok_active and mode != "baseline" and not baseline_only else "no"),
         ),
         ("Degraded to baseline", "yes" if baseline_only else "no"),
     ]
@@ -461,44 +431,26 @@ def session_status_rows(
         rows.append(("Mode", mode))
     if request_policy is not None:
         rows.append(("Request policy", request_policy))
-    if session_quality or (
-        summary is not None and summary.get("session_quality")
-    ):
+    if session_quality or (summary is not None and summary.get("session_quality")):
         rows.append(
             (
                 "Session quality",
-                str(
-                    session_quality
-                    or (
-                        summary.get("session_quality")
-                        if summary is not None
-                        else ""
-                    )
-                ),
+                str(session_quality or (summary.get("session_quality") if summary is not None else "")),
             )
         )
-    if degradation_reason or (
-        summary is not None and summary.get("last_degradation_reason")
-    ):
+    if degradation_reason or (summary is not None and summary.get("last_degradation_reason")):
         rows.append(
             (
                 "Degradation reason",
-                str(
-                    degradation_reason
-                    or (
-                        summary.get("last_degradation_reason")
-                        if summary is not None
-                        else ""
-                    )
-                ),
+                str(degradation_reason or (summary.get("last_degradation_reason") if summary is not None else "")),
             )
         )
     if session_signals is not None:
         rows.append(("Session signals", session_signals))
     if summary is not None:
-        request_shape_blocks = int(
-            summary.get("preflight_block_original_payload_count", 0)
-        ) + int(summary.get("preflight_block_rewritten_payload_count", 0))
+        request_shape_blocks = int(summary.get("preflight_block_original_payload_count", 0)) + int(
+            summary.get("preflight_block_rewritten_payload_count", 0)
+        )
         if request_shape_blocks > 0:
             rows.append(
                 (
@@ -506,9 +458,9 @@ def session_status_rows(
                     f"{int(summary.get('preflight_block_original_payload_count', 0))} original, {int(summary.get('preflight_block_rewritten_payload_count', 0))} rewritten",
                 )
             )
-        stream_transport_recoveries = int(
-            summary.get("stream_recovery_empty_success_count", 0)
-        ) + int(summary.get("stream_recovery_read_error_count", 0))
+        stream_transport_recoveries = int(summary.get("stream_recovery_empty_success_count", 0)) + int(
+            summary.get("stream_recovery_read_error_count", 0)
+        )
         if stream_transport_recoveries > 0:
             rows.append(
                 (
@@ -516,9 +468,7 @@ def session_status_rows(
                     f"{int(summary.get('stream_recovery_empty_success_count', 0))} empty, {int(summary.get('stream_recovery_read_error_count', 0))} read-error",
                 )
             )
-        held_recovery = int(
-            summary.get("request_policy_held_by_recovery_count", 0)
-        )
+        held_recovery = int(summary.get("request_policy_held_by_recovery_count", 0))
         if held_recovery > 0:
             rows.append(("Recovery holdovers", str(held_recovery)))
     if summary is not None:
@@ -536,11 +486,7 @@ def session_status_rows(
         )
     if fallback_count is None and summary is not None:
         fallback_count_val = summary["fallback_count"]
-        fallback_count = (
-            int(fallback_count_val)
-            if isinstance(fallback_count_val, int | float | str)
-            else 0
-        )
+        fallback_count = int(fallback_count_val) if isinstance(fallback_count_val, int | float | str) else 0
     if fallback_count is not None:
         rows.append(("Fallbacks", str(fallback_count)))
     return rows
@@ -571,43 +517,39 @@ def interaction_quality_rows(
             )
         )
     if thinking_mutation_events is not None:
-        rows.append(
-            ("Thinking mutation events", str(thinking_mutation_events))
-        )
+        rows.append(("Thinking mutation events", str(thinking_mutation_events)))
     if repeated_active_file_reads is not None:
-        rows.append(
-            ("Repeated active-file reads", str(repeated_active_file_reads))
-        )
+        rows.append(("Repeated active-file reads", str(repeated_active_file_reads)))
     if task_score is not None:
         rows.append(("Task score", str(task_score)))
     return rows
 
 
 __all__ = [
+    "COLLECTOR_LOG_FILE",
+    "COLLECTOR_PID_FILE",
+    "LOG_FILE",
+    "PID_FILE",
+    "RUNTIME_WARNING_SIGNALS",
+    "TOK_DIR",
     "bridge_url",
     "collector_url",
-    "msg_text",
     "console",
-    "TOK_DIR",
-    "PID_FILE",
-    "LOG_FILE",
-    "COLLECTOR_PID_FILE",
-    "COLLECTOR_LOG_FILE",
-    "RUNTIME_WARNING_SIGNALS",
-    "read_pid",
     "find_pids_on_port",
     "get_running_bridge_pid",
-    "read_collector_pid",
-    "start_collector",
-    "memory_root",
-    "savings_style",
-    "render_stats_panel",
-    "savings_verdict",
-    "status_border",
-    "runtime_verdict",
-    "session_signals_text",
-    "session_recommendation",
-    "savings_headline",
-    "session_status_rows",
     "interaction_quality_rows",
+    "memory_root",
+    "msg_text",
+    "read_collector_pid",
+    "read_pid",
+    "render_stats_panel",
+    "runtime_verdict",
+    "savings_headline",
+    "savings_style",
+    "savings_verdict",
+    "session_recommendation",
+    "session_signals_text",
+    "session_status_rows",
+    "start_collector",
+    "status_border",
 ]

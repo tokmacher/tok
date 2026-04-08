@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Runtime request-preparation helpers extracted from core."""
+
+from __future__ import annotations
 
 import copy
 import hashlib
@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import tok.runtime.core as _core
-from ..compression import (
+from tok.compression import (
     EDIT_LIKE_TOOLS,
     compress_history,
     compress_recent_window,
@@ -18,30 +18,31 @@ from ..compression import (
     inject_system_additions,
     text_of,
 )
-from ..neuro.ir import Instruction
+from tok.neuro.ir import Instruction
+
 from .config import (
+    _SHORT_SESSION_THRESHOLD,
     FILE_READ_DENSITY_THRESHOLD,
     RUNTIME_HINTS_MAX_PER_TURN,
     TOK_FILE_DELIVERY_STALE_TURNS,
-    TOK_LARGE_FILE_HINT,
-    TOK_READ_PLAN_HINT,
-    TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
     TOK_HOT_COMMAND_MAX_CHARS,
     TOK_HOT_COMMAND_MAX_LINES,
     TOK_HOT_FILE_MAX_CHARS,
     TOK_HOT_FILE_MAX_LINES,
     TOK_HOT_SEARCH_MAX_CHARS,
     TOK_HOT_SEARCH_MAX_LINES,
+    TOK_LARGE_FILE_HINT,
     TOK_NEIGHBORHOOD_TRIGGER_ANCHORS,
     TOK_NEIGHBORHOOD_WINDOW_TURNS,
     TOK_REACQUIRE_STUCK_COUNT,
     TOK_REACQUIRE_STUCK_WINDOW_TURNS,
     TOK_REACQUIRE_TRIGGER_COUNT,
     TOK_REACQUIRE_WINDOW_TURNS,
+    TOK_READ_PLAN_HINT,
+    TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOK_STABLE_RESULT_INFO_HINT,
     TOOL_USE_DENSITY_THRESHOLD,
-    _SHORT_SESSION_THRESHOLD,
 )
 from .core import UniversalTokRuntime, logger
 from .memory.bridge_memory import clean_system_context
@@ -53,13 +54,13 @@ from .pipeline.request_preparation import (
     collect_transient_error_snippets,
     mutation_signals,
 )
-from .pipeline.response_processing import translate_request_results
 from .pipeline.request_validation import (
     canonicalize_anthropic_bridge_body,
     detect_prompt_bloat,
     has_recoverable_immediate_pairing_failures,
     validate_anthropic_bridge_body,
 )
+from .pipeline.response_processing import translate_request_results
 from .pipeline.tool_processing import (
     _should_skip_history_rewrite,
     build_tool_use_id_to_context,
@@ -71,9 +72,9 @@ from .pipeline.tool_processing import (
 from .policy.macro_handling import _jit_context_matches
 from .policy.semantic_validation import calculate_invisible_pressure
 from .repeat_targets import (
+    SEARCH_LIKE_TOOLS,
     HotSummaryRecord,
     RepeatTargetEvent,
-    SEARCH_LIKE_TOOLS,
     build_summary_for_family,
     evidence_identity_key,
     resolve_evidence_intent,
@@ -127,20 +128,14 @@ def observe_repeat_target_result_impl(
             command=command,
             args=tool_args,
         )
-    evidence_intent = resolve_evidence_intent(
-        tool_name, path=path, query=query, command=command
-    )
+    evidence_intent = resolve_evidence_intent(tool_name, path=path, query=query, command=command)
     evidence_anchor = evidence_intent.anchor if evidence_intent else ""
 
     search_like_result = tool_name in SEARCH_LIKE_TOOLS or (
         evidence_intent is not None and evidence_intent.domain == "search"
     )
-    if exact_evidence_key:
-        if not (
-            search_like_result
-            and search_result_evidence_level(text) == "navigation"
-        ):
-            session_self._pending_exact_evidence_keys.add(exact_evidence_key)
+    if exact_evidence_key and not (search_like_result and search_result_evidence_level(text) == "navigation"):
+        session_self._pending_exact_evidence_keys.add(exact_evidence_key)
 
     current_turn = max(1, session_self.bridge_memory.turn)
     token_cost = max(0, count_tokens(text))
@@ -205,40 +200,22 @@ def observe_repeat_target_result_impl(
         recent_window_count=repeat_count,
         stuck_window_count=stuck_count,
         unchanged_result_count=(
-            (record.unchanged_result_count + 1)
-            if unchanged_result and record
-            else (1 if unchanged_result else 0)
+            (record.unchanged_result_count + 1) if unchanged_result and record else (1 if unchanged_result else 0)
         ),
-        evidence_intent=(
-            record.evidence_intent if record else evidence_intent
-        ),
+        evidence_intent=(record.evidence_intent if record else evidence_intent),
     )
     signals: dict[str, int] = {}
     if session_self.is_predictive_cache_hit(family, logical_target):
         signals["predictive_cache_hits"] = 1
     hot_now = repeat_count >= TOK_REACQUIRE_TRIGGER_COUNT
-    stuck_now = stuck_count >= TOK_REACQUIRE_STUCK_COUNT or (
-        hot_now and blocker_rediscovery
-    )
-    if hot_now and not updated.hot_promotion_turn:
-        updated.hot_promotion_turn = current_turn
-        signals["repeat_target_hot"] = 1
-    elif (
-        hot_now
-        and record
-        and record.hot_promotion_turn < current_turn
-        and repeat_count > record.repeat_count
+    stuck_now = stuck_count >= TOK_REACQUIRE_STUCK_COUNT or (hot_now and blocker_rediscovery)
+    if (hot_now and not updated.hot_promotion_turn) or (
+        hot_now and record and record.hot_promotion_turn < current_turn and repeat_count > record.repeat_count
     ):
         updated.hot_promotion_turn = current_turn
         signals["repeat_target_hot"] = 1
-    if stuck_now and not updated.stuck_promotion_turn:
-        updated.stuck_promotion_turn = current_turn
-        signals["repeat_target_stuck"] = 1
-    elif (
-        stuck_now
-        and record
-        and record.stuck_promotion_turn < current_turn
-        and stuck_count > record.stuck_window_count
+    if (stuck_now and not updated.stuck_promotion_turn) or (
+        stuck_now and record and record.stuck_promotion_turn < current_turn and stuck_count > record.stuck_window_count
     ):
         updated.stuck_promotion_turn = current_turn
         signals["repeat_target_stuck"] = 1
@@ -247,17 +224,14 @@ def observe_repeat_target_result_impl(
     session_self._trim_repeat_target_state()
 
     if evidence_intent and evidence_anchor:
-        novelty_keys = session_self._evidence_anchor_novelty_keys.setdefault(
-            evidence_anchor, set()
-        )
+        novelty_keys = session_self._evidence_anchor_novelty_keys.setdefault(evidence_anchor, set())
         if evidence_intent.novelty_key:
             if evidence_intent.novelty_key in novelty_keys:
                 signals["evidence_novelty_missing"] = 1
             else:
                 novelty_keys.add(evidence_intent.novelty_key)
-        else:
-            if novelty_keys:
-                signals["evidence_novelty_missing"] = 1
+        elif novelty_keys:
+            signals["evidence_novelty_missing"] = 1
 
         if signals.get("repeat_target_hot"):
             signals["evidence_anchor_hot"] = 1
@@ -267,30 +241,21 @@ def observe_repeat_target_result_impl(
         if evidence_intent.domain == "file_current" and evidence_anchor:
             parent_dir = str(Path(evidence_anchor).parent)
             if parent_dir and parent_dir != ".":
-                neighborhood = session_self._evidence_neighborhoods.setdefault(
-                    parent_dir, set()
-                )
+                neighborhood = session_self._evidence_neighborhoods.setdefault(parent_dir, set())
                 neighborhood.add(evidence_anchor)
                 recent_neighborhood_events = [
                     e
                     for e in session_self._recent_repeat_target_events
-                    if e.evidence_anchor in neighborhood
-                    and current_turn - e.turn_index
-                    < TOK_NEIGHBORHOOD_WINDOW_TURNS
+                    if e.evidence_anchor in neighborhood and current_turn - e.turn_index < TOK_NEIGHBORHOOD_WINDOW_TURNS
                 ]
                 if (
                     len(neighborhood) >= TOK_NEIGHBORHOOD_TRIGGER_ANCHORS
-                    and len(recent_neighborhood_events)
-                    >= TOK_NEIGHBORHOOD_TRIGGER_ANCHORS
+                    and len(recent_neighborhood_events) >= TOK_NEIGHBORHOOD_TRIGGER_ANCHORS
                 ):
                     signals["evidence_neighborhood_hot"] = 1
 
-    if family == "file_read" and (
-        signals.get("repeat_target_hot") or signals.get("repeat_target_stuck")
-    ):
-        warm_metrics = session_self.apply_predictive_cache_warming(
-            logical_target
-        )
+    if family == "file_read" and (signals.get("repeat_target_hot") or signals.get("repeat_target_stuck")):
+        warm_metrics = session_self.apply_predictive_cache_warming(logical_target)
         for metric_key, metric_value in warm_metrics.items():
             signals[metric_key] = signals.get(metric_key, 0) + metric_value
     return signals
@@ -302,10 +267,7 @@ def _message_has_tool_result(message: dict[str, Any]) -> bool:
     content = message.get("content")
     if not isinstance(content, list):
         return False
-    return any(
-        isinstance(block, dict) and block.get("type") == "tool_result"
-        for block in content
-    )
+    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
 def _message_has_user_prompt(message: dict[str, Any]) -> bool:
@@ -315,11 +277,7 @@ def _message_has_user_prompt(message: dict[str, Any]) -> bool:
     if not isinstance(content, list):
         return False
     for block in content:
-        if (
-            isinstance(block, dict)
-            and block.get("type") == "text"
-            and str(block.get("text", "")).strip()
-        ):
+        if isinstance(block, dict) and block.get("type") == "text" and str(block.get("text", "")).strip():
             return True
     return False
 
@@ -350,9 +308,7 @@ def _stream_recovery_winnowing_floor_messages(
         tool_ids = {
             str(block.get("id", "")).strip()
             for block in content
-            if isinstance(block, dict)
-            and block.get("type") == "tool_use"
-            and str(block.get("id", "")).strip()
+            if isinstance(block, dict) and block.get("type") == "tool_use" and str(block.get("id", "")).strip()
         }
         if tool_ids:
             assistant_idx = idx
@@ -387,11 +343,7 @@ def _stream_recovery_winnowing_floor_messages(
                 paired_user_idx = idx
                 break
 
-    keep_indexes = sorted(
-        idx
-        for idx in {assistant_idx, paired_user_idx, latest_user_prompt_idx}
-        if idx >= 0
-    )
+    keep_indexes = sorted(idx for idx in {assistant_idx, paired_user_idx, latest_user_prompt_idx} if idx >= 0)
     return [messages[idx] for idx in keep_indexes]
 
 
@@ -417,10 +369,7 @@ def _resolve_effective_tool_compatible(
     normalized_tool_events: list[Any],
     behavior_signals: dict[str, int],
 ) -> tuple[bool, list[str]]:
-    if (
-        request.request_policy == "forced_baseline"
-        or not request.tool_compatible
-    ):
+    if request.request_policy == "forced_baseline" or not request.tool_compatible:
         return False, []
     if request.request_policy == "legacy_tool_compatible":
         return True, ["legacy_default"]
@@ -444,23 +393,16 @@ def _resolve_effective_tool_compatible(
     reasons: list[str] = []
     if session._request_policy_tool_mode_sticky_turns > 0:
         reasons.append("sticky")
-    cooldown_remaining = getattr(
-        session, "_stream_recovery_cooldown_remaining", 0
-    )
+    cooldown_remaining = getattr(session, "_stream_recovery_cooldown_remaining", 0)
     if cooldown_remaining > 0:
-        session._stream_recovery_cooldown_remaining = max(
-            0, cooldown_remaining - 1
-        )
+        session._stream_recovery_cooldown_remaining = max(0, cooldown_remaining - 1)
     if (
         session._stream_recovery_reacquisition_budget > 0
         or session._stream_recovery_history_floor_budget > 0
         or session._request_policy_stream_recovery_watch_turns > 0
     ):
         reasons.append("stream_recovery")
-    if (
-        session._request_policy_tool_recovery_watch_turns > 0
-        or session._invalid_tool_history_recovery_count > 0
-    ):
+    if session._request_policy_tool_recovery_watch_turns > 0 or session._invalid_tool_history_recovery_count > 0:
         reasons.append("tool_recovery")
     if any(
         session.pending_behavior_signals.get(key, 0) > 0
@@ -482,7 +424,8 @@ def _resolve_effective_tool_compatible(
 def _snapshot_latest_assistant_thinking(
     messages: list[dict[str, Any]],
 ) -> str | None:
-    """Return structured snapshot of the latest protected assistant message.
+    """
+    Return structured snapshot of the latest protected assistant message.
 
     Returns ``None`` when no assistant message contains thinking/redacted_thinking
     blocks.  The caller can later pass the returned string to
@@ -494,17 +437,20 @@ def _snapshot_latest_assistant_thinking(
         - content_hash: SHA256 hash of the full_content JSON serialization
         - block_types: sequence of block type identifiers (e.g., ["thinking", "text"])
     """
+    # Defensive: malformed request bodies can reach bridge preflight before
+    # canonicalization/validation. Snapshot helpers must never throw.
+    if not isinstance(messages, list):
+        return None
     for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
         if msg.get("role") != "assistant":
             continue
         content = msg.get("content")
         if not isinstance(content, list):
             continue
         thinking_blocks = [
-            b
-            for b in content
-            if isinstance(b, dict)
-            and b.get("type") in {"thinking", "redacted_thinking"}
+            b for b in content if isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"}
         ]
         if not thinking_blocks:
             return None
@@ -526,7 +472,8 @@ def _restore_latest_assistant_thinking(
     messages: list[dict[str, Any]],
     snapshot: str | None,
 ) -> bool:
-    """Replace the full protected content list in the latest assistant message.
+    """
+    Replace the full protected content list in the latest assistant message.
 
     This is the inverse of ``_snapshot_latest_assistant_thinking``.  It finds
     the latest assistant message with thinking/redacted_thinking blocks and
@@ -556,26 +503,15 @@ def _restore_latest_assistant_thinking(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        if not any(
-            isinstance(b, dict)
-            and b.get("type") in {"thinking", "redacted_thinking"}
-            for b in content
-        ):
+        if not any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
             continue
 
         msg["content"] = original_content
 
-        restored_content_json = json.dumps(
-            original_content, ensure_ascii=False, sort_keys=True
-        )
-        restored_hash = hashlib.sha256(
-            restored_content_json.encode()
-        ).hexdigest()
+        restored_content_json = json.dumps(original_content, ensure_ascii=False, sort_keys=True)
+        restored_hash = hashlib.sha256(restored_content_json.encode()).hexdigest()
 
-        if restored_hash == original_hash:
-            return True
-        else:
-            return False
+        return bool(restored_hash == original_hash)
     return False
 
 
@@ -603,33 +539,23 @@ def prepare_request_impl(
     if request.messages:
         for m in reversed(request.messages):
             if m.get("role") == "user":
-                last_user_msg = text_of(cast(Any, m.get("content", "")))
+                last_user_msg = text_of(cast("Any", m.get("content", "")))
                 break
 
     if detect_prompt_bloat(body.get("system"), last_user_msg):
         session.pending_behavior_signals["tok_prompt_bloat_detected"] = 1
-        current_sys = cast(Any, body.get("system", ""))
+        current_sys = cast("Any", body.get("system", ""))
         cleaned_sys = clean_system_context(session.bridge_memory, current_sys)
         if cleaned_sys and cleaned_sys != current_sys:
             body["system"] = cleaned_sys
             session.pending_behavior_signals["tok_prompt_optimized"] = 1
             if session.bridge_memory.top_hot_files(1):
-                session.pending_behavior_signals[
-                    "smoothness_prompt_optimization_active_task"
-                ] = 1
+                session.pending_behavior_signals["smoothness_prompt_optimization_active_task"] = 1
             compressed = True
             logger.warning(
                 "tok_prompt_optimized: system prompt reduced from %d to %d chars",
-                len(
-                    text_of(current_sys)
-                    if isinstance(current_sys, list)
-                    else str(current_sys)
-                ),
-                len(
-                    text_of(cleaned_sys)
-                    if isinstance(cleaned_sys, list)
-                    else str(cleaned_sys)
-                ),
+                len(text_of(current_sys) if isinstance(current_sys, list) else str(current_sys)),
+                len(text_of(cleaned_sys) if isinstance(cleaned_sys, list) else str(cleaned_sys)),
             )
 
     translated_messages = translate_request_results(body.get("messages", []))
@@ -642,22 +568,14 @@ def prepare_request_impl(
             parts = entry.value.strip().split()
             if not parts:
                 continue
-            recent_instructions.append(
-                Instruction(op=parts[0], args=tuple(parts[1:]))
-            )
+            recent_instructions.append(Instruction(op=parts[0], args=tuple(parts[1:])))
 
-        jit_macro = session.bridge_memory.macro_registry.match_recent_sequence(
-            recent_instructions
-        )
+        jit_macro = session.bridge_memory.macro_registry.match_recent_sequence(recent_instructions)
         try:
             threshold = int(os.getenv("TOK_JIT_HIT_THRESHOLD", "3"))
         except ValueError:
             threshold = 3  # Default fallback for invalid env var value
-        if (
-            jit_macro
-            and jit_macro.hit_count >= threshold
-            and _jit_context_matches(jit_macro, session)
-        ):
+        if jit_macro and jit_macro.hit_count >= threshold and _jit_context_matches(jit_macro, session):
             session.pending_behavior_signals["jit_offer_available"] = 1
             session.pending_behavior_signals[f"jit_offer_{jit_macro.name}"] = 1
             session._pending_macro_heal = jit_macro.name
@@ -668,62 +586,41 @@ def prepare_request_impl(
     _speculative_macro_hint: str | None = None
     if session.bridge_memory.load_global_macros:
         try:
-            _spec_threshold = int(
-                os.getenv("TOK_SPECULATIVE_HIT_THRESHOLD", "2")
-            )
+            _spec_threshold = int(os.getenv("TOK_SPECULATIVE_HIT_THRESHOLD", "2"))
         except ValueError:
             _spec_threshold = 2  # Default fallback for invalid env var value
         _spec_names = [
             f"@{m.name}"
             for m in session.bridge_memory.macro_registry.macros.values()
-            if m.hit_count >= _spec_threshold
-            and _jit_context_matches(m, session)
+            if m.hit_count >= _spec_threshold and _jit_context_matches(m, session)
         ]
         if _spec_names:
             _speculative_macro_hint = (
-                "Available macros for current context: "
-                + ", ".join(sorted(_spec_names))
-                + ". Use @name to invoke."
+                "Available macros for current context: " + ", ".join(sorted(_spec_names)) + ". Use @name to invoke."
             )
-            session.pending_behavior_signals["speculative_macros_injected"] = (
-                len(_spec_names)
-            )
+            session.pending_behavior_signals["speculative_macros_injected"] = len(_spec_names)
 
     id_to_context = build_tool_use_id_to_context(translated_messages)
-    suppress_reacquisition_once = (
-        session._stream_recovery_reacquisition_budget > 0
-    )
-    stream_recovery_history_floor_active = (
-        session._stream_recovery_history_floor_budget > 0
-    )
+    suppress_reacquisition_once = session._stream_recovery_reacquisition_budget > 0
+    stream_recovery_history_floor_active = session._stream_recovery_history_floor_budget > 0
     if stream_recovery_history_floor_active:
-        session._stream_recovery_history_floor_budget = max(
-            0, session._stream_recovery_history_floor_budget - 1
-        )
+        session._stream_recovery_history_floor_budget = max(0, session._stream_recovery_history_floor_budget - 1)
     behavior_signals = collect_behavior_signals(
         translated_messages,
         id_to_context,
         suppress_reacquisition_once=suppress_reacquisition_once,
     )
     if suppress_reacquisition_once:
-        session._stream_recovery_reacquisition_budget = max(
-            0, session._stream_recovery_reacquisition_budget - 1
-        )
+        session._stream_recovery_reacquisition_budget = max(0, session._stream_recovery_reacquisition_budget - 1)
     behavior_signals["_project_markers_proxy"] = len(session._project_markers)
     for err_snippet in collect_transient_error_snippets(translated_messages):
-        session.bridge_memory._upsert(
-            session.bridge_memory.hot, "errs", err_snippet, score_delta=1
-        )
+        session.bridge_memory._upsert(session.bridge_memory.hot, "errs", err_snippet, score_delta=1)
 
     blockers, hypotheses = extract_memory_items(translated_messages)
     for blocker in blockers:
-        session.bridge_memory._upsert(
-            session.bridge_memory.hot, "blockers", blocker, score_delta=2
-        )
+        session.bridge_memory._upsert(session.bridge_memory.hot, "blockers", blocker, score_delta=2)
     for hypothesis in hypotheses:
-        session.bridge_memory._upsert(
-            session.bridge_memory.hot, "questions", hypothesis, score_delta=2
-        )
+        session.bridge_memory._upsert(session.bridge_memory.hot, "questions", hypothesis, score_delta=2)
 
     normalized_tool_events = normalize_tool_events(translated_messages)
     runtime_hints: list[str] = []
@@ -747,29 +644,19 @@ def prepare_request_impl(
 
     from tok.runtime.smoothness.models import TokMode
 
-    _lossless_mode_active = (
-        session.current_tok_mode == TokMode.LOSSLESS_TASK_MODE
-    )
+    _lossless_mode_active = session.current_tok_mode == TokMode.LOSSLESS_TASK_MODE
     if _lossless_mode_active:
         should_skip_history = True
         skip_reason = "lossless_task_mode"
         history_skip_reason = skip_reason
         behavior_signals["lossless_task_mode_history_skipped"] = 1
-        logger.info(
-            "LOSSLESS_TASK_MODE: skipping active-workset compression entirely"
-        )
+        logger.info("LOSSLESS_TASK_MODE: skipping active-workset compression entirely")
 
     current_pressure = calculate_invisible_pressure(behavior_signals)
     request_policy = request.request_policy
-    previous_effective_tool_compatible = (
-        session._request_policy_last_effective_tool_compatible
-    )
-    effective_tool_compatible = (
-        request.tool_compatible and request_policy == "legacy_tool_compatible"
-    )
-    request_policy_reasons: list[str] = (
-        ["legacy_default"] if effective_tool_compatible else []
-    )
+    previous_effective_tool_compatible = session._request_policy_last_effective_tool_compatible
+    effective_tool_compatible = request.tool_compatible and request_policy == "legacy_tool_compatible"
+    request_policy_reasons: list[str] = ["legacy_default"] if effective_tool_compatible else []
     request_policy_escalated = False
 
     if translated_messages:
@@ -790,9 +677,7 @@ def prepare_request_impl(
             request_policy_reasons = []
 
         fresh_tool_mode_trigger = any(
-            reason
-            in {"stream_recovery", "tool_recovery", "structured_tool_loop"}
-            for reason in request_policy_reasons
+            reason in {"stream_recovery", "tool_recovery", "structured_tool_loop"} for reason in request_policy_reasons
         )
         fresh_tool_mode_trigger = fresh_tool_mode_trigger and (
             session._stream_recovery_reacquisition_budget > 0
@@ -826,19 +711,13 @@ def prepare_request_impl(
                         "tool_recovery",
                         "structured_tool_loop",
                     }:
-                        behavior_signals[
-                            f"request_policy_escalation_source_{reason}"
-                        ] = 1
+                        behavior_signals[f"request_policy_escalation_source_{reason}"] = 1
             if fresh_tool_mode_trigger:
                 session._request_policy_tool_mode_sticky_turns = max(
                     session._request_policy_tool_mode_sticky_turns,
                     TOK_REQUEST_POLICY_STICKY_TURNS,
                 )
-        elif (
-            request_policy == "natural_first"
-            and previous_effective_tool_compatible
-            and not effective_tool_compatible
-        ):
+        elif request_policy == "natural_first" and previous_effective_tool_compatible and not effective_tool_compatible:
             behavior_signals["request_policy_deescalations"] = 1
 
         if request_policy == "forced_baseline":
@@ -851,12 +730,9 @@ def prepare_request_impl(
         for reason in request_policy_reasons:
             behavior_signals[f"request_policy_reason_{reason}"] = 1
 
-        cooldown_suppressed = getattr(
-            session, "_stream_recovery_cooldown_suppressed", False
-        )
+        cooldown_suppressed = getattr(session, "_stream_recovery_cooldown_suppressed", False)
         active_recovery_present = (
-            session._stream_recovery_reacquisition_budget > 0
-            or session._stream_recovery_history_floor_budget > 0
+            session._stream_recovery_reacquisition_budget > 0 or session._stream_recovery_history_floor_budget > 0
         )
         if cooldown_suppressed and not active_recovery_present:
             behavior_signals["request_policy_recovery_cooldown_suppressed"] = 1
@@ -869,9 +745,7 @@ def prepare_request_impl(
         ):
             if recovery_sticky_continuation:
                 behavior_signals["request_policy_held_by_recovery"] = 1
-                behavior_signals[
-                    "request_policy_recovery_sticky_continuations"
-                ] = 1
+                behavior_signals["request_policy_recovery_sticky_continuations"] = 1
                 session._request_policy_tool_mode_sticky_turns = 0
                 session._request_policy_stream_recovery_watch_turns = 0
                 session._request_policy_tool_recovery_watch_turns = 0
@@ -895,24 +769,17 @@ def prepare_request_impl(
             session._request_policy_tool_recovery_watch_turns = max(
                 0, session._request_policy_tool_recovery_watch_turns - 1
             )
-        session._request_policy_last_effective_tool_compatible = (
-            effective_tool_compatible
-        )
+        session._request_policy_last_effective_tool_compatible = effective_tool_compatible
 
-        runtime_hints = (
-            [_speculative_macro_hint] if _speculative_macro_hint else []
-        )
+        runtime_hints = [_speculative_macro_hint] if _speculative_macro_hint else []
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
             runtime_hints.append(TOK_REPEAT_COMMAND_SUPPRESSION_HINT)
             behavior_signals["repeat_command_suppression_hint_injected"] = 1
         file_read_count = sum(
-            1
-            for event in normalized_tool_events
-            if getattr(event, "compressibility_class", "") == "file_read"
+            1 for event in normalized_tool_events if getattr(event, "compressibility_class", "") == "file_read"
         )
         if effective_tool_compatible and (
-            file_read_count >= FILE_READ_DENSITY_THRESHOLD
-            or len(normalized_tool_events) >= TOOL_USE_DENSITY_THRESHOLD
+            file_read_count >= FILE_READ_DENSITY_THRESHOLD or len(normalized_tool_events) >= TOOL_USE_DENSITY_THRESHOLD
         ):
             runtime_hints.append(TOK_READ_PLAN_HINT)
             behavior_signals["read_plan_hint_injected"] = 1
@@ -921,10 +788,7 @@ def prepare_request_impl(
         answer_ready = False
         resend_signals: dict[str, int] = {}
         has_answer_anchor = False
-        read_only_audit_turn = (
-            effective_tool_compatible
-            and _is_read_only_audit_turn(translated_messages)
-        )
+        read_only_audit_turn = effective_tool_compatible and _is_read_only_audit_turn(translated_messages)
         late_answer_followthrough_active = (
             effective_tool_compatible
             and session._late_answer_followthrough_pending
@@ -939,9 +803,7 @@ def prepare_request_impl(
             and not read_only_audit_turn
         )
         late_answer_assembly_repair_mode = (
-            session._late_answer_assembly_repair_mode_pending
-            if late_answer_assembly_repair_active
-            else ""
+            session._late_answer_assembly_repair_mode_pending if late_answer_assembly_repair_active else ""
         )
         answer_ready_repair_active = (
             effective_tool_compatible
@@ -951,20 +813,12 @@ def prepare_request_impl(
             and not late_answer_assembly_repair_active
             and not read_only_audit_turn
         )
-        session._late_answer_followthrough_active = (
-            late_answer_followthrough_active
-        )
+        session._late_answer_followthrough_active = late_answer_followthrough_active
         session._answer_ready_repair_active = answer_ready_repair_active
-        session._late_answer_assembly_repair_active = (
-            late_answer_assembly_repair_active
-        )
-        session._late_answer_assembly_repair_mode_active = (
-            late_answer_assembly_repair_mode
-        )
+        session._late_answer_assembly_repair_active = late_answer_assembly_repair_active
+        session._late_answer_assembly_repair_mode_active = late_answer_assembly_repair_mode
 
-        repeat_snapshot_signals = _capture_repeat_target_snapshots(
-            translated_messages, id_to_context, session
-        )
+        repeat_snapshot_signals = _capture_repeat_target_snapshots(translated_messages, id_to_context, session)
         if repeat_snapshot_signals:
             session._bump_signals(repeat_snapshot_signals)
             for key, value in repeat_snapshot_signals.items():
@@ -976,11 +830,7 @@ def prepare_request_impl(
         else:
             body["messages"], type_breakdown = compress_tool_results(
                 translated_messages,
-                result_cache=(
-                    result_cache
-                    if result_cache is not None
-                    else session.result_cache
-                ),
+                result_cache=(result_cache if result_cache is not None else session.result_cache),
                 tool_use_id_to_context=id_to_context,
                 compression_level=policy.tool_levels[mode],
                 semantic_hash_cache=session.semantic_hash_cache,
@@ -995,20 +845,14 @@ def prepare_request_impl(
             if tool_saved > 0:
                 saved_tokens += tool_saved
                 compressed = True
-            file_cache_hits = sum(
-                v for k, v in type_breakdown.items() if k.endswith("_cached")
-            )
+            file_cache_hits = sum(v for k, v in type_breakdown.items() if k.endswith("_cached"))
             if file_cache_hits > 0:
-                behavior_signals["tool_result_cache_hit"] = (
-                    behavior_signals.get("tool_result_cache_hit", 0) + 1
-                )
+                behavior_signals["tool_result_cache_hit"] = behavior_signals.get("tool_result_cache_hit", 0) + 1
             semantic_dedup_hits = type_breakdown.get("semantic_dedup", 0)
             if semantic_dedup_hits > 0:
-                behavior_signals["semantic_dedup_hit"] = (
-                    behavior_signals.get("semantic_dedup_hit", 0) + 1
-                )
+                behavior_signals["semantic_dedup_hit"] = behavior_signals.get("semantic_dedup_hit", 0) + 1
                 if effective_tool_compatible:
-                    from ..compression import _STABLE_RESULT_EXPLANATION
+                    from tok.compression import _STABLE_RESULT_EXPLANATION
 
                     runtime_hints.append(_STABLE_RESULT_EXPLANATION)
                 else:
@@ -1048,24 +892,19 @@ def prepare_request_impl(
 
         if should_skip_history:
             if stream_recovery_history_floor_active:
-                floored_recent = _stream_recovery_winnowing_floor_messages(
-                    body["messages"]
-                )
+                floored_recent = _stream_recovery_winnowing_floor_messages(body["messages"])
                 if floored_recent:
                     if len(floored_recent) < len(body["messages"]):
                         compressed = True
                     recent = floored_recent
                     body["messages"] = recent
-                    behavior_signals[
-                        "stream_recovery_history_floor_kept_context"
-                    ] = 1
+                    behavior_signals["stream_recovery_history_floor_kept_context"] = 1
                 else:
                     recent = body["messages"]
                     behavior_signals["stream_recovery_history_floor_noop"] = 1
             else:
                 behavior_signals["tok_history_compression_skipped"] = (
-                    behavior_signals.get("tok_history_compression_skipped", 0)
-                    + 1
+                    behavior_signals.get("tok_history_compression_skipped", 0) + 1
                 )
                 if skip_reason:
                     behavior_signals[f"tok_skip_{skip_reason}"] = 1
@@ -1077,11 +916,7 @@ def prepare_request_impl(
 
             h_profile: dict[str, Any] = dict(policy.history_profiles[mode])
             h_profile["_no_pointers"] = True
-            bridge_keep_turns = (
-                max(keep_turns, 2)
-                if request.adapter_kind == "claude-bridge"
-                else keep_turns
-            )
+            bridge_keep_turns = max(keep_turns, 2) if request.adapter_kind == "claude-bridge" else keep_turns
             recent, tok_state = compress_history(
                 body["messages"],
                 keep_turns=bridge_keep_turns,
@@ -1094,11 +929,7 @@ def prepare_request_impl(
                 tool_compatible=effective_tool_compatible,
                 first_exact_evidence_seen=session._first_exact_evidence_seen,
             )
-            if (
-                request.adapter_kind == "claude-bridge"
-                and not recent
-                and body["messages"]
-            ):
+            if request.adapter_kind == "claude-bridge" and not recent and body["messages"]:
                 recent, tok_state = compress_history(
                     body["messages"],
                     keep_turns=max(bridge_keep_turns, 2),
@@ -1112,10 +943,7 @@ def prepare_request_impl(
                     first_exact_evidence_seen=session._first_exact_evidence_seen,
                 )
                 behavior_signals["bridge_minimum_tail_preserved"] = 1
-            if (
-                request.adapter_kind == "claude-bridge"
-                and _messages_contain_tool_material(recent)
-            ):
+            if request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(recent):
                 candidate_body = {
                     "model": request.model,
                     "messages": recent,
@@ -1123,9 +951,7 @@ def prepare_request_impl(
                 }
                 pairing_failures = [
                     failure
-                    for failure in validate_anthropic_bridge_body(
-                        candidate_body
-                    )
+                    for failure in validate_anthropic_bridge_body(candidate_body)
                     if has_recoverable_immediate_pairing_failures([failure])
                 ]
                 if pairing_failures:
@@ -1134,55 +960,28 @@ def prepare_request_impl(
                         pairing_failures,
                     )
                     behavior_signals["tok_history_pairing_safety_degraded"] = 1
-                    if (
-                        "assistant_tool_use_missing_next_tool_result"
-                        in pairing_failures
-                    ):
-                        behavior_signals[
-                            "tok_history_pairing_missing_next_tool_result"
-                        ] = 1
-                    if (
-                        "assistant_tool_use_incomplete_next_tool_result_coverage"
-                        in pairing_failures
-                    ):
-                        behavior_signals[
-                            "tok_history_pairing_incomplete_next_tool_result_coverage"
-                        ] = 1
-                    if (
-                        "tool_result_not_immediately_after_assistant_tool_use"
-                        in pairing_failures
-                    ):
-                        behavior_signals[
-                            "tok_history_pairing_ordering_failure"
-                        ] = 1
+                    if "assistant_tool_use_missing_next_tool_result" in pairing_failures:
+                        behavior_signals["tok_history_pairing_missing_next_tool_result"] = 1
+                    if "assistant_tool_use_incomplete_next_tool_result_coverage" in pairing_failures:
+                        behavior_signals["tok_history_pairing_incomplete_next_tool_result_coverage"] = 1
+                    if "tool_result_not_immediately_after_assistant_tool_use" in pairing_failures:
+                        behavior_signals["tok_history_pairing_ordering_failure"] = 1
                     if "user_tool_result_after_text" in pairing_failures:
-                        behavior_signals[
-                            "tok_history_pairing_user_text_before_tool_result"
-                        ] = 1
+                        behavior_signals["tok_history_pairing_user_text_before_tool_result"] = 1
                     recent = body["messages"]
                     tok_state = ""
                     recent_breakdown = {}
                     # Immediate escalation: if natural_first and pairing safety degraded,
                     # escalate to tool-compatible mode now rather than waiting for next turn
-                    if (
-                        request_policy == "natural_first"
-                        and not effective_tool_compatible
-                    ):
+                    if request_policy == "natural_first" and not effective_tool_compatible:
                         effective_tool_compatible = True
                         if not request_policy_escalated:
                             request_policy_escalated = True
                             behavior_signals["request_policy_escalations"] = 1
-                            behavior_signals[
-                                "request_policy_escalation_source_tool_recovery"
-                            ] = 1
-                        behavior_signals[
-                            "request_policy_reason_tool_recovery"
-                        ] = 1
+                            behavior_signals["request_policy_escalation_source_tool_recovery"] = 1
+                        behavior_signals["request_policy_reason_tool_recovery"] = 1
                         behavior_signals["request_policy_tool_compatible"] = (
-                            behavior_signals.get(
-                                "request_policy_natural_first", 0
-                            )
-                            + 1
+                            behavior_signals.get("request_policy_natural_first", 0) + 1
                         )
                         behavior_signals["request_policy_natural_first"] = 0
                         # Set recovery watch for sticky continuation
@@ -1191,15 +990,11 @@ def prepare_request_impl(
                             TOK_REQUEST_POLICY_STICKY_TURNS,
                         )
             for k, v in recent_breakdown.items():
-                type_breakdown[f"recent_{k}"] = (
-                    type_breakdown.get(f"recent_{k}", 0) + v
-                )
+                type_breakdown[f"recent_{k}"] = type_breakdown.get(f"recent_{k}", 0) + v
 
         if not should_skip_history:
             if tok_state:
-                logger.info(
-                    f"HISTORY WINNOWING SUCCESS: msgs {len(body['messages'])} -> {len(recent)}"
-                )
+                logger.info(f"HISTORY WINNOWING SUCCESS: msgs {len(body['messages'])} -> {len(recent)}")
                 _in_active_tool_loop = any(
                     behavior_signals.get(k, 0) > 0
                     for k in (
@@ -1218,30 +1013,21 @@ def prepare_request_impl(
                     TokMode.LOSSLESS_TASK_MODE,
                 ):
                     should_skip_history = True
-                    behavior_signals[
-                        "smoothness_guarded_history_winnowing_skipped"
-                    ] = 1
+                    behavior_signals["smoothness_guarded_history_winnowing_skipped"] = 1
                     logger.info(
                         "GUARDED_TOK: skipping history winnowing in active tool loop (mode=%s)",
                         session.current_tok_mode.value,
                     )
                 else:
                     if _in_active_tool_loop:
-                        behavior_signals[
-                            "smoothness_history_winnowing_active_loop"
-                        ] = 1
+                        behavior_signals["smoothness_history_winnowing_active_loop"] = 1
                     body["messages"] = recent
                     compressed = True
                     if effective_tool_compatible:
                         behavior_signals["tool_compatible_compression"] = (
-                            behavior_signals.get(
-                                "tool_compatible_compression", 0
-                            )
-                            + 1
+                            behavior_signals.get("tool_compatible_compression", 0) + 1
                         )
-                    session_memory = session.refresh_hot_memory(
-                        tok_state, model=request.model
-                    )
+                    session_memory = session.refresh_hot_memory(tok_state, model=request.model)
             else:
                 behavior_signals["tok_history_cut_point_missing"] = 1
                 tool_result_count = sum(
@@ -1250,25 +1036,15 @@ def prepare_request_impl(
                     if m.get("role") == "user"
                     and any(
                         isinstance(b, dict) and b.get("type") == "tool_result"
-                        for b in (
-                            m.get("content")
-                            if isinstance(m.get("content"), list)
-                            else []
-                        )
+                        for b in (m.get("content") if isinstance(m.get("content"), list) else [])
                     )
                 )
                 if tool_result_count > 0:
-                    behavior_signals[
-                        "tok_history_cut_point_missing_with_tools"
-                    ] = 1
+                    behavior_signals["tok_history_cut_point_missing_with_tools"] = 1
                     behavior_signals["tok_history_cut_blocked_tool_result"] = 1
-                session_memory = session.refresh_hot_memory(
-                    "", model=request.model
-                )
+                session_memory = session.refresh_hot_memory("", model=request.model)
         else:
-            session_memory = session.refresh_hot_memory(
-                "", model=request.model
-            )
+            session_memory = session.refresh_hot_memory("", model=request.model)
 
         if effective_tool_compatible:
             if skip_reason == "short_session":
@@ -1280,7 +1056,7 @@ def prepare_request_impl(
                     runtime_hints,
                     behavior_signals,
                     hot_hint_metrics,
-                    processed_body,
+                    _processed_body,
                     resend_signals,
                     answer_ready,
                 ) = runtime_self._build_tool_compatible_resend(
@@ -1309,9 +1085,7 @@ def prepare_request_impl(
                     pressure=current_pressure,
                     behavior_signals=behavior_signals,
                 )
-            has_answer_anchor = bool(
-                behavior_signals.get("answer_anchor_present", 0)
-            )
+            has_answer_anchor = bool(behavior_signals.get("answer_anchor_present", 0))
         elif skip_reason == "short_session":
             # Short session: skip ALL Tok additions to avoid overhead
             behavior_signals["short_session_system_additions_skipped"] = 1
@@ -1334,9 +1108,7 @@ def prepare_request_impl(
         if _mut_signals.get("tok_preflight_rejected"):
             body = original_body
             if session._pending_exact_evidence_keys:
-                session._first_exact_evidence_seen.update(
-                    session._pending_exact_evidence_keys
-                )
+                session._first_exact_evidence_seen.update(session._pending_exact_evidence_keys)
                 session._pending_exact_evidence_keys.clear()
             session._bump_signals(_mut_signals)
             session._save_bridge_memory()
@@ -1355,20 +1127,14 @@ def prepare_request_impl(
 
         prepared_prompt_tokens = session.prepared_prompt_tokens(body)
         baseline_prompt_tokens = session.prepared_prompt_tokens(original_body)
-        saved_prompt_tokens = max(
-            0, baseline_prompt_tokens - prepared_prompt_tokens
-        )
+        saved_prompt_tokens = max(0, baseline_prompt_tokens - prepared_prompt_tokens)
         if saved_prompt_tokens > 0:
             compressed = True
             saved_tokens += saved_prompt_tokens
 
         for key, value in session.pending_behavior_signals.items():
             if value and value > _pre_existing_session_signals.get(key, 0):
-                behavior_signals[key] = (
-                    behavior_signals.get(key, 0)
-                    + value
-                    - _pre_existing_session_signals.get(key, 0)
-                )
+                behavior_signals[key] = behavior_signals.get(key, 0) + value - _pre_existing_session_signals.get(key, 0)
 
         for key, value in hot_hint_metrics.items():
             if value:
@@ -1384,28 +1150,20 @@ def prepare_request_impl(
             session._answer_ready_repair_pending = False
             session._late_answer_followthrough_pending = False
             session._late_answer_assembly_repair_pending = False
-        elif (
-            effective_tool_compatible
-            and not session._baseline_only
-            and not read_only_audit_turn
-        ):
+        elif effective_tool_compatible and not session._baseline_only and not read_only_audit_turn:
             if has_answer_anchor and not answer_ready:
                 session._answer_ready_repair_pending = True
             elif answer_ready and not has_answer_anchor:
                 session._late_answer_followthrough_pending = True
         session._save_bridge_memory()
     else:
-        session._request_policy_last_effective_tool_compatible = (
-            effective_tool_compatible
-        )
+        session._request_policy_last_effective_tool_compatible = effective_tool_compatible
         prepared_prompt_tokens = session.prepared_prompt_tokens(body)
         baseline_prompt_tokens = prepared_prompt_tokens
         saved_prompt_tokens = 0
 
     if session._pending_exact_evidence_keys:
-        session._first_exact_evidence_seen.update(
-            session._pending_exact_evidence_keys
-        )
+        session._first_exact_evidence_seen.update(session._pending_exact_evidence_keys)
         session._pending_exact_evidence_keys.clear()
 
     canonical_body, canonicalized, canonical_signals = (
@@ -1418,12 +1176,8 @@ def prepare_request_impl(
         for key, value in canonical_signals.items():
             behavior_signals[key] = behavior_signals.get(key, 0) + value
 
-    if _restore_latest_assistant_thinking(
-        body.get("messages", []), _thinking_snapshot
-    ):
-        logger.debug(
-            "thinking_block_restore: restored latest assistant thinking blocks after canonicalization"
-        )
+    if _restore_latest_assistant_thinking(body.get("messages", []), _thinking_snapshot):
+        logger.debug("thinking_block_restore: restored latest assistant thinking blocks after canonicalization")
 
     return PreparedRuntimeRequest(
         body=body,
@@ -1440,7 +1194,5 @@ def prepare_request_impl(
         prepared_prompt_tokens=prepared_prompt_tokens,
         saved_prompt_tokens=saved_prompt_tokens,
         hot_hint_tokens_added=hot_hint_metrics.get("hot_hint_tokens_added", 0),
-        reacquisition_tokens_avoided_estimate=hot_hint_metrics.get(
-            "reacquisition_tokens_avoided_estimate", 0
-        ),
+        reacquisition_tokens_avoided_estimate=hot_hint_metrics.get("reacquisition_tokens_avoided_estimate", 0),
     )

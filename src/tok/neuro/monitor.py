@@ -1,13 +1,21 @@
+"""
+Monitoring and analysis for neural components.
+
+This module provides monitoring functionality for the neural components,
+including pattern mining, execution tracking, and performance analysis.
+"""
+
 import logging
 import re
-import time
 import shlex
+import time
 from pathlib import Path
 from typing import cast
-from .ir import TokIR, Instruction
+
+from .ir import Instruction, TokIR
+from .memory import EpisodeMemory, TokMemory
 from .miner import IRPatternMiner
 from .planner import save_tok
-from .memory import EpisodeMemory, TokMemory
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +26,8 @@ BLOCK_RE = re.compile(
 
 
 class LiveNeuroMonitor:
+    """Monitor for live neural component execution and pattern mining."""
+
     def __init__(self, log_path: str, target_tok: str) -> None:
         self.log_path = Path(log_path)
         self.target_tok = Path(target_tok)
@@ -25,6 +35,7 @@ class LiveNeuroMonitor:
         self.last_pos = 0
 
     def parse_command_to_ir(self, cmd_str: str) -> TokIR:
+        """Parse a shell command string into TokIR representation."""
         parts = shlex.split(cmd_str)
         if not parts:
             return TokIR(())
@@ -34,6 +45,7 @@ class LiveNeuroMonitor:
         return TokIR(instructions=(inst,))
 
     def step(self) -> None:
+        """Process new log entries and update patterns."""
         if not self.log_path.exists():
             return
 
@@ -58,18 +70,12 @@ class LiveNeuroMonitor:
                 )
 
         if new_episodes:
-            logger.debug(
-                "Distilled %d new actions into TokIR", len(new_episodes)
-            )
+            logger.debug("Distilled %d new actions into TokIR", len(new_episodes))
             self.history.extend(new_episodes)
 
             # Mine and Sync
             miner = IRPatternMiner(min_frequency=2)
-            histories = [
-                e.metadata["ir"]
-                for e in self.history
-                if isinstance(e.metadata.get("ir"), TokIR)
-            ]
+            histories = [e.metadata["ir"] for e in self.history if isinstance(e.metadata.get("ir"), TokIR)]
             macros = miner.mine(histories)
 
             if macros:
@@ -83,11 +89,10 @@ class LiveNeuroMonitor:
                     cast("list[TokMemory]", self.history),
                     reg,
                 )
-                logger.info(
-                    "Synced %d macros to %s", len(macros), self.target_tok
-                )
+                logger.info("Synced %d macros to %s", len(macros), self.target_tok)
 
     def run(self) -> None:
+        """Run the monitor loop indefinitely."""
         logger.info("Neuro-Monitor started on %s", self.log_path)
         while True:
             self.step()

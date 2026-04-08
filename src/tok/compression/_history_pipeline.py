@@ -1,12 +1,26 @@
-from __future__ import annotations
-
 """History- and request-side compression orchestration helpers."""
 
+from __future__ import annotations
+
+import contextlib
 import copy
 import re
 from typing import Any
 
+from tok.runtime.config import RESULT_CACHE_TTL_SECONDS
+from tok.runtime.repeat_targets import (
+    SEARCH_LIKE_TOOLS,
+    build_file_skeleton,
+    build_file_summary,
+    evidence_identity_key,
+    normalize_path_target,
+    search_result_evidence_level,
+)
+from tok.utils.event_logging import log_semantic_dedup
+
 from . import (
+    _CUT_REJECTION_REASONS,
+    _SEMANTIC_HASH_MIN_CHARS,
     EDIT_LIKE_TOOLS,
     FILE_LIKE_TOOLS,
     QUESTION_PREFIXES,
@@ -18,8 +32,6 @@ from . import (
     TOK_OUTPUT_DIRECTIVE_REINFORCED,
     TOK_PROTOCOL_LAW,
     TOK_TOOL_COMPAT_DIRECTIVE,
-    _CUT_REJECTION_REASONS,
-    _SEMANTIC_HASH_MIN_CHARS,
     _apply_result_cache,
     _compute_semantic_hash,
     _make_semantic_cache_key,
@@ -30,7 +42,7 @@ from . import (
     logger,
     text_of,
 )
-from ._registry import build_default_registry, Compressor
+from ._registry import Compressor, build_default_registry
 from ._tool_result_codecs import (
     _compress_config_json,
     _compress_env_ps,
@@ -49,20 +61,10 @@ from ._tool_result_codecs import (
     _tighten_compressed_output,
     truncate_large_result,
 )
-from ..runtime.config import RESULT_CACHE_TTL_SECONDS
-from ..runtime.repeat_targets import (
-    build_file_skeleton,
-    build_file_summary,
-    SEARCH_LIKE_TOOLS,
-    evidence_identity_key,
-    normalize_path_target,
-    search_result_evidence_level,
-)
-from ..utils.event_logging import log_semantic_dedup
 
 __all__ = [
-    "TOOL_COMPRESS_THRESHOLD",
     "RECENT_WINDOW_THRESHOLD",
+    "TOOL_COMPRESS_THRESHOLD",
     "_compress_git_log_impl",
     "_detect_tool_content_type_impl",
     "compress_history_impl",
@@ -95,9 +97,7 @@ def compress_history_impl(
             if cls.eligible:
                 eligible_indices.append(i)
             elif cls.reason in _CUT_REJECTION_REASONS:
-                rejection_counts[cls.reason] = (
-                    rejection_counts.get(cls.reason, 0) + 1
-                )
+                rejection_counts[cls.reason] = rejection_counts.get(cls.reason, 0) + 1
 
         for i in reversed(eligible_indices):
             turns_seen += 1
@@ -134,11 +134,7 @@ def compress_history_impl(
             msg = recent[i]
             if msg.get("role") == "tool_result":
                 content = msg.get("content", "")
-                if isinstance(content, str) and (
-                    "PASSED" in content
-                    or "SUCCESS" in content
-                    or "DONE" in content
-                ):
+                if isinstance(content, str) and ("PASSED" in content or "SUCCESS" in content or "DONE" in content):
                     is_completed_scenario = False
                     for j in range(i + 1, len(recent)):
                         if recent[j].get("role") == "user":
@@ -164,12 +160,7 @@ def compress_history_impl(
             return s
 
         lowered = s.lower()
-        if (
-            "error" in lowered
-            or "fail" in lowered
-            or "parse_error" in lowered
-            or "exception" in lowered
-        ):
+        if "error" in lowered or "fail" in lowered or "parse_error" in lowered or "exception" in lowered:
             lines = s.splitlines()
             if len(lines) > 1:
                 first_line = lines[0].strip()
@@ -191,20 +182,13 @@ def compress_history_impl(
 
         return s[:max_len].strip()
 
-    def _bump(
-        bucket: dict[str, int], value: str, score: int, max_len: int
-    ) -> None:
+    def _bump(bucket: dict[str, int], value: str, score: int, max_len: int) -> None:
         cleaned = _norm(value, max_len)
         if cleaned:
             bucket[cleaned] = bucket.get(cleaned, 0) + score
 
     def _top_items(bucket: dict[str, int], limit: int) -> list[str]:
-        return [
-            item
-            for item, _score in sorted(
-                bucket.items(), key=lambda kv: (-kv[1], kv[0])
-            )[:limit]
-        ]
+        return [item for item, _score in sorted(bucket.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
 
     next_scores: dict[str, int] = {}
 
@@ -255,9 +239,7 @@ def compress_history_impl(
             lowered = stripped.lower()
             if not stripped:
                 continue
-            if "?" in stripped or (
-                role == "user" and lowered.startswith(QUESTION_PREFIXES)
-            ):
+            if "?" in stripped or (role == "user" and lowered.startswith(QUESTION_PREFIXES)):
                 _bump(question_scores, stripped[:60], 2 + recency, 60)
 
     total_old = len(old)
@@ -311,10 +293,7 @@ def compress_history_impl(
         content = msg.get("content")
         if role == "assistant" and isinstance(content, list):
             for block in content:
-                if (
-                    not isinstance(block, dict)
-                    or block.get("type") != "tool_use"
-                ):
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
                     continue
                 tool_name = str(block.get("name", "")).lower()
                 tool_input = block.get("input", {})
@@ -331,9 +310,7 @@ def compress_history_impl(
                     _bump(file_scores, path, 6 + recency, 64)
                 elif path and tool_name in FILE_LIKE_TOOLS:
                     _bump(file_scores, path, 3 + recency, 64)
-                command = str(
-                    tool_input.get("command") or tool_input.get("cmd") or ""
-                ).strip()
+                command = str(tool_input.get("command") or tool_input.get("cmd") or "").strip()
                 if not command:
                     command = f"{tool_name} {path}".strip()
                 if command:
@@ -354,9 +331,7 @@ def compress_history_impl(
         ):
             first = text.splitlines()[0] if text.splitlines() else text
             _bump(error_scores, first[:60], 3 + recency, 60)
-        for match in re.finditer(
-            r"\b(\d+\s+(?:passed|failed|errors?))\b", lowered
-        ):
+        for match in re.finditer(r"\b(\d+\s+(?:passed|failed|errors?))\b", lowered):
             _bump(test_scores, match.group(1), 2 + recency, 24)
         for line in text.splitlines():
             stripped = line.strip()
@@ -398,12 +373,8 @@ def compress_history_impl(
     top_cmds = _top_items(cmd_scores, _get_int(profile, "cmds", 2))
     top_tests = _top_items(test_scores, _get_int(profile, "tests", 2))
     top_errors = _top_items(error_scores, _get_int(profile, "errs", 2))
-    top_constraints = _top_items(
-        constraint_scores, _get_int(profile, "constraints", 2)
-    )
-    top_questions = _top_items(
-        question_scores, _get_int(profile, "questions", 2)
-    )
+    top_constraints = _top_items(constraint_scores, _get_int(profile, "constraints", 2))
+    top_questions = _top_items(question_scores, _get_int(profile, "questions", 2))
     top_blockers = _top_items(blocker_scores, _get_int(profile, "blockers", 2))
     top_next = _top_items(next_scores, _get_int(profile, "next", 2))
     if top_files:
@@ -423,12 +394,7 @@ def compress_history_impl(
     if top_next:
         state_map["next"] = ",".join(top_next)
     if facts:
-        compact_facts = [
-            f"{key}:{value}"
-            for key, value in sorted(facts.items())[
-                : _get_int(profile, "facts", 3)
-            ]
-        ]
+        compact_facts = [f"{key}:{value}" for key, value in sorted(facts.items())[: _get_int(profile, "facts", 3)]]
         if compact_facts:
             state_map["facts"] = ",".join(compact_facts)
 
@@ -445,21 +411,22 @@ def compress_history_impl(
         "next",
         "facts",
     ]
-    payload = "|".join(
-        f"{key}:{state_map[key]}" for key in ordered_keys if key in state_map
-    )
+    payload = "|".join(f"{key}:{state_map[key]}" for key in ordered_keys if key in state_map)
     return recent, f">>> {payload}" if payload else ""
 
 
 def _detect_tool_content_type_impl(text: str) -> str:
+    """Detect the content type of tool output."""
     return _detect_tool_content_type(text)
 
 
 def _compress_git_log_impl(text: str) -> str:
+    """Compress git log output."""
     return _compress_git_log(text)
 
 
 def _tool_command_hint(tool_context: dict[str, Any] | None) -> str:
+    """Extract command hint from tool context."""
     if not isinstance(tool_context, dict):
         return ""
     args = tool_context.get("args")
@@ -480,15 +447,14 @@ def tok_tool_result_impl(
     compression_level: str = "balanced",
     tool_context: dict[str, Any] | None = None,
 ) -> str:
+    """Compress a tool result using registry-based compressors."""
     if len(content) <= TOOL_COMPRESS_THRESHOLD:
         return content
 
     kind = _detect_tool_content_type_impl(content)
     original_chars = len(content)
     registry = build_default_registry(
-        compress_pytest=lambda text: _compress_pytest(
-            text, command=_tool_command_hint(tool_context)
-        ),
+        compress_pytest=lambda text: _compress_pytest(text, command=_tool_command_hint(tool_context)),
         compress_grep=_compress_grep,
         compress_git_diff=_compress_git_diff,
         compress_ls=_compress_ls,
@@ -506,9 +472,7 @@ def tok_tool_result_impl(
     compressor = registry.get(kind)
     compressed = compressor(content) if compressor else content
 
-    compressed = _tighten_compressed_output(
-        kind, compressed, compression_level
-    )
+    compressed = _tighten_compressed_output(kind, compressed, compression_level)
     compressed = truncate_large_result(compressed)
 
     saved = original_chars - len(compressed)
@@ -518,8 +482,7 @@ def tok_tool_result_impl(
     if not compressed.startswith(">>>") and saved > 0:
         compressed = (
             f">>> tok_compressed:tool_result|type:{kind}"
-            f"|original_chars:{original_chars}|saved_chars:{saved}\n"
-            + compressed
+            f"|original_chars:{original_chars}|saved_chars:{saved}\n" + compressed
         )
 
     return compressed
@@ -529,7 +492,8 @@ def _build_last_file_read_ids(
     messages: list[dict[str, Any]],
     tool_use_id_to_context: dict[str, dict[str, Any]] | None,
 ) -> frozenset[str]:
-    """Return tool_use_ids of the most recent file-like read per normalized path.
+    """
+    Return tool_use_ids of the most recent file-like read per normalized path.
 
     These entries are exempted from result-cache compression so the model always
     has at least one verbatim copy of each file in context.
@@ -544,10 +508,7 @@ def _build_last_file_read_ids(
             continue
         if isinstance(content, list):
             for block in content:
-                if not (
-                    isinstance(block, dict)
-                    and block.get("type") == "tool_result"
-                ):
+                if not (isinstance(block, dict) and block.get("type") == "tool_result"):
                     continue
                 tool_id = block.get("tool_use_id", "")
                 ctx = tool_use_id_to_context.get(tool_id)
@@ -580,11 +541,7 @@ def _build_last_file_read_ids(
             if not isinstance(args, dict):
                 continue
             path = str(
-                args.get("path")
-                or args.get("file_path")
-                or args.get("AbsolutePath")
-                or args.get("TargetFile")
-                or ""
+                args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
             )
             if path:
                 path_to_last_id[path] = tool_id
@@ -594,10 +551,7 @@ def _build_last_file_read_ids(
 
 def compress_tool_results_impl(
     messages: list[dict[str, Any]],
-    result_cache: dict[
-        str, tuple[str, str, float] | tuple[str, str] | tuple[str]
-    ]
-    | None = None,
+    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
@@ -610,9 +564,7 @@ def compress_tool_results_impl(
     keep_turns_window: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
-    last_file_read_ids = _build_last_file_read_ids(
-        messages, tool_use_id_to_context
-    )
+    last_file_read_ids = _build_last_file_read_ids(messages, tool_use_id_to_context)
 
     def _extract_normalized_path(context: dict[str, Any]) -> str:
         raw_args = context.get("args")
@@ -620,11 +572,7 @@ def compress_tool_results_impl(
         if not args:
             return ""
         path = str(
-            args.get("path")
-            or args.get("file_path")
-            or args.get("AbsolutePath")
-            or args.get("TargetFile")
-            or ""
+            args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
         )
         return path.lower().strip()
 
@@ -651,9 +599,7 @@ def compress_tool_results_impl(
         if cache_key is None:
             return
         args = context.get("args") if isinstance(context, dict) else None
-        if isinstance(args, dict) and any(
-            k in args for k in ("offset", "limit", "start", "end")
-        ):
+        if isinstance(args, dict) and any(k in args for k in ("offset", "limit", "start", "end")):
             return
         cache[cache_key] = _compute_semantic_hash(raw)
 
@@ -672,24 +618,17 @@ def compress_tool_results_impl(
         if first_exact_evidence_seen is None or not context:
             return False
         tool_name = str(context.get("name", "")).lower()
-        if (
-            tool_name in SEARCH_LIKE_TOOLS
-            and search_result_evidence_level(raw) == "navigation"
-        ):
+        if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
             return False
         key = evidence_identity_key(
             str(context.get("name", "")),
             path=_extract_normalized_path(context),
             query=str(context.get("query") or "").strip() or None,
             command=str(
-                (context.get("args") or {}).get("command")
-                or (context.get("args") or {}).get("cmd")
-                or ""
+                (context.get("args") or {}).get("command") or (context.get("args") or {}).get("cmd") or ""
             ).strip()
             or None,
-            args=context.get("args")
-            if isinstance(context.get("args"), dict)
-            else None,
+            args=context.get("args") if isinstance(context.get("args"), dict) else None,
         )
         if not key or key in first_exact_evidence_seen:
             return False
@@ -711,16 +650,9 @@ def compress_tool_results_impl(
     ) -> bool:
         if not _first_exact_guard(context, raw):
             return False
-        if (
-            session_files_read is not None
-            and norm_path
-            and norm_path not in session_files_read
-        ):
+        if session_files_read is not None and norm_path and norm_path not in session_files_read:
             session_files_read.add(norm_path)
-            if (
-                semantic_hash_cache is not None
-                and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
-            ):
+            if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                 _cache_semantic_hash(context, raw, semantic_hash_cache)
         if norm_path:
             _mark_file_fully_delivered(norm_path)
@@ -737,14 +669,8 @@ def compress_tool_results_impl(
             ):
                 tool_id = msg.get("tool_use_id", "")
                 context = tool_use_id_to_context.get(tool_id)
-                if (
-                    context
-                    and isinstance(context.get("args"), dict)
-                    and context["args"].get("tok_bypass_cache")
-                ):
-                    breakdown["tok_bypass_cache_applied"] = (
-                        breakdown.get("tok_bypass_cache_applied", 0) + 1
-                    )
+                if context and isinstance(context.get("args"), dict) and context["args"].get("tok_bypass_cache"):
+                    breakdown["tok_bypass_cache_applied"] = breakdown.get("tok_bypass_cache_applied", 0) + 1
                     continue
                 if tool_id in last_file_read_ids:
                     if context:
@@ -753,24 +679,13 @@ def compress_tool_results_impl(
                     continue
                 if context:
                     norm_path = _extract_normalized_path(context)
-                    if _preserve_first_exact_observation(
-                        context, content, norm_path
-                    ):
+                    if _preserve_first_exact_observation(context, content, norm_path):
                         msg["content"] = content
                         continue
-                    if (
-                        session_files_read is not None
-                        and norm_path
-                        and norm_path not in session_files_read
-                    ):
+                    if session_files_read is not None and norm_path and norm_path not in session_files_read:
                         session_files_read.add(norm_path)
-                        if (
-                            semantic_hash_cache is not None
-                            and len(content) >= _SEMANTIC_HASH_MIN_CHARS
-                        ):
-                            _cache_semantic_hash(
-                                context, content, semantic_hash_cache
-                            )
+                        if semantic_hash_cache is not None and len(content) >= _SEMANTIC_HASH_MIN_CHARS:
+                            _cache_semantic_hash(context, content, semantic_hash_cache)
                         _mark_file_fully_delivered(norm_path)
                         continue
                     if not _is_file_fully_delivered(norm_path):
@@ -786,25 +701,16 @@ def compress_tool_results_impl(
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
-                            breakdown.get(
-                                "stable_payload_validation_failed", 0
-                            )
-                            + 1
+                            breakdown.get("stable_payload_validation_failed", 0) + 1
                         )
                     if saved > 0:
                         kind = _detect_tool_content_type_impl(content)
-                        key = (
-                            f"{kind}_cached"
-                            if "|unchanged|" in compressed
-                            else f"{kind}_diff"
-                        )
+                        key = f"{kind}_cached" if "|unchanged|" in compressed else f"{kind}_diff"
                         breakdown[key] = breakdown.get(key, 0) + saved
                     msg["content"] = compressed
             continue
         for block in content:
-            if not (
-                isinstance(block, dict) and block.get("type") == "tool_result"
-            ):
+            if not (isinstance(block, dict) and block.get("type") == "tool_result"):
                 continue
 
             raw = block.get("content", "")
@@ -815,14 +721,8 @@ def compress_tool_results_impl(
             ctx: dict[str, Any] | None = None
             if tool_use_id_to_context is not None:
                 ctx = tool_use_id_to_context.get(tool_id)
-                if (
-                    ctx
-                    and isinstance(ctx.get("args"), dict)
-                    and ctx["args"].get("tok_bypass_cache")
-                ):
-                    breakdown["tok_bypass_cache_applied"] = (
-                        breakdown.get("tok_bypass_cache_applied", 0) + 1
-                    )
+                if ctx and isinstance(ctx.get("args"), dict) and ctx["args"].get("tok_bypass_cache"):
+                    breakdown["tok_bypass_cache_applied"] = breakdown.get("tok_bypass_cache_applied", 0) + 1
                     continue
 
             if ctx:
@@ -834,18 +734,12 @@ def compress_tool_results_impl(
             # Search-specific repeat compression path
             # Search tools use query+scope identity, not norm_path
             tool_name = str(ctx.get("name", "")).lower() if ctx else ""
-            if (
-                ctx
-                and tool_name in SEARCH_LIKE_TOOLS
-                and first_exact_evidence_seen is not None
-            ):
+            if ctx and tool_name in SEARCH_LIKE_TOOLS and first_exact_evidence_seen is not None:
                 search_key = evidence_identity_key(
                     tool_name,
                     path=str(ctx.get("path") or "").strip() or None,
                     query=str(ctx.get("query") or "").strip() or None,
-                    args=ctx.get("args")
-                    if isinstance(ctx.get("args"), dict)
-                    else None,
+                    args=ctx.get("args") if isinstance(ctx.get("args"), dict) else None,
                 )
                 # Only compress if this is a repeat (key already seen)
                 if search_key and search_key in first_exact_evidence_seen:
@@ -864,17 +758,11 @@ def compress_tool_results_impl(
                             ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                         )
                         if saved > 0:
-                            breakdown["search_repeat_cached"] = (
-                                breakdown.get("search_repeat_cached", 0)
-                                + saved
-                            )
+                            breakdown["search_repeat_cached"] = breakdown.get("search_repeat_cached", 0) + saved
                         block["content"] = compressed
                         continue
                     # Apply semantic hash compression for repeat search
-                    if (
-                        semantic_hash_cache is not None
-                        and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
-                    ):
+                    if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                         cache_key = _make_semantic_cache_key(ctx, raw)
                         if cache_key is not None:
                             content_hash = _compute_semantic_hash(raw)
@@ -884,38 +772,26 @@ def compress_tool_results_impl(
                                 summary = ""
                                 if hot_summary_records is not None:
                                     record_key = f"search|{search_key}"
-                                    record = hot_summary_records.get(
-                                        record_key
-                                    )
+                                    record = hot_summary_records.get(record_key)
                                     if record and hasattr(record, "summary"):
                                         summary = record.summary
                                 if not summary:
-                                    from ..runtime.repeat_targets import (
+                                    from tok.runtime.repeat_targets import (
                                         build_search_summary,
                                     )
 
-                                    try:
+                                    with contextlib.suppress(Exception):
                                         summary = build_search_summary(
                                             raw,
                                             max_chars=280,
                                             max_lines=12,
                                         )
-                                    except Exception:
-                                        pass
                                 if not summary:
-                                    summary = _truncate_stable_snippet(
-                                        raw, 280
-                                    )
-                                token = (
-                                    f"@stable_result(hash:{content_hash})\n"
-                                    f"@stable_summary |> {summary}"
-                                )
+                                    summary = _truncate_stable_snippet(raw, 280)
+                                token = f"@stable_result(hash:{content_hash})\n@stable_summary |> {summary}"
                                 saved = len(raw) - len(token)
                                 if saved > 0:
-                                    breakdown["search_repeat_dedup"] = (
-                                        breakdown.get("search_repeat_dedup", 0)
-                                        + saved
-                                    )
+                                    breakdown["search_repeat_dedup"] = breakdown.get("search_repeat_dedup", 0) + saved
                                     block["content"] = token
                                     continue
                             else:
@@ -923,16 +799,9 @@ def compress_tool_results_impl(
 
             if _is_precision_read_context(ctx):
                 norm_path = _extract_normalized_path(ctx) if ctx else ""
-                if (
-                    session_files_read is not None
-                    and norm_path
-                    and norm_path not in session_files_read
-                ):
+                if session_files_read is not None and norm_path and norm_path not in session_files_read:
                     session_files_read.add(norm_path)
-                    if (
-                        semantic_hash_cache is not None
-                        and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
-                    ):
+                    if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                         _cache_semantic_hash(ctx, raw, semantic_hash_cache)
                 if result_cache is not None and not bypass_result_cache:
                     assert ctx is not None
@@ -946,10 +815,7 @@ def compress_tool_results_impl(
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
-                            breakdown.get(
-                                "stable_payload_validation_failed", 0
-                            )
-                            + 1
+                            breakdown.get("stable_payload_validation_failed", 0) + 1
                         )
                     block["content"] = compressed
                 else:
@@ -963,16 +829,9 @@ def compress_tool_results_impl(
                 continue
 
             norm_path = _extract_normalized_path(ctx) if ctx else ""
-            if (
-                session_files_read is not None
-                and norm_path
-                and norm_path not in session_files_read
-            ):
+            if session_files_read is not None and norm_path and norm_path not in session_files_read:
                 session_files_read.add(norm_path)
-                if (
-                    semantic_hash_cache is not None
-                    and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
-                ):
+                if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                     _cache_semantic_hash(ctx, raw, semantic_hash_cache)
                 _mark_file_fully_delivered(norm_path)
                 continue
@@ -985,9 +844,7 @@ def compress_tool_results_impl(
             ):
                 cache_key = _make_semantic_cache_key(ctx, raw)
                 ctx_args = ctx.get("args") if isinstance(ctx, dict) else None
-                if isinstance(ctx_args, dict) and any(
-                    k in ctx_args for k in ("offset", "limit", "start", "end")
-                ):
+                if isinstance(ctx_args, dict) and any(k in ctx_args for k in ("offset", "limit", "start", "end")):
                     cache_key = None
                 if cache_key is not None:
                     content_hash = _compute_semantic_hash(raw)
@@ -1005,14 +862,12 @@ def compress_tool_results_impl(
                         if not summary and ctx is not None:
                             path = ctx.get("path")
                             if path and len(raw) >= 100:
-                                try:
+                                with contextlib.suppress(Exception):
                                     summary = build_file_summary(
                                         raw,
                                         max_chars=280,
                                         max_lines=12,
                                     )
-                                except Exception:
-                                    pass
                         if not summary:
                             summary = _truncate_stable_snippet(raw, 280)
 
@@ -1020,32 +875,22 @@ def compress_tool_results_impl(
                         if ctx is not None:
                             path = ctx.get("path")
                             if path and len(raw) >= 100:
-                                try:
+                                with contextlib.suppress(Exception):
                                     skeleton = build_file_skeleton(
                                         raw,
                                         max_chars=280,
                                         max_lines=14,
                                     )
-                                except Exception:
-                                    pass
 
                         lines = [f"@stable_result(hash:{content_hash})"]
                         if summary:
-                            lines.append(
-                                f"@stable_summary |> "
-                                f"{_truncate_stable_snippet(summary, 280)}"
-                            )
+                            lines.append(f"@stable_summary |> {_truncate_stable_snippet(summary, 280)}")
                         if skeleton:
-                            lines.append(
-                                f"@stable_skeleton |> "
-                                f"{_truncate_stable_snippet(skeleton, 280)}"
-                            )
+                            lines.append(f"@stable_skeleton |> {_truncate_stable_snippet(skeleton, 280)}")
                         token = "\n".join(lines)
                         saved = len(raw) - len(token)
                         if saved > 0:
-                            breakdown["semantic_dedup"] = breakdown.get(
-                                "semantic_dedup", 0
-                            ) + max(0, saved)
+                            breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)
                             log_semantic_dedup(cache_key, saved)
                             block["content"] = token
                             continue
@@ -1060,9 +905,7 @@ def compress_tool_results_impl(
             ):
                 context = ctx
                 if context:
-                    if _preserve_first_exact_observation(
-                        context, raw, norm_path
-                    ):
+                    if _preserve_first_exact_observation(context, raw, norm_path):
                         block["content"] = raw
                         continue
                     compressed, saved = _apply_result_cache(
@@ -1075,18 +918,11 @@ def compress_tool_results_impl(
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
-                            breakdown.get(
-                                "stable_payload_validation_failed", 0
-                            )
-                            + 1
+                            breakdown.get("stable_payload_validation_failed", 0) + 1
                         )
                     if saved > 0:
                         kind = _detect_tool_content_type_impl(raw)
-                        key = (
-                            f"{kind}_cached"
-                            if "|unchanged|" in compressed
-                            else f"{kind}_diff"
-                        )
+                        key = f"{kind}_cached" if "|unchanged|" in compressed else f"{kind}_diff"
                         breakdown[key] = breakdown.get(key, 0) + saved
                     block["content"] = compressed
                     continue
@@ -1115,13 +951,12 @@ def inject_system_additions_impl(
     runtime_hints: list[str] | None = None,
     behavior_signals: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    """Inject Tok directives and dynamic state into system prompt."""
     sys_prompt = body.get("system", "")
     if not tool_compatible and sys_prompt:
         if isinstance(sys_prompt, str):
             if "[Tok File Freshness System]" not in sys_prompt:
-                sys_prompt = (
-                    sys_prompt + "\n\n" + TOK_FRESHNESS_SIGNALS_EXPLANATION
-                )
+                sys_prompt = sys_prompt + "\n\n" + TOK_FRESHNESS_SIGNALS_EXPLANATION
                 body["system"] = sys_prompt
         elif isinstance(sys_prompt, list):
             has_freshness = any(
@@ -1131,8 +966,12 @@ def inject_system_additions_impl(
                 for block in sys_prompt
             )
             if not has_freshness:
-                sys_prompt = sys_prompt + [
-                    {"type": "text", "text": TOK_FRESHNESS_SIGNALS_EXPLANATION}
+                sys_prompt = [
+                    *sys_prompt,
+                    {
+                        "type": "text",
+                        "text": TOK_FRESHNESS_SIGNALS_EXPLANATION,
+                    },
                 ]
                 body["system"] = sys_prompt
 
@@ -1143,52 +982,30 @@ def inject_system_additions_impl(
     use_protocol_law = (
         not tool_compatible
         and 1 < pressure <= 50
-        and not (
-            behavior_signals
-            and behavior_signals.get("semantic_drift_detected")
-        )
+        and not (behavior_signals and behavior_signals.get("semantic_drift_detected"))
     )
     if use_protocol_law:
         directive_parts.append(TOK_PROTOCOL_LAW)
     elif tool_compatible:
         directive_parts.append(TOK_TOOL_COMPAT_DIRECTIVE)
-    elif pressure > 50 or (
-        behavior_signals and behavior_signals.get("semantic_drift_detected")
-    ):
+    elif pressure > 50 or (behavior_signals and behavior_signals.get("semantic_drift_detected")):
         directive_parts.append(TOK_OUTPUT_DIRECTIVE_REINFORCED)
     else:
         directive_parts.append(TOK_OUTPUT_DIRECTIVE_MINIMAL)
     if runtime_hints:
-        directive_parts.append(
-            "\n".join(
-                str(hint).strip()
-                for hint in runtime_hints
-                if str(hint).strip()
-            )
-        )
+        directive_parts.append("\n".join(str(hint).strip() for hint in runtime_hints if str(hint).strip()))
     output_directive = "\n\n".join(directive_parts)
 
-    include_tok_state = _should_include_tok_state(
-        tok_state, tool_compatible=tool_compatible
-    )
+    include_tok_state = _should_include_tok_state(tok_state, tool_compatible=tool_compatible)
 
-    if (
-        tool_compatible
-        and not include_tok_state
-        and not grammar
-        and not todo
-        and not deltas
-    ):
+    if tool_compatible and not include_tok_state and not grammar and not todo and not deltas:
         current_sys_prompt = body.get("system", "")
         if isinstance(current_sys_prompt, str):
-            body["system"] = (
-                current_sys_prompt + "\n\n" + output_directive
-                if current_sys_prompt
-                else output_directive
-            )
+            body["system"] = current_sys_prompt + "\n\n" + output_directive if current_sys_prompt else output_directive
         elif isinstance(current_sys_prompt, list):
-            body["system"] = current_sys_prompt + [
-                {"type": "text", "text": output_directive}
+            body["system"] = [
+                *current_sys_prompt,
+                {"type": "text", "text": output_directive},
             ]
         else:
             body["system"] = output_directive
@@ -1214,14 +1031,11 @@ def inject_system_additions_impl(
         if dynamic_state:
             additions.append(dynamic_state)
         addition = "\n\n".join(additions)
-        body["system"] = (
-            current_sys_prompt + "\n\n" + addition
-            if current_sys_prompt
-            else addition
-        )
+        body["system"] = current_sys_prompt + "\n\n" + addition if current_sys_prompt else addition
     elif isinstance(current_sys_prompt, list):
-        body["system"] = current_sys_prompt + [
-            {"type": "text", "text": output_directive}
+        body["system"] = [
+            *current_sys_prompt,
+            {"type": "text", "text": output_directive},
         ]
         if dynamic_state:
             body["system"].append({"type": "text", "text": dynamic_state})
@@ -1246,6 +1060,8 @@ def compress_recent_window_impl(
     tool_compatible: bool = False,
     first_exact_evidence_seen: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Apply content-aware compression to recent window messages."""
+
     def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
         if not context:
             return False
@@ -1260,6 +1076,7 @@ def compress_recent_window_impl(
     def _preserve_first_exact_observation(
         context: dict[str, Any] | None,
     ) -> bool:
+        """Preserve first exact observation and track it in session."""
         if first_exact_evidence_seen is None or not context:
             return False
         key = evidence_identity_key(
@@ -1267,14 +1084,10 @@ def compress_recent_window_impl(
             path=str(context.get("path") or "").strip() or None,
             query=str(context.get("query") or "").strip() or None,
             command=str(
-                (context.get("args") or {}).get("command")
-                or (context.get("args") or {}).get("cmd")
-                or ""
+                (context.get("args") or {}).get("command") or (context.get("args") or {}).get("cmd") or ""
             ).strip()
             or None,
-            args=context.get("args")
-            if isinstance(context.get("args"), dict)
-            else None,
+            args=context.get("args") if isinstance(context.get("args"), dict) else None,
         )
         if not key or key in first_exact_evidence_seen:
             return False
@@ -1285,6 +1098,7 @@ def compress_recent_window_impl(
         context: dict[str, Any] | None,
         raw: str,
     ) -> bool:
+        """Guard first exact observation from compression."""
         if first_exact_evidence_seen is None or not context:
             return False
         key = evidence_identity_key(
@@ -1292,14 +1106,10 @@ def compress_recent_window_impl(
             path=str(context.get("path") or "").strip() or None,
             query=str(context.get("query") or "").strip() or None,
             command=str(
-                (context.get("args") or {}).get("command")
-                or (context.get("args") or {}).get("cmd")
-                or ""
+                (context.get("args") or {}).get("command") or (context.get("args") or {}).get("cmd") or ""
             ).strip()
             or None,
-            args=context.get("args")
-            if isinstance(context.get("args"), dict)
-            else None,
+            args=context.get("args") if isinstance(context.get("args"), dict) else None,
         )
         if not key or key in first_exact_evidence_seen:
             return False
@@ -1328,10 +1138,7 @@ def compress_recent_window_impl(
             if _is_precision_read_context(ctx):
                 continue
             tool_name = str(ctx.get("name", "")).lower()
-            if (
-                tool_name in SEARCH_LIKE_TOOLS
-                and search_result_evidence_level(content) == "navigation"
-            ):
+            if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(content) == "navigation":
                 continue
             if _first_exact_guard(ctx, content):
                 msg["content"] = content
@@ -1343,8 +1150,7 @@ def compress_recent_window_impl(
                 continue
             effective_threshold = (
                 RECENT_WINDOW_EVIDENCE_THRESHOLD
-                if tool_compatible
-                and kind in {"file", "grep", "grep_context", "search_results"}
+                if tool_compatible and kind in {"file", "grep", "grep_context", "search_results"}
                 else threshold
             )
             if len(content) <= effective_threshold:
@@ -1362,54 +1168,36 @@ def compress_recent_window_impl(
         if not isinstance(content, list):
             continue
         for block in content:
-            if not (
-                isinstance(block, dict) and block.get("type") == "tool_result"
-            ):
+            if not (isinstance(block, dict) and block.get("type") == "tool_result"):
                 continue
             raw = block.get("content", "")
             if not isinstance(raw, str):
                 continue
 
             tool_id = block.get("tool_use_id", "")
-            ctx: dict[str, Any] | None = None
+            tool_ctx: dict[str, Any] | None = None
             if tool_use_id_to_context is not None:
-                ctx = tool_use_id_to_context.get(tool_id)
-                if (
-                    ctx
-                    and isinstance(ctx.get("args"), dict)
-                    and ctx["args"].get("tok_bypass_cache")
-                ):
-                    breakdown["tok_bypass_cache_applied"] = (
-                        breakdown.get("tok_bypass_cache_applied", 0) + 1
-                    )
+                tool_ctx = tool_use_id_to_context.get(tool_id)
+                if tool_ctx and isinstance(tool_ctx.get("args"), dict) and tool_ctx["args"].get("tok_bypass_cache"):
+                    breakdown["tok_bypass_cache_applied"] = breakdown.get("tok_bypass_cache_applied", 0) + 1
                     continue
 
-            tool_name = str(ctx.get("name", "")).lower() if ctx else ""
-            if (
-                tool_name in SEARCH_LIKE_TOOLS
-                and search_result_evidence_level(raw) == "navigation"
-            ):
+            tool_name = str(tool_ctx.get("name", "")).lower() if tool_ctx else ""
+            if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
                 continue
-            if first_exact_evidence_seen is not None and ctx:
+            if first_exact_evidence_seen is not None and tool_ctx:
                 key = evidence_identity_key(
-                    str(ctx.get("name", "")),
-                    path=str(ctx.get("path") or "").strip() or None,
-                    query=str(ctx.get("query") or "").strip() or None,
+                    str(tool_ctx.get("name", "")),
+                    path=str(tool_ctx.get("path") or "").strip() or None,
+                    query=str(tool_ctx.get("query") or "").strip() or None,
                     command=str(
-                        (ctx.get("args") or {}).get("command")
-                        or (ctx.get("args") or {}).get("cmd")
-                        or ""
+                        (tool_ctx.get("args") or {}).get("command") or (tool_ctx.get("args") or {}).get("cmd") or ""
                     ).strip()
                     or None,
-                    args=ctx.get("args")
-                    if isinstance(ctx.get("args"), dict)
-                    else None,
+                    args=tool_ctx.get("args") if isinstance(tool_ctx.get("args"), dict) else None,
                 )
                 if key and key not in first_exact_evidence_seen:
-                    if (
-                        tool_name in SEARCH_LIKE_TOOLS
-                        and search_result_evidence_level(raw) == "navigation"
-                    ):
+                    if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
                         continue
                     first_exact_evidence_seen.add(key)
                     block["content"] = raw
@@ -1427,8 +1215,7 @@ def compress_recent_window_impl(
                     continue
             effective_threshold = (
                 RECENT_WINDOW_EVIDENCE_THRESHOLD
-                if tool_compatible
-                and kind in {"file", "grep", "grep_context", "search_results"}
+                if tool_compatible and kind in {"file", "grep", "grep_context", "search_results"}
                 else threshold
             )
             if len(raw) <= effective_threshold:

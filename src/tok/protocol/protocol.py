@@ -6,11 +6,11 @@ must implement, enforcing a clean architectural contract.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 
 class SerializationProtocol(ABC):
-    """Abstract base class for serialization components.
+    """
+    Abstract base class for serialization components.
 
     Defines the contract that any serializer/deserializer must satisfy:
     - encode: convert data to text
@@ -18,25 +18,29 @@ class SerializationProtocol(ABC):
     """
 
     @abstractmethod
-    def encode(self, data: Any) -> str:
-        """Serialize data to text format.
+    def encode(self, data: object) -> str:
+        """
+        Serialize data to text format.
 
         Args:
             data: Data to serialize (type depends on implementation)
 
         Returns:
             Serialized text representation
+
         """
         raise NotImplementedError
 
     @abstractmethod
-    def decode(self, text: str) -> Any:
-        """Deserialize text to data.
+    def decode(self, text: str) -> object:
+        """
+        Deserialize text to data.
 
         Args:
             text: Text to deserialize
 
         Returns:
             Deserialized data
+
         """
         raise NotImplementedError

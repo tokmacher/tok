@@ -14,7 +14,7 @@ def _load_pr_comment_module() -> ModuleType:
     return module
 
 
-def test_pr_comment_load_results_accepts_structured_export(tmp_path):
+def test_pr_comment_load_results_accepts_structured_export(tmp_path) -> None:
     mod = _load_pr_comment_module()
     payload = {
         "results": [
@@ -42,7 +42,7 @@ def test_pr_comment_load_results_accepts_structured_export(tmp_path):
     assert loaded["release_summary"]["billing_delta_usd"] == 0.12
 
 
-def test_pr_comment_generate_comment_surfaces_release_summary():
+def test_pr_comment_generate_comment_surfaces_release_summary() -> None:
     mod = _load_pr_comment_module()
     payload = {
         "results": [
@@ -69,7 +69,7 @@ def test_pr_comment_generate_comment_surfaces_release_summary():
     assert "$0.6700 (3.5%)" in comment
 
 
-def test_pr_comment_accepts_structured_export_with_stability_check():
+def test_pr_comment_accepts_structured_export_with_stability_check() -> None:
     mod = _load_pr_comment_module()
     payload = {
         "results": [
