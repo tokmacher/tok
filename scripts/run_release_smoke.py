@@ -27,6 +27,7 @@ IMPORT_CHECK = (
     "print('tok release smoke imports OK')",
 )
 
+# Release-surface contract gate (manifest + CLI declaration drift).
 SURFACE_GATE_CHECK = (
     "from typer.testing import CliRunner",
     "from tok.cli import app",
@@ -38,6 +39,7 @@ SURFACE_GATE_CHECK = (
     "raise SystemExit(1 if failures else 0)",
 )
 
+# Boundary contract gate: malformed ingress fails locally without upstream execution.
 VALIDATION_FAILURE_CHECK = (
     "import textwrap",
     """code = textwrap.dedent('''\
@@ -223,6 +225,7 @@ asyncio.run(_run())
     "exec(code, globals(), globals())",
 )
 
+# Drift guard for defended root export surface.
 RELEASE_SURFACE_DRIFT_CHECK = (
     "import tok",
     "from tok.release_surface import (SUPPORTED_ROOT_EXPORTS, CANDIDATE_PENDING_PROOF, EXPERIMENTAL_ROOT_EXPORTS)",
@@ -236,6 +239,7 @@ RELEASE_SURFACE_DRIFT_CHECK = (
     "print('release-surface drift smoke OK')",
 )
 
+# Packaging/install contract gate for defended import surface.
 CLEAN_INSTALL_IMPORT_CHECK = (
     "import textwrap",
     """code = textwrap.dedent('''\
@@ -293,10 +297,12 @@ with tempfile.TemporaryDirectory(prefix="tok-clean-import-") as td:
 
 
 SMOKE_STEPS: tuple[SmokeStep, ...] = (
+    # Baseline command visibility.
     SmokeStep("CLI help", ("uv", "run", "tok", "--help")),
     SmokeStep("Bridge help", ("uv", "run", "tok", "bridge", "--help")),
     SmokeStep("Doctor help", ("uv", "run", "tok", "doctor", "--help")),
     SmokeStep("Stats help", ("uv", "run", "tok", "stats", "--help")),
+    # Release-surface visibility and declaration checks.
     SmokeStep(
         "Public imports",
         (
@@ -317,6 +323,7 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
             "; ".join(SURFACE_GATE_CHECK),
         ),
     ),
+    # Focused baseline regression cluster.
     SmokeStep(
         "Focused bridge/runtime/compression smoke",
         (
@@ -341,6 +348,7 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
             "-q",
         ),
     ),
+    # Plan 10C promoted boundaries, in ledger promotion order.
     SmokeStep(
         "Primary non-streaming bridge smoke",
         (
@@ -381,6 +389,7 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
             "; ".join(CLEAN_INSTALL_IMPORT_CHECK),
         ),
     ),
+    # Packaging build sanity gate.
     SmokeStep(
         "Build smoke",
         (

@@ -427,6 +427,10 @@ def _snapshot_latest_assistant_thinking(
     """
     Return structured snapshot of the latest protected assistant message.
 
+    Contract: this helper is defensive and must never raise on malformed bridge
+    request message shapes; it returns ``None`` when the expected structure is
+    absent.
+
     Returns ``None`` when no assistant message contains thinking/redacted_thinking
     blocks.  The caller can later pass the returned string to
     ``_restore_latest_assistant_thinking`` to guarantee the full protected content
@@ -437,8 +441,8 @@ def _snapshot_latest_assistant_thinking(
         - content_hash: SHA256 hash of the full_content JSON serialization
         - block_types: sequence of block type identifiers (e.g., ["thinking", "text"])
     """
-    # Defensive: malformed request bodies can reach bridge preflight before
-    # canonicalization/validation. Snapshot helpers must never throw.
+    # Malformed request bodies can reach bridge preflight before canonicalization.
+    # This helper must stay non-throwing on unexpected message/content shapes.
     if not isinstance(messages, list):
         return None
     for msg in reversed(messages):

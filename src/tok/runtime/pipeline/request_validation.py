@@ -304,7 +304,12 @@ def _validate_canonical_bridge_body_model(body: dict[str, Any]) -> list[str]:
             err.get("loc") == ("system",) and "invalid_system_block" in str(err.get("msg", "")) for err in errors
         ):
             return ["invalid_system_block"]
+        # Boundary contract: malformed bridge wire shape must block before upstream execution.
         return ["bridge_wire_model_invalid"]
+
+
+def _all_failures_are_non_blocking(validation_failures: list[str]) -> bool:
+    return all(failure in _NON_BLOCKING_OUTGOING_FAILURES for failure in validation_failures)
 
 
 def _normalize_message_content_to_blocks(
@@ -1276,10 +1281,7 @@ def canonicalize_anthropic_bridge_body(
     new_body["messages"] = canonical_messages
     validation_failures = _validate_canonical_bridge_body_model(new_body)
     if validation_failures:
-        non_blocking_failures = [
-            failure for failure in validation_failures if failure in _NON_BLOCKING_OUTGOING_FAILURES
-        ]
-        if len(non_blocking_failures) == len(validation_failures):
+        if _all_failures_are_non_blocking(validation_failures):
             signals["tok_bridge_canonical_validation_nonblocking"] = 1
             return new_body, True, signals
         failed_signals = dict(signals)
