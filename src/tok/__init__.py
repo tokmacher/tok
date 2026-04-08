@@ -131,22 +131,7 @@ def process(
 
 
 __all__: list[str] = [
-    # Defended 0.1.0 surface - promoted per Plan 10C.1
     "Bridge",
-    # TYPE_CHECKING imports exposed for static analysis
-    "BlockSchema",
-    "DocumentTransformer",
-    "PreparedRuntimeRequest",
-    "ProcessedRuntimeResponse",
-    "RuntimeRequest",
-    "RuntimeSession",
-    "Sifter",
-    "TokEncoder",
-    "TokNode",
-    "TokParser",
-    "TokRegistry",
-    "TokSchema",
-    "UniversalTokRuntime",
 ]
 
 __version__ = "0.1.0"
