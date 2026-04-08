@@ -1595,7 +1595,7 @@ def _collect_bridge_provider_sensitivity_risks(
 
 
 def _summarize_message_blocks(
-    content: list[dict[str, Any]],
+    content: str | list[dict[str, Any]],
     summary: dict[str, Any],
 ) -> list[str]:
     """Summarize blocks within a message."""
@@ -1652,7 +1652,9 @@ def summarize_message_structure(
             summary["assistant_msgs"] += 1
 
         content = msg.get("content")
-        blocks_summary = _summarize_message_blocks(content if isinstance(content, list) else [], summary)
+        # Pass content as-is if str or list, otherwise empty list
+        typed_content: str | list[dict[str, Any]] = content if isinstance(content, (str, list)) else []
+        blocks_summary = _summarize_message_blocks(typed_content, summary)
 
         role_seq.append(f"{role}[{','.join(blocks_summary)}]")
 
