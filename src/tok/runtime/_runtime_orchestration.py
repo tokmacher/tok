@@ -78,11 +78,24 @@ def build_tool_compatible_resend(
         if has_answer_anchor_param is not None:
             has_answer_anchor = has_answer_anchor_param
 
+        if translated_messages is None:
+            answer_ready = False
+        else:
+            answer_ready = _is_answer_ready_turn(
+                translated_messages,
+                tool_compatible=request.tool_compatible,
+                has_answer_anchor=has_answer_anchor,
+                baseline_only=session._baseline_only,
+            )
+
         resend_reason = _select_resend_reason(comparable_state, previous_comparable, has_answer_anchor)
         (
             processed_memory,
             resend_signals,
-        ) = session.maybe_suppress_tool_compatible_state(memory)
+        ) = session.maybe_suppress_tool_compatible_state(
+            memory,
+            force_resend_on_answer_ready=bool(answer_ready and has_answer_anchor),
+        )
         behavior_signals.update({key: behavior_signals.get(key, 0) + value for key, value in resend_signals.items()})
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,
@@ -94,15 +107,6 @@ def build_tool_compatible_resend(
             tok_history_compression_skipped=bool(behavior_signals.get("tok_history_compression_skipped", 0)),
             tool_compatible_compression=bool(behavior_signals.get("tool_compatible_compression", 0)),
         )
-        if translated_messages is None:
-            answer_ready = False
-        else:
-            answer_ready = _is_answer_ready_turn(
-                translated_messages,
-                tool_compatible=request.tool_compatible,
-                has_answer_anchor=behavior_signals.get("answer_anchor_present", 0) > 0,
-                baseline_only=session._baseline_only,
-            )
         if answer_ready:
             behavior_signals["answer_ready_turn"] = 1
         if session._late_answer_followthrough_active:

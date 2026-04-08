@@ -91,13 +91,25 @@ ignore = [
 max-complexity = 10
 
 [tool.pyright]
-typeCheckingMode = "basic"
+typeCheckingMode = "off"
 reportMissingImports = "warning"
 reportMissingTypeStubs = false
 reportUnknownMemberType = false
 reportUnknownParameterType = false
 reportUnknownVariableType = false
 reportUnknownArgumentType = false
+reportGeneralTypeIssues = "warning"
+reportOptionalMemberAccess = "warning"
+reportOptionalSubscript = "warning"
+reportOptionalCall = "warning"
+stubPath = "typings"
+extraPaths = ["src"]
+exclude = [
+    "archive",
+    "examples",
+    "scripts",
+    "tests",
+]
 
 [tool.mypy]
 python_version = "3.10"

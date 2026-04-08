@@ -204,19 +204,6 @@ def _latest_answer_verification(session: RuntimeSession) -> str:
     return ""
 
 
-def _verification_specificity(value: str) -> tuple[int, int]:
-    """Calculate specificity score for a verification value."""
-    lowered = value.lower()
-    score = 0
-    if "compress_history" in lowered:
-        score += 4
-    if "function" in lowered:
-        score += 1
-    if "(" in value and ")" in value:
-        score += 1
-    return (score, len(value))
-
-
 def reinforce_structured_answer_memory(session: RuntimeSession, fields: dict[str, list[str]]) -> dict[str, list[str]]:
     """Reinforce answer memory with prior session state."""
     if not fields:
@@ -238,11 +225,8 @@ def reinforce_structured_answer_memory(session: RuntimeSession, fields: dict[str
         fact.split(":", 1)[1].strip() for fact in existing_facts if fact.startswith("answer_verification:")
     ]
     prior_verification = _latest_answer_verification(session)
-    if prior_verification:
-        if not current_verifications or _verification_specificity(prior_verification) > max(
-            _verification_specificity(v) for v in current_verifications
-        ):
-            existing_facts.insert(0, f"answer_verification:{prior_verification}")
+    if prior_verification and not current_verifications:
+        existing_facts.insert(0, f"answer_verification:{prior_verification}")
     return reinforced
 
 

@@ -573,7 +573,12 @@ class RuntimeSession:
         self.pending_behavior_signals.clear()
         return signals
 
-    def maybe_suppress_tool_compatible_state(self, state: str) -> tuple[str, dict[str, int]]:
+    def maybe_suppress_tool_compatible_state(
+        self,
+        state: str,
+        *,
+        force_resend_on_answer_ready: bool = False,
+    ) -> tuple[str, dict[str, int]]:
         """Avoid resending unchanged tool-compatible state on every turn."""
         cleaned = state.strip()
         if not cleaned:
@@ -594,9 +599,25 @@ class RuntimeSession:
             and parsed
             and set(parsed.keys()) <= {"turns"}
         ):
+            if force_resend_on_answer_ready:
+                rendered = _build_tok_state(parsed)
+                self._last_tool_compatible_state = rendered
+                self._last_tool_compatible_state_fields = comparable
+                return rendered, {
+                    "state_resend_full_turn": 1,
+                    "state_resend_reason_answer_ready_forced_full": 1,
+                }
             return "", {"state_resend_suppressed_turn": 1}
         strategy = _select_resend_strategy(comparable, previous_comparable, has_answer_facts)
         if strategy == "suppress":
+            if force_resend_on_answer_ready:
+                rendered = _build_tok_state(parsed)
+                self._last_tool_compatible_state = rendered
+                self._last_tool_compatible_state_fields = comparable
+                return rendered, {
+                    "state_resend_full_turn": 1,
+                    "state_resend_reason_answer_ready_forced_full": 1,
+                }
             return "", {"state_resend_suppressed_turn": 1}
         rendered = _build_tok_state(parsed)
         self._last_tool_compatible_state = rendered

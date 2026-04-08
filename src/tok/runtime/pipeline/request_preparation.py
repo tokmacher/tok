@@ -622,6 +622,9 @@ def _annotate_full_turn_resend(
     tool_compatible_compression: bool,
 ) -> None:
     """Helper for applying full turn resend diagnostics."""
+    if resend_signals.get("state_resend_reason_answer_ready_forced_full"):
+        behavior_signals["state_resend_reason_answer_ready_forced_full"] = 1
+        return
     if resend_reason == "new_answer_anchor":
         behavior_signals["state_resend_reason_answer_anchor_present_kept_full"] = 1
         behavior_signals["answer_anchor_forced_full_resend"] = 1

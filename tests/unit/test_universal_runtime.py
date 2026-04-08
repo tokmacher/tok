@@ -1106,7 +1106,7 @@ def test_tool_compatible_state_with_answer_facts_suppresses_when_unchanged(
             },
             {
                 "role": "user",
-                "content": "What is the main implementation entry point?",
+                "content": "If fresh evidence is required, use the read-only tools first.",
             },
         ],
     )
@@ -2059,7 +2059,7 @@ def test_reinforce_structured_answer_memory_carries_forward_prior_file(
     assert "answer_file:src/tok/compression.py" in reinforced["facts"]
 
 
-def test_reinforce_structured_answer_memory_prefers_more_specific_verification(
+def test_reinforce_structured_answer_memory_keeps_current_verification_when_present(
     tmp_path,
 ) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
@@ -2075,7 +2075,7 @@ def test_reinforce_structured_answer_memory_prefers_more_specific_verification(
         {"facts": ["answer_verification:compress function"]},
     )
 
-    assert reinforced["facts"][0] == "answer_verification:compress_history function"
+    assert reinforced["facts"] == ["answer_verification:compress function"]
 
 
 def test_compact_structured_answer_memory_trims_answer_payloads() -> None:
@@ -2656,7 +2656,7 @@ def test_answer_anchor_present_signal_set_when_answer_facts_in_state(
     assert prepared.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 1
 
 
-def test_answer_anchor_present_can_suppress_when_state_is_unchanged(
+def test_answer_anchor_present_forces_full_resend_on_answer_ready_turn(
     tmp_path,
 ) -> None:
     from tok.runtime.core import (
@@ -2690,8 +2690,8 @@ def test_answer_anchor_present_can_suppress_when_state_is_unchanged(
 
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
-    assert second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
+    assert second.behavior_signals.get("state_resend_full_turn", 0) == 1
+    assert second.behavior_signals.get("state_resend_reason_answer_ready_forced_full", 0) == 1
     assert second.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 0
 
 

@@ -21,14 +21,21 @@ def estimated_token_count(memory_list: Sequence[object]) -> int:
     """
     total_chars = 0
     for item in memory_list:
-        if hasattr(item, "question"):
-            total_chars += len(item.question)
-        if hasattr(item, "answer") and item.answer:
-            total_chars += len(item.answer)
-        if hasattr(item, "lesson"):
-            total_chars += len(item.lesson)
-        if hasattr(item, "definition"):
-            total_chars += len(item.definition)
+        question = getattr(item, "question", None)
+        if isinstance(question, str):
+            total_chars += len(question)
+
+        answer = getattr(item, "answer", None)
+        if isinstance(answer, str):
+            total_chars += len(answer)
+
+        lesson = getattr(item, "lesson", None)
+        if isinstance(lesson, str):
+            total_chars += len(lesson)
+
+        definition = getattr(item, "definition", None)
+        if isinstance(definition, str):
+            total_chars += len(definition)
 
     return max(1, total_chars // 4)
 
