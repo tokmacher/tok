@@ -382,6 +382,14 @@ def test_bridge_session_accepts_legacy_request_policy_escape_hatch(
     assert session.request_policy_default == "legacy_tool_compatible"
 
 
+def test_gateway_and_benchmark_share_request_policy_helpers() -> None:
+    import tok.gateway._request_policy as request_policy
+    from tok.testing import live_benchmark
+
+    assert gateway._default_request_policy is request_policy.default_request_policy
+    assert live_benchmark.default_request_policy is request_policy.default_request_policy
+
+
 def test_health_endpoint_reports_baseline_only_and_session_savings(
     tmp_path,
 ) -> None:

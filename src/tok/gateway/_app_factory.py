@@ -9,7 +9,7 @@ import json
 import math
 import random  # noqa: F401 - compatibility anchor for gateway tests
 import time
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,7 +18,6 @@ from fastapi.responses import StreamingResponse
 
 from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
 from tok.runtime.smoothness import SmoothnessEventType
-from tok.universal_runtime import RuntimeRequest
 
 from . import (
     _RUNTIME,
@@ -30,8 +29,8 @@ from . import (
 )
 from ._anthropic_optimizations import apply_anthropic_optimizations
 from ._bridge_comparison import _safe_headers
-from ._bridge_preflight import _run_bridge_preflight
 from ._bridge_request_handler import send_with_tok_fail_open_retry
+from ._bridge_runtime_pipeline import prepare_bridge_payload
 from ._bridge_streaming import _emit_sse_block, buffer_strip_restream_impl
 
 if TYPE_CHECKING:
@@ -458,96 +457,38 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 if not isinstance(body, dict) or not isinstance(original_body, dict):
                     msg = "request body must be a JSON object"
                     raise ValueError(msg)
-
-                (
-                    provider_safe_original_body,
-                    behavior_signals,
-                    source_retry_forbidden,
-                    preflight_response,
-                ) = _run_bridge_preflight(
-                    session,
-                    body=copy.deepcopy(body),
-                    original_body=original_body,
+                tok_tool_header = request.headers.get("x-tok-tool-compatible", "")
+                bridge_payload, preflight_response = prepare_bridge_payload(
+                    session=session,
+                    body=body,
                     headers=headers,
-                    behavior_signals=behavior_signals,
-                    compressed=False,
-                    request_state=request_state,
                     path=path,
-                    emit_ready_log=(path == "v1/messages/count_tokens"),
-                    emit_repair_logs=(path == "v1/messages/count_tokens"),
-                    reset_recovery_state=(path == "v1/messages/count_tokens"),
+                    tok_tool_header=tok_tool_header,
+                    request_state=request_state,
                 )
                 if preflight_response is not None:
                     return preflight_response
-                provider_safe_original_body_bytes = json.dumps(provider_safe_original_body).encode()
-                raw_retry_forbidden = source_retry_forbidden
-                source_behavior_signals = dict(behavior_signals)
 
-                request_model = str(provider_safe_original_body.get("model", ""))
-                messages = provider_safe_original_body.get("messages", [])
+                body = dict(bridge_payload.body)
+                behavior_signals = dict(bridge_payload.behavior_signals)
+                request_policy = bridge_payload.request_policy
+                request_tool_compatible = bridge_payload.request_tool_compatible
+                compressed = bridge_payload.compressed
+                saved_toks = bridge_payload.saved_toks
+                tool_breakdown = dict(bridge_payload.tool_breakdown)
+                prompt_metrics = dict(bridge_payload.prompt_metrics)
+                raw_retry_forbidden = bridge_payload.retry_forbidden
+                provider_safe_original_body = dict(bridge_payload.provider_safe_original_body)
+                provider_safe_original_body_bytes = json.dumps(provider_safe_original_body).encode()
+                request_model = bridge_payload.request_model
+                messages = list(bridge_payload.request_messages)
 
                 if path == "v1/messages":
-                    tok_tool_header = request.headers.get("x-tok-tool-compatible", "")
-                    if tok_tool_header.lower() in {
-                        "0",
-                        "false",
-                        "off",
-                        "no",
-                    }:
-                        request_tool_compatible = False
-                        request_policy = (
-                            "forced_baseline"
-                            if session.request_policy_default == "forced_baseline"
-                            else "natural_first"
-                        )
-                    elif session.runtime_session._baseline_only:
-                        request_tool_compatible = False
-                        request_policy = "forced_baseline"
-                        behavior_signals["baseline_only_session"] = 1
-                        behavior_signals["tok_fallback_activated"] = 1
-                        logger.warning(
-                            "tok_fallback_activated: session is in baseline-only mode, serving without compression"
-                        )
-                    else:
-                        request_tool_compatible = True
-                        request_policy = session.request_policy_default
-
-                    logger.info(
-                        "Request mode: model=%s, request_policy=%s, tool_compatible_allowed=%s (tools present: %s, header=%s)",
-                        request_model,
-                        request_policy,
-                        request_tool_compatible,
-                        bool(provider_safe_original_body.get("tools")),
-                        tok_tool_header or "<unset>",
-                    )
-
                     from tok.runtime.smoothness.models import TokMode
 
                     if session.runtime_session.current_tok_mode == TokMode.LOSSLESS_TASK_MODE:
                         logger.warning("LOSSLESS_TASK_MODE active: preserving full task flow for emergency mode")
 
-                    prepared = _RUNTIME.prepare_request(
-                        RuntimeRequest(
-                            model=request_model,
-                            messages=messages,
-                            system=provider_safe_original_body.get("system", ""),
-                            adapter_kind="claude-bridge",
-                            tool_compatible=request_tool_compatible,
-                            request_policy=cast(
-                                "Literal['legacy_tool_compatible', 'natural_first', 'forced_baseline']",
-                                request_policy,
-                            ),
-                            request_has_tools=bool(provider_safe_original_body.get("tools")),
-                        ),
-                        session.runtime_session,
-                        result_cache=session.result_cache,
-                    )
-                    request_policy = prepared.request_policy
-                    request_tool_compatible = prepared.effective_tool_compatible
-                    compressed = prepared.compressed
-                    saved_toks = prepared.input_saved_tokens
-                    tool_breakdown = prepared.type_breakdown
-                    behavior_signals = dict(prepared.behavior_signals)
                     _note_request_policy_recovery_watch(session, behavior_signals)
                     if behavior_signals.get("smoothness_history_winnowing_active_loop"):
                         with contextlib.suppress(Exception):
@@ -565,25 +506,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                 SmoothnessEventType.REPEATED_ACTIVE_FILE_READ,
                                 {"count": behavior_signals.get("repeat_file_read", 0)},
                             )
-                    for key, value in source_behavior_signals.items():
-                        behavior_signals[key] = behavior_signals.get(key, 0) + value
-                    _note_request_policy_recovery_watch(session, behavior_signals)
-                    prompt_metrics = {
-                        "baseline_prompt_tokens": prepared.baseline_prompt_tokens,
-                        "prepared_prompt_tokens": prepared.prepared_prompt_tokens,
-                        "saved_prompt_tokens": prepared.saved_prompt_tokens,
-                        "hot_hint_tokens_added": prepared.hot_hint_tokens_added,
-                        "reacquisition_tokens_avoided_estimate": prepared.reacquisition_tokens_avoided_estimate,
-                    }
-                    logger.info(
-                        "Prepared request policy: request_policy=%s, effective_tool_compatible=%s, escalated=%s",
-                        request_policy,
-                        request_tool_compatible,
-                        prepared.request_policy_escalated,
-                    )
-                    body = copy.deepcopy(provider_safe_original_body)
-                    body["messages"] = prepared.body.get("messages", [])
-                    body["system"] = prepared.body.get("system", body.get("system", ""))
 
                     session.capture_request(
                         {
@@ -595,36 +517,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             "request_policy": request_policy,
                         }
                     )
-
-                    (
-                        body,
-                        behavior_signals,
-                        prepared_retry_forbidden,
-                        preflight_response,
-                    ) = _run_bridge_preflight(
-                        session,
-                        body=body,
-                        original_body=provider_safe_original_body,
-                        headers=headers,
-                        behavior_signals=behavior_signals,
-                        compressed=compressed,
-                        request_state=request_state,
-                        path=path,
-                    )
-                    if preflight_response is not None:
-                        return preflight_response
-                    raw_retry_forbidden = raw_retry_forbidden or prepared_retry_forbidden
-                    if behavior_signals.get("tok_bridge_pairing_degraded_to_provider_safe", 0):
-                        compressed = False
-                        saved_toks = 0
-                        tool_breakdown = {}
-                        prompt_metrics = {
-                            "baseline_prompt_tokens": 0,
-                            "prepared_prompt_tokens": 0,
-                            "saved_prompt_tokens": 0,
-                            "hot_hint_tokens_added": 0,
-                            "reacquisition_tokens_avoided_estimate": 0,
-                        }
                     body = apply_anthropic_optimizations(body)
                     body_bytes = json.dumps(body).encode()
 

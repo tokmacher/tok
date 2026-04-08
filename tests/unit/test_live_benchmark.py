@@ -2,6 +2,8 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+from tok.gateway._bridge_runtime_pipeline import BridgePreparedPayload
+from tok.gateway._request_policy import default_request_policy
 from tok.testing.live_benchmark import (
     BenchmarkDefinition,
     BenchmarkResult,
@@ -12,6 +14,7 @@ from tok.testing.live_benchmark import (
     compare_results,
     load_benchmark_definition,
     normalize_fixture_messages,
+    normalize_fixture_messages_for_bridge,
     render_comparison_markdown,
     render_stability_markdown,
     select_preferred_mode,
@@ -217,6 +220,26 @@ def test_chunk_messages_respects_replay_turn_boundaries() -> None:
     assert chunks[4] == [{"role": "user", "content": "Please summarize the answer."}]
 
 
+def test_bridge_fixture_normalization_preserves_tool_result_pairing() -> None:
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "x.py"}},
+            ],
+        },
+        {"role": "tool_result", "tool_use_id": "t1", "content": "print('ok')"},
+    ]
+    normalized = normalize_fixture_messages_for_bridge(messages, "final prompt")
+    chunks = _chunk_messages(normalized[:-1], 2)
+    merged = [message for chunk in chunks for message in chunk]
+
+    assert normalized[1]["role"] == "user"
+    assert normalized[1]["content"][0]["type"] == "tool_result"
+    assert merged[0]["role"] == "assistant"
+    assert merged[1]["content"][0]["type"] == "tool_result"
+
+
 def test_compare_results_emits_bootstrap_diagnosis() -> None:
     baseline = _result(mode="baseline", total_tokens=120, prompt_tokens=100)
     candidate = _result(
@@ -386,7 +409,73 @@ def test_live_benchmark_runner_reports_prompt_and_response_metrics(
     assert "state_resend_full_turns" in universal.diagnostics
     assert "directive_tokens_estimate" in universal.prompt_metrics
     assert "state_payload_tokens_estimate" in universal.prompt_metrics
-    assert universal.turns[0]["diagnostics"]["request_policy"] == ("natural_first")
+    assert universal.turns[0]["diagnostics"]["request_policy"] == default_request_policy()
+    assert universal.turns[0]["diagnostics"]["execution_path"] == "claude-bridge"
+    assert universal.turns[0]["diagnostics"]["bridge_preflight_applied"] == 1
+
+
+def test_live_benchmark_tok_universal_uses_shared_bridge_pipeline(tmp_path, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Fix failing tests in src/tok/gateway.py"},
+                ]
+            }
+        )
+        + "\n"
+    )
+    definition = BenchmarkDefinition(
+        name="coding-loop",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a coding loop.",
+        followup_prompt="File=<the file that was changed>\nVerification=<the result>",
+        success_terms=("gateway.py", "passed"),
+        min_success_terms=2,
+    )
+    runner = LiveBenchmarkRunner(
+        model="gpt-4o-mini",
+        client=_FakeClient("File=gateway.py\nVerification=1 passed in 0.05s"),
+    )
+
+    captured_paths: list[str] = []
+
+    def _fake_prepare_bridge_payload(*, session, body, headers, path, **kwargs):
+        del session, headers, kwargs
+        captured_paths.append(path)
+        return (
+            BridgePreparedPayload(
+                body={
+                    "model": body.get("model", ""),
+                    "system": body.get("system", ""),
+                    "messages": list(body.get("messages", [])),
+                },
+                behavior_signals={},
+                request_policy=default_request_policy(),
+                request_tool_compatible=True,
+                compressed=False,
+                saved_toks=0,
+                tool_breakdown={},
+                prompt_metrics={
+                    "baseline_prompt_tokens": 0,
+                    "prepared_prompt_tokens": 0,
+                    "saved_prompt_tokens": 0,
+                    "hot_hint_tokens_added": 0,
+                    "reacquisition_tokens_avoided_estimate": 0,
+                },
+                retry_forbidden=False,
+            ),
+            None,
+        )
+
+    monkeypatch.setattr("tok.testing.live_benchmark.prepare_bridge_payload", _fake_prepare_bridge_payload)
+
+    result = runner.run(definition, mode="tok-universal", turns=2)
+
+    assert captured_paths == ["v1/messages", "v1/messages"]
+    assert result.turns[0]["diagnostics"]["execution_path"] == "claude-bridge"
+    assert result.turns[0]["diagnostics"]["bridge_preflight_applied"] == 1
 
 
 def test_live_benchmark_runner_rejects_placeholder_success(tmp_path) -> None:

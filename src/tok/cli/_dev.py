@@ -151,14 +151,22 @@ def live_benchmark(
     if mode == "compare":
         repeated_results: list[dict[str, Any]] = []
         compare_modes = ("tok-universal",)
-        for _ in range(max(1, repeats)):
-            console.print(f"[dim]Running mode: baseline (repeat {_ + 1})...[/dim]")
+        for run_index in range(max(1, repeats)):
+            console.print(f"[dim]Running mode: baseline (repeat {run_index + 1})...[/dim]")
             baseline = runner.run(definition, mode="baseline", turns=effective_turns)
             run_results: dict[str, Any] = {"baseline": baseline}
             for compare_mode in compare_modes:
-                console.print(f"[dim]Running mode: {compare_mode} (repeat {_ + 1})...[/dim]")
+                console.print(f"[dim]Running mode: {compare_mode} (repeat {run_index + 1})...[/dim]")
                 run_results[compare_mode] = runner.run(definition, mode=compare_mode, turns=effective_turns)
             repeated_results.append(run_results)
+            write_result(output / f"{benchmark}_run{run_index + 1}_baseline.json", run_results["baseline"])
+            for compare_mode in compare_modes:
+                candidate = run_results[compare_mode]
+                write_result(output / f"{benchmark}_run{run_index + 1}_{compare_mode}.json", candidate)
+                write_result(
+                    output / f"{benchmark}_run{run_index + 1}_compare_{compare_mode}.json",
+                    compare_results(run_results["baseline"], candidate),
+                )
 
         last_run = repeated_results[-1]
         baseline = last_run["baseline"]

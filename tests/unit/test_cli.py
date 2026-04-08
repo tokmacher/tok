@@ -1704,6 +1704,10 @@ class TestCLI:
         assert (output_dir / "coding-loop_baseline.json").exists()
         assert (output_dir / "coding-loop_tok-universal.json").exists()
         assert (output_dir / "coding-loop_compare_tok-universal.json").exists()
+        for run_index in range(1, 4):
+            assert (output_dir / f"coding-loop_run{run_index}_baseline.json").exists()
+            assert (output_dir / f"coding-loop_run{run_index}_tok-universal.json").exists()
+            assert (output_dir / f"coding-loop_run{run_index}_compare_tok-universal.json").exists()
         assert (output_dir / "coding-loop_compare.md").exists()
         assert (output_dir / "coding-loop_stability.json").exists()
         assert (output_dir / "coding-loop_stability.md").exists()

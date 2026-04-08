@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -14,6 +15,10 @@ from typing import Any, Literal, cast
 
 from openai import OpenAI
 
+from tok.gateway import BridgeSession
+from tok.gateway._anthropic_optimizations import apply_anthropic_optimizations
+from tok.gateway._bridge_runtime_pipeline import prepare_bridge_payload
+from tok.gateway._request_policy import default_request_policy
 from tok.runtime.core import (
     RuntimeRequest,
     RuntimeSession,
@@ -549,6 +554,35 @@ def normalize_fixture_messages(messages: list[dict[str, Any]], followup_prompt: 
     return normalized
 
 
+def normalize_fixture_messages_for_bridge(messages: list[dict[str, Any]], followup_prompt: str) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for msg in messages:
+        role = str(msg.get("role", "")).strip() or "user"
+        if role == "tool_result":
+            tool_id = str(msg.get("tool_use_id", "")).strip()
+            tool_result_block: dict[str, Any] = {
+                "type": "tool_result",
+                "tool_use_id": tool_id,
+                "content": copy.deepcopy(msg.get("content", "")),
+            }
+            normalized.append({"role": "user", "content": [tool_result_block]})
+            continue
+
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            normalized.append({"role": role, "content": copy.deepcopy(content)})
+            continue
+        if isinstance(content, str):
+            if content.strip():
+                normalized.append({"role": role, "content": content})
+            continue
+        if content is not None:
+            normalized.append({"role": role, "content": str(content)})
+
+    normalized.append({"role": "user", "content": followup_prompt})
+    return normalized
+
+
 def _turn_prompts(definition: BenchmarkDefinition, turns: int) -> list[str]:
     if definition.prompt_sequence:
         prompts = list(definition.prompt_sequence[:turns])
@@ -572,8 +606,15 @@ def _chunk_messages(messages: list[dict[str, Any]], turns: int) -> list[list[dic
         return [[] for _ in range(turns)]
 
     def _is_tool_result_message(message: dict[str, Any]) -> bool:
-        content = str(message.get("content", "")).strip()
-        return bool(message.get("role") == "user" and content.startswith("Tool result ("))
+        if message.get("role") != "user":
+            return False
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content.strip().startswith("Tool result (")
+        if isinstance(content, list):
+            blocks = [block for block in content if isinstance(block, dict)]
+            return bool(blocks) and all(block.get("type") == "tool_result" for block in blocks)
+        return False
 
     def _is_user_authored_message(message: dict[str, Any]) -> bool:
         return bool(message.get("role") == "user" and not _is_tool_result_message(message))
@@ -928,14 +969,18 @@ class LiveBenchmarkRunner:
             raise ValueError(msg)
         canonical_mode = "tok-universal" if mode in {"tok-tool-compatible", "tok-universal"} else mode
         raw_messages = load_fixture_messages(definition.fixture_path)
-        normalized = normalize_fixture_messages(raw_messages, definition.followup_prompt)
+        normalized = (
+            normalize_fixture_messages_for_bridge(raw_messages, definition.followup_prompt)
+            if canonical_mode == "tok-universal"
+            else normalize_fixture_messages(raw_messages, definition.followup_prompt)
+        )
         context_messages = normalized[:-1]
         turn_prompts = _turn_prompts(definition, turns)
         message_chunks = _chunk_messages(context_messages, turns)
         original_system_tokens = _estimate_tokens(definition.system_prompt)
         runtime = UniversalTokRuntime()
         tool_compatible = canonical_mode in {"tok-universal", "tok-minimal"}
-        request_policy = "natural_first" if canonical_mode == "tok-universal" else "legacy_tool_compatible"
+        request_policy = default_request_policy() if canonical_mode == "tok-universal" else "legacy_tool_compatible"
 
         # Identity logging for pointer registry continuity
         id(runtime)
@@ -957,8 +1002,9 @@ class LiveBenchmarkRunner:
             os.environ["TOK_NEURO_REACTOR"] = "0"
 
         with tempfile.TemporaryDirectory(prefix="tok_live_benchmark_") as tmpdir:
-            session = RuntimeSession(memory_dir=Path(tmpdir))
-            conversation: list[dict[str, str]] = []
+            bridge_session = BridgeSession(memory_dir=Path(tmpdir))
+            session = bridge_session.runtime_session
+            conversation: list[dict[str, Any]] = []
             turn_results: list[dict[str, Any]] = []
             total_prompt_tokens = 0
             total_completion_tokens = 0
@@ -974,7 +1020,7 @@ class LiveBenchmarkRunner:
             from tok.compression import compress_history
             from tok.runtime.policy.smart_policy import policy_for_model
 
-            past_messages: list[dict[str, str]] = []
+            past_messages: list[dict[str, Any]] = []
             for idx, chunk in enumerate(message_chunks):
                 # Ingest previous assistant turns to prime the Reactor
                 if canonical_mode == "tok-neuro" and idx > 0:
@@ -998,6 +1044,7 @@ class LiveBenchmarkRunner:
                 baseline_prompt_estimate = original_system_tokens + normalized_messages_tokens
                 prepared = None
                 prepared_body: dict[str, Any] | None = None
+                turn_tool_compatible = False
 
                 if canonical_mode == "baseline":
                     chat_messages = [
@@ -1044,81 +1091,174 @@ class LiveBenchmarkRunner:
                         "messages": conversation.copy(),
                     }
                 else:
-                    prepared = runtime.prepare_request(
-                        RuntimeRequest(
-                            model=self.model,
-                            messages=conversation,
-                            system=definition.system_prompt,
-                            adapter_kind="text-loop",
-                            tool_compatible=tool_compatible,
-                            request_policy=cast(
-                                "Literal['legacy_tool_compatible', 'natural_first', 'forced_baseline']",
-                                request_policy,
-                            ),
-                        ),
-                        session,
-                    )
-                    prepared_body = dict(prepared.body)
-                    if canonical_mode == "tok-minimal":
-                        sys_val = prepared_body.get("system")
-                        prepared_body["system"] = _minimalize_system_prompt(
-                            sys_val if isinstance(sys_val, (str, list, dict)) else "",
-                            definition.system_prompt,
+                    if canonical_mode == "tok-universal":
+                        bridge_request_body = {
+                            "model": self.model,
+                            "messages": copy.deepcopy(conversation),
+                            "system": definition.system_prompt,
+                        }
+                        bridge_payload, preflight_response = prepare_bridge_payload(
+                            session=bridge_session,
+                            body=bridge_request_body,
+                            headers={},
+                            path="v1/messages",
                         )
-                    chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get("messages", [])
-                    prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
-                    prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
-                    sys_val2 = prepared_body.get("system")
-                    (
-                        system_tokens_estimate,
-                        directive_tokens_estimate,
-                        state_payload_tokens_estimate,
-                    ) = _system_breakdown(
-                        definition.system_prompt, sys_val2 if isinstance(sys_val2, (str, list, dict)) else ""
-                    )
-                    outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
-                    tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
-                    tok_overhead_tokens = max(
-                        0,
-                        outbound_prompt_estimate - baseline_prompt_estimate + prepared.input_saved_tokens,
-                    )
-                    turn_compression_metrics = {
-                        "input_saved_tokens": prepared.input_saved_tokens,
-                        "output_saved_tokens": 0,
-                        "total_saved_tokens": prepared.input_saved_tokens,
-                        "input_behavior_signals": dict(prepared.behavior_signals),
-                        "type_breakdown": dict(prepared.type_breakdown),
-                    }
-                    turn_prompt_metrics = {
-                        "system_prompt_tokens": original_system_tokens,
-                        "normalized_messages_tokens": normalized_messages_tokens,
-                        "prepared_messages_tokens": prepared_messages_tokens,
-                        "system_tokens_estimate": system_tokens_estimate,
-                        "directive_tokens_estimate": directive_tokens_estimate,
-                        "state_payload_tokens_estimate": state_payload_tokens_estimate,
-                        "tok_system_additions_tokens": tok_system_additions_tokens,
-                        "tok_overhead_tokens": tok_overhead_tokens,
-                        "estimated_prompt_delta_tokens": outbound_prompt_estimate - baseline_prompt_estimate,
-                        "outbound_prompt_estimate_tokens": outbound_prompt_estimate,
-                    }
-                    turn_response_metrics = {
-                        "response_behavior_signals": {},
-                        "invisible_pressure": 0,
-                        "reacquisition_cost_tokens": int(prepared.behavior_signals.get("reacquisition_cost_tokens", 0)),
-                        "family_mode": "",
-                        "response_mode": canonical_mode,
-                    }
-                    turn_diagnostics = {
-                        "tool_compatible_requested": tool_compatible,
-                        "request_policy": request_policy,
-                        "request_messages_before": len(conversation),
-                        "request_messages_after": len(chat_messages),
-                        "runtime_mode": prepared.mode,
-                    }
-                    outbound_payload = {
-                        "system": prepared_body.get("system"),
-                        "messages": prepared_body.get("messages", []),
-                    }
+                        if preflight_response is not None:
+                            msg = (
+                                "tok-universal benchmark bridge preflight rejected payload "
+                                f"(status={preflight_response.status_code})"
+                            )
+                            raise RuntimeError(msg)
+
+                        prepared_body = apply_anthropic_optimizations(copy.deepcopy(bridge_payload.body))
+                        request_policy = bridge_payload.request_policy
+                        turn_tool_compatible = bridge_payload.request_tool_compatible
+                        chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get(
+                            "messages", []
+                        )
+                        prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
+                        prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
+                        sys_val2 = prepared_body.get("system")
+                        (
+                            system_tokens_estimate,
+                            directive_tokens_estimate,
+                            state_payload_tokens_estimate,
+                        ) = _system_breakdown(
+                            definition.system_prompt, sys_val2 if isinstance(sys_val2, (str, list, dict)) else ""
+                        )
+                        outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
+                        tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
+                        tok_overhead_tokens = max(
+                            0,
+                            outbound_prompt_estimate - baseline_prompt_estimate + bridge_payload.saved_toks,
+                        )
+                        turn_compression_metrics = {
+                            "input_saved_tokens": bridge_payload.saved_toks,
+                            "output_saved_tokens": 0,
+                            "total_saved_tokens": bridge_payload.saved_toks,
+                            "input_behavior_signals": dict(bridge_payload.behavior_signals),
+                            "type_breakdown": dict(bridge_payload.tool_breakdown),
+                        }
+                        turn_prompt_metrics = {
+                            "system_prompt_tokens": original_system_tokens,
+                            "normalized_messages_tokens": normalized_messages_tokens,
+                            "prepared_messages_tokens": prepared_messages_tokens,
+                            "system_tokens_estimate": system_tokens_estimate,
+                            "directive_tokens_estimate": directive_tokens_estimate,
+                            "state_payload_tokens_estimate": state_payload_tokens_estimate,
+                            "tok_system_additions_tokens": tok_system_additions_tokens,
+                            "tok_overhead_tokens": tok_overhead_tokens,
+                            "estimated_prompt_delta_tokens": outbound_prompt_estimate - baseline_prompt_estimate,
+                            "outbound_prompt_estimate_tokens": outbound_prompt_estimate,
+                        }
+                        turn_response_metrics = {
+                            "response_behavior_signals": {},
+                            "invisible_pressure": 0,
+                            "reacquisition_cost_tokens": int(
+                                bridge_payload.behavior_signals.get("reacquisition_cost_tokens", 0)
+                            ),
+                            "family_mode": "",
+                            "response_mode": canonical_mode,
+                        }
+                        turn_diagnostics = {
+                            "tool_compatible_requested": turn_tool_compatible,
+                            "request_policy": request_policy,
+                            "request_messages_before": len(conversation),
+                            "request_messages_after": len(chat_messages),
+                            "runtime_mode": "claude-bridge",
+                            "execution_path": "claude-bridge",
+                            "bridge_preflight_applied": 1,
+                        }
+                        if turn_diagnostics["execution_path"] != "claude-bridge":
+                            msg = "tok-universal benchmark must execute through the claude-bridge path"
+                            raise RuntimeError(msg)
+                        outbound_payload = {
+                            "system": prepared_body.get("system"),
+                            "messages": prepared_body.get("messages", []),
+                        }
+                    else:
+                        prepared = runtime.prepare_request(
+                            RuntimeRequest(
+                                model=self.model,
+                                messages=conversation,
+                                system=definition.system_prompt,
+                                adapter_kind="text-loop",
+                                tool_compatible=tool_compatible,
+                                request_policy=cast(
+                                    "Literal['legacy_tool_compatible', 'natural_first', 'forced_baseline']",
+                                    request_policy,
+                                ),
+                            ),
+                            session,
+                        )
+                        prepared_body = dict(prepared.body)
+                        if canonical_mode == "tok-minimal":
+                            sys_val = prepared_body.get("system")
+                            prepared_body["system"] = _minimalize_system_prompt(
+                                sys_val if isinstance(sys_val, (str, list, dict)) else "",
+                                definition.system_prompt,
+                            )
+                        turn_tool_compatible = tool_compatible
+                        chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get(
+                            "messages", []
+                        )
+                        prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
+                        prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
+                        sys_val2 = prepared_body.get("system")
+                        (
+                            system_tokens_estimate,
+                            directive_tokens_estimate,
+                            state_payload_tokens_estimate,
+                        ) = _system_breakdown(
+                            definition.system_prompt, sys_val2 if isinstance(sys_val2, (str, list, dict)) else ""
+                        )
+                        outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
+                        tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
+                        tok_overhead_tokens = max(
+                            0,
+                            outbound_prompt_estimate - baseline_prompt_estimate + prepared.input_saved_tokens,
+                        )
+                        turn_compression_metrics = {
+                            "input_saved_tokens": prepared.input_saved_tokens,
+                            "output_saved_tokens": 0,
+                            "total_saved_tokens": prepared.input_saved_tokens,
+                            "input_behavior_signals": dict(prepared.behavior_signals),
+                            "type_breakdown": dict(prepared.type_breakdown),
+                        }
+                        turn_prompt_metrics = {
+                            "system_prompt_tokens": original_system_tokens,
+                            "normalized_messages_tokens": normalized_messages_tokens,
+                            "prepared_messages_tokens": prepared_messages_tokens,
+                            "system_tokens_estimate": system_tokens_estimate,
+                            "directive_tokens_estimate": directive_tokens_estimate,
+                            "state_payload_tokens_estimate": state_payload_tokens_estimate,
+                            "tok_system_additions_tokens": tok_system_additions_tokens,
+                            "tok_overhead_tokens": tok_overhead_tokens,
+                            "estimated_prompt_delta_tokens": outbound_prompt_estimate - baseline_prompt_estimate,
+                            "outbound_prompt_estimate_tokens": outbound_prompt_estimate,
+                        }
+                        turn_response_metrics = {
+                            "response_behavior_signals": {},
+                            "invisible_pressure": 0,
+                            "reacquisition_cost_tokens": int(
+                                prepared.behavior_signals.get("reacquisition_cost_tokens", 0)
+                            ),
+                            "family_mode": "",
+                            "response_mode": canonical_mode,
+                        }
+                        turn_diagnostics = {
+                            "tool_compatible_requested": tool_compatible,
+                            "request_policy": request_policy,
+                            "request_messages_before": len(conversation),
+                            "request_messages_after": len(chat_messages),
+                            "runtime_mode": prepared.mode,
+                            "execution_path": "text-loop",
+                            "bridge_preflight_applied": 0,
+                        }
+                        outbound_payload = {
+                            "system": prepared_body.get("system"),
+                            "messages": prepared_body.get("messages", []),
+                        }
 
                 started = time.time()
                 create_kwargs: dict[str, Any] = {
@@ -1145,7 +1285,7 @@ class LiveBenchmarkRunner:
                         model=self.model,
                         session=session,
                         behavior_signals=turn_compression_metrics["input_behavior_signals"],
-                        tool_compatible=tool_compatible,
+                        tool_compatible=turn_tool_compatible,
                     )
                     visible_response = (
                         "\n".join(

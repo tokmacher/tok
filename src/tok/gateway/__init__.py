@@ -37,6 +37,15 @@ from ._bridge_comparison import _request_fingerprint_diff
 
 # Internal gateway support modules
 from ._fingerprint import _request_body_fingerprint
+from ._request_policy import (
+    default_request_policy as _default_request_policy,
+)
+from ._request_policy import (
+    normalize_request_policy as _normalize_request_policy,
+)
+from ._request_policy import (
+    request_policy_mode_label as _request_policy_mode_label,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -72,43 +81,6 @@ ANTHROPIC_API_BASE = "https://api.anthropic.com"
 def _default_api_base() -> str:
     configured = os.getenv("TOK_API_BASE", ANTHROPIC_API_BASE).strip()
     return configured or ANTHROPIC_API_BASE
-
-
-_REQUEST_POLICY_ALIASES = {
-    "legacy": "legacy_tool_compatible",
-    "legacy_tool_compatible": "legacy_tool_compatible",
-    "tool_compatible": "legacy_tool_compatible",
-    "tool-compatible": "legacy_tool_compatible",
-    "natural": "natural_first",
-    "natural_first": "natural_first",
-    "natural-first": "natural_first",
-    "baseline": "forced_baseline",
-    "forced_baseline": "forced_baseline",
-    "forced-baseline": "forced_baseline",
-}
-
-
-def _normalize_request_policy(value: str) -> str:
-    normalized = value.strip().lower()
-    if not normalized:
-        return ""
-    return _REQUEST_POLICY_ALIASES.get(normalized, "")
-
-
-def _default_request_policy() -> str:
-    tok_mode = os.getenv("TOK_MODE", "tool-compatible").strip().lower()
-    if tok_mode == "baseline":
-        return "forced_baseline"
-    explicit_policy = _normalize_request_policy(os.getenv("TOK_REQUEST_POLICY", ""))
-    if explicit_policy:
-        return explicit_policy
-    return "natural_first"
-
-
-def _request_policy_mode_label(policy: str) -> str:
-    if policy == "forced_baseline":
-        return "baseline"
-    return "tool-compatible"
 
 
 def _parse_request_body(
