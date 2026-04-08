@@ -1576,10 +1576,7 @@ class TestCLI:
                 del definition
                 totals = {
                     "baseline": 120,
-                    "tok-minimal": 85,
-                    "tok-native": 80,
-                    "tok-tool-compatible": 90,
-                    "tok-neuro": 88,
+                    "tok-universal": 85,
                 }
                 total = totals[mode]
                 return SimpleNamespace(
@@ -1683,7 +1680,7 @@ class TestCLI:
         )
         monkeypatch.setattr(
             "tok.testing.live_benchmark.select_preferred_mode",
-            lambda baseline, comparisons: "tok-minimal",
+            lambda baseline, comparisons: "tok-universal",
         )
 
         output_dir = tmp_path / "artifacts"
@@ -1705,12 +1702,8 @@ class TestCLI:
 
         assert result.exit_code == 0
         assert (output_dir / "coding-loop_baseline.json").exists()
-        assert (output_dir / "coding-loop_tok-minimal.json").exists()
-        assert (output_dir / "coding-loop_tok-native.json").exists()
-        assert (output_dir / "coding-loop_tok-tool-compatible.json").exists()
-        assert (output_dir / "coding-loop_compare_tok-minimal.json").exists()
-        assert (output_dir / "coding-loop_compare_tok-native.json").exists()
-        assert (output_dir / "coding-loop_compare_tok-tool-compatible.json").exists()
+        assert (output_dir / "coding-loop_tok-universal.json").exists()
+        assert (output_dir / "coding-loop_compare_tok-universal.json").exists()
         assert (output_dir / "coding-loop_compare.md").exists()
         assert (output_dir / "coding-loop_stability.json").exists()
         assert (output_dir / "coding-loop_stability.md").exists()
