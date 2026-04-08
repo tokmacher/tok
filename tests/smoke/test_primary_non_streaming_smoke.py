@@ -23,10 +23,6 @@ from fastapi.responses import JSONResponse
 
 from tok.gateway import BridgeSession, create_app
 
-# -----------------------------------------------------------------------------
-# Synthetic upstream with call counter
-# -----------------------------------------------------------------------------
-
 
 class _UpstreamState:
     """Thread-safe state for synthetic upstream."""
@@ -112,11 +108,6 @@ async def _start_upstream_server(state: _UpstreamState, port: int) -> asyncio.Ta
         raise RuntimeError(f"Upstream server failed to start on port {port}")
 
     return task
-
-
-# -----------------------------------------------------------------------------
-# Smoke test
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/tok-protocol.svg)](https://pypi.org/project/tok-protocol/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Tok cuts LLM token costs by 15–46% on sessions of 8+ turns, without altering your
+**Tok is designed to reduce LLM token costs on longer sessions, without altering your
 workflow.**
 
 Savings come primarily from **input token compression** (prompt/context optimization)
@@ -15,8 +15,9 @@ different rates for input vs output tokens, your actual cost reduction depends o
 provider's pricing structure and session length.
 
 Tok is an invisible bridge that sits between Claude Code and the model API. It
-compresses conversations on the way out and re-hydrates them on the way back. You use
-Claude exactly as before — Tok runs underneath, saving tokens automatically.
+compresses conversations on the way out and re-hydrates them on the way back. The
+focused 0.1.0 public release story is Claude Code first: you keep using Claude exactly
+as before while Tok runs underneath and saves tokens automatically.
 
 ## Who Is Tok For?
 
@@ -36,8 +37,8 @@ Tok intercepts LLM traffic and applies deterministic compression:
 - **Rolling state**: Conversation history compresses to O(1) size regardless of length
 - **Lossless round-trip**: Everything re-hydrates perfectly on the way back
 
-The result: ~50% fewer tokens sent to the model, with no visible change to your
-workflow.
+The result is typically lower token volume on sustained sessions, while preserving the
+bridge-first Claude workflow.
 
 ## Supported Workflow
 
@@ -60,9 +61,11 @@ invisibly.
 The main CLI commands for `0.1.0` are: `tok install`,
 `tok bridge start|status|logs|stop`, `tok doctor`, and `tok stats`.
 
-## Using OpenRouter and Other Providers
+## Experimental Provider Paths
 
-Tok works with any OpenAI-compatible API. To use OpenRouter:
+Tok can be pointed at OpenAI-compatible APIs, but for the focused 0.1.0 release those
+paths are validation-only and not part of the public default story. To use OpenRouter
+for experimental validation:
 
 ```bash
 # Set your OpenRouter API key
@@ -74,8 +77,8 @@ tok bridge start
 claude
 ```
 
-Tok automatically detects the provider and applies compression. The same workflow works
-for:
+Tok automatically detects the provider and applies compression during validation, but
+the public release path remains Claude Code first. Other experimental paths include:
 
 - **OpenRouter** — access to 100+ models through a single API
 - **DeepSeek** — set `DEEPSEEK_API_KEY` and configure your endpoint
@@ -109,12 +112,19 @@ repetition (207 API calls):
 
 ![Tok Savings Output showing 82 percent saved](docs/images/tok_stats.png)
 
-This output from a high-repetition session shows the upper bound of savings. Typical
-results from benchmark testing across Claude Sonnet, GPT-4, and DeepSeek:
+This output from a high-repetition session shows an upper-bound example. For release
+decisions, use the claims matrix and reproducible benchmark commands:
 
-- **15–46% token savings** on sessions of 8+ turns (varies by model, mode, and workload)
+- **Reference release band**: 45–55% on validated benchmark workflows (not a universal
+  guarantee)
 - **Automatic baseline fallback** for short sessions where compression adds overhead
 - **Fail-open safety** — if compression risks fidelity, Tok falls back to uncompressed
+
+See:
+
+- [`docs/claims_matrix.md`](./docs/claims_matrix.md)
+- [`docs/pricing_verification.md`](./docs/pricing_verification.md)
+- [`docs/live_smoke_matrix.md`](./docs/live_smoke_matrix.md)
 
 ## Technical Overview
 

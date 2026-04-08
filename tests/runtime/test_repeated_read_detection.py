@@ -37,10 +37,15 @@ def _tool_result(tool_id: str, content: str) -> dict[str, Any]:
     }
 
 
-def _cache_entry(tool_name: str, context: dict[str, Any], content: str) -> tuple[str, tuple[str, str]]:
+def _cache_entry(tool_name: str, context: dict[str, Any], content: str) -> tuple[str, tuple[str, str, float]]:
+    """Create a cache entry matching production format.
+
+    Uses the actual _make_cache_key from the implementation to ensure key format
+    stays synchronized. Entry tuple format: (content_hash[:8], content, timestamp).
+    """
     key = _make_cache_key(tool_name, context)
     digest = hashlib.sha256(content.encode()).hexdigest()[:8]
-    return key, (digest, content)
+    return key, (digest, content, 12345.0)  # timestamp matches production format
 
 
 def test_bypass_reacquire_not_counted_as_penalized_repeat() -> None:
@@ -65,7 +70,7 @@ def test_bypass_reacquire_not_counted_as_penalized_repeat() -> None:
     ctx = build_tool_use_id_to_context(messages)
     assert ctx["t2"]["args"].get("tok_bypass_cache") is True
 
-    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
+    result_cache: dict[str, tuple[str, str, float]] = {}
     cache_entry = _cache_entry("read", ctx["t1"], file_content)
     result_cache[cache_entry[0]] = cache_entry[1]
 
@@ -90,7 +95,7 @@ def test_cross_turn_reread_without_bypass_still_counted() -> None:
         _tool_result("t2", content_v2),
     ]
     ctx = build_tool_use_id_to_context(messages)
-    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
+    result_cache: dict[str, tuple[str, str, float]] = {}
     cache_entry = _cache_entry("read", ctx["t1"], content_v1)
     result_cache[cache_entry[0]] = cache_entry[1]
 
@@ -134,7 +139,7 @@ def test_cached_hit_not_counted_as_repeat() -> None:
         _tool_result("t2", content),
     ]
     ctx = build_tool_use_id_to_context(messages)
-    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
+    result_cache: dict[str, tuple[str, str, float]] = {}
     cache_entry = _cache_entry("read", ctx["t1"], content)
     result_cache[cache_entry[0]] = cache_entry[1]
 
@@ -145,11 +150,6 @@ def test_cached_hit_not_counted_as_repeat() -> None:
     )
     assert signals.get("repeat_file_read", 0) == 0, f"expected no repeat_file_read for cache hit, got {signals}"
     assert signals.get("cached_file_read", 0) >= 1, f"expected cached_file_read >= 1, got {signals}"
-
-
-# ---------------------------------------------------------------------------
-# Bypass-routing tests
-# ---------------------------------------------------------------------------
 
 
 class TestBypassRouting:

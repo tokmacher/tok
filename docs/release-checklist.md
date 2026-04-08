@@ -13,6 +13,9 @@ Steps for cutting a Tok release.
 - [ ] Run maintainer release smoke: `python scripts/run_release_smoke.py`
 - [ ] Confirm the release-surface gate passes and no experimental root exports are
   advertised as canonical
+- [ ] Reconcile pricing claims via `docs/pricing_verification.md`
+- [ ] Reconcile benchmark/savings claims via `docs/claims_matrix.md`
+- [ ] Confirm automated and manual live-smoke coverage via `docs/live_smoke_matrix.md`
 - [ ] Build package: `python -m build`
 - [ ] Verify wheel installs cleanly in a fresh venv
 - [ ] Run the clean-room install verification from the README

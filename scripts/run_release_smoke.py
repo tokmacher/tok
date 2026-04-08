@@ -9,12 +9,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+UV_RUN_PREFIX: tuple[str, ...] = ("uv", "run")
+PYTHON_INLINE_PREFIX: tuple[str, ...] = (*UV_RUN_PREFIX, "python", "-c")
 
 
 @dataclass(frozen=True)
 class SmokeStep:
     name: str
     command: tuple[str, ...]
+
+
+def _inline_python_step(name: str, statements: tuple[str, ...]) -> SmokeStep:
+    return SmokeStep(name, (*PYTHON_INLINE_PREFIX, "; ".join(statements)))
+
+
+def _pytest_step(name: str, *args: str) -> SmokeStep:
+    return SmokeStep(name, (*UV_RUN_PREFIX, "pytest", *args))
 
 
 IMPORT_CHECK = (
@@ -298,96 +308,52 @@ with tempfile.TemporaryDirectory(prefix="tok-clean-import-") as td:
 
 SMOKE_STEPS: tuple[SmokeStep, ...] = (
     # Baseline command visibility.
-    SmokeStep("CLI help", ("uv", "run", "tok", "--help")),
-    SmokeStep("Bridge help", ("uv", "run", "tok", "bridge", "--help")),
-    SmokeStep("Doctor help", ("uv", "run", "tok", "doctor", "--help")),
-    SmokeStep("Stats help", ("uv", "run", "tok", "stats", "--help")),
+    SmokeStep("CLI help", (*UV_RUN_PREFIX, "tok", "--help")),
+    SmokeStep("Bridge help", (*UV_RUN_PREFIX, "tok", "bridge", "--help")),
+    SmokeStep("Doctor help", (*UV_RUN_PREFIX, "tok", "doctor", "--help")),
+    SmokeStep("Stats help", (*UV_RUN_PREFIX, "tok", "stats", "--help")),
     # Release-surface visibility and declaration checks.
-    SmokeStep(
+    _inline_python_step(
         "Public imports",
-        (
-            "uv",
-            "run",
-            "python",
-            "-c",
-            "; ".join(IMPORT_CHECK),
-        ),
+        IMPORT_CHECK,
     ),
-    SmokeStep(
+    _inline_python_step(
         "Release-surface gate",
-        (
-            "uv",
-            "run",
-            "python",
-            "-c",
-            "; ".join(SURFACE_GATE_CHECK),
-        ),
+        SURFACE_GATE_CHECK,
     ),
     # Focused baseline regression cluster.
-    SmokeStep(
+    _pytest_step(
         "Focused bridge/runtime/compression smoke",
-        (
-            "uv",
-            "run",
-            "pytest",
-            "tests/unit/test_compatibility_shims.py",
-            "tests/unit/test_bridge_smoke.py",
-            "tests/unit/test_packaging_smoke.py",
-            "tests/unit/test_gateway.py::test_gateway_canonicalizes_tool_heavy_bridge_body_before_send",
-            "tests/unit/test_universal_runtime.py::test_runtime_prepare_request_compression_in_tool_compatible_mode",
-            "-q",
-        ),
+        "tests/unit/test_compatibility_shims.py",
+        "tests/unit/test_bridge_smoke.py",
+        "tests/unit/test_packaging_smoke.py",
+        "tests/unit/test_gateway.py::test_gateway_canonicalizes_tool_heavy_bridge_body_before_send",
+        "tests/unit/test_universal_runtime.py::test_runtime_prepare_request_compression_in_tool_compatible_mode",
+        "-q",
     ),
-    SmokeStep(
+    _pytest_step(
         "Primary streaming bridge smoke",
-        (
-            "uv",
-            "run",
-            "pytest",
-            "tests/smoke/test_primary_streaming_smoke.py",
-            "-q",
-        ),
+        "tests/smoke/test_primary_streaming_smoke.py",
+        "-q",
     ),
-    # Plan 10C promoted boundaries, in ledger promotion order.
-    SmokeStep(
+    _pytest_step("Claude live smoke matrix", "tests/smoke/test_live_claude_smoke_matrix.py", "-q"),
+    # Ledger-promoted boundaries, in promotion order.
+    _pytest_step(
         "Primary non-streaming bridge smoke",
-        (
-            "uv",
-            "run",
-            "pytest",
-            "tests/smoke/test_primary_non_streaming_smoke.py",
-            "-q",
-        ),
+        "tests/smoke/test_primary_non_streaming_smoke.py",
+        "-q",
     ),
-    SmokeStep(
+    _inline_python_step(
         "Validation-failure smoke",
-        (
-            "uv",
-            "run",
-            "python",
-            "-c",
-            "; ".join(VALIDATION_FAILURE_CHECK),
-        ),
+        VALIDATION_FAILURE_CHECK,
     ),
-    SmokeStep(
+    _inline_python_step(
         "Release-surface drift smoke",
-        (
-            "uv",
-            "run",
-            "python",
-            "-c",
-            "; ".join(RELEASE_SURFACE_DRIFT_CHECK),
-        ),
+        RELEASE_SURFACE_DRIFT_CHECK,
     ),
-    SmokeStep(
+    _inline_python_step(
         "Clean install/import smoke",
-        (
-            "uv",
-            "run",
-            "python",
-            "-c",
-            "; ".join(CLEAN_INSTALL_IMPORT_CHECK),
-        ),
+        CLEAN_INSTALL_IMPORT_CHECK,
     ),
     # Packaging build sanity gate.
     SmokeStep(

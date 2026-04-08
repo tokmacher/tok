@@ -85,6 +85,17 @@ from .types import PreparedRuntimeRequest, RuntimeRequest
 
 globals().update(vars(_core))
 
+_RECENT_COMMAND_WINDOW = 10
+_DEFAULT_JIT_HIT_THRESHOLD = 3
+_DEFAULT_SPECULATIVE_HIT_THRESHOLD = 2
+
+
+def _env_int_or_default(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
 
 def observe_repeat_target_result_impl(
     session_self: _core.RuntimeSession,
@@ -568,17 +579,14 @@ def prepare_request_impl(
     rolling_cmds = session.bridge_memory.rolling_cmds
     if rolling_cmds:
         recent_instructions: list[Instruction] = []
-        for entry in rolling_cmds[-10:]:
+        for entry in rolling_cmds[-_RECENT_COMMAND_WINDOW:]:
             parts = entry.value.strip().split()
             if not parts:
                 continue
             recent_instructions.append(Instruction(op=parts[0], args=tuple(parts[1:])))
 
         jit_macro = session.bridge_memory.macro_registry.match_recent_sequence(recent_instructions)
-        try:
-            threshold = int(os.getenv("TOK_JIT_HIT_THRESHOLD", "3"))
-        except ValueError:
-            threshold = 3  # Default fallback for invalid env var value
+        threshold = _env_int_or_default("TOK_JIT_HIT_THRESHOLD", _DEFAULT_JIT_HIT_THRESHOLD)
         if jit_macro and jit_macro.hit_count >= threshold and _jit_context_matches(jit_macro, session):
             session.pending_behavior_signals["jit_offer_available"] = 1
             session.pending_behavior_signals[f"jit_offer_{jit_macro.name}"] = 1
@@ -589,14 +597,14 @@ def prepare_request_impl(
 
     _speculative_macro_hint: str | None = None
     if session.bridge_memory.load_global_macros:
-        try:
-            _spec_threshold = int(os.getenv("TOK_SPECULATIVE_HIT_THRESHOLD", "2"))
-        except ValueError:
-            _spec_threshold = 2  # Default fallback for invalid env var value
+        speculative_hit_threshold = _env_int_or_default(
+            "TOK_SPECULATIVE_HIT_THRESHOLD",
+            _DEFAULT_SPECULATIVE_HIT_THRESHOLD,
+        )
         _spec_names = [
             f"@{m.name}"
             for m in session.bridge_memory.macro_registry.macros.values()
-            if m.hit_count >= _spec_threshold and _jit_context_matches(m, session)
+            if m.hit_count >= speculative_hit_threshold and _jit_context_matches(m, session)
         ]
         if _spec_names:
             _speculative_macro_hint = (

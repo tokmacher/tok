@@ -20,10 +20,6 @@ from tok.adapters import (
 )
 from tok.universal_runtime import RuntimeSession
 
-# ---------------------------------------------------------------------------
-# 1. Adapter discipline: no forbidden imports
-# ---------------------------------------------------------------------------
-
 _FORBIDDEN_MODULES = {"compression", "bridge_memory", "stats"}
 _ADAPTERS_PATH = Path(__file__).parent.parent.parent / "src" / "tok" / "adapters" / "adapters.py"
 
@@ -47,10 +43,6 @@ def test_adapters_module_does_not_import_compression() -> None:
     forbidden = imports & _FORBIDDEN_MODULES
     assert not forbidden, f"adapters.py must not import {_FORBIDDEN_MODULES}, found: {forbidden}"
 
-
-# ---------------------------------------------------------------------------
-# 2. OrchestratorAdapter and ClaudeBridgeAdapter produce equivalent bodies
-# ---------------------------------------------------------------------------
 
 _MODEL = "google/gemini-2.0-flash-lite-001"
 _MESSAGES = [{"role": "user", "content": "Audit the codebase"}]

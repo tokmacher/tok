@@ -28,14 +28,10 @@ Example runs:
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
-
-# Ensure tok is available
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import tok
 from tok.runtime.policy.smart_policy import UNIVERSAL_MODE
+from tok.utils.token_utils import count_tokens
 
 
 def _require_env(name: str) -> str:
@@ -131,32 +127,13 @@ def run_universal_demo() -> None:
     # Wrap with tok-universal
     prepared = tok.wrap(messages, model=model, session=session)
 
-    # Check thinking blocks are preserved in output
-    output_messages = prepared.body.get("messages", [])
-    thinking_count = sum(
-        1
-        for msg in output_messages
-        if isinstance(msg.get("content"), list)
-        for block in msg["content"]
-        if isinstance(block, dict) and block.get("type") == "thinking"
-    )
-
-    if thinking_count > 0:
-        pass
-    else:
-        pass
-
     # Show savings percentage if we had baseline info
-    baseline_tokens = sum(len(str(m).encode()) for m in messages) // 4
-    ((prepared.input_saved_tokens / baseline_tokens * 100) if baseline_tokens > 0 else 0)
+    baseline_tokens = sum(count_tokens(str(m)) for m in messages)
+    savings_pct = (prepared.input_saved_tokens / baseline_tokens * 100) if baseline_tokens > 0 else 0
+    print(f"  Savings: {savings_pct:.1f}%")
 
     # Demonstrate that the output is ready for API use
-
     # Summary
-
-    # If we have API keys, show how to send
-    if "ANTHROPIC_API_KEY" in os.environ and model.startswith("claude"):
-        pass
 
 
 if __name__ == "__main__":

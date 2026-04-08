@@ -21,12 +21,17 @@ Registration (add to ~/.claude/settings.json under "hooks"):
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Transcript parsing
-# ---------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
+# Candidate directories for Claude Code memory storage
+MEMORY_CANDIDATES: tuple[Path, ...] = (
+    Path.home() / ".claude" / "memory",
+    Path.home() / ".claude" / "project-memory",
+)
 
 
 def _text_of(content: str | list | None) -> str:
@@ -82,16 +87,6 @@ def parse_transcript(path: Path) -> list[dict]:
     return messages
 
 
-# ---------------------------------------------------------------------------
-# Memory output
-# ---------------------------------------------------------------------------
-
-MEMORY_CANDIDATES = [
-    Path.home() / ".claude" / "projects" / "-Users-jfj-Desktop-tok" / "memory",
-    Path(__file__).parent.parent / ".claude" / "memory",
-]
-
-
 def find_memory_dir() -> Path | None:
     for candidate in MEMORY_CANDIDATES:
         if candidate.exists() and candidate.is_dir():
@@ -137,11 +132,6 @@ Compressed from {message_count} messages in session `{session_id}`.
             memory_index.write_text(existing.rstrip() + "\n" + pointer, encoding="utf-8")
     else:
         memory_index.write_text(pointer, encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -190,6 +180,7 @@ def main() -> None:
         tok_state = orch.memory.to_tok()  # type: ignore[attr-defined]
 
     except Exception:
+        logger.exception("TokOrchestrator compression failed")
         sys.exit(0)
 
     memory_dir = find_memory_dir()
@@ -197,7 +188,6 @@ def main() -> None:
         sys.exit(0)
 
     write_memory(memory_dir, tok_state, len(messages), session_id)
-    memory_dir / "tok_session_state.md"
 
 
 if __name__ == "__main__":

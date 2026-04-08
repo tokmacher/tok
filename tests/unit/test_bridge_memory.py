@@ -21,7 +21,7 @@ def test_bridge_memory_roundtrip() -> None:
 
 def test_bridge_memory_hot_projection_is_bounded() -> None:
     state = BridgeMemoryState()
-    # Now limits (from Plan 7) are: files:4, cmds:16, errs:8...
+    # Limits are: files:4, cmds:16, errs:8...
 
     state.replace_hot_from_wire_state(
         ">>> turns:8|goal:stabilize_tok|files:a.py,b.py,c.py,d.py,e.py"

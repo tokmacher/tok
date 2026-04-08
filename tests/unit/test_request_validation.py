@@ -882,8 +882,9 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, 
         tool_use_id_to_context=None,
         threshold=0,
         tool_compatible=False,
+        first_exact_evidence_seen=None,
     ):
-        del tool_use_id_to_context, threshold, tool_compatible
+        del tool_use_id_to_context, threshold, tool_compatible, first_exact_evidence_seen
         return messages, {"file": 128}
 
     monkeypatch.setattr(

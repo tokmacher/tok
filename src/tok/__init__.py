@@ -130,8 +130,6 @@ def process(
     )
 
 
-__all__: list[str] = [
-    "Bridge",
-]
+__all__: list[str] = ["Bridge"]
 
 __version__ = "0.1.0"

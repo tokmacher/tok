@@ -3310,11 +3310,6 @@ def test_streaming_tool_json_deltas_become_tool_use_blocks() -> None:
     assert client.closed is True
 
 
-# ---------------------------------------------------------------------------
-# Change 1: inject_system_additions conditionalization tests
-# ---------------------------------------------------------------------------
-
-
 def test_cold_start_no_injection_when_tool_compatible_and_no_memory() -> None:
     from tok.compression import inject_system_additions
 
@@ -3344,11 +3339,6 @@ def test_strict_mode_injection_includes_protocol_law() -> None:
     sys = result["system"]
     assert "[Tok law]" in sys
     assert "No JSON" in sys
-
-
-# ---------------------------------------------------------------------------
-# Change 2: streaming signal tracking tests
-# ---------------------------------------------------------------------------
 
 
 def test_has_visible_content_block_with_text_block() -> None:
@@ -3711,11 +3701,6 @@ def test_streaming_empty_success_tool_use_loop_breaker_falls_back(
     signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
     assert signals["stream_recovery_loop_broken"] == 1
     assert signals["stream_recovery_fallback"] == 1
-
-
-# ---------------------------------------------------------------------------
-# Thinking-enabled requests force non-streaming upstream
-# ---------------------------------------------------------------------------
 
 
 def test_thinking_enabled_forces_non_streaming_upstream(tmp_path, monkeypatch) -> None:
@@ -4116,6 +4101,7 @@ def test_thinking_disabled_does_not_force_non_streaming(tmp_path, monkeypatch) -
         )
 
     async def _fake_send(self, request, stream=False):
+        del self
         payload = json.loads(request.read().decode())
         sent_bodies.append(payload)
         sse_data = (
@@ -4187,22 +4173,12 @@ def test_thinking_disabled_does_not_force_non_streaming(tmp_path, monkeypatch) -
     assert sent_bodies[0]["stream"] is True
 
 
-# ---------------------------------------------------------------------------
-# Malformed signal coverage
-# ---------------------------------------------------------------------------
-
-
 def test_malformed_tok_hybrid_tool_signals() -> None:
     from tok.universal_runtime import malformed_tok_signals
 
     signals = malformed_tok_signals('@Tool(json={"name": "Read", "path": "/x"})')
     assert signals.get("malformed_tok_hybrid_tool") == 1
     assert signals.get("malformed_tok_response") == 1
-
-
-# ---------------------------------------------------------------------------
-# M2: Non-streaming processing error fail-open
-# ---------------------------------------------------------------------------
 
 
 def test_non_streaming_processing_error_fail_open_passes_raw_content(tmp_path, monkeypatch) -> None:
@@ -4379,11 +4355,6 @@ def test_non_streaming_processing_error_fail_closed_propagates(tmp_path, monkeyp
                 "stream": False,
             },
         )
-
-
-# ---------------------------------------------------------------------------
-# M3: Streaming fail-open retry on HTTP 400
-# ---------------------------------------------------------------------------
 
 
 def test_gateway_retries_streaming_with_original_after_tok_400(tmp_path, monkeypatch) -> None:
@@ -4922,11 +4893,6 @@ def test_gateway_local_throttle_expiry_allows_upstream_again(tmp_path, monkeypat
     )
     assert allowed.status_code == 200
     assert sent_count == 1
-
-
-# ---------------------------------------------------------------------------
-# M5: fail_open=False gating
-# ---------------------------------------------------------------------------
 
 
 def test_gateway_fail_open_false_does_not_retry_on_400(tmp_path, monkeypatch) -> None:

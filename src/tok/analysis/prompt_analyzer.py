@@ -24,11 +24,6 @@ def measure(text: str, label: str) -> dict[str, str | int]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Plan 1 — Base prompt components
-# ---------------------------------------------------------------------------
-
-
 def measure_base_prompts() -> dict[str, dict[str, str | int]]:
     """Measure token counts of TOK_SYSTEM_PROMPT and all variants."""
     from tok.analysis.prompt import (
@@ -71,11 +66,6 @@ def measure_grammar_snippets() -> dict[str, dict[str, str | int]]:
 
     levels = ["essentials", "restricted", "full", "pulse", "explore"]
     return {lvl: measure(get_grammar_snippet(lvl), f"grammar:{lvl}") for lvl in levels}
-
-
-# ---------------------------------------------------------------------------
-# Plan 2 — Directive redundancy and pressure escalation
-# ---------------------------------------------------------------------------
 
 
 def analyze_directive_overlap() -> dict[str, dict[str, list[str] | int]]:
@@ -182,10 +172,6 @@ def measure_dynamic_injections() -> dict[str, dict[str, str | int]]:
     return results
 
 
-# ---------------------------------------------------------------------------
-# Per-turn vs. per-session — actual gateway injection path
-# ---------------------------------------------------------------------------
-
 _TYPICAL_TOK_STATE = (
     ">>> turns:8|goal:refactor auth|files:src/auth.py,src/tokens.py|"
     "cmds:pytest tests/|errs:TokenExpired|constraints:no breaking changes|"
@@ -257,11 +243,6 @@ def measure_per_turn_actual() -> dict[str, Any]:
     return results
 
 
-# ---------------------------------------------------------------------------
-# Plan 3 — Memory state accumulation
-# ---------------------------------------------------------------------------
-
-
 def simulate_memory_growth(
     turns: list[int] | None = None,
 ) -> dict[str, Any]:
@@ -325,11 +306,6 @@ def measure_memory_profiles() -> dict[str, dict[str, str | int]]:
             results[key] = measure(projected, key)
 
     return results
-
-
-# ---------------------------------------------------------------------------
-# Plan 4 — History compression analysis
-# ---------------------------------------------------------------------------
 
 
 def _make_conversation(n_turns: int) -> list[dict[str, Any]]:
@@ -509,11 +485,6 @@ def measure_tool_compression_impact() -> dict[str, Any]:
             ),
         }
     return results
-
-
-# ---------------------------------------------------------------------------
-# Full baseline scenario measurement
-# ---------------------------------------------------------------------------
 
 
 def measure_cold_start() -> dict[str, str | int]:

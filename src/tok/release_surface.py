@@ -13,14 +13,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SUPPORTED_ROOT_EXPORTS: tuple[str, ...] = (
-    # Defended 0.1.0 surface - promoted per Plan 10C.1
-    "Bridge",
-)
+SUPPORTED_ROOT_EXPORTS: tuple[str, ...] = ("Bridge",)
 
 CANDIDATE_PENDING_PROOF: tuple[str, ...] = (
-    # Demoted from SUPPORTED_ROOT_EXPORTS - pending smoke gate completion
-    # Re-promotion order defined in hardening_ledger.md Plan 10C
     "BlockSchema",
     "BridgeUnavailableError",
     "CompressionError",

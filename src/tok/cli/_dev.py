@@ -68,7 +68,7 @@ def live_benchmark(
         str,
         typer.Option(
             "--mode",
-            help="Run baseline, tok-minimal, tok-native, tok-tool-compatible, or compare",
+            help="Run baseline, tok-universal, or compare",
         ),
     ] = "compare",
     model: Annotated[str, typer.Option("--model", help="Model identifier to use")] = "deepseek/deepseek-v3.2",
@@ -150,79 +150,35 @@ def live_benchmark(
 
     if mode == "compare":
         repeated_results: list[dict[str, Any]] = []
+        compare_modes = ("tok-universal",)
         for _ in range(max(1, repeats)):
             console.print(f"[dim]Running mode: baseline (repeat {_ + 1})...[/dim]")
             baseline = runner.run(definition, mode="baseline", turns=effective_turns)
-            console.print(f"[dim]Running mode: tok-minimal (repeat {_ + 1})...[/dim]")
-            tok_minimal = runner.run(definition, mode="tok-minimal", turns=effective_turns)
-            console.print(f"[dim]Running mode: tok-native (repeat {_ + 1})...[/dim]")
-            tok_native = runner.run(definition, mode="tok-native", turns=effective_turns)
-            console.print(f"[dim]Running mode: tok-tool-compatible (repeat {_ + 1})...[/dim]")
-            tok_tool_compatible = runner.run(definition, mode="tok-tool-compatible", turns=effective_turns)
-            console.print(f"[dim]Running mode: tok-neuro (repeat {_ + 1})...[/dim]")
-            tok_neuro = runner.run(definition, mode="tok-neuro", turns=effective_turns)
-            repeated_results.append(
-                {
-                    "baseline": baseline,
-                    "tok-minimal": tok_minimal,
-                    "tok-native": tok_native,
-                    "tok-tool-compatible": tok_tool_compatible,
-                    "tok-neuro": tok_neuro,
-                }
-            )
+            run_results: dict[str, Any] = {"baseline": baseline}
+            for compare_mode in compare_modes:
+                console.print(f"[dim]Running mode: {compare_mode} (repeat {_ + 1})...[/dim]")
+                run_results[compare_mode] = runner.run(definition, mode=compare_mode, turns=effective_turns)
+            repeated_results.append(run_results)
 
         last_run = repeated_results[-1]
         baseline = last_run["baseline"]
-        tok_minimal = last_run["tok-minimal"]
-        tok_native = last_run["tok-native"]
-        tok_tool_compatible = last_run["tok-tool-compatible"]
-        tok_neuro = last_run["tok-neuro"]
-        minimal_comparison = compare_results(baseline, tok_minimal)
-        native_comparison = compare_results(baseline, tok_native)
-        tool_compatible_comparison = compare_results(baseline, tok_tool_compatible)
-        neuro_comparison = compare_results(baseline, tok_neuro)
+        comparisons = [compare_results(baseline, last_run[compare_mode]) for compare_mode in compare_modes]
         preferred_mode = select_preferred_mode(
             baseline,
-            [
-                minimal_comparison,
-                native_comparison,
-                tool_compatible_comparison,
-                neuro_comparison,
-            ],
+            comparisons,
         )
         write_result(output / f"{benchmark}_baseline.json", baseline)
-        write_result(output / f"{benchmark}_tok-minimal.json", tok_minimal)
-        write_result(output / f"{benchmark}_tok-native.json", tok_native)
-        write_result(
-            output / f"{benchmark}_tok-tool-compatible.json",
-            tok_tool_compatible,
-        )
-        write_result(output / f"{benchmark}_tok-neuro.json", tok_neuro)
-        write_result(
-            output / f"{benchmark}_compare_tok-minimal.json",
-            minimal_comparison,
-        )
-        write_result(
-            output / f"{benchmark}_compare_tok-native.json",
-            native_comparison,
-        )
-        write_result(
-            output / f"{benchmark}_compare_tok-tool-compatible.json",
-            tool_compatible_comparison,
-        )
-        write_result(
-            output / f"{benchmark}_compare_tok-neuro.json",
-            neuro_comparison,
-        )
+        for compare_mode in compare_modes:
+            compare_result = last_run[compare_mode]
+            write_result(output / f"{benchmark}_{compare_mode}.json", compare_result)
+            write_result(
+                output / f"{benchmark}_compare_{compare_mode}.json",
+                compare_results(baseline, compare_result),
+            )
         (output / f"{benchmark}_compare.md").write_text(
             render_comparison_markdown(
                 baseline,
-                [
-                    minimal_comparison,
-                    native_comparison,
-                    tool_compatible_comparison,
-                    neuro_comparison,
-                ],
+                comparisons,
             )
         )
         if repeats > 1:
@@ -234,15 +190,11 @@ def live_benchmark(
         console.print(
             f"[green]✅ Live benchmark complete:[/green] {benchmark} "
             f"baseline_tokens={baseline.provider_usage.total_tokens} "
-            f"tok_minimal_tokens={tok_minimal.provider_usage.total_tokens} "
-            f"tok_native_tokens={tok_native.provider_usage.total_tokens} "
-            f"tok_tool_compatible_tokens={tok_tool_compatible.provider_usage.total_tokens}"
+            f"preferred_tokens={last_run[preferred_mode].provider_usage.total_tokens if preferred_mode in last_run else baseline.provider_usage.total_tokens}"
         )
         console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_baseline.json'}")
-        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-minimal.json'}")
-        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-native.json'}")
-        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-tool-compatible.json'}")
-        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_tok-neuro.json'}")
+        for compare_mode in compare_modes:
+            console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_{compare_mode}.json'}")
         console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_compare.md'}")
         if repeats > 1:
             console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.json'}")
@@ -252,10 +204,7 @@ def live_benchmark(
 
     if mode not in {
         "baseline",
-        "tok-minimal",
-        "tok-native",
-        "tok-tool-compatible",
-        "tok-neuro",
+        "tok-universal",
     }:
         console.print(f"[red]Unknown mode: {mode}[/red]")
         raise typer.Exit(1)

@@ -435,11 +435,6 @@ class TestInjectSystemAdditions:
         )
 
 
-# ---------------------------------------------------------------------------
-# Tool result compression
-# ---------------------------------------------------------------------------
-
-
 def _make_pytest_log(n_passed: int, n_failed: int = 0) -> str:
     lines = ["platform linux -- Python 3.12.0", "collected 80 items", ""]
     for i in range(n_passed):
@@ -733,11 +728,6 @@ class TestCompressToolResults:
         assert breakdown["pytest"] > 0
 
 
-# ---------------------------------------------------------------------------
-# New compressors
-# ---------------------------------------------------------------------------
-
-
 def _make_git_diff(n_files: int = 2, context_lines: int = 5) -> str:
     lines = []
     for i in range(n_files):
@@ -888,11 +878,6 @@ class TestNewCompressors:
         assert len(_compress_git_log(text)) < len(text)
 
 
-# ---------------------------------------------------------------------------
-# File cache (re-read dedup)
-# ---------------------------------------------------------------------------
-
-
 class TestFileCache:
     def _tool_result_msg(self, tool_id: str, content: str) -> list[dict[str, Any]]:
         return [
@@ -1008,11 +993,6 @@ class TestFileCache:
         assert "view_file" in FILE_LIKE_TOOLS
         assert out[1]["content"][0]["content"] == raw
         assert breakdown == {}
-
-
-# ---------------------------------------------------------------------------
-# Savings bug fix verification
-# ---------------------------------------------------------------------------
 
 
 class TestSavingsBugFix:
@@ -1321,10 +1301,6 @@ class TestCompressRecentWindow:
         assert msgs[0]["content"][0]["text"] == "x" * 20_000
 
 
-# ---------------------------------------------------------------------------
-# Per-turn injection budget tests
-# ---------------------------------------------------------------------------
-
 _TYPICAL_STATE = (
     ">>> turns:8|goal:refactor auth|files:src/auth.py,src/tokens.py|"
     "cmds:pytest tests/|errs:TokenExpired|constraints:no breaking changes|"
@@ -1429,14 +1405,8 @@ class TestPerTurnInjectionBudget:
         with_law = _inject(tok_state=_TYPICAL_STATE, pressure=2)  # threshold is >1
         with_reinforced = _inject(tok_state=_TYPICAL_STATE, pressure=75)
 
-        # with_law uses pressure=2 (threshold >1), with_reinforced uses pressure=75
         _law_delta = _token_count(with_law) - _token_count(baseline)
         _reinforced_delta = _token_count(with_reinforced) - _token_count(baseline)
-
-
-# ---------------------------------------------------------------------------
-# Large-file exact-access tests (Step 5.2)
-# ---------------------------------------------------------------------------
 
 
 class TestLargeFileExactAccess:

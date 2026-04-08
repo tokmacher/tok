@@ -25,6 +25,9 @@ logging.basicConfig(
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True, markup=True)],
 )
+# Keep dependency request logs quiet in normal CLI flows (bridge start/status, doctor, stats).
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 app = typer.Typer(help="Tok — bridge-first CLI for Claude Code", add_completion=False)
 bridge_app = typer.Typer(help="Bridge-first workflow commands")

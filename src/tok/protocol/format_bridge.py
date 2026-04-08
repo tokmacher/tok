@@ -409,7 +409,8 @@ class Bridge(SerializationProtocol):
             raise TypeError(f"Expected str, dict, or list, got {type(data)}")
         return Bridge().detect_and_convert(data)
 
-    def decode(self, text: str) -> Any:
+    @staticmethod
+    def decode(text: str) -> Any:
         """
         Decode Tok text to data. Satisfies SerializationProtocol.
 

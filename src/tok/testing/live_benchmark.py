@@ -695,7 +695,8 @@ def _extract_labeled_fields(text: str, session: RuntimeSession | None = None) ->
     for label in labels:
         # Match "File=..." or "file: ..." or "|> File=..."
         # Capture until end of line or pipe separator, allowing spaces
-        pattern = rf"(?:\|>\s*)?{label}\s*[:=]\s*([^|\n]+)"
+        # Guard against matching substrings inside other identifiers (e.g. "proFILE=...").
+        pattern = rf"(?:\|>\s*)?(?<![\w-]){label}(?![\w-])\s*[:=]\s*([^|\n]+)"
         matches = re.finditer(pattern, text, re.IGNORECASE)
         for m in matches:
             # Strip whitespace and trailing punctuation for more flexible matching
@@ -925,6 +926,7 @@ class LiveBenchmarkRunner:
         if turns < 1:
             msg = "turns must be >= 1"
             raise ValueError(msg)
+        canonical_mode = "tok-universal" if mode in {"tok-tool-compatible", "tok-universal"} else mode
         raw_messages = load_fixture_messages(definition.fixture_path)
         normalized = normalize_fixture_messages(raw_messages, definition.followup_prompt)
         context_messages = normalized[:-1]
@@ -932,8 +934,8 @@ class LiveBenchmarkRunner:
         message_chunks = _chunk_messages(context_messages, turns)
         original_system_tokens = _estimate_tokens(definition.system_prompt)
         runtime = UniversalTokRuntime()
-        tool_compatible = mode in {"tok-tool-compatible", "tok-minimal"}
-        request_policy = "natural_first" if mode == "tok-tool-compatible" else "legacy_tool_compatible"
+        tool_compatible = canonical_mode in {"tok-universal", "tok-minimal"}
+        request_policy = "natural_first" if canonical_mode == "tok-universal" else "legacy_tool_compatible"
 
         # Identity logging for pointer registry continuity
         id(runtime)
@@ -943,10 +945,10 @@ class LiveBenchmarkRunner:
             else "unknown"
         )
 
-        if mode not in {
+        if canonical_mode not in {
             "baseline",
             "tok-native",
-            "tok-tool-compatible",
+            "tok-universal",
             "tok-minimal",
             "tok-neuro",
         }:
@@ -954,7 +956,7 @@ class LiveBenchmarkRunner:
             raise ValueError(msg)
 
         # Set Pattern Reactor toggle
-        if mode == "tok-neuro":
+        if canonical_mode == "tok-neuro":
             os.environ["TOK_NEURO_REACTOR"] = "1"
         else:
             os.environ["TOK_NEURO_REACTOR"] = "0"
@@ -980,7 +982,7 @@ class LiveBenchmarkRunner:
             past_messages: list[dict[str, str]] = []
             for idx, chunk in enumerate(message_chunks):
                 # Ingest previous assistant turns to prime the Reactor
-                if mode == "tok-neuro" and idx > 0:
+                if canonical_mode == "tok-neuro" and idx > 0:
                     h_profile = dict(policy_for_model(self.model).history_profiles["balanced"])
                     h_profile["_no_pointers"] = True
                     _, tok_state = compress_history(
@@ -1002,7 +1004,7 @@ class LiveBenchmarkRunner:
                 prepared = None
                 prepared_body: dict[str, Any] | None = None
 
-                if mode == "baseline":
+                if canonical_mode == "baseline":
                     chat_messages = [
                         {
                             "role": "system",
@@ -1062,7 +1064,7 @@ class LiveBenchmarkRunner:
                         session,
                     )
                     prepared_body = dict(prepared.body)
-                    if mode == "tok-minimal":
+                    if canonical_mode == "tok-minimal":
                         prepared_body["system"] = _minimalize_system_prompt(
                             prepared_body.get("system"),
                             definition.system_prompt,
@@ -1105,7 +1107,7 @@ class LiveBenchmarkRunner:
                         "invisible_pressure": 0,
                         "reacquisition_cost_tokens": int(prepared.behavior_signals.get("reacquisition_cost_tokens", 0)),
                         "family_mode": "",
-                        "response_mode": mode,
+                        "response_mode": canonical_mode,
                     }
                     turn_diagnostics = {
                         "tool_compatible_requested": tool_compatible,
@@ -1138,7 +1140,7 @@ class LiveBenchmarkRunner:
 
                 raw_response = response.choices[0].message.content or ""
                 visible_response = raw_response
-                if mode != "baseline":
+                if canonical_mode != "baseline":
                     processed = runtime.process_response(
                         raw_response,
                         model=self.model,
@@ -1223,7 +1225,7 @@ class LiveBenchmarkRunner:
                 definition, final_visible_response, session=session
             )
             notes = list(failures)
-            if mode != "baseline" and _sum_warning_signals(aggregate_response_signals):
+            if canonical_mode != "baseline" and _sum_warning_signals(aggregate_response_signals):
                 notes.append("response_contract_friction_detected")
 
             prompt_metrics = {
@@ -1259,7 +1261,9 @@ class LiveBenchmarkRunner:
                 "invisible_pressure": calculate_invisible_pressure(aggregate_response_signals),
                 "reacquisition_cost_tokens": int(aggregate_response_signals.get("reacquisition_cost_tokens", 0)),
                 "family_mode": (turn_results[-1]["response_metrics"]["family_mode"] if turn_results else ""),
-                "response_mode": (turn_results[-1]["response_metrics"]["response_mode"] if turn_results else mode),
+                "response_mode": (
+                    turn_results[-1]["response_metrics"]["response_mode"] if turn_results else canonical_mode
+                ),
             }
             diagnostics = {
                 "tool_compatible_requested": tool_compatible,
@@ -1277,7 +1281,7 @@ class LiveBenchmarkRunner:
                 "state_resend_delta_turns": aggregate_input_behavior_signals.get("state_resend_delta_turn", 0),
                 "state_resend_full_turns": aggregate_input_behavior_signals.get("state_resend_full_turn", 0),
             }
-            if mode != "baseline" and turn_results:
+            if canonical_mode != "baseline" and turn_results:
                 diagnostics["runtime_mode"] = turn_results[-1]["diagnostics"].get("runtime_mode", "")
 
             compression_metrics = {
@@ -1290,7 +1294,7 @@ class LiveBenchmarkRunner:
 
             return BenchmarkResult(
                 benchmark=definition.name,
-                mode=mode,
+                mode=canonical_mode,
                 model=self.model,
                 provider=self.provider,
                 fixture_path=str(definition.fixture_path),
@@ -1379,34 +1383,31 @@ def summarize_compare_runs(
             "mode_summaries": {},
         }
 
-    mode_order = (
-        "baseline",
-        "tok-minimal",
-        "tok-native",
-        "tok-tool-compatible",
-        "tok-neuro",
-    )
+    mode_order = ("baseline", "tok-universal")
     preferred_mode_counts: dict[str, int] = {}
     mode_summaries: dict[str, Any] = {}
 
     for run in repeated_results:
         baseline = run["baseline"]
+        candidate = run.get("tok-universal") or run.get("tok-tool-compatible")
+        if candidate is None:
+            continue
         comparisons = []
-        for m in [
-            "tok-minimal",
-            "tok-native",
-            "tok-tool-compatible",
-            "tok-neuro",
-        ]:
-            if m in run:
-                comparisons.append(compare_results(baseline, run[m]))
+        comparisons.append(compare_results(baseline, candidate))
         if not comparisons:
             continue
         preferred = select_preferred_mode(baseline, comparisons)
         preferred_mode_counts[preferred] = preferred_mode_counts.get(preferred, 0) + 1
 
     for mode in mode_order:
-        results = [run[mode] for run in repeated_results if mode in run]
+        if mode == "tok-universal":
+            results = [
+                (run.get("tok-universal") or run.get("tok-tool-compatible"))
+                for run in repeated_results
+                if (run.get("tok-universal") or run.get("tok-tool-compatible")) is not None
+            ]
+        else:
+            results = [run[mode] for run in repeated_results if mode in run]
         if not results:
             continue
         total_tokens = [result.provider_usage.total_tokens for result in results]
@@ -1505,9 +1506,11 @@ def check_stability_artifacts(
 
         mode_summaries = payload.get("mode_summaries", {})
         preferred_mode_counts = payload.get("preferred_mode_counts", {})
-        tok_summary = mode_summaries.get("tok-tool-compatible", {})
+        tok_summary = mode_summaries.get("tok-universal", {}) or mode_summaries.get("tok-tool-compatible", {})
         runs = int(payload.get("runs", 0))
-        preferred_count = int(preferred_mode_counts.get("tok-tool-compatible", 0))
+        preferred_count = int(
+            preferred_mode_counts.get("tok-universal", 0) or preferred_mode_counts.get("tok-tool-compatible", 0)
+        )
         success_rate = float(tok_summary.get("success_rate", 0.0))
 
         benchmark_name = str(payload.get("benchmark", benchmark))

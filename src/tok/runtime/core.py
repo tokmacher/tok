@@ -21,6 +21,7 @@ __all__ = [
     "extract_structured_answer_memory",
     "ground_structured_answer_memory",
     "reinforce_structured_answer_memory",
+    "_select_resend_reason",
 ]
 
 import logging
@@ -99,6 +100,7 @@ from .memory.tok_state import (
     _build_tok_state,
     _delta_tok_state_fields,
     _prepare_tool_compatible_state,
+    _select_resend_reason,
     _select_resend_strategy,
 )
 from .pipeline.request_preparation import (
@@ -124,9 +126,6 @@ from .policy.smart_policy import (
 )
 from .smoothness.models import TokMode
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 # SEARCH_LIKE_TOOLS is moved to .tool_processing
 from .tools import RuntimeToolExecutor
 from .types import (

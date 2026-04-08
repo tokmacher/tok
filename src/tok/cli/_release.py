@@ -758,9 +758,9 @@ def gate_check_command(
     trend_info = load_session_trend(tracker)
 
     if fixture_set is not None:
-        from scripts.select_fixtures import select_fixtures
+        from tok.cli._gate import select_fixture_set
 
-        fixture_names = select_fixtures(fixture_set)
+        fixture_names = select_fixture_set(fixture_set)
         fixture_files = []
         for name in fixture_names:
             p = fixtures_dir / name

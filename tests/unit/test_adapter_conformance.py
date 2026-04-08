@@ -72,7 +72,7 @@ def test_orchestrator_finalize_does_not_double_consume_signals() -> None:
 
     process_response() (called inside finalize()) already drains
     session.consume_behavior_signals(). A second consume returns {} and was
-    previously a misleading no-op. After the Plan 5 fix, the re-consume lines
+    previously a misleading no-op. The re-consume lines
     are removed; this test guards against their reintroduction by verifying that
     OrchestratorAdapter.finalize() does NOT call consume_behavior_signals() on
     the session a second time within the adapter itself.
@@ -92,7 +92,7 @@ def test_gateway_sse_path_does_not_double_consume_signals() -> None:
     """
     gateway.py SSE path must not re-consume session signals after process_response().
 
-    After the Plan 5 fix, the stale re-consume that followed process_response() in the
+    The stale re-consume that followed process_response() in the
     SSE path was removed. This test verifies that process_response() and
     consume_behavior_signals() are not called back-to-back (with only whitespace/comments
     between them) in gateway.py.
@@ -114,5 +114,5 @@ def test_gateway_sse_path_does_not_double_consume_signals() -> None:
         assert newline_count > 5, (
             f"gateway.py: process_response() appears to be immediately followed by "
             f"consume_behavior_signals() within {newline_count} lines — "
-            "this is the stale double-consume pattern that was removed in Plan 5."
+            "this is the stale double-consume pattern that was removed."
         )

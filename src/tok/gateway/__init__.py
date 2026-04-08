@@ -66,10 +66,6 @@ except Exception:
         return len(text) // 4
 
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
 
 
@@ -231,10 +227,6 @@ def _log_bridge_body_structure(
     )
 
 
-# ---------------------------------------------------------------------------
-# Tool Translation
-# ---------------------------------------------------------------------------
-
 _RUNTIME = UniversalTokRuntime()
 _build_tool_use_id_to_context = build_tool_use_id_to_context
 _collect_behavior_signals = collect_behavior_signals
@@ -275,11 +267,6 @@ def _response_contract_for_mode(text: str, *, tool_compatible: bool) -> Response
         behavior_signals=processed.behavior_signals,
         mode=processed.mode,
     )
-
-
-# ---------------------------------------------------------------------------
-# Session state
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -418,11 +405,6 @@ class BridgeSession:
         self.runtime_session.bridge_memory = value
 
 
-# ---------------------------------------------------------------------------
-# SSE buffering + re-streaming
-# ---------------------------------------------------------------------------
-
-
 async def _buffer_strip_restream(
     session: BridgeSession,
     client: httpx.AsyncClient,
@@ -489,10 +471,6 @@ def _materialize_stream_tool_blocks(
         )
     normalized_tool_blocks, _ = normalize_tool_use_blocks(tool_blocks, seed_prefix="toolu_stream")
     return normalized_tool_blocks
-
-
-# FastAPI app factory
-# ---------------------------------------------------------------------------
 
 
 def create_app(session: BridgeSession | None = None) -> FastAPI:

@@ -2,11 +2,20 @@
 
 ## Executive Summary
 
-Comprehensive benchmark testing across multiple models (Claude Sonnet 4.6, GPT-4.1,
-DeepSeek v3.2) reveals that Tok's compression modes achieve **60-70% token savings**
-while maintaining task success rates for sessions ≥ 8 turns. Short sessions (< 8 turns)
-should default to baseline to avoid compression overhead. The research-loop-15 fixture
-has been fixed and now properly validates 15-turn research sessions.
+Historical benchmark exploration across multiple models (Claude Sonnet 4.6, GPT-4.1,
+DeepSeek v3.2) showed high variance in savings outcomes. For release decisions, use the
+reproducible claims matrix and gate outputs instead of this document as sole evidence.
+Short sessions (< 8 turns) should default to baseline to avoid compression overhead. The
+research-loop-15 fixture has been fixed and now properly validates 15-turn research
+sessions.
+
+## Release Authority (Current Evidence Standard)
+
+- Release benchmark evidence compares **baseline vs tok-universal only**, executed via
+  `UniversalTokRuntime` using OpenRouter.
+- Multi-mode findings in this document
+  (tok-minimal/tok-native/tok-neuro/tok-tool-compatible) are historical exploration and
+  are not release claim inputs.
 
 ## Benchmark Task Definitions
 
@@ -287,9 +296,9 @@ ______________________________________________________________________
 
 ## Conclusion
 
-Tok 0.1.0 demonstrates significant token savings (60-70%) across all tested models, with
-strong performance on longer sessions (15+ turns). The research-loop-15 fixture has been
-fixed and all benchmarks now pass successfully.
+Tok 0.1.0 demonstrates meaningful savings on long sessions, with performance varying by
+model, mode, and fixture. The research-loop-15 fixture has been fixed and benchmark
+infrastructure remains usable for release revalidation.
 
 **Key Recommendations:**
 

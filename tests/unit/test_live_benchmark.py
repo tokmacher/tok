@@ -92,7 +92,7 @@ def _result(
             "response_mode": mode,
         },
         diagnostics={
-            "tool_compatible_requested": mode == "tok-tool-compatible",
+            "tool_compatible_requested": mode == "tok-universal",
             "request_messages_before": 3,
             "request_messages_after": 2,
             "session_turns": 3,
@@ -252,9 +252,9 @@ def test_compare_results_emits_response_drift_diagnosis() -> None:
 
 def test_select_preferred_mode_ignores_failing_candidate() -> None:
     baseline = _result(mode="baseline", total_tokens=120, prompt_tokens=100, success=True)
-    failing = _result(mode="tok-minimal", total_tokens=50, prompt_tokens=40, success=False)
+    failing = _result(mode="tok-universal", total_tokens=50, prompt_tokens=40, success=False)
     winning = _result(
-        mode="tok-tool-compatible",
+        mode="tok-universal",
         total_tokens=90,
         prompt_tokens=70,
         success=True,
@@ -268,7 +268,7 @@ def test_select_preferred_mode_ignores_failing_candidate() -> None:
         ],
     )
 
-    assert preferred == "tok-tool-compatible"
+    assert preferred == "tok-universal"
 
 
 def test_render_comparison_markdown_includes_success_and_turns() -> None:
@@ -315,35 +315,21 @@ def test_load_benchmark_definition_supports_research_variant() -> None:
 def test_summarize_compare_runs_reports_preferred_counts_and_medians() -> None:
     run_one = {
         "baseline": _result(mode="baseline", total_tokens=120, prompt_tokens=100),
-        "tok-minimal": _result(
-            mode="tok-minimal",
-            total_tokens=90,
-            prompt_tokens=70,
-            success=False,
-        ),
-        "tok-native": _result(mode="tok-native", total_tokens=110, prompt_tokens=90),
-        "tok-tool-compatible": _result(mode="tok-tool-compatible", total_tokens=80, prompt_tokens=60),
+        "tok-universal": _result(mode="tok-universal", total_tokens=80, prompt_tokens=60),
     }
     run_two = {
         "baseline": _result(mode="baseline", total_tokens=140, prompt_tokens=115),
-        "tok-minimal": _result(
-            mode="tok-minimal",
-            total_tokens=95,
-            prompt_tokens=75,
-            success=False,
-        ),
-        "tok-native": _result(mode="tok-native", total_tokens=100, prompt_tokens=80),
-        "tok-tool-compatible": _result(mode="tok-tool-compatible", total_tokens=85, prompt_tokens=65),
+        "tok-universal": _result(mode="tok-universal", total_tokens=85, prompt_tokens=65),
     }
 
     summary = summarize_compare_runs([run_one, run_two])
     markdown = render_stability_markdown("coding-loop-5", "m", summary)
 
     assert summary["runs"] == 2
-    assert summary["preferred_mode_counts"]["tok-tool-compatible"] == 2
-    assert summary["mode_summaries"]["tok-tool-compatible"]["median_total_tokens"] == 82
+    assert summary["preferred_mode_counts"]["tok-universal"] == 2
+    assert summary["mode_summaries"]["tok-universal"]["median_total_tokens"] == 82
     assert "Preferred Mode Counts" in markdown
-    assert "tok-tool-compatible" in markdown
+    assert "tok-universal" in markdown
 
 
 def test_live_benchmark_runner_reports_prompt_and_response_metrics(
@@ -379,9 +365,7 @@ def test_live_benchmark_runner_reports_prompt_and_response_metrics(
     runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
 
     baseline = runner.run(definition, mode="baseline", turns=3)
-    minimal = runner.run(definition, mode="tok-minimal", turns=3)
-    native = runner.run(definition, mode="tok-native", turns=3)
-    tool_compatible = runner.run(definition, mode="tok-tool-compatible", turns=3)
+    universal = runner.run(definition, mode="tok-universal", turns=3)
 
     assert baseline.task_success is True
     assert baseline.compression_metrics["total_saved_tokens"] == 0
@@ -392,30 +376,17 @@ def test_live_benchmark_runner_reports_prompt_and_response_metrics(
     assert len(baseline.turns) == 3
     assert "outbound_payload" in baseline.turns[0]
 
-    assert minimal.task_success is True
-    assert minimal.diagnostics["tool_compatible_requested"] is True
-    assert len(minimal.turns) == 3
-    assert minimal.turns[0]["outbound_payload"]["system"]
-    assert "state_resend_suppressed_turns" in minimal.diagnostics
-    assert "state_resend_delta_turns" in minimal.diagnostics
-    assert "state_resend_full_turns" in minimal.diagnostics
-    assert "directive_tokens_estimate" in minimal.prompt_metrics
-    assert "state_payload_tokens_estimate" in minimal.prompt_metrics
-
-    assert native.task_success is True
-    assert native.compression_metrics["input_saved_tokens"] >= 0
-    assert native.prompt_metrics["prepared_messages_tokens"] >= 0
-    assert native.response_metrics["response_mode"] in {
-        "tok-native",
-        "tool-compatible",
-        "tok",
-        "empty",
-    }
-
-    assert tool_compatible.task_success is True
-    assert tool_compatible.diagnostics["tool_compatible_requested"] is True
-    assert tool_compatible.turns[0]["diagnostics"]["request_policy"] == ("natural_first")
-    assert tool_compatible.response_metrics["response_mode"] == "tool-compatible"
+    assert universal.task_success is True
+    assert universal.mode == "tok-universal"
+    assert universal.diagnostics["tool_compatible_requested"] is True
+    assert len(universal.turns) == 3
+    assert universal.turns[0]["outbound_payload"]["system"]
+    assert "state_resend_suppressed_turns" in universal.diagnostics
+    assert "state_resend_delta_turns" in universal.diagnostics
+    assert "state_resend_full_turns" in universal.diagnostics
+    assert "directive_tokens_estimate" in universal.prompt_metrics
+    assert "state_payload_tokens_estimate" in universal.prompt_metrics
+    assert universal.turns[0]["diagnostics"]["request_policy"] == ("natural_first")
 
 
 def test_live_benchmark_runner_rejects_placeholder_success(tmp_path) -> None:

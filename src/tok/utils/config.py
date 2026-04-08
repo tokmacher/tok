@@ -15,5 +15,4 @@ MIN_TOK_LENGTH: int = 500
 MAX_STEPS: int = 20
 PING_INTERVAL: int = 10
 
-# Logging
 VERBOSE: bool = True

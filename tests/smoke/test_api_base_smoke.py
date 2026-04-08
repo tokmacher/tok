@@ -23,10 +23,6 @@ from fastapi.responses import StreamingResponse
 
 from tok.gateway import BridgeSession, create_app
 
-# -----------------------------------------------------------------------------
-# Synthetic upstream state with thread-safe counters
-# -----------------------------------------------------------------------------
-
 
 class _DefaultUpstreamState:
     """Thread-safe state for default-path synthetic upstream."""
@@ -71,11 +67,6 @@ class _ExplicitUpstreamState:
 # Global state instances
 _default_upstream_state = _DefaultUpstreamState()
 _explicit_upstream_state = _ExplicitUpstreamState()
-
-
-# -----------------------------------------------------------------------------
-# Synthetic upstream factories with distinct markers
-# -----------------------------------------------------------------------------
 
 
 def _create_default_upstream(state: _DefaultUpstreamState) -> FastAPI:
@@ -188,11 +179,6 @@ def _create_explicit_upstream(state: _ExplicitUpstreamState) -> FastAPI:
     return app
 
 
-# -----------------------------------------------------------------------------
-# Server startup helpers
-# -----------------------------------------------------------------------------
-
-
 async def _start_upstream_server(app: FastAPI, port: int) -> asyncio.Task:
     """Start synthetic upstream server on specified port."""
     config = uvicorn.Config(
@@ -226,11 +212,6 @@ def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-# -----------------------------------------------------------------------------
-# Positive override test: explicit api-base wins over default env
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -393,11 +374,6 @@ async def test_explicit_api_base_wins_over_default_env() -> None:
 
     assert final_explicit == 1, f"UPSTREAM CALL MISMATCH: explicit upstream expected 1 call, got {final_explicit}"
     assert final_default == 0, f"UPSTREAM CALL MISMATCH: default upstream expected 0 calls, got {final_default}"
-
-
-# -----------------------------------------------------------------------------
-# Negative no-fallback test: unreachable explicit fails clearly
-# -----------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

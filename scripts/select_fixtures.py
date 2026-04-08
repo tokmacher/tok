@@ -37,8 +37,6 @@ def get_feature_fixtures() -> list[str]:
         "tool_density_micro",
         "episodes_multi_phase",
         "release_reacquisition",
-        "orchestrator_parity",
-        "bridge_vs_orchestrator",
         "cache_sensitivity",
     ]
 
@@ -75,8 +73,6 @@ def get_full_fixtures() -> list[str]:
         "tool_density_micro",
         "episodes_multi_phase",
         "release_reacquisition",
-        "orchestrator_parity",
-        "bridge_vs_orchestrator",
         "cache_sensitivity",
     ]
 

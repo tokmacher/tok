@@ -16,11 +16,6 @@ def isolate_macro_registry(monkeypatch) -> None:
     monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
 
 
-# ---------------------------------------------------------------------------
-# ROI field serialization
-# ---------------------------------------------------------------------------
-
-
 def test_macro_roi_fields_round_trip() -> None:
     """lifetime_savings and avg_tokens_per_use survive to_dict / from_dict."""
     macro = Macro(
@@ -48,11 +43,6 @@ def test_macro_roi_defaults_to_zero() -> None:
     macro = Macro.from_dict(data)
     assert macro.lifetime_savings == 0
     assert macro.avg_tokens_per_use == 0.0
-
-
-# ---------------------------------------------------------------------------
-# record_savings
-# ---------------------------------------------------------------------------
 
 
 def test_record_savings_accumulates() -> None:
@@ -90,11 +80,6 @@ def test_record_savings_ignores_non_positive() -> None:
     registry.record_savings("m0", 0)
     registry.record_savings("m0", -5)
     assert macro.lifetime_savings == 0
-
-
-# ---------------------------------------------------------------------------
-# apply_decay: ROI protection
-# ---------------------------------------------------------------------------
 
 
 def _old_macro(name: str, hits: int, savings: int = 0) -> Macro:
@@ -140,11 +125,6 @@ def test_apply_decay_spares_durable_macro_regardless_of_roi() -> None:
     registry.macros["durable_m"] = macro
     registry.apply_decay()
     assert "durable_m" in registry.macros
-
-
-# ---------------------------------------------------------------------------
-# Hypothesis promotion (bridge_memory.py)
-# ---------------------------------------------------------------------------
 
 
 def test_hypothesis_promotion_clears_answered_question() -> None:

@@ -60,7 +60,7 @@ _EVIDENCE_SOURCE_KIND = Literal[
 _GIT_SHOW_RE = re.compile(r"^git\s+show\s+([^:]+):(.+)$")
 _GIT_DIFF_PATH_RE = re.compile(r"^git\s+diff\s+([\w@~^./:-]+)\s*--\s*(.+)$")
 _METADATA_SUBTYPES = frozenset({"git", "stat", "wc", "file", "ls", "find"})
-_TMP_PREFIXES = (tempfile.gettempdir(), "/var/tmp/", "/private/tmp/", "tmp/")
+_TMP_PREFIXES = (tempfile.gettempdir(), "/tmp/", "/var/tmp/", "/private/tmp/", "tmp/")
 
 
 @dataclass(frozen=True)

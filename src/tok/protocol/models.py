@@ -427,9 +427,6 @@ class TokToolCall(BaseModel):
         return data
 
 
-# ---- Compiler Guard schemas ----
-
-
 class ReadToolSchema(BaseModel):
     path: str
 

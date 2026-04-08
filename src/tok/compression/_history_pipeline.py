@@ -650,6 +650,12 @@ def compress_tool_results_impl(
     ) -> bool:
         if not _first_exact_guard(context, raw):
             return False
+        if context:
+            tool_name = str(context.get("name", "")).lower()
+            if tool_name in FILE_LIKE_TOOLS:
+                args = context.get("args")
+                if isinstance(args, dict) and any(k in args for k in ("offset", "limit", "start", "end")):
+                    return False
         if session_files_read is not None and norm_path and norm_path not in session_files_read:
             session_files_read.add(norm_path)
             if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
@@ -804,7 +810,8 @@ def compress_tool_results_impl(
                     if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                         _cache_semantic_hash(ctx, raw, semantic_hash_cache)
                 if result_cache is not None and not bypass_result_cache:
-                    assert ctx is not None
+                    if ctx is None:
+                        continue
                     compressed, _saved = _apply_result_cache(
                         raw,
                         ctx,
@@ -1197,18 +1204,18 @@ def compress_recent_window_impl(
                     args=tool_ctx.get("args") if isinstance(tool_ctx.get("args"), dict) else None,
                 )
                 if key and key not in first_exact_evidence_seen:
-                    if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
-                        continue
                     first_exact_evidence_seen.add(key)
                     block["content"] = raw
                     continue
 
             kind = _detect_tool_content_type_impl(raw)
+            if kind == "raw" and tool_name in SEARCH_LIKE_TOOLS:
+                kind = "search_results"
             if kind in {"raw", "file"}:
-                ctx = ctx or {}
-                if _is_precision_read_context(ctx):
+                context = tool_ctx or {}
+                if _is_precision_read_context(context):
                     continue
-                tool_name = str(ctx.get("name", "")).lower()
+                tool_name = str(context.get("name", "")).lower()
                 if tool_name in FILE_LIKE_TOOLS:
                     kind = "file"
                 elif kind == "raw":

@@ -16,10 +16,6 @@ from tok.universal_runtime import (
     UniversalTokRuntime,
 )
 
-# ---------------------------------------------------------------------------
-# Isolation
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture(autouse=True)
 def mock_tok_storage():
@@ -35,11 +31,6 @@ def mock_tok_storage():
         yield
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _make_request(
     messages: list[dict[str, Any]] | None = None,
 ) -> RuntimeRequest:
@@ -47,11 +38,6 @@ def _make_request(
         model="claude-sonnet-4-6",
         messages=messages or [{"role": "user", "content": "hello"}],
     )
-
-
-# ---------------------------------------------------------------------------
-# Local Mesh Discovery
-# ---------------------------------------------------------------------------
 
 
 class TestLocalMeshDiscovery:
@@ -99,11 +85,6 @@ class TestLocalMeshDiscovery:
 
         system = prepared.body.get("system", "")
         assert "@npm_install" not in system
-
-
-# ---------------------------------------------------------------------------
-# Macro Healing
-# ---------------------------------------------------------------------------
 
 
 class TestMacroHealing:

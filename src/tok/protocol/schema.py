@@ -90,8 +90,6 @@ class TokSchema:
         return True, None
 
 
-# ── Registry ──────────────────────────────────────────────────────────────────
-
 DEFAULT_SCHEMA = TokSchema()
 
 # Example Tool: get_weather

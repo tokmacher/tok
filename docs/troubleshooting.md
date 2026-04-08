@@ -66,8 +66,9 @@ Very short sessions (under 10-15 turns) may not show clear savings. Tok's compre
 benefits accumulate over longer conversations where repeated file reads, tool outputs,
 and context build up.
 
-For verification, sessions of 50+ turns typically show the validated 45-55% savings
-range. Shorter sessions may show lower or inconsistent savings due to:
+For release verification, use the maintained benchmark and claims matrix flow rather
+than a single ad-hoc run. Sessions of 50+ turns are more likely to land in the 45-55%
+reference band; shorter sessions may show lower or inconsistent savings due to:
 
 - Less opportunity for semantic deduplication
 - Fewer repeated tool calls to cache
@@ -89,6 +90,11 @@ tok capture-summary ~/.tok/sessions/<capture>.jsonl
 tok capture-review ~/.tok/sessions --candidates
 tok evidence-gap ~/.tok/sessions --stress-dir tmp/stress_language/<timestamp>
 ```
+
+For reproducible release claims, refer to:
+
+- [`docs/claims_matrix.md`](./claims_matrix.md)
+- [`docs/benchmark_findings_0.1.0.md`](./benchmark_findings_0.1.0.md)
 
 ## Clean-Room Install Check
 

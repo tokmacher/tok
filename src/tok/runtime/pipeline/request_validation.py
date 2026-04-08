@@ -73,6 +73,10 @@ _NON_BLOCKING_OUTGOING_FAILURES = frozenset(
     }
 )
 _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD = 16
+_DEFAULT_PROMPT_BLOAT_THRESHOLD_CHARS = 2000
+_DEFAULT_PROMPT_OPTIMIZE_LIMIT_CHARS = 2500
+_USER_PROMPT_LEAK_MIN_CHARS = 200
+_USER_PROMPT_LEAK_SNIPPET_CHARS = 100
 _PROVIDER_SENSITIVE_FAILURES = frozenset(
     {
         "provider_sensitive_large_tool_use_text_interleaving",
@@ -1956,7 +1960,7 @@ def detect_prompt_bloat(system_prompt: str | list[dict[str, Any]] | None, user_p
         return False
 
     # Threshold for automatic optimization (chars)
-    BLOAT_THRESHOLD = int(os.getenv("TOK_PROMPT_BLOAT_THRESHOLD", "2000"))
+    bloat_threshold = int(os.getenv("TOK_PROMPT_BLOAT_THRESHOLD", str(_DEFAULT_PROMPT_BLOAT_THRESHOLD_CHARS)))
 
     system_text = ""
     if isinstance(system_prompt, list):
@@ -1968,13 +1972,13 @@ def detect_prompt_bloat(system_prompt: str | list[dict[str, Any]] | None, user_p
     else:
         system_text = str(system_prompt)
 
-    if len(system_text) > BLOAT_THRESHOLD:
+    if len(system_text) > bloat_threshold:
         return True
 
     # Check if user prompt content is leaking into system context (e.g. flattening)
-    if user_prompt and len(user_prompt) > 200:
+    if user_prompt and len(user_prompt) > _USER_PROMPT_LEAK_MIN_CHARS:
         # Check if a substantial part of the user prompt is in the system prompt
-        snippet = user_prompt[:100].strip()
+        snippet = user_prompt[:_USER_PROMPT_LEAK_SNIPPET_CHARS].strip()
         if snippet and snippet in system_text:
             return True
 
@@ -1987,7 +1991,7 @@ def should_optimize_prompts(
 ) -> bool:
     """Check if optimization is recommended based on size thresholds or size metrics."""
     # Threshold for intervention (chars)
-    SIZE_LIMIT = int(os.getenv("TOK_PROMPT_OPTIMIZE_LIMIT", "2500"))
+    size_limit = int(os.getenv("TOK_PROMPT_OPTIMIZE_LIMIT", str(_DEFAULT_PROMPT_OPTIMIZE_LIMIT_CHARS)))
 
     system_text = ""
     if isinstance(system_prompt, list):
@@ -1999,7 +2003,7 @@ def should_optimize_prompts(
     elif system_prompt:
         system_text = str(system_prompt)
 
-    if len(system_text) > SIZE_LIMIT:
+    if len(system_text) > size_limit:
         return True
 
     # Check for high growth rate signal if provided in metrics

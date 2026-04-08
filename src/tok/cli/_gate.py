@@ -33,6 +33,78 @@ def load_gate_config(config_path: Path | None) -> dict[str, Any] | None:
         return None
 
 
+def select_fixture_set(fixture_set: str) -> list[str]:
+    """Select a named fixture set for gate-check (feature/full/redteam)."""
+    if fixture_set == "feature":
+        return [
+            "claude_coding_loop",
+            "gpt_coding_loop",
+            "long_coding_session",
+            "search_intensive_workflow",
+            "high_pressure_scenario",
+            "runtime_conformance",
+            "cache_stable_research_turns",
+            "refined_search_recovery",
+            # Green stress fixtures
+            "metric_long_debug",
+            "burst_retries",
+            "verbose_payload",
+            "straddling_boundary",
+            "context_pinned_file",
+            "alternating_adapters",
+            "branching_tests",
+            "compression_hypothesis_churn",
+            "heavy_tool_event",
+            "tool_density_micro",
+            "episodes_multi_phase",
+            "release_reacquisition",
+            "cache_sensitivity",
+        ]
+    if fixture_set == "full":
+        return [
+            "claude_coding_loop",
+            "gpt_coding_loop",
+            "long_coding_session",
+            "search_intensive_workflow",
+            "high_pressure_scenario",
+            "multi_model_session",
+            "file_heavy_operations",
+            "test_cli_fixture",
+            "test_search_fixture",
+            "test_coding_fixture",
+            "comprehensive_test",
+            "gemini_coding_loop",
+            "pressure_session",
+            "runtime_conformance",
+            "cache_stable_research_turns",
+            "refined_search_recovery",
+            # Green stress fixtures
+            "metric_long_debug",
+            "burst_retries",
+            "verbose_payload",
+            "straddling_boundary",
+            "context_pinned_file",
+            "alternating_adapters",
+            "branching_tests",
+            "compression_hypothesis_churn",
+            "heavy_tool_event",
+            "tool_density_micro",
+            "episodes_multi_phase",
+            "release_reacquisition",
+            "cache_sensitivity",
+        ]
+    if fixture_set == "redteam":
+        return [
+            "grammar_drift",
+            "markdown_fallback",
+            "subtle_drift",
+            "healing_drift",
+            "repeat_search_pressure",
+        ]
+    msg = f"Unknown fixture set: {fixture_set}"
+    raise ValueError(msg)
+
+
 def load_fixture_files(fixtures_dir: Path) -> list[Path]:
     """
     Load fixture files from directory.

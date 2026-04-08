@@ -758,8 +758,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     compressed_request=compressed,
                     sleep_fn=asyncio.sleep,
                 )
-                for key, value in retry_signals.items():
-                    behavior_signals[key] = behavior_signals.get(key, 0) + value
+                if retry_signals:
+                    for key, value in retry_signals.items():
+                        behavior_signals[key] = behavior_signals.get(key, 0) + value
                 _note_request_policy_recovery_watch(session, retry_signals)
                 if response.status_code == 429:
                     await _close_streaming_setup_resources(response, client)
@@ -775,12 +776,11 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         "hot_hint_tokens_added": 0,
                         "reacquisition_tokens_avoided_estimate": 0,
                     }
-                    behavior_signals = {
-                        "tok_fail_open_retry": 1,
-                        "tok_fallback_activated": 1,
-                    }
-                    for key, value in retry_signals.items():
-                        behavior_signals[key] = behavior_signals.get(key, 0) + value
+                    behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
+                    behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
+                    if retry_signals:
+                        for key, value in retry_signals.items():
+                            behavior_signals[key] = behavior_signals.get(key, 0) + value
                     logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
                     _record_fallback_once(session, request_state)
                 resp_headers = _safe_headers(response.headers)
@@ -829,10 +829,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     compressed = False
                     saved_toks = 0
                     tool_breakdown = {}
-                    behavior_signals = {
-                        "streaming_error_retry": 1,
-                    }
+                    behavior_signals["streaming_error_retry"] = behavior_signals.get("streaming_error_retry", 0) + 1
                     retry_client = httpx.AsyncClient(timeout=300.0)
+                    response = None
                     try:
                         (
                             response,
@@ -878,7 +877,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                 media_type=response.headers.get("content-type", "text/event-stream"),
                             )
                     except Exception:
-                        await _close_streaming_setup_resources(None, retry_client)
+                        await _close_streaming_setup_resources(response, retry_client)
                         raise
                 return Response(
                     content=f"Streaming error: {e!s}",
@@ -904,8 +903,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 compressed_request=compressed,
                 sleep_fn=asyncio.sleep,
             )
-            for key, value in retry_signals.items():
-                behavior_signals[key] = behavior_signals.get(key, 0) + value
+            if retry_signals:
+                for key, value in retry_signals.items():
+                    behavior_signals[key] = behavior_signals.get(key, 0) + value
             _note_request_policy_recovery_watch(session, retry_signals)
             if response.status_code == 429:
                 return _normalize_rate_limit_response(session, response)
@@ -920,23 +920,22 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     "hot_hint_tokens_added": 0,
                     "reacquisition_tokens_avoided_estimate": 0,
                 }
-                behavior_signals = {
-                    "tok_fail_open_retry": 1,
-                    "tok_fallback_activated": 1,
-                }
-                for key, value in retry_signals.items():
-                    behavior_signals[key] = behavior_signals.get(key, 0) + value
+                behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
+                behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
+                if retry_signals:
+                    for key, value in retry_signals.items():
+                        behavior_signals[key] = behavior_signals.get(key, 0) + value
                 logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
                 _record_fallback_once(session, request_state)
+
+            content = response.content
 
             if response.status_code >= 400:
                 logger.warning(
                     "Upstream %d: %s",
                     response.status_code,
-                    response.text[:300],
+                    content[:300].decode(errors="replace") if isinstance(content, bytes) else str(content)[:300],
                 )
-
-            content = response.content
             resp_json: dict[str, Any] = {}
             if path == "v1/messages" and response.status_code == 200:
                 try:
@@ -1015,26 +1014,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             type_breakdown=tool_breakdown if compressed else None,
                             behavior_signals=response_signals or None,
                             prompt_metrics=prompt_metrics if compressed else None,
-                        )
-
-                        session.capture_event(
-                            {
-                                "event": "response",
-                                "model": resp_json["model"],
-                                "request_policy": request_policy,
-                                "tool_compatible": request_tool_compatible,
-                                "baseline_only": session.runtime_session._baseline_only,
-                                "fallback_count": int(
-                                    session.tracker.behavior_signals().get("tok_fallback_activated", 0)
-                                ),
-                                "behavior_signals": response_signals or {},
-                                "session_quality": str(
-                                    (session.tracker.session_summary() or {}).get("session_quality", "clean")
-                                ),
-                                "session_tokens_saved": int(
-                                    (session.tracker.session_summary() or {}).get("tokens_saved", 0)
-                                ),
-                            }
                         )
 
                         # Finish smoothness turn

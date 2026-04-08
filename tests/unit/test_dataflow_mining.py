@@ -16,11 +16,6 @@ def isolate_macro_registry(monkeypatch) -> None:
     monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
 
 
-# ---------------------------------------------------------------------------
-# Macro.context_requirements field
-# ---------------------------------------------------------------------------
-
-
 def test_context_requirements_defaults_to_empty_dict() -> None:
     macro = Macro(
         name="m0",
@@ -53,11 +48,6 @@ def test_context_requirements_loads_from_legacy_dict_without_key() -> None:
     }
     macro = Macro.from_dict(data)
     assert macro.context_requirements == {}
-
-
-# ---------------------------------------------------------------------------
-# Data-flow dependency fingerprint
-# ---------------------------------------------------------------------------
 
 
 def _ir(
@@ -167,11 +157,6 @@ def test_miner_embeds_dep_fingerprint_in_provenance() -> None:
         assert "deps:" in (macro.provenance.source_code or ""), (
             f"Expected dep fingerprint in source_code: {macro.provenance.source_code}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Context-aware JIT filtering
-# ---------------------------------------------------------------------------
 
 
 def _make_session_with_files(*files: str) -> RuntimeSession:

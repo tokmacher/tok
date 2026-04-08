@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import tok.compression._pipeline
-
-tok.compression._pipeline.TOOL_COMPRESS_THRESHOLD = 0
-
 from tok.analysis.prompt import MINIMAL_PULSE_PROMPT, TOK_EXPLORE_PROMPT
 from tok.compression import (
     _SEMANTIC_HASH_MIN_CHARS,
@@ -17,6 +13,7 @@ from tok.compression import (
     _make_semantic_cache_key,
     compress_tool_results,
 )
+from tok.compression import _pipeline as compression_pipeline
 from tok.neuro.ir import Instruction, Macro
 from tok.runtime.config import (
     ANSWER_READY_REPAIR_HINT,
@@ -30,9 +27,7 @@ from tok.universal_runtime import (
     UniversalTokRuntime,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+compression_pipeline.TOOL_COMPRESS_THRESHOLD = 0
 
 
 def _make_tool_use_msg(tool_id: str, tool_name: str, path: str = "src/tok/foo.py") -> dict[str, Any]:
@@ -70,11 +65,6 @@ def _make_id_to_context(tool_id: str, tool_name: str, path: str) -> dict[str, An
             "args": {"path": path},
         }
     }
-
-
-# ---------------------------------------------------------------------------
-# Speculative Macro Injection
-# ---------------------------------------------------------------------------
 
 
 class TestSpeculativeMacroInjection:
@@ -161,11 +151,6 @@ class TestSpeculativeMacroInjection:
         # We verify by checking that the hint appeared in the system prompt as a proxy.
         prepared = runtime.prepare_request(self._request_with_message(), session)
         assert "@sig_macro" in prepared.body.get("system", "")
-
-
-# ---------------------------------------------------------------------------
-# Semantic Hash Deduplication
-# ---------------------------------------------------------------------------
 
 
 class TestComputeSemanticHash:
@@ -689,11 +674,6 @@ class TestPrecisionReadVerbatim:
         )
         msg_content = result[0]["content"]
         assert msg_content == content
-
-
-# ---------------------------------------------------------------------------
-# Integration: semantic_dedup_hit signal in prepare_request
-# ---------------------------------------------------------------------------
 
 
 class TestSemanticDedupSignal:

@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time as time_module
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
@@ -97,10 +98,11 @@ class StableResultPayload(BaseModel):
 # Format: (content_hash, raw_content, timestamp) or legacy 2-tuple/1-tuple
 ResultCacheEntry: TypeAlias = tuple[str, str, float] | tuple[str, str] | tuple[str]
 
-# Maximum number of entries in the result cache
+# Maximum number of entries in the result cache to bound memory usage
 RESULT_CACHE_MAX_SIZE = 256
 
-# ---------------------------------------------------------------------------
+# Lock for thread-safe cache operations (callers must use this for external synchronization)
+_result_cache_lock = threading.Lock()
 
 _CUT_REJECTION_REASONS = frozenset({"non_user", "top_level_tool_result", "user_contains_tool_result_block"})
 
@@ -717,6 +719,40 @@ def _process_cache_hit(
     compression_level: str,
 ) -> tuple[str, int]:
     """Process a cache hit and return compressed result."""
+    host_stub_replayed = _should_replay_host_stub(
+        is_file_like,
+        cached_raw_text,
+        raw_text,
+        raw_text,
+    )
+    if host_stub_replayed:
+        _update_cache_after_hit(
+            result_cache,
+            cache_key,
+            host_stub_replayed=True,
+            entry_length=entry_length,
+            cached_hash=cached_hash,
+            cached_raw=cached_raw,
+            content_hash=cached_hash,
+            raw=cached_raw,
+        )
+        return _serve_cached_content_hash_match(
+            raw,
+            raw_text,
+            context,
+            tool_name,
+            normalized_tool_name,
+            is_precision_read,
+            is_file_like,
+            result_cache,
+            cache_key,
+            entry_length,
+            cached_hash,
+            cached_raw,
+            host_stub_replayed=True,
+            compression_level=compression_level,
+        )
+
     if _is_content_hash_match(raw_text, cached_raw_text):
         _update_cache_after_hit(
             result_cache,
@@ -786,8 +822,15 @@ def _store_cache_entry(
 ) -> tuple[str, int]:
     normalized_error = _normalize_error_content(raw_text)
     content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
-    result_cache[cache_key] = (content_hash, raw, time_module.time())
-    _evict_cache_entry(result_cache)
+    with _result_cache_lock:
+        result_cache[cache_key] = (content_hash, raw, time_module.time())
+        while len(result_cache) > RESULT_CACHE_MAX_SIZE:
+            try:
+                oldest = next(iter(result_cache))
+                logger.debug("result_cache_evict: key=%s size=%d", oldest, len(result_cache))
+                del result_cache[oldest]
+            except StopIteration:
+                break
     if is_file_like:
         return raw, 0
     if prefer_normalized_error and normalized_error:
@@ -798,24 +841,6 @@ def _store_cache_entry(
         tool_context=context,
     )
     return compressed, len(raw_text) - len(compressed)
-
-
-def _evict_cache_entry(
-    result_cache: MutableMapping[str, ResultCacheEntry],
-) -> None:
-    """
-    Evict oldest cache entry when cache exceeds size limit.
-
-    Note: This operation is not atomic. If thread-safety is required,
-    callers must ensure external synchronization of result_cache.
-    """
-    while len(result_cache) > RESULT_CACHE_MAX_SIZE:
-        try:
-            oldest = next(iter(result_cache))
-            logger.debug("result_cache_evict: key=%s size=%d", oldest, len(result_cache))
-            del result_cache[oldest]
-        except StopIteration:
-            break
 
 
 def _unpack_cache_entry(
@@ -858,7 +883,9 @@ def _is_file_mtime_changed(context: dict[str, Any], cached_timestamp: float | No
     try:
         mtime = os.path.getmtime(path)
         return mtime > cached_timestamp
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
+        # Synthetic or inaccessible paths should not force a cache miss.
+        # Real files still invalidate when their mtime is newer than the cache timestamp.
         return False
 
 
@@ -972,9 +999,7 @@ def _handle_diff_result(
 ) -> tuple[str, int]:
     """Handle the case when diff is empty or too large."""
     # Content differs but diff is empty (edge case with trailing newlines)
-    if content_hash == cached_hash:
-        pass  # Treat as changed content
-    elif normalized_error:
+    if normalized_error:
         stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
         saved = len(raw_text) - len(stub)
         if saved < 0:
@@ -1061,8 +1086,16 @@ def _serve_cached_content_hash_match(
         return payload, len(raw_text) - len(payload)
 
     stub = f">>> tool:{tool_name}|unchanged|cached"
-    if context.get("path"):
-        stub += f"|path:{context['path']}"
+    raw_args = context.get("args")
+    raw_path = (
+        context.get("path")
+        or (raw_args.get("path") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("file_path") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
+    )
+    if raw_path:
+        stub += f"|path:{raw_path}"
     return stub, len(raw_text) - len(stub)
 
 

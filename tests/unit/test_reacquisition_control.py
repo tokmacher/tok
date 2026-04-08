@@ -542,11 +542,6 @@ def test_unchanged_prepared_payload_reuses_cached_token_estimate(
     assert session.consume_behavior_signals()["prepared_prompt_token_cache_hit"] == 1
 
 
-# ---------------------------------------------------------------------------
-# 2. Delta state: unchanged sticky fields should NOT churn
-# ---------------------------------------------------------------------------
-
-
 def _state(turns: int, **kwargs: str | list[str]) -> dict[str, list[str]]:
     base: dict[str, list[str]] = {"turns": [str(turns)]}
     base.update({k: [v] if isinstance(v, str) else v for k, v in kwargs.items()})
@@ -594,11 +589,6 @@ def test_changed_tests_appear_in_delta() -> None:
     assert "3_passed" in delta, f"Expected changed tests in delta; got: {delta!r}"
 
 
-# ---------------------------------------------------------------------------
-# 3. Answer-anchor fields: no churn on stable anchor turns
-# ---------------------------------------------------------------------------
-
-
 def test_answer_anchor_facts_unchanged_not_in_delta() -> None:
     """Stable answer-anchor facts should not be re-sent in delta on subsequent turns."""
     previous = _state(
@@ -641,11 +631,6 @@ def test_answer_anchor_facts_changed_appear_in_delta() -> None:
     delta = _delta_tok_state_fields(previous, current)
 
     assert "answer_verification:all_pass" in delta, f"Expected changed anchor facts in delta; got: {delta!r}"
-
-
-# ---------------------------------------------------------------------------
-# 4. Delta is empty (only turns) when nothing else changes
-# ---------------------------------------------------------------------------
 
 
 def test_delta_empty_when_only_turns_change() -> None:
