@@ -116,6 +116,13 @@ class TestClassifyCutEligibility:
 
 
 class TestCompressHistory:
+    @staticmethod
+    def _state_field(state: str, key: str) -> str:
+        for part in state.replace(">>> ", "", 1).split("|"):
+            if part.startswith(f"{key}:"):
+                return part.split(":", 1)[1]
+        return ""
+
     def test_canonical_memory_field_order(self) -> None:
         assert CANONICAL_MEMORY_FIELDS == (
             "turns",
@@ -177,11 +184,83 @@ class TestCompressHistory:
 
         _, state = compress_history(msgs, keep_turns=1)
 
-        assert "files:src/tok/gateway.py" in state or "files:src/tok/compression.py" in state
+        assert "src/tok/gateway.py" in state or "src/tok/compression.py" in state
         assert "cmds:pytest tests/unit/test_gateway.py" in state
         assert "constraints:" in state
         assert "tests:" in state or "errs:" in state
         assert state.index("turns:") < state.index("goal:")
+
+    def test_suppresses_stale_failures_when_later_pass_exists(self) -> None:
+        msgs = [
+            {"role": "user", "content": "Fix failing tests in src/tok/gateway.py"},
+            {"role": "assistant", "content": "Running pytest tests/unit/test_gateway.py::test_route"},
+            {
+                "role": "user",
+                "content": "FAILED tests/unit/test_gateway.py::test_route - AssertionError",
+            },
+            {"role": "assistant", "content": "Applied patch in src/tok/gateway.py"},
+            {
+                "role": "user",
+                "content": "1 passed in 0.05s for tests/unit/test_gateway.py::test_route",
+            },
+            {"role": "assistant", "content": "Looks good"},
+            {"role": "user", "content": "continue"},
+            {"role": "assistant", "content": "done"},
+        ]
+
+        _, state = compress_history(msgs, keep_turns=1)
+        tests_field = self._state_field(state, "tests").lower()
+        errs_field = self._state_field(state, "errs").lower()
+
+        assert "1 passed" in tests_field
+        assert "test_route_failed" not in tests_field
+        assert "test_route_failed" not in errs_field
+
+    def test_keeps_failure_when_latest_outcome_is_failure(self) -> None:
+        msgs = [
+            {"role": "user", "content": "Fix tests in src/tok/gateway.py"},
+            {"role": "assistant", "content": "Running pytest tests/unit/test_gateway.py::test_route"},
+            {
+                "role": "user",
+                "content": "1 passed in 0.05s for tests/unit/test_gateway.py::test_route",
+            },
+            {"role": "assistant", "content": "Re-running after another edit"},
+            {
+                "role": "user",
+                "content": "FAILED tests/unit/test_gateway.py::test_route - AssertionError",
+            },
+            {"role": "assistant", "content": "Investigating"},
+            {"role": "user", "content": "continue"},
+            {"role": "assistant", "content": "done"},
+        ]
+
+        _, state = compress_history(msgs, keep_turns=1)
+        tests_field = self._state_field(state, "tests").lower()
+        errs_field = self._state_field(state, "errs").lower()
+
+        assert "failed" in tests_field or "failed" in errs_field
+
+    def test_placeholder_file_verification_templates_not_promoted_to_facts(self) -> None:
+        msgs = [
+            {"role": "user", "content": "Please summarize."},
+            {
+                "role": "assistant",
+                "content": (
+                    "Use this format:\n"
+                    "File=<the file that was changed>\n"
+                    "Verification=<the command or result that verified the fix>\n"
+                    "profile=balanced"
+                ),
+            },
+            {"role": "user", "content": "continue"},
+            {"role": "assistant", "content": "done"},
+        ]
+
+        _, state = compress_history(msgs, keep_turns=1)
+        facts_field = self._state_field(state, "facts").lower()
+
+        assert "file:<the" not in facts_field
+        assert "verification:<the" not in facts_field
 
     def test_preserves_tool_result_pairs(self) -> None:
         msgs: list[dict[str, Any]] = [

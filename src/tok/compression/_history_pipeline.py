@@ -153,6 +153,67 @@ def compress_history_impl(
     constraint_scores: dict[str, int] = {}
     question_scores: dict[str, int] = {}
     blocker_scores: dict[str, int] = {}
+    outcome_events: list[dict[str, str | int]] = []
+
+    def _extract_test_anchor(text: str) -> str:
+        test_case = re.search(r"\b(tests?/[\w./-]+::[\w./-]+)\b", text, re.IGNORECASE)
+        if test_case:
+            return test_case.group(1).lower()
+        test_file = re.search(r"\b(tests?/[\w./-]+\.(?:py|ts|tsx|js|jsx|go|rb|rs))\b", text, re.IGNORECASE)
+        if test_file:
+            return test_file.group(1).lower()
+        source_file = re.search(r"\b(src/[\w./-]+\.(?:py|ts|tsx|js|jsx|go|rb|rs))\b", text, re.IGNORECASE)
+        if source_file:
+            return source_file.group(1).lower()
+        return ""
+
+    def _line_outcome_type(line: str) -> str:
+        lowered_line = line.lower()
+        if re.search(r"\b\d+\s+passed\b", lowered_line) or " passed" in lowered_line or "passed " in lowered_line:
+            return "pass"
+        if (
+            re.search(r"\b\d+\s+failed\b", lowered_line)
+            or " failed" in lowered_line
+            or "failed " in lowered_line
+            or "error:" in lowered_line
+            or "assertionerror" in lowered_line
+            or "exception" in lowered_line
+            or "traceback" in lowered_line
+        ):
+            return "fail"
+        return ""
+
+    def _record_outcome_event(line: str, recency_score: int) -> None:
+        outcome = _line_outcome_type(line)
+        if not outcome:
+            return
+        anchor = _extract_test_anchor(line)
+        if not anchor:
+            return
+        outcome_events.append(
+            {
+                "anchor": anchor,
+                "outcome": outcome,
+                "line": _norm(line, 96),
+                "recency_score": recency_score,
+            }
+        )
+
+    def _is_placeholder_fact_value(value: str) -> bool:
+        lowered_value = value.lower()
+        return any(
+            marker in lowered_value
+            for marker in (
+                "<the ",
+                "<the file",
+                "<the command",
+                "<the result",
+                "<the primary",
+                "<the function",
+                "<the class",
+                "<the specific",
+            )
+        )
 
     def _norm(value: str, max_len: int) -> str:
         s = value.strip()
@@ -242,11 +303,11 @@ def compress_history_impl(
             if "?" in stripped or (role == "user" and lowered.startswith(QUESTION_PREFIXES)):
                 _bump(question_scores, stripped[:60], 2 + recency, 60)
 
-    total_old = len(old)
     for idx, msg in enumerate(old):
         text = text_of(msg.get("content", ""))
         role = msg.get("role", "")
-        recency = total_old - idx
+        # Newer evidence should score higher than older evidence.
+        recency = idx + 1
 
         if role == "user":
             user_turns += 1
@@ -282,6 +343,7 @@ def compress_history_impl(
             stripped = line.strip()
             if not stripped:
                 continue
+            _record_outcome_event(stripped, recency)
             cmd_match: re.Match[str] | None = re.search(
                 r"(?:^|\s|>|#|run|exec)\s*(?:sudo\s+)?(pytest|python|python3|uv|npm|pnpm|yarn|cargo|go|git|rg|grep|sed|cat|ls|find|make|bash|sh|pip|docker|kubectl|gcloud|az|aws|gh|code|vi|vim|nano|emacs|test|build|install|update|delete|create|start|stop|restart|status|log|diff|mv|cp|rm|mkdir|rmdir|chmod|chown|pwd|cd|echo|print|export|unset|source|env|which|whereis|type|alias|unalias|history|jobs|fg|bg|kill|ps|top|htop|df|du|free|netstat|ss|curl|wget|ping|traceroute|dig|nslookup|ssh|scp|rsync|tar|zip|unzip|gzip|gunzip|bzip2|bunzip2|xz|unxz|7z|un7z|apt|yum|dnf|pacman|brew|choco|winget|snap|flatpak|gem|bundle|rake|mvn|gradle|cmake)\b",
                 stripped,
@@ -351,11 +413,27 @@ def compress_history_impl(
         ):
             key = match.group(1).lower()
             value = match.group(2).strip()
-            if key not in STOP_WORDS and len(key) > 2:
+            if key not in STOP_WORDS and len(key) > 2 and not _is_placeholder_fact_value(value):
                 facts[key] = _norm(value[:25], 25)
 
     _summarize_causal_failures(old, error_scores, blocker_scores)
     _summarize_decision_hypotheses(old, next_scores, question_scores)
+
+    suppressed_failure_markers: set[str] = set()
+    if outcome_events:
+        latest_event_by_anchor: dict[str, dict[str, str | int]] = {}
+        for event in outcome_events:
+            anchor = str(event["anchor"])
+            latest_event_by_anchor[anchor] = event
+        for event in latest_event_by_anchor.values():
+            if event.get("outcome") == "pass":
+                anchor = str(event.get("anchor", "")).strip()
+                if not anchor:
+                    continue
+                suppressed_failure_markers.add(anchor)
+                anchor_basename = anchor.rsplit("/", 1)[-1]
+                if anchor_basename:
+                    suppressed_failure_markers.add(anchor_basename)
 
     profile = profile or {}
 
@@ -373,6 +451,17 @@ def compress_history_impl(
     top_cmds = _top_items(cmd_scores, _get_int(profile, "cmds", 2))
     top_tests = _top_items(test_scores, _get_int(profile, "tests", 2))
     top_errors = _top_items(error_scores, _get_int(profile, "errs", 2))
+
+    def _mentions_suppressed_failure(item: str) -> bool:
+        lowered_item = item.lower()
+        if not any(fail_word in lowered_item for fail_word in ("failed", "error", "exception", "traceback")):
+            return False
+        return any(marker and marker in lowered_item for marker in suppressed_failure_markers)
+
+    if suppressed_failure_markers:
+        top_tests = [item for item in top_tests if not _mentions_suppressed_failure(item)]
+        top_errors = [item for item in top_errors if not _mentions_suppressed_failure(item)]
+
     top_constraints = _top_items(constraint_scores, _get_int(profile, "constraints", 2))
     top_questions = _top_items(question_scores, _get_int(profile, "questions", 2))
     top_blockers = _top_items(blocker_scores, _get_int(profile, "blockers", 2))
