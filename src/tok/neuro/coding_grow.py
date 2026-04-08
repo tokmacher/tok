@@ -20,3 +20,4 @@ class TokifyResult:
 
 def tokify_code(_code: str) -> TokifyResult:
     """Stub for tokify_code function."""
+    return TokifyResult([])

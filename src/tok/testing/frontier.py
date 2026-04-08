@@ -9,7 +9,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -194,7 +194,7 @@ class CompressionFrontierReport:
     benchmarks: list[str]
     repeats: int
     openrouter_prompt: str
-    openrouter_turn_sets: list[int]
+    openrouter_turn_sets: Sequence[int]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1060,7 +1060,7 @@ def run_checkpoint_frontier(
     provider_options: dict[str, Any] | None = None,
     pricing: dict[str, float] | None = None,
     openrouter_prompt: str,
-    openrouter_turn_sets: list[int],
+    openrouter_turn_sets: Sequence[int],
     openrouter_delay_seconds: float,
     openrouter_api_key: str | None = None,
     openrouter_api_base: str = "https://openrouter.ai/api/v1",
@@ -1134,7 +1134,7 @@ def run_frontier_report(
     provider_options: dict[str, Any] | None = None,
     pricing: dict[str, float] | None = None,
     openrouter_prompt: str = "Give me a one-line repo summary.",
-    openrouter_turn_sets: list[int] | None = None,
+    openrouter_turn_sets: Sequence[int] | None = None,
     openrouter_delay_seconds: float = 0.2,
     openrouter_api_key: str | None = None,
     openrouter_api_base: str = "https://openrouter.ai/api/v1",

@@ -428,7 +428,8 @@ def _canonicalize_bridge_message(
         return {"role": role, "content": []}, {}
 
     canonical_role = "assistant" if role == "assistant" else "user"
-    blocks, drops = _normalize_message_content_to_blocks(message.get("content"))
+    raw_content = message.get("content")
+    blocks, drops = _normalize_message_content_to_blocks(raw_content if isinstance(raw_content, (str, list)) else "")
     if canonical_role == "user":
         filtered_blocks: list[dict[str, Any]] = []
         for block in blocks:
@@ -921,7 +922,7 @@ def _process_bridged_message(
         return None, True
 
     if not changed and not preserve_content:
-        changed = _check_changed_content(msg, orig_content, role)
+        changed = _check_changed_content(msg, orig_content if isinstance(orig_content, (str, list)) else "", role)
 
     return msg, changed
 
@@ -1022,10 +1023,11 @@ def _get_protected_message_info(
     for i, msg in enumerate(messages):
         if id(msg) == protected_original_identity:
             content = msg.get("content")
+            typed_content = content if isinstance(content, list) else []
             return (
-                _content_hash(content),
-                _block_type_sequence(content),
-                _has_thinking_with_signature(content),
+                _content_hash(typed_content),
+                _block_type_sequence(typed_content),
+                _has_thinking_with_signature(typed_content),
                 i,
             )
     return None, [], False, None
@@ -1487,7 +1489,9 @@ def _collect_bridge_tool_result_shape_risks(
             _flush_pending_tool_uses(risks, pending_tool_use_ids)
             if isinstance(content, list):
                 _detect_thinking_between_tool_use(content, risks)
-            pending_tool_use_ids = _process_assistant_tool_ids(content, seen_tool_use_ids)
+            pending_tool_use_ids = _process_assistant_tool_ids(
+                content if isinstance(content, list) else [], seen_tool_use_ids
+            )
             awaiting_tool_results_for_message = bool(pending_tool_use_ids)
             user_already_responded_to_current_assistant = False
             continue
@@ -1648,7 +1652,7 @@ def summarize_message_structure(
             summary["assistant_msgs"] += 1
 
         content = msg.get("content")
-        blocks_summary = _summarize_message_blocks(content, summary)
+        blocks_summary = _summarize_message_blocks(content if isinstance(content, list) else [], summary)
 
         role_seq.append(f"{role}[{','.join(blocks_summary)}]")
 

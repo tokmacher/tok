@@ -939,11 +939,6 @@ class LiveBenchmarkRunner:
 
         # Identity logging for pointer registry continuity
         id(runtime)
-        (
-            id(runtime._state.pointers)
-            if hasattr(runtime, "_state") and hasattr(runtime._state, "pointers")
-            else "unknown"
-        )
 
         if canonical_mode not in {
             "baseline",
@@ -1065,18 +1060,22 @@ class LiveBenchmarkRunner:
                     )
                     prepared_body = dict(prepared.body)
                     if canonical_mode == "tok-minimal":
+                        sys_val = prepared_body.get("system")
                         prepared_body["system"] = _minimalize_system_prompt(
-                            prepared_body.get("system"),
+                            sys_val if isinstance(sys_val, (str, list, dict)) else "",
                             definition.system_prompt,
                         )
                     chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get("messages", [])
                     prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
                     prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
+                    sys_val2 = prepared_body.get("system")
                     (
                         system_tokens_estimate,
                         directive_tokens_estimate,
                         state_payload_tokens_estimate,
-                    ) = _system_breakdown(definition.system_prompt, prepared_body.get("system"))
+                    ) = _system_breakdown(
+                        definition.system_prompt, sys_val2 if isinstance(sys_val2, (str, list, dict)) else ""
+                    )
                     outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
                     tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
                     tok_overhead_tokens = max(
@@ -1410,11 +1409,11 @@ def summarize_compare_runs(
             results = [run[mode] for run in repeated_results if mode in run]
         if not results:
             continue
-        total_tokens = [result.provider_usage.total_tokens for result in results]
-        prompt_tokens = [result.provider_usage.prompt_tokens for result in results]
-        completion_tokens = [result.provider_usage.completion_tokens for result in results]
-        latency_ms = [result.provider_usage.latency_ms for result in results]
-        successes = sum(1 for result in results if result.task_success)
+        total_tokens = [result.provider_usage.total_tokens for result in results if result is not None]
+        prompt_tokens = [result.provider_usage.prompt_tokens for result in results if result is not None]
+        completion_tokens = [result.provider_usage.completion_tokens for result in results if result is not None]
+        latency_ms = [result.provider_usage.latency_ms for result in results if result is not None]
+        successes = sum(1 for result in results if result is not None and result.task_success)
 
         mode_summaries[mode] = {
             "runs": len(results),

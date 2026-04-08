@@ -61,7 +61,7 @@ async def _aclose_if_possible(resource: object | None) -> None:
         return
     resource_aclose = getattr(resource, "aclose", None)
     if callable(resource_aclose):
-        await resource_aclose()
+        await resource_aclose()  # type: ignore[misc]
 
 
 async def _close_streaming_setup_resources(

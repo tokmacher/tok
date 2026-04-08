@@ -130,6 +130,8 @@ def run_legacy_turn(prompt: str, format_name: str) -> int:
         ),
     }
 
+    if client is None:
+        return 0
     try:
         completion = client.chat.completions.create(
             model=MODEL,
