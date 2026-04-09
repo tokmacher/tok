@@ -14,14 +14,6 @@ def _get_header_value(headers: dict[str, str], name: str) -> str:
     return ""
 
 
-def _request_uses_prompt_caching(headers: dict[str, str], body: dict[str, Any]) -> bool:
-    """Return True when the inbound request uses Anthropic prompt caching."""
-    beta_header = _get_header_value(headers, "anthropic-beta")
-    if "prompt-caching" in beta_header:
-        return True
-    return bool(isinstance(body, dict) and _body_has_cache_control(body))
-
-
 def _system_fingerprint(system: object) -> dict[str, int | str]:
     """Summarize system shape without logging raw content."""
     if system is None:
@@ -110,15 +102,6 @@ def _request_body_fingerprint(headers: dict[str, str], body: dict[str, Any]) -> 
         "system": system,
         "cache_control": cache_counts,
     }
-
-
-def _system_value_for_compare(body: dict[str, Any]) -> object:
-    """Treat missing system and empty-string system equivalently for compare."""
-    has_system = "system" in body
-    system = body.get("system")
-    if system == "" and not has_system:
-        return None
-    return system
 
 
 def _body_has_cache_control(value: object) -> bool:

@@ -1676,11 +1676,11 @@ class TestCLI:
         )
         monkeypatch.setattr(
             "tok.testing.live_benchmark.render_comparison_markdown",
-            lambda baseline, comparisons: "# compare\n",
+            lambda baseline, _comparisons: "# compare\n",
         )
         monkeypatch.setattr(
             "tok.testing.live_benchmark.select_preferred_mode",
-            lambda baseline, comparisons: "tok-universal",
+            lambda _baseline, _comparisons: "tok-universal",
         )
 
         output_dir = tmp_path / "artifacts"

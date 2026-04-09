@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "task_id": "qa.attrs.frozen-slots-boundary",
+  "repo": "python-attrs/attrs",
+  "upstream_ref": "24.2.0",
+  "resolved_commit": "9624b085d2baae5e28e57382af430054cb9a30e1",
+  "asset_builder_version": "1",
+  "created_at": "2026-04-09T13:41:16.948771+00:00",
+  "workspace_sha256": "d647d15f303bbe65ea458398fbade221dbc7c02a99b0bd83c7795fe0cda656cd"
+}

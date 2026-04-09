@@ -1237,7 +1237,7 @@ def compress_recent_window_impl(
 
     def _first_exact_guard(
         context: dict[str, Any] | None,
-        raw: str,
+        _raw: str,
     ) -> bool:
         """Guard first exact observation from compression."""
         if first_exact_evidence_seen is None or not context:

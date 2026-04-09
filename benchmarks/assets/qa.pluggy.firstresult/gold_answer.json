@@ -1,0 +1,46 @@
+{
+  "required_files": [
+    "src/pluggy/_hooks.py",
+    "src/pluggy/_callers.py"
+  ],
+  "required_symbols": [
+    "firstresult",
+    "_multicall"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "src/pluggy/_hooks.py",
+        "src/pluggy/_callers.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "firstresult",
+        "_multicall"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "src/pluggy/_hooks.py",
+      "anchor": "firstresult",
+      "why": "firstresult is declared here",
+      "start_line": 45,
+      "end_line": 45
+    },
+    {
+      "file": "src/pluggy/_callers.py",
+      "anchor": "def _multicall",
+      "why": "call short-circuiting happens here",
+      "start_line": 53,
+      "end_line": 53
+    }
+  ]
+}

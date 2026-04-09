@@ -1,0 +1,46 @@
+{
+  "required_files": [
+    "src/tok/gateway/_bridge_streaming.py",
+    "tests/unit/test_bridge_streaming_lifecycle.py"
+  ],
+  "required_symbols": [
+    "passthrough_stream_impl",
+    "buffer_strip_restream_impl"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "src/tok/gateway/_bridge_streaming.py",
+        "tests/unit/test_bridge_streaming_lifecycle.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "passthrough_stream_impl",
+        "buffer_strip_restream_impl"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "src/tok/gateway/_bridge_streaming.py",
+      "anchor": "async def passthrough_stream_impl",
+      "why": "stream ownership path",
+      "start_line": 204,
+      "end_line": 204
+    },
+    {
+      "file": "tests/unit/test_bridge_streaming_lifecycle.py",
+      "anchor": "test_passthrough_stream_impl_closes_owned_resources_on_iteration_failure",
+      "why": "lifecycle behavior is verified here",
+      "start_line": 88,
+      "end_line": 88
+    }
+  ]
+}

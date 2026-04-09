@@ -14,11 +14,15 @@ import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+try:
+    from _uv_lock import load_uv_lock, parse_upload_time
+except ImportError:  # pragma: no cover - import path differs under tests
+    from scripts._uv_lock import load_uv_lock, parse_upload_time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -40,115 +44,9 @@ PACKAGE_NAME_REGEX = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0
 VERSION_REGEX = re.compile(r"^[a-zA-Z0-9._+-]+$")
 
 
-def _read_lock_file() -> list[str]:
-    """Read the uv.lock file and return its lines."""
-    lock_file = Path("uv.lock")
-    if not lock_file.exists():
-        logger.error("uv.lock file not found")
-        sys.exit(1)
-
-    try:
-        with open(lock_file, encoding="utf-8") as f:
-            return f.readlines()
-    except OSError as e:
-        logger.exception(f"Failed to read uv.lock file: {e}")
-        sys.exit(1)
-
-
-def _update_package_field(package: dict[str, Any], key: str, value: str, line_num: int) -> None:
-    """Update a single field in the package based on the key."""
-    if key == "version":
-        _set_package_version(package, value, line_num)
-    elif key == "hash":
-        package["hash"] = value
-    elif key == "url":
-        _set_package_url(package, value, line_num)
-    elif key == "dependencies":
-        deps = _parse_dependencies(value, line_num)
-        if deps:
-            package["dependencies"] = deps
-
-
-def _process_lock_line(
-    line: str,
-    line_num: int,
-    current_package: dict[str, Any] | None,
-    packages: list[dict[str, Any]],
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    """Process a single line from the lock file."""
-    stripped = line.strip()
-    if not stripped or "=" not in stripped:
-        return current_package, packages
-
-    key, value = _split_lock_line(stripped)
-
-    if key == "name":
-        if current_package:
-            packages.append(current_package)
-        return _begin_package(value, line_num), packages
-
-    if current_package:
-        _update_package_field(current_package, key, value, line_num)
-
-    return current_package, packages
-
-
 def parse_uv_lock() -> list:
     """Parse uv.lock file to extract package information."""
-    lines = _read_lock_file()
-    packages: list[dict[str, Any]] = []
-    current_package: dict[str, Any] | None = None
-
-    for line_num, raw_line in enumerate(lines, 1):
-        current_package, packages = _process_lock_line(raw_line, line_num, current_package, packages)
-
-    if current_package:
-        packages.append(current_package)
-
-    logger.info(f"Parsed {len(packages)} packages from uv.lock")
-    return packages
-
-
-def _split_lock_line(line: str) -> tuple[str, str]:
-    key, value = line.split("=", 1)
-    return key.strip(), value.strip().strip('"')
-
-
-def _begin_package(name: str, line_num: int) -> dict[str, Any] | None:
-    if not validate_package_name(name):
-        logger.warning(f"Invalid package name at line {line_num}: {name}")
-        return None
-    return {"name": name}
-
-
-def _set_package_version(package: dict[str, Any], version: str, line_num: int) -> None:
-    if not validate_version(version):
-        logger.warning(f"Invalid version at line {line_num}: {version}")
-        return
-    package["version"] = version
-
-
-def _set_package_url(package: dict[str, Any], url: str, line_num: int) -> None:
-    if not any(url.startswith(source) for source in SECURITY_CONFIG["allowed_sources"]):
-        logger.warning(f"Untrusted package source at line {line_num}: {url}")
-        return
-    package["url"] = url
-
-
-def _parse_dependencies(value: str, line_num: int) -> list[str]:
-    if not value.startswith("[") or not value.endswith("]"):
-        return []
-    deps_list = value[1:-1]
-    dependencies = []
-    for dep in deps_list.split(","):
-        candidate = dep.strip().strip('"')
-        if not candidate:
-            continue
-        if validate_package_name(candidate):
-            dependencies.append(candidate)
-        else:
-            logger.warning(f"Invalid dependency at line {line_num}: {candidate}")
-    return dependencies
+    return load_uv_lock()
 
 
 def validate_package_name(package_name: str) -> bool:
@@ -221,39 +119,61 @@ def get_package_security_data(package_name: str, version: str) -> dict:
             verify=True,  # SSL verification enabled
         )
 
+        if response.status_code == 404:
+            logger.warning(f"Package metadata not found on PyPI for {package_name}@{version}")
+            return {}
+
         response.raise_for_status()
         data = response.json()
 
         # Validate response structure
-        if not isinstance(data, dict) or "releases" not in data:
+        if not isinstance(data, dict):
             logger.warning(f"Invalid response structure for {package_name}@{version}")
             return {}
 
-        # Extract relevant security information with validation
-        uploads = data.get("uploads", [])
-        releases = data.get("releases", {}).get(version, [])
+        artifacts = data.get("urls", [])
+        if not isinstance(artifacts, list):
+            logger.warning(f"Invalid versioned artifact list for {package_name}@{version}")
+            return {}
+
+        upload_times = [
+            parsed
+            for artifact in artifacts
+            if isinstance(artifact, dict)
+            for parsed in [
+                parse_upload_time(str(artifact.get("upload_time_iso_8601") or artifact.get("upload_time") or ""))
+            ]
+            if parsed is not None
+        ]
+        earliest_upload = min(upload_times) if upload_times else None
 
         return {
-            "upload_time": uploads[0].get("upload_time") if uploads else None,
-            "package_size": sum(f.get("size", 0) for f in releases if isinstance(f, dict)),
-            "has_wheel": any(isinstance(f, dict) and f.get("packagetype") == "bdist_wheel" for f in releases),
-            "has_source": any(isinstance(f, dict) and f.get("packagetype") == "sdist" for f in releases),
+            "upload_time": (
+                earliest_upload.isoformat().replace("+00:00", "Z") if earliest_upload is not None else None
+            ),
+            "package_size": sum(int(artifact.get("size", 0)) for artifact in artifacts if isinstance(artifact, dict)),
+            "has_wheel": any(
+                isinstance(artifact, dict) and artifact.get("packagetype") == "bdist_wheel" for artifact in artifacts
+            ),
+            "has_source": any(
+                isinstance(artifact, dict) and artifact.get("packagetype") == "sdist" for artifact in artifacts
+            ),
         }
 
     except requests.exceptions.SSLError as e:
-        logger.exception(f"SSL error fetching {package_name}@{version}: {e}")
+        logger.warning(f"SSL error fetching {package_name}@{version}: {e}")
         return {}
     except requests.exceptions.Timeout as e:
-        logger.exception(f"Timeout fetching {package_name}@{version}: {e}")
+        logger.warning(f"Timeout fetching {package_name}@{version}: {e}")
         return {}
     except requests.exceptions.RequestException as e:
-        logger.exception(f"Network error fetching {package_name}@{version}: {e}")
+        logger.warning(f"Network error fetching {package_name}@{version}: {e}")
         return {}
     except (json.JSONDecodeError, ValueError) as e:
-        logger.exception(f"Invalid JSON response for {package_name}@{version}: {e}")
+        logger.warning(f"Invalid JSON response for {package_name}@{version}: {e}")
         return {}
     except Exception as e:
-        logger.exception(f"Unexpected error fetching {package_name}@{version}: {e}")
+        logger.warning(f"Unexpected error fetching {package_name}@{version}: {e}")
         return {}
     finally:
         session.close()
@@ -272,13 +192,22 @@ def analyze_dependency_tree(packages: list) -> dict:
         if not name:
             continue
 
+        lock_upload_time = package.get("upload_time")
+        security_data = {}
+        if not package.get("editable"):
+            security_data = get_package_security_data(name, version)
+
         package_info[name] = {
             "version": version,
-            "hash": package.get("hash", ""),
-            "url": package.get("url", ""),
+            "artifact_hash": package.get("artifact_hash", ""),
+            "artifact_url": package.get("artifact_url", ""),
+            "source": package.get("source", {}),
+            "editable": package.get("editable"),
             "dependencies": package.get("dependencies", []),
-            **get_package_security_data(name, version),
+            **security_data,
         }
+        if package_info[name].get("upload_time") is None and lock_upload_time is not None:
+            package_info[name]["upload_time"] = lock_upload_time.isoformat().replace("+00:00", "Z")
 
         for dep in package.get("dependencies", []):
             dependency_graph[name].add(dep)
@@ -289,7 +218,7 @@ def analyze_dependency_tree(packages: list) -> dict:
         "summary": {
             "total_packages": len(packages),
             "total_dependencies": sum(len(p.get("dependencies", [])) for p in packages),
-            "packages_with_hashes": sum(1 for p in packages if p.get("hash")),
+            "packages_with_hashes": sum(1 for p in packages if p.get("hashes")),
             "packages_with_wheels": sum(
                 1 for p in packages if package_info.get(p.get("name", ""), {}).get("has_wheel")
             ),
@@ -297,8 +226,13 @@ def analyze_dependency_tree(packages: list) -> dict:
             / (1024 * 1024),
         },
         "security_metrics": {
-            "packages_with_integrity_checks": sum(1 for p in packages if p.get("hash")),
-            "packages_from_trusted_sources": sum(1 for p in packages if "pypi.org" in p.get("url", "")),
+            "packages_with_integrity_checks": sum(1 for p in packages if p.get("hashes")),
+            "packages_from_trusted_sources": sum(
+                1
+                for p in packages
+                if "pypi.org" in str(p.get("artifact_url", ""))
+                or "pypi.org" in str(p.get("source", {}).get("registry", ""))
+            ),
             "recent_packages": 0,  # Will be calculated below
         },
         "dependency_analysis": {
@@ -344,7 +278,10 @@ def calculate_max_depth(graph: dict) -> int:
 
         return max_depth
 
-    return max(get_depth(pkg) for pkg in graph)
+    if not graph:
+        return 0
+
+    return max((get_depth(pkg) for pkg in graph), default=0)
 
 
 def find_most_depended_upon(graph: dict) -> list:

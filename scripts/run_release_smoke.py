@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -305,6 +306,16 @@ with tempfile.TemporaryDirectory(prefix="tok-clean-import-") as td:
     "exec(code, globals(), globals())",
 )
 
+SMOKE_LEGACY_BENCHMARKS: tuple[str, ...] = ("coding-loop-5", "research-loop-5")
+SMOKE_CATALOG_TASKS: tuple[str, ...] = (
+    "exec.click.option-precedence",
+    "exec.rich.overflow-markup",
+    "qa.click.option-precedence",
+    "qa.pluggy.hook-discovery",
+    "qa.rich.markup-pipeline",
+    "qa.tok.api-base-plumbing",
+)
+
 
 SMOKE_STEPS: tuple[SmokeStep, ...] = (
     # Baseline command visibility.
@@ -378,8 +389,115 @@ def _run_step(step: SmokeStep) -> int:
     return completed.returncode
 
 
-def main() -> int:
-    for step in SMOKE_STEPS:
+def _benchmark_steps(
+    *,
+    benchmark_mode: str,
+    benchmark_output: Path,
+    model: str,
+    private_evaluator_root: Path | None,
+) -> tuple[SmokeStep, ...]:
+    if benchmark_mode == "none":
+        return ()
+
+    benchmark_output = benchmark_output.resolve()
+    legacy_benchmarks = ",".join(SMOKE_LEGACY_BENCHMARKS)
+    live_benchmark_command: list[str] = [
+        *UV_RUN_PREFIX,
+        "tok",
+        "dev",
+        "live-benchmark",
+        "--program",
+        "both",
+        "--mode",
+        "compare",
+        "--model",
+        model,
+        "--output",
+        str(benchmark_output),
+        "--legacy-benchmarks",
+        legacy_benchmarks,
+    ]
+    if benchmark_mode == "smoke":
+        for task_id in SMOKE_CATALOG_TASKS:
+            live_benchmark_command.extend(["--task", task_id])
+    elif benchmark_mode == "public_full":
+        live_benchmark_command.append("--public-release-only")
+    else:
+        raise ValueError(f"unsupported benchmark mode: {benchmark_mode}")
+    if private_evaluator_root is not None:
+        live_benchmark_command.extend(["--private-evaluator-root", str(private_evaluator_root.resolve())])
+
+    gate_check_command = [
+        *UV_RUN_PREFIX,
+        "tok",
+        "gate-check",
+        "tests/fixtures/replay",
+        "--stability-dir",
+        str(benchmark_output / "legacy"),
+        "--benchmark-report",
+        str(benchmark_output / "catalog" / "report.json"),
+        "--continue-on-error",
+    ]
+    return (
+        SmokeStep(f"Benchmark {benchmark_mode}", tuple(live_benchmark_command)),
+        SmokeStep("Benchmark gate-check", tuple(gate_check_command)),
+    )
+
+
+def build_steps(
+    *,
+    benchmark_mode: str,
+    benchmark_output: Path,
+    model: str,
+    private_evaluator_root: Path | None,
+) -> tuple[SmokeStep, ...]:
+    return (
+        *SMOKE_STEPS,
+        *_benchmark_steps(
+            benchmark_mode=benchmark_mode,
+            benchmark_output=benchmark_output,
+            model=model,
+            private_evaluator_root=private_evaluator_root,
+        ),
+    )
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--benchmark-mode",
+        choices=("none", "smoke", "public_full"),
+        default="none",
+        help="Optional live benchmark sweep to append after the baseline smoke steps",
+    )
+    parser.add_argument(
+        "--benchmark-output",
+        type=Path,
+        default=ROOT / "tmp" / "benchmark-smoke",
+        help="Artifact directory for benchmark smoke outputs",
+    )
+    parser.add_argument(
+        "--model",
+        default="anthropic/claude-sonnet-4.6",
+        help="Model identifier to use for live benchmark smoke",
+    )
+    parser.add_argument(
+        "--private-evaluator-root",
+        type=Path,
+        default=None,
+        help="Optional private evaluator overlay for claimable execution benchmarks",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    for step in build_steps(
+        benchmark_mode=args.benchmark_mode,
+        benchmark_output=args.benchmark_output,
+        model=args.model,
+        private_evaluator_root=args.private_evaluator_root,
+    ):
         exit_code = _run_step(step)
         if exit_code != 0:
             return exit_code

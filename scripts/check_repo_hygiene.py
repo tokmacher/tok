@@ -23,10 +23,12 @@ ALLOWED_TOP_LEVEL_FILES = frozenset(
         "LICENSE",
         "NOTICE",
         "README.md",
+        "ROADMAP.md",
         "SECURITY.md",
         "gate-config.json",
         "pyproject.toml",
         "roadmap.md",
+        "sbom.spdx",
         "uv.lock",
     }
 )

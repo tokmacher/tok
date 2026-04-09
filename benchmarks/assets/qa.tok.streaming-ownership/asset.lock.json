@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "task_id": "qa.tok.streaming-ownership",
+  "repo": "tok",
+  "upstream_ref": "HEAD",
+  "resolved_commit": "ee47179567d63e3d3bf8ab47009f54ec06194ceb",
+  "asset_builder_version": "1",
+  "created_at": "2026-04-09T13:41:18.353780+00:00",
+  "workspace_sha256": "bd4928c3ecae0afdbeb4c34d327c4002aeee77ec16fb97bf4ec707eab2dfaee5"
+}

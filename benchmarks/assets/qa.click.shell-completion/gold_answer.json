@@ -1,0 +1,46 @@
+{
+  "required_files": [
+    "src/click/shell_completion.py",
+    "tests/test_shell_completion.py"
+  ],
+  "required_symbols": [
+    "ShellComplete",
+    "add_completion_class"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "src/click/shell_completion.py",
+        "tests/test_shell_completion.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "ShellComplete",
+        "add_completion_class"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "src/click/shell_completion.py",
+      "anchor": "class ShellComplete",
+      "why": "completion dispatch is implemented here",
+      "start_line": 192,
+      "end_line": 192
+    },
+    {
+      "file": "tests/test_shell_completion.py",
+      "anchor": "def test_help_option",
+      "why": "help-option completion registration is verified here",
+      "start_line": 70,
+      "end_line": 70
+    }
+  ]
+}

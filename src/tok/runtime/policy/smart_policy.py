@@ -84,7 +84,7 @@ def identify_model_family(model: str) -> ModelFamily:
     return ModelFamily(provider="unknown", family="unknown")
 
 
-def policy_for_model(model: str) -> SmartZonePolicy:
+def policy_for_model(_model: str) -> SmartZonePolicy:
     """Return the smart zone policy for a given model."""
     family = ModelFamily(provider="universal", family="universal")
     return _make_policy(

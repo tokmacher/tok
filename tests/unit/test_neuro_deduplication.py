@@ -43,7 +43,8 @@ def test_op_sequence_deduplication_across_args() -> None:
 
 def test_production_distiller_compaction() -> None:
     class MockLLM(StubClient):
-        def chat(self, system: str, user: str) -> str:
+        def chat(self, *, system: str, user: str) -> str:
+            _ = user  # unused but required by parent interface
             return "Rule: Distilled Skill"
 
     llm = MockLLM()

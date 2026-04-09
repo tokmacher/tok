@@ -6,45 +6,23 @@ Generates SPDX 2.3 format Software Bill of Materials.
 """
 
 import json
-import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from _uv_lock import load_uv_lock, normalize_hash
+except ImportError:  # pragma: no cover - import path differs under tests
+    from scripts._uv_lock import load_uv_lock, normalize_hash
 
-def parse_uv_lock() -> list[dict[str, str]]:
+
+def parse_uv_lock() -> list[dict[str, Any]]:
     """Parse uv.lock file to extract package information."""
-    lock_file = Path("uv.lock")
-    if not lock_file.exists():
-        sys.exit(1)
-
-    packages: list[dict[str, str]] = []
-    current_package: dict[str, str] = {}
-
-    with lock_file.open() as f:
-        lines = f.readlines()
-
-    for line in lines:
-        line = line.strip()
-        if line.startswith("name = "):
-            if current_package:
-                packages.append(current_package)
-            current_package = {"name": line.split("=")[1].strip().strip('"')}
-        elif line.startswith("version = ") and current_package:
-            current_package["version"] = line.split("=")[1].strip().strip('"')
-        elif line.startswith("hash = ") and current_package:
-            current_package["hash"] = line.split("=")[1].strip().strip('"')
-        elif line.startswith("url = ") and current_package:
-            current_package["url"] = line.split("=")[1].strip().strip('"')
-
-    if current_package:
-        packages.append(current_package)
-
-    return packages
+    return load_uv_lock()
 
 
-def generate_spdx_sbom(packages: list[dict[str, str]]) -> dict[str, Any]:
+def generate_spdx_sbom(packages: list[dict[str, Any]]) -> dict[str, Any]:
     """Generate SPDX 2.3 format SBOM."""
     # Document creation info
     creation_info = {
@@ -92,8 +70,8 @@ def generate_spdx_sbom(packages: list[dict[str, str]]) -> dict[str, Any]:
     for package in packages:
         package_name = package.get("name", "")
         version = package.get("version", "")
-        package_hash = package.get("hash", "")
-        package_url = package.get("url", "")
+        package_hash = str(package.get("artifact_hash", ""))
+        package_url = str(package.get("artifact_url", ""))
 
         if not package_name or not version:
             continue
@@ -118,7 +96,12 @@ def generate_spdx_sbom(packages: list[dict[str, str]]) -> dict[str, Any]:
 
         # Add checksum if available
         if package_hash:
-            spdx_package["checksums"] = [{"algorithm": "SHA256", "checksumValue": package_hash}]
+            spdx_package["checksums"] = [
+                {
+                    "algorithm": "SHA256",
+                    "checksumValue": normalize_hash(package_hash),
+                }
+            ]
 
         document_packages.append(spdx_package)
 

@@ -625,7 +625,7 @@ def _profile_summary(
 
 def _frontier_release_profile(
     benchmark_profiles: list[FrontierProfileSummary],
-    openrouter_profiles: list[FrontierOpenRouterSummary],
+    _openrouter_profiles: list[FrontierOpenRouterSummary],
 ) -> tuple[str, list[str]]:
     stable_profiles = {profile.profile.name for profile in benchmark_profiles if profile.verdict == "stable"}
     if stable_profiles:

@@ -1,15 +1,9 @@
 """Code sifter utilities for extracting function signatures and generating hashes."""
 
 import ast
-import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-
-def generate_verbatim_hash(source_code: str) -> str:
-    """Generate MD5 hash of source code (first 6 chars)."""
-    return hashlib.md5(source_code.encode()).hexdigest()[:6]  # nosec B324
 
 
 def extract_args_info(args: ast.arguments) -> list[str]:
@@ -87,30 +81,6 @@ def extract_class_info(class_def: ast.ClassDef) -> dict[str, Any]:
         "bases": bases,
         "decorators": [d.id for d in class_def.decorator_list if isinstance(d, ast.Name)],
     }
-
-
-def get_source_without_docstring(tree: ast.AST, source: str) -> str:
-    """Remove docstring from function/class body."""
-    if not isinstance(tree, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-        return source
-
-    if not tree.body:
-        return source
-
-    first_stmt = tree.body[0]
-    if (
-        isinstance(first_stmt, ast.Expr)
-        and isinstance(first_stmt.value, ast.Str | ast.Constant)
-        and isinstance(first_stmt.value, ast.Constant)
-        and isinstance(first_stmt.value.value, str)
-    ):
-        lines = source.split("\n")
-        if lines:
-            docstring_end = first_stmt.end_lineno
-            if docstring_end is None:
-                return source
-            return "\n".join(lines[docstring_end - tree.lineno :])
-    return source
 
 
 def _minify_python(source_code: str) -> str:
@@ -212,10 +182,6 @@ class Sifter:
             result = chr((n % 26) + 65) + result
             n = (n // 26) - 1
         return result
-
-    @classmethod
-    def reset_pointers(cls) -> None:
-        cls._pointer_counter = 0
 
     def _add_method_entries(
         self,
@@ -565,16 +531,3 @@ class Sifter:
 
         with open(file_path, "w", encoding="utf-8") as f:
             f.write("\n\n".join(content_parts) + "\n")
-
-    @staticmethod
-    def to_dir(tok_string: str, output_path: str) -> None:
-        """Reconstructs a Python codebase from a v1.8.1 Tok source-map."""
-        chunks = Sifter._parse_corpus_chunks(tok_string)
-        module_members = Sifter._parse_module_members(tok_string)
-
-        out_dir = Path(output_path)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "__init__.py").touch()
-
-        for module_name, data in module_members.items():
-            Sifter._write_module(module_name, data, chunks, out_dir)

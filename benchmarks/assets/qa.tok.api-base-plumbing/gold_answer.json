@@ -1,0 +1,48 @@
+{
+  "required_files": [
+    "src/tok/cli/_bridge_commands.py",
+    "src/tok/gateway/__init__.py",
+    "tests/smoke/test_api_base_smoke.py"
+  ],
+  "required_symbols": [
+    "bridge_start",
+    "TOK_API_BASE"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "src/tok/cli/_bridge_commands.py",
+        "src/tok/gateway/__init__.py",
+        "tests/smoke/test_api_base_smoke.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "bridge_start",
+        "TOK_API_BASE"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "src/tok/cli/_bridge_commands.py",
+      "anchor": "def bridge_start",
+      "why": "CLI entry point for api-base override",
+      "start_line": 12,
+      "end_line": 12
+    },
+    {
+      "file": "tests/smoke/test_api_base_smoke.py",
+      "anchor": "test_explicit_api_base_wins_over_default_env",
+      "why": "override behavior is verified here",
+      "start_line": 218,
+      "end_line": 218
+    }
+  ]
+}

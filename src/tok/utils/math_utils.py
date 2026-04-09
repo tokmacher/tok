@@ -7,7 +7,7 @@ def add(x: float, y: float) -> float:
 
 
 def subtract(x: float, y: float) -> float:
-    """Subtract y from x."""
+    """Subtract two numbers."""
     return x - y
 
 
@@ -17,8 +17,7 @@ def multiply(x: float, y: float) -> float:
 
 
 def divide(x: float, y: float) -> float:
-    """Divide x by y, raising ValueError on division by zero."""
+    """Divide two numbers, raise ValueError if divisor is zero."""
     if y == 0:
-        msg = "Cannot divide by zero"
-        raise ValueError(msg)
+        raise ValueError("Cannot divide by zero")
     return x / y

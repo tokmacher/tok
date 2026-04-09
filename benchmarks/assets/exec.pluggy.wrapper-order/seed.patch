@@ -1,0 +1,13 @@
+diff --git a/src/pluggy/_callers.py b/src/pluggy/_callers.py
+index d01f925..2ba8fb4 100644
+--- a/src/pluggy/_callers.py
++++ b/src/pluggy/_callers.py
+@@ -68,7 +68,7 @@ def _multicall(
+     try:  # run impl and wrapper setup functions in a loop
+         teardowns: list[Teardown] = []
+         try:
+-            for hook_impl in reversed(hook_impls):
++            for hook_impl in hook_impls:
+                 try:
+                     args = [caller_kwargs[argname] for argname in hook_impl.argnames]
+                 except KeyError:

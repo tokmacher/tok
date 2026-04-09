@@ -29,6 +29,7 @@ from .pipeline.response_processing import (
     _is_strict_structured_answer_response,
     _visible_text_from_content_blocks,
     heal_drift,
+    is_safe_visible_contract_output,
     response_behavior_signals,
     response_contract_for_mode,
 )
@@ -251,6 +252,49 @@ def process_response_impl(
     ).strip()
     has_tool = any(block.get("type") == "tool_use" for block in contract.content_blocks)
     has_answer_text = _is_answer_like_visible_text(visible_text)
+
+    natural_response_acceptable = bool(getattr(session, "_natural_response_acceptable_this_turn", False))
+    recovered_valid = is_safe_visible_contract_output(
+        visible_text,
+        content_blocks=contract.content_blocks,
+        expected_labels=expected_labels,
+        session=session,
+    )
+    malformed_present = any(
+        merged_signals.get(key, 0) > 0
+        for key in (
+            "malformed_tok_response",
+            "malformed_tok_hybrid_tool",
+            "malformed_tok_non_inverted_msg",
+            "malformed_tok_markdown_fallback",
+            "malformed_tok_bad_header",
+        )
+    )
+    suppress_contract_friction = natural_response_acceptable or (
+        strict_structured_answer and not malformed_present and not merged_signals.get("tok_drift_healed")
+    )
+    if recovered_valid and (
+        natural_response_acceptable
+        or strict_structured_answer
+        or merged_signals.get("tok_drift_healed")
+        or malformed_present
+    ):
+        if suppress_contract_friction:
+            for key in (
+                "non_tok_response",
+                "fail_open_compat_response",
+                "malformed_tok_response",
+                "malformed_tok_hybrid_tool",
+                "malformed_tok_non_inverted_msg",
+                "malformed_tok_markdown_fallback",
+                "malformed_tok_bad_header",
+                "tok_drift_healed",
+            ):
+                merged_signals.pop(key, None)
+        merged_signals["response_contract_recovered_valid"] = 1
+        if natural_response_acceptable:
+            merged_signals["natural_response_contract_accepted"] = 1
+
     handle_answer_repair(
         session,
         merged_signals=merged_signals,

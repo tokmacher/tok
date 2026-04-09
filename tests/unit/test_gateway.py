@@ -37,8 +37,7 @@ from tok.universal_runtime import PreparedRuntimeRequest
 # Fake classes and helpers for test_gateway_developer_smoke_surfaces_recovery_and_repair_outcomes
 class _FakeStreamResponse:
     async def aiter_bytes(self):
-        if False:
-            yield b""
+        yield b""
         msg = "boom"
         raise httpx.ReadError(msg)
 
@@ -4216,7 +4215,7 @@ def test_non_streaming_processing_error_fail_open_passes_raw_content(tmp_path, m
             normalized_tool_events=[],
         )
 
-    def _fake_process_response(*args, **kwargs) -> NoReturn:
+    def _fake_process_response(**kwargs) -> NoReturn:
         msg = "processing failure"
         raise RuntimeError(msg)
 
@@ -4270,7 +4269,7 @@ def test_non_streaming_processing_error_fail_open_records_usage(tmp_path, monkey
             normalized_tool_events=[],
         )
 
-    def _fake_process_response(*args, **kwargs) -> NoReturn:
+    def _fake_process_response(**kwargs) -> NoReturn:
         msg = "processing failure"
         raise RuntimeError(msg)
 
@@ -4330,7 +4329,7 @@ def test_non_streaming_processing_error_fail_closed_propagates(tmp_path, monkeyp
             normalized_tool_events=[],
         )
 
-    def _fake_process_response(*args, **kwargs) -> NoReturn:
+    def _fake_process_response(**kwargs) -> NoReturn:
         msg = "processing failure"
         raise RuntimeError(msg)
 
@@ -4585,7 +4584,7 @@ def test_gateway_retries_upstream_429_then_succeeds(tmp_path, monkeypatch, caplo
     monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
-    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda _x, _y: 1.0)
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
     session = BridgeSession(
@@ -4664,7 +4663,7 @@ def test_gateway_429_retry_honors_retry_after_floor(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
-    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda _x, _y: 1.0)
 
     app = create_app(
         BridgeSession(
@@ -4726,7 +4725,7 @@ def test_gateway_persistent_429_retries_then_exhausts(tmp_path, monkeypatch, cap
     monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
-    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda _x, _y: 1.0)
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
     app = create_app(
@@ -4791,7 +4790,7 @@ def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch) 
     monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
-    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda a, b: 1.0)
+    monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda _x, _y: 1.0)
 
     session = BridgeSession(
         memory_dir=memory_dir,

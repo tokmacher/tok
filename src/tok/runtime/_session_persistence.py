@@ -233,7 +233,7 @@ def record_episode(session: RuntimeSession, entry: EpisodeEntry) -> None:
     session._bump_signals({"episode_recorded": 1})
 
 
-def session_logger_for(session: RuntimeSession) -> logging.Logger:
+def session_logger_for(_session: RuntimeSession) -> logging.Logger:
     """Return the logger instance for the session module."""
     from .core import logger
 

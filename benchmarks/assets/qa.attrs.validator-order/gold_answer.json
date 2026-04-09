@@ -1,0 +1,46 @@
+{
+  "required_files": [
+    "src/attr/_make.py",
+    "tests/test_functional.py"
+  ],
+  "required_symbols": [
+    "validate",
+    "_obj_setattr"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "src/attr/_make.py",
+        "tests/test_functional.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "validate",
+        "_obj_setattr"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "src/attr/_make.py",
+      "anchor": "def validate",
+      "why": "validator execution path",
+      "start_line": 1774,
+      "end_line": 1774
+    },
+    {
+      "file": "tests/test_functional.py",
+      "anchor": "test_validator",
+      "why": "validator behavior is covered here",
+      "start_line": 155,
+      "end_line": 155
+    }
+  ]
+}

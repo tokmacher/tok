@@ -1,0 +1,12 @@
+diff --git a/src/click/core.py b/src/click/core.py
+index cc65e89..0601e71 100644
+--- a/src/click/core.py
++++ b/src/click/core.py
+@@ -2278,6 +2278,6 @@ class Parameter:
+         value = opts.get(self.name)  # type: ignore
+         source = ParameterSource.COMMANDLINE
+
+-        if value is None:
++        if not value:
+             value = self.value_from_envvar(ctx)
+             source = ParameterSource.ENVIRONMENT

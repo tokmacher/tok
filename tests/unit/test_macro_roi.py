@@ -12,8 +12,8 @@ from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 
 @pytest.fixture(autouse=True)
 def isolate_macro_registry(monkeypatch) -> None:
-    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **kw: None)
-    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
+    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **_: None)
+    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **_: None)
 
 
 def test_macro_roi_fields_round_trip() -> None:

@@ -33,7 +33,6 @@ if TYPE_CHECKING:
         TokDeltaTracker,
         delta_to_tok,
         diff_tok,
-        format_compact_delta,
     )
 else:
     try:
@@ -41,13 +40,11 @@ else:
             TokDeltaTracker,
             delta_to_tok,
             diff_tok,
-            format_compact_delta,
         )
     except ImportError:
         TokDeltaTracker = None
         diff_tok = None
         delta_to_tok = None
-        format_compact_delta = None
 
 # TokRegistry is optional - gracefully handle if missing
 TokRegistry: type[Any] | None = None

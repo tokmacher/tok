@@ -322,11 +322,6 @@ def search_result_evidence_level(text: str) -> SearchResultEvidenceLevel:
     return "navigation"
 
 
-def search_result_has_line_evidence(text: str) -> bool:
-    """Return True when a search result includes line-level grounding evidence."""
-    return search_result_evidence_level(text) == "exact_content"
-
-
 def extract_shell_file_read_path(command: str) -> str | None:
     """Return the direct read-only file target for simple shell inspection commands."""
     text = " ".join(str(command or "").strip().split())
@@ -747,7 +742,7 @@ _NEGATIVE_TOKENS = frozenset(("logger.debug", "logger.info", "logger.warning", "
 _NEGATIVE_EXCEPTIONS = frozenset(("except Exception", "except BaseException"))
 
 
-def _calculate_positive_score(text: str, lower: str) -> int:
+def _calculate_positive_score(_text: str, lower: str) -> int:
     """Calculate positive score contribution from prefixes."""
     score = 0
     for prefixes, points in _HIGH_SCORE_PREFIXES:

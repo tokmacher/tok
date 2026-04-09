@@ -1,0 +1,46 @@
+{
+  "required_files": [
+    "src/attr/_next_gen.py",
+    "src/attr/_make.py"
+  ],
+  "required_symbols": [
+    "define",
+    "frozen"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "src/attr/_next_gen.py",
+        "src/attr/_make.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "define",
+        "frozen"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "src/attr/_next_gen.py",
+      "anchor": "def define",
+      "why": "next-gen API entry point",
+      "start_line": 24,
+      "end_line": 24
+    },
+    {
+      "file": "src/attr/_make.py",
+      "anchor": "frozen",
+      "why": "frozen/slots decisions are carried here",
+      "start_line": 539,
+      "end_line": 539
+    }
+  ]
+}

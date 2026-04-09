@@ -1,0 +1,46 @@
+{
+  "required_files": [
+    "src/pluggy/_callers.py",
+    "testing/test_multicall.py"
+  ],
+  "required_symbols": [
+    "hookwrapper",
+    "_multicall"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "src/pluggy/_callers.py",
+        "testing/test_multicall.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "hookwrapper",
+        "_multicall"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "src/pluggy/_callers.py",
+      "anchor": "def _multicall",
+      "why": "wrapper execution path",
+      "start_line": 53,
+      "end_line": 53
+    },
+    {
+      "file": "testing/test_multicall.py",
+      "anchor": "def test_hookwrapper",
+      "why": "wrapper behavior is tested here",
+      "start_line": 81,
+      "end_line": 81
+    }
+  ]
+}

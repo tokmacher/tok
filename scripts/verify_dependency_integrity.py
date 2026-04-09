@@ -11,7 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import tomllib
+try:
+    from _uv_lock import load_uv_lock, normalize_hash
+except ImportError:  # pragma: no cover - import path differs under tests
+    from scripts._uv_lock import load_uv_lock, normalize_hash
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -50,95 +53,14 @@ def validate_version(version: str) -> bool:
     return bool(VERSION_REGEX.fullmatch(version))
 
 
-def normalize_hash(hash_str: str) -> str:
-    """Strip the algorithm prefix from uv.lock hashes."""
-    return hash_str.removeprefix("sha256:")
-
-
 def validate_hash(hash_str: str) -> bool:
     """Validate SHA-256 hash format."""
     return bool(HASH_REGEX.fullmatch(normalize_hash(hash_str)))
 
 
-def parse_upload_time(upload_time: str) -> datetime | None:
-    """Parse uv.lock upload timestamps."""
-    try:
-        return datetime.fromisoformat(upload_time.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def collect_artifacts(package: dict[str, Any]) -> list[dict[str, Any]]:
-    """Collect wheel and sdist metadata from a uv.lock package entry."""
-    artifacts: list[dict[str, Any]] = []
-
-    sdist = package.get("sdist")
-    if isinstance(sdist, dict):
-        artifacts.append(sdist)
-
-    wheels = package.get("wheels", [])
-    if isinstance(wheels, list):
-        artifacts.extend(artifact for artifact in wheels if isinstance(artifact, dict))
-
-    return artifacts
-
-
 def parse_uv_lock() -> list[dict[str, Any]]:
     """Parse uv.lock file to extract package information."""
-    lock_file = Path("uv.lock")
-    if not lock_file.exists():
-        logger.error("uv.lock file not found")
-        sys.exit(1)
-
-    try:
-        with open(lock_file, "rb") as f:
-            data = tomllib.load(f)
-    except (OSError, tomllib.TOMLDecodeError) as e:
-        logger.exception(f"Failed to read uv.lock file: {e}")
-        sys.exit(1)
-
-    packages: list[dict[str, Any]] = []
-    for raw_package in data.get("package", []):
-        if not isinstance(raw_package, dict):
-            continue
-
-        package_name = str(raw_package.get("name", ""))
-        version = str(raw_package.get("version", ""))
-        if not validate_package_name(package_name):
-            logger.warning("Invalid package name in uv.lock: %s", package_name)
-            continue
-        if not validate_version(version):
-            logger.warning(
-                "Invalid package version in uv.lock: %s@%s",
-                package_name,
-                version,
-            )
-            continue
-
-        source = raw_package.get("source", {})
-        artifacts = collect_artifacts(raw_package)
-        upload_times = [
-            parsed
-            for artifact in artifacts
-            for parsed in [parse_upload_time(str(artifact.get("upload-time", "")))]
-            if parsed is not None
-        ]
-        hashes = [str(artifact.get("hash", "")) for artifact in artifacts if artifact.get("hash")]
-        primary_artifact = next((artifact for artifact in artifacts if artifact.get("url")), None)
-
-        packages.append(
-            {
-                "name": package_name,
-                "version": version,
-                "source": source if isinstance(source, dict) else {},
-                "artifact_url": (str(primary_artifact.get("url", "")) if isinstance(primary_artifact, dict) else ""),
-                "hashes": hashes,
-                "upload_time": min(upload_times) if upload_times else None,
-            }
-        )
-
-    logger.info("Parsed %d packages from uv.lock", len(packages))
-    return packages
+    return load_uv_lock()
 
 
 def check_blocked_packages(package_name: str) -> bool:
@@ -219,12 +141,12 @@ def main() -> int:
         violations.extend(package_violations)
 
     if violations:
-        for _violation in violations:
-            pass
+        for violation in violations:
+            logger.error("%s", violation)
 
     if warnings:
-        for _warning in warnings:
-            pass
+        for warning in warnings:
+            logger.warning("%s", warning)
 
     if violations:
         logger.error(

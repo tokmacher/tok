@@ -40,6 +40,23 @@ Tok intercepts LLM traffic and applies deterministic compression:
 The result is typically lower token volume on sustained sessions, while preserving the
 bridge-first Claude workflow.
 
+## Support Tok
+
+Tok exists because I ran into a real problem and wanted to solve it: getting the same AI
+results with less wasted context and lower token spend. The goal is to keep Tok open
+source and useful first.
+
+If Tok helps you, the most helpful support is:
+
+- Star the repo and share it with people who would benefit
+- File issues, report regressions, and share benchmark results
+- Contribute docs, tests, or fixes
+- Use any sponsorship links listed here in the future if you want to help fund ongoing
+  maintenance
+
+Support is appreciated, but not expected. If Tok saves you money or makes your workflow
+less frustrating, that's why it's here.
+
 ## Supported Workflow
 
 The first open-source release supports exactly this path:
@@ -125,6 +142,7 @@ See:
 - [`docs/claims_matrix.md`](./docs/claims_matrix.md)
 - [`docs/pricing_verification.md`](./docs/pricing_verification.md)
 - [`docs/live_smoke_matrix.md`](./docs/live_smoke_matrix.md)
+- [`benchmarks/README.md`](./benchmarks/README.md)
 
 ## Technical Overview
 

@@ -60,7 +60,7 @@ class SemanticValidator:
     """Monitors and corrects protocol drift (the 'Reflex' layer)."""
 
     def __init__(self) -> None:
-        self.drift_count = 0
+        pass
 
     def validate_drift(self, text: str, behavior_signals: dict[str, Any]) -> dict[str, Any]:
         """Detect and log semantic drift patterns."""
@@ -107,8 +107,5 @@ class SemanticValidator:
         # 4. Repeated tool patterns indicating 'Cognitive Tax'
         if behavior_signals.get("repeat_file_read", 0) > 1 or behavior_signals.get("repeat_search", 0) > 1:
             drift_signals["semantic_pressure_detected"] = 1
-
-        if drift_signals:
-            self.drift_count += 1
 
         return drift_signals

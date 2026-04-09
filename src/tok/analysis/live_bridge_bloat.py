@@ -266,7 +266,7 @@ def _patched_history_skip() -> Iterator[None]:
     from tok.runtime import core as core_module
 
     original = core_module._should_skip_history_rewrite
-    core_module._should_skip_history_rewrite = lambda messages, normalized_tool_events, *, tool_compatible: (
+    core_module._should_skip_history_rewrite = lambda _messages, _normalized_tool_events, *, tool_compatible: (  # type: ignore[assignment]
         False,
         "",
     )
@@ -281,7 +281,7 @@ def _forced_history_skip(reason: str) -> Iterator[None]:
     from tok.runtime import core as core_module
 
     original = core_module._should_skip_history_rewrite
-    core_module._should_skip_history_rewrite = lambda messages, normalized_tool_events, *, tool_compatible: (
+    core_module._should_skip_history_rewrite = lambda _messages, _normalized_tool_events, *, tool_compatible: (  # type: ignore[assignment]
         True,
         reason,
     )

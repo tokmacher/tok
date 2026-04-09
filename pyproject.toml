@@ -37,7 +37,7 @@ dependencies = [
 dev = [
     "build>=1.2.1",
     "hatchling>=1.25.0",
-    "pytest>=7.0",
+    "pytest>=8.3.0,<8.4.0",
     "pytest-cov>=4.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.1.0",
@@ -46,6 +46,7 @@ dev = [
     "hypothesis>=6.0",
     "safety>=2.0.0",
     "requests>=2.33.0",
+    "vulture>=2.0.0,<3.0.0",
 ]
 
 [project.urls]
@@ -89,6 +90,12 @@ ignore = [
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
+
+[tool.vulture]
+min_confidence = 80
+ignore_names = ["model_config", "_*"]
+exclude = ["typings", ".git", "benchmarks/assets", "tmp", "tests/unit/test_gateway.py"]
+ignore_decorators = []
 
 [tool.pyright]
 typeCheckingMode = "off"
@@ -205,6 +212,7 @@ skip_covered = false
 [dependency-groups]
 dev = [
     "hypothesis>=6.151.9",
+    "pre-commit>=4.5.1",
 ]
 
 [tool.commitizen]

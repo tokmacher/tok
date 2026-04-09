@@ -1,0 +1,46 @@
+{
+  "required_files": [
+    "tests/test_console.py",
+    "tests/test_text.py"
+  ],
+  "required_symbols": [
+    "test_markup",
+    "test_wrap"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "tests/test_console.py",
+        "tests/test_text.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "test_markup",
+        "test_wrap"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "tests/test_console.py",
+      "anchor": "test_markup",
+      "why": "console render behavior coverage",
+      "start_line": 304,
+      "end_line": 304
+    },
+    {
+      "file": "tests/test_text.py",
+      "anchor": "test_wrap",
+      "why": "text wrapping coverage",
+      "start_line": 404,
+      "end_line": 404
+    }
+  ]
+}

@@ -25,7 +25,6 @@ class DocumentTransformer:
     def __init__(self, flattening_threshold: int = 5) -> None:
         self.flattening_threshold = flattening_threshold
         self.citations: dict[str, TokNode] = {}
-        self.nodes_by_id: dict[str, TokNode] = {}
         self._next_id = 0
 
     def _generate_id(self, prefix: str = "node") -> str:
@@ -518,10 +517,6 @@ class DocumentTransformer:
 
         toc_node = TokNode(type="TOC", headers=toc_headers, rows=toc_rows)
         return toc_node, head_to_node
-
-    def to_markdown(self, nodes: list[TokNode]) -> str:
-        """Deterministic Reconstruction Engine (Re-hydration)."""
-        return self.detransform_nodes(nodes)
 
     def detransform(self, tok_text: str) -> str:
         """Convert Tok text back to markdown format."""

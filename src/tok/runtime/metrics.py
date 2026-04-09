@@ -69,6 +69,8 @@ def report_protocol_drift(
             "answer_phase_tool_intent_quarantined",
             "answer_phase_non_labeled_fallback_applied",
             "answer_phase_fallback_failed_no_anchor",
+            "response_contract_recovered_valid",
+            "natural_response_contract_accepted",
             "tok_drift_healed",
         )
     }

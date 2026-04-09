@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "task_id": "qa.tok.release-surface-enforcement",
+  "repo": "tok",
+  "upstream_ref": "HEAD",
+  "resolved_commit": "ee47179567d63e3d3bf8ab47009f54ec06194ceb",
+  "asset_builder_version": "1",
+  "created_at": "2026-04-09T13:41:19.754606+00:00",
+  "workspace_sha256": "7498add38d9b1ef52456767c3f29f06888cc1bc992a95fd84b6ce5c5856ae360"
+}

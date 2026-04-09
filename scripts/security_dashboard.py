@@ -325,8 +325,8 @@ class SecurityMonitor:
             "dependency_trend": "stable",
         }
 
-    def print_dashboard(self) -> None:
-        """Print security dashboard to console."""
+    def print_dashboard(self) -> dict:
+        """Build the dashboard once and return it for persistence."""
         dashboard = self.generate_dashboard()
 
         score_data = dashboard["security_score"]
@@ -350,14 +350,15 @@ class SecurityMonitor:
         if security_metrics:
             pass
 
+        return dashboard
+
 
 def main() -> None:
     """Main function."""
     monitor = SecurityMonitor()
-    monitor.print_dashboard()
+    dashboard = monitor.print_dashboard()
 
     # Save dashboard data
-    dashboard = monitor.generate_dashboard()
     output_file = Path("security-dashboard.json")
     with open(output_file, "w") as f:
         json.dump(dashboard, f, indent=2)

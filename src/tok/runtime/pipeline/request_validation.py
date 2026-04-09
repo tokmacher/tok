@@ -627,7 +627,7 @@ def _rewrite_provider_safe_tool_ids(
 
 
 def _rewrite_assistant_tool_message(
-    message: dict[str, Any],
+    _message: dict[str, Any],
     msg_index: int,
     content: list[Any],
     occupied_ids: set[str],
@@ -797,7 +797,18 @@ def _assistant_user_tool_exchange_is_broken(
     pending_tool_use_ids = [str(block.get("id", "")).strip() for block in assistant_tool_blocks]
     seen_tool_use_ids = set(pending_tool_use_ids)
     risks: dict[str, int] = {}
-    _process_user_tool_results(user_content, seen_tool_use_ids, pending_tool_use_ids, risks)
+    tool_result_count, matched_pending_tool_use_count = _process_user_tool_results(
+        user_content,
+        seen_tool_use_ids,
+        pending_tool_use_ids,
+        risks,
+    )
+    _evaluate_pending_coverage(
+        risks,
+        pending_tool_use_ids,
+        tool_result_count,
+        matched_pending_tool_use_count,
+    )
     return bool(risks)
 
 

@@ -264,26 +264,6 @@ def delta_to_tok(deltas: list[TokDelta]) -> str:
     return "\n".join(lines).strip()
 
 
-def format_compact_delta(deltas: list[TokDelta]) -> str:
-    """Format as compact single-line changes for minimal token usage."""
-    lines = []
-
-    for delta in deltas:
-        if delta.op == "update":
-            changes = []
-            for field in delta.changed_fields():
-                old_val = delta.old_attrs.get(field, "")
-                new_val = delta.new_attrs.get(field, "")
-                changes.append(f"{field}: {old_val} -> {new_val}")
-            lines.append(f"@delta {delta.op} {delta.target_type}:{delta.target_label} | {'; '.join(changes)}")
-        elif delta.op == "add":
-            lines.append(f"@delta add {delta.target_type}:{delta.target_label}")
-        elif delta.op == "remove":
-            lines.append(f"@delta remove {delta.target_type}:{delta.target_label}")
-
-    return "\n".join(lines)
-
-
 class TokDeltaTracker:
     """Track before/after snapshots for explicit delta computation."""
 
@@ -299,10 +279,6 @@ class TokDeltaTracker:
         before = self.snapshots.get(before_name, "")
         after = self.snapshots.get(after_name, "")
         return diff_tok(before, after)
-
-    def diff_to_tok(self, before_name: str, after_name: str) -> str:
-        """Compute delta and return as Tok string."""
-        return delta_to_tok(self.diff(before_name, after_name))
 
 
 def _apply_single_delta(

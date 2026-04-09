@@ -794,7 +794,7 @@ def _process_cache_hit(
             cached_hash,
             cached_raw,
             host_stub_replayed=True,
-            compression_level=compression_level,
+            _compression_level=compression_level,
             preserve_exact_search_evidence=preserve_exact_search_evidence,
         )
 
@@ -823,7 +823,7 @@ def _process_cache_hit(
             cached_hash,
             cached_raw,
             host_stub_replayed=False,
-            compression_level=compression_level,
+            _compression_level=compression_level,
             preserve_exact_search_evidence=preserve_exact_search_evidence,
         )
 
@@ -1013,9 +1013,9 @@ def _should_strip_diff_whitespace(normalized_tool_name: str) -> bool:
 
 def _handle_hash_mismatch_result(
     raw_text: str,
-    cached_raw_text: str,
-    content_hash: str,
-    cached_hash: str,
+    _cached_raw_text: str,
+    _content_hash: str,
+    _cached_hash: str,
     normalized_error: str | None,
     tool_name: str | None,
     compression_level: str,
@@ -1043,9 +1043,9 @@ def _handle_hash_mismatch_result(
 
 def _handle_diff_result(
     raw_text: str,
-    cached_raw_text: str,
-    content_hash: str,
-    cached_hash: str,
+    _cached_raw_text: str,
+    _content_hash: str,
+    _cached_hash: str,
     normalized_error: str | None,
     tool_name: str | None,
     compression_level: str,
@@ -1114,14 +1114,14 @@ def _serve_cached_content_hash_match(
     tool_name: str | None,
     normalized_tool_name: str,
     is_precision_read: bool,
-    is_file_like: bool,
+    _is_file_like: bool,
     result_cache: MutableMapping[str, ResultCacheEntry],
     cache_key: str,
-    entry_length: int,
+    _entry_length: int,
     cached_hash: str,
     cached_raw: str,
     host_stub_replayed: bool,
-    compression_level: str,
+    _compression_level: str,
     preserve_exact_search_evidence: bool = False,
 ) -> tuple[str, int]:
     current_time = time_module.time()

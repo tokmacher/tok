@@ -1,0 +1,12 @@
+diff --git a/rich/text.py b/rich/text.py
+index 7b32967..41ed017 100644
+--- a/rich/text.py
++++ b/rich/text.py
+@@ -1239,6 +1239,6 @@ class Text(JupyterMixin):
+                     console, width, justify=wrap_justify, overflow=wrap_overflow
+                 )
+             for line in new_lines:
+-                line.truncate(width, overflow=wrap_overflow)
++                line.truncate(width, overflow="crop")
+             lines.extend(new_lines)
+         return lines

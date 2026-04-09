@@ -1,0 +1,218 @@
+{
+  "tasks": [
+    {
+      "id": "session.context-reacquisition.answer",
+      "family": "real_session",
+      "title": "Context reacquisition grounded-answer episode",
+      "summary": "Resume a redacted real session where the next milestone is to answer a grounded codebase question without unnecessary rereads.",
+      "repo": "tok",
+      "ref": "HEAD",
+      "setup_script": "no_setup_required",
+      "prompt": "Continue from the redacted milestone context and produce the next grounded answer without losing the active evidence trail.",
+      "allowed_tools": [
+        "list_dir",
+        "grep_search",
+        "view_file"
+      ],
+      "time_budget_minutes": 6,
+      "step_budget": 24,
+      "success_evaluator": {
+        "kind": "real_session",
+        "invalid_tool_calls_limit": 0,
+        "milestone_type": "grounded_answer",
+        "requires_evidence_block": true
+      },
+      "artifact_policy": {
+        "publish_redacted_episode": false,
+        "publish_summary": true,
+        "publish_full_capture": false
+      },
+      "public_release": false,
+      "capture_source": "capture-review:candidate=context reacquisition",
+      "redaction_version": "pilot-v1",
+      "episode_type": "grounded_answer",
+      "next_milestone": "Answer the pending grounded question with valid supporting evidence.",
+      "asset_dir": "assets/session.context-reacquisition.answer",
+      "workspace_source": {
+        "kind": "local_checkout",
+        "path": "."
+      },
+      "family_payload": {
+        "episode_bundle": {
+          "capture_source": "capture-review:candidate=context reacquisition",
+          "redaction_version": "pilot-v1",
+          "episode_type": "grounded_answer",
+          "next_milestone": "Answer the pending grounded question with valid supporting evidence."
+        },
+        "milestone_evaluator": {
+          "kind": "real_session",
+          "invalid_tool_calls_limit": 0,
+          "milestone_type": "grounded_answer",
+          "requires_evidence_block": true
+        }
+      }
+    },
+    {
+      "id": "session.response-contract.patch",
+      "family": "real_session",
+      "title": "Response-contract patch episode",
+      "summary": "Resume a redacted real session where the next milestone is to patch a response-contract defect and validate the fix.",
+      "repo": "tok",
+      "ref": "HEAD",
+      "setup_script": "no_setup_required",
+      "prompt": "Continue from the redacted milestone context, diagnose the response-contract defect, and complete the next patch milestone with a validating test run.",
+      "allowed_tools": [
+        "list_dir",
+        "grep_search",
+        "view_file",
+        "edit_file",
+        "run_tests",
+        "git_diff"
+      ],
+      "time_budget_minutes": 15,
+      "step_budget": 60,
+      "success_evaluator": {
+        "kind": "real_session",
+        "invalid_tool_calls_limit": 0,
+        "milestone_type": "patch_completion",
+        "requires_clean_exit": true
+      },
+      "artifact_policy": {
+        "publish_redacted_episode": false,
+        "publish_summary": true,
+        "publish_full_capture": false
+      },
+      "public_release": false,
+      "capture_source": "capture-review:candidate=response contract drift",
+      "redaction_version": "pilot-v1",
+      "episode_type": "patch_completion",
+      "next_milestone": "Land the targeted patch and confirm the associated regression test passes.",
+      "asset_dir": "assets/session.response-contract.patch",
+      "workspace_source": {
+        "kind": "local_checkout",
+        "path": "."
+      },
+      "family_payload": {
+        "episode_bundle": {
+          "capture_source": "capture-review:candidate=response contract drift",
+          "redaction_version": "pilot-v1",
+          "episode_type": "patch_completion",
+          "next_milestone": "Land the targeted patch and confirm the associated regression test passes."
+        },
+        "milestone_evaluator": {
+          "kind": "real_session",
+          "invalid_tool_calls_limit": 0,
+          "milestone_type": "patch_completion",
+          "requires_clean_exit": true
+        }
+      }
+    },
+    {
+      "id": "session.fail-open.answer",
+      "family": "real_session",
+      "title": "Fail-open compatibility diagnosis episode",
+      "summary": "Resume a redacted real session where the next milestone is to diagnose a fail-open compatibility issue and answer with grounded evidence.",
+      "repo": "tok",
+      "ref": "HEAD",
+      "setup_script": "no_setup_required",
+      "prompt": "Continue from the redacted milestone context and diagnose the fail-open compatibility issue with a grounded explanation of the root cause and safety boundary.",
+      "allowed_tools": [
+        "list_dir",
+        "grep_search",
+        "view_file"
+      ],
+      "time_budget_minutes": 6,
+      "step_budget": 24,
+      "success_evaluator": {
+        "kind": "real_session",
+        "invalid_tool_calls_limit": 0,
+        "milestone_type": "bug_diagnosis",
+        "requires_evidence_block": true
+      },
+      "artifact_policy": {
+        "publish_redacted_episode": false,
+        "publish_summary": true,
+        "publish_full_capture": false
+      },
+      "public_release": false,
+      "capture_source": "capture-review:candidate=fail-open compatibility",
+      "redaction_version": "pilot-v1",
+      "episode_type": "bug_diagnosis",
+      "next_milestone": "Explain the fail-open compatibility issue with grounded evidence and the correct mitigation.",
+      "asset_dir": "assets/session.fail-open.answer",
+      "workspace_source": {
+        "kind": "local_checkout",
+        "path": "."
+      },
+      "family_payload": {
+        "episode_bundle": {
+          "capture_source": "capture-review:candidate=fail-open compatibility",
+          "redaction_version": "pilot-v1",
+          "episode_type": "bug_diagnosis",
+          "next_milestone": "Explain the fail-open compatibility issue with grounded evidence and the correct mitigation."
+        },
+        "milestone_evaluator": {
+          "kind": "real_session",
+          "invalid_tool_calls_limit": 0,
+          "milestone_type": "bug_diagnosis",
+          "requires_evidence_block": true
+        }
+      }
+    },
+    {
+      "id": "session.answer-anchor.patch",
+      "family": "real_session",
+      "title": "Answer-anchor retention patch episode",
+      "summary": "Resume a redacted real session where the next milestone is to patch an answer-anchor retention issue without invalid tool calls.",
+      "repo": "tok",
+      "ref": "HEAD",
+      "setup_script": "no_setup_required",
+      "prompt": "Continue from the redacted milestone context and complete the next patch milestone so the active answer anchors survive compression and replay pressure.",
+      "allowed_tools": [
+        "list_dir",
+        "grep_search",
+        "view_file",
+        "edit_file",
+        "run_tests",
+        "git_diff"
+      ],
+      "time_budget_minutes": 15,
+      "step_budget": 60,
+      "success_evaluator": {
+        "kind": "real_session",
+        "invalid_tool_calls_limit": 0,
+        "milestone_type": "patch_completion",
+        "requires_clean_exit": true
+      },
+      "artifact_policy": {
+        "publish_redacted_episode": false,
+        "publish_summary": true,
+        "publish_full_capture": false
+      },
+      "public_release": false,
+      "capture_source": "capture-review:candidate=answer anchor retention",
+      "redaction_version": "pilot-v1",
+      "episode_type": "patch_completion",
+      "next_milestone": "Land the targeted patch that preserves answer anchors and verify the regression is fixed.",
+      "asset_dir": "assets/session.answer-anchor.patch",
+      "workspace_source": {
+        "kind": "local_checkout",
+        "path": "."
+      },
+      "family_payload": {
+        "episode_bundle": {
+          "capture_source": "capture-review:candidate=answer anchor retention",
+          "redaction_version": "pilot-v1",
+          "episode_type": "patch_completion",
+          "next_milestone": "Land the targeted patch that preserves answer anchors and verify the regression is fixed."
+        },
+        "milestone_evaluator": {
+          "kind": "real_session",
+          "invalid_tool_calls_limit": 0,
+          "milestone_type": "patch_completion",
+          "requires_clean_exit": true
+        }
+      }
+    }
+  ]
+}

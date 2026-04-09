@@ -2193,7 +2193,7 @@ class StressHarness:
             return "full_resend_default"
         return "no_resend_signal"
 
-    def _log(self, message: str) -> None:
+    def _log(self, _message: str) -> None:
         if self._progress:
             pass
 

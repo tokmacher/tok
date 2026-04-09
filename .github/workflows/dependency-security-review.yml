@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -144,18 +145,53 @@ jobs:
             const issue_number = context.issue.number;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+            const approvalPhrase = 'Security review completed - approved';
+            const allowedPermissions = new Set(['write', 'maintain', 'admin']);
 
-            // Get comments
-            const comments = await github.rest.issues.listComments({
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner,
               repo,
               issue_number,
+              per_page: 100,
             });
 
-            const hasApproval = comments.data.some(comment =>
-              comment.body.includes('Security review completed - approved') &&
-              comment.user.type === 'User'
-            );
+            const permissionCache = new Map();
+
+            async function hasAllowedPermission(login) {
+              if (!login) {
+                return false;
+              }
+              if (permissionCache.has(login)) {
+                return permissionCache.get(login);
+              }
+              try {
+                const result = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner,
+                  repo,
+                  username: login,
+                });
+                const allowed = allowedPermissions.has(result.data.permission);
+                permissionCache.set(login, allowed);
+                return allowed;
+              } catch (error) {
+                if (error.status === 404) {
+                  permissionCache.set(login, false);
+                  return false;
+                }
+                throw error;
+              }
+            }
+
+            let hasApproval = false;
+            for (const comment of comments) {
+              if (!comment.body.includes(approvalPhrase)) {
+                continue;
+              }
+              if (await hasAllowedPermission(comment.user?.login)) {
+                hasApproval = true;
+                break;
+              }
+            }
 
             if (!hasApproval) {
               console.log('❌ Security review approval not found');

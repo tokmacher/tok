@@ -10,8 +10,8 @@ from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 @pytest.fixture(autouse=True)
 def isolate_macro_registry(monkeypatch) -> None:
     """Prevent tests from reading or writing the global macro store."""
-    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **kw: None)
-    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
+    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **_: None)
+    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **_: None)
 
 
 def test_neuro_reactor_discovers_simple_pattern() -> None:

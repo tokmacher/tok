@@ -64,7 +64,7 @@ MODEL = "openai/gpt-4.1-mini"
 TEXT_LOOP_ADAPTER = TextLoopAdapter()
 
 
-def get_weather(location: str, days: int = 3, **kwargs: object) -> list[TokNode]:
+def get_weather(location: str, days: int = 3, **_kwargs: object) -> list[TokNode]:
     """Mock weather tool."""
     mock = {
         "San Francisco": [
@@ -212,8 +212,8 @@ def run(user_input: str, *, compare: bool = False) -> None:
 def _finalize_tok_turn(
     response_text: str,
     prepared: PreparedRuntimeRequest,
-    start_time: float,
-    tta: float | None,
+    _start_time: float,
+    _tta: float | None,
 ) -> int:
     typed_prepared = prepared
     if response_text:

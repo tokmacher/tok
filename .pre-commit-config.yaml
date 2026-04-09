@@ -10,12 +10,15 @@ repos:
     hooks:
       - id: ruff
         args: ["--fix", "--show-fixes"]
+        exclude: ^benchmarks/
       - id: ruff-format
+        exclude: ^benchmarks/
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.3.0
     hooks:
       - id: codespell
+        exclude: ^benchmarks/
         additional_dependencies:
           - setuptools
 
@@ -24,13 +27,15 @@ repos:
     rev: v1.10.0
     hooks:
       - id: python-no-eval
+        exclude: ^benchmarks/
       - id: python-no-log-warn
+        exclude: ^benchmarks/
 
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.35.1
     hooks:
       - id: yamllint
-        exclude: ^\.github/ISSUE_TEMPLATE/
+        exclude: ^\.github/ISSUE_TEMPLATE/|^benchmarks/
         args:
           - >
             --config-data={
@@ -50,6 +55,7 @@ repos:
       - id: bandit
         args: ["-c", "pyproject.toml", "-lll"]
         additional_dependencies: ["bandit[toml]"]
+        exclude: ^benchmarks/
 
 
   - repo: https://github.com/pre-commit/mirrors-mypy
@@ -58,7 +64,7 @@ repos:
       - id: mypy
         name: "🐍 python · Mypy checks"
         args: [--no-strict-optional, --ignore-missing-imports]
-        exclude: ^src/tok/gateway|^scripts/|^tests/|^examples/
+        exclude: ^src/tok/gateway|^scripts/|^tests/|^examples/|^benchmarks/
         additional_dependencies: ["pydantic", "httpx", "rich", "typer", "types-requests"]
 
   - repo: https://github.com/RobertCraigie/pyright-python
@@ -68,6 +74,7 @@ repos:
         name: "🐍 python · Check types"
         args: [--level=warning]
         files: ^src/.*\.py$
+        exclude: ^benchmarks/
         types: [python]
         additional_dependencies: ["pytest", "httpx", "pydantic", "tiktoken"]
         stages: [pre-push]
@@ -128,6 +135,7 @@ repos:
     hooks:
       - id: mdformat
         name: "📝 markdown · Format markdown"
+        exclude: ^benchmarks/
         additional_dependencies:
           - mdformat-gfm
           - mdformat-ruff
@@ -140,6 +148,7 @@ repos:
     hooks:
       - id: markdownlint
         args: ["--disable", "MD013,MD033,MD034"]
+        exclude: ^benchmarks/
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
@@ -168,13 +177,18 @@ repos:
         entry: python scripts/check_repo_hygiene.py
         language: system
         pass_filenames: false
+      - id: vulture
+        name: dead code detection
+        entry: uv run vulture src/tok tests scripts examples --min-confidence 80
+        language: system
+        pass_filenames: false
       - id: run-tests
         name: run tests
         entry: pytest --tb=short -q
         language: system
         pass_filenames: false
         types: [python]
-        stages: [pre-push]
+        stages: [pre-commit]
       - id: dependency-integrity
         name: dependency integrity check
         entry: python scripts/verify_dependency_integrity.py

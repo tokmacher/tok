@@ -123,9 +123,7 @@ class TokParser(SerializationProtocol):
         self._stack: list[tuple[int, TokNode]] = []
         self._buffer: str = ""
         self._active_boundary: str | None = None
-        self._active_label: str | None = None
         self._pending_header: str = ""
-        self._in_quote: str | None = None
         self._in_inverted_body: bool = False
 
     @property
@@ -139,9 +137,7 @@ class TokParser(SerializationProtocol):
         self._stack = []
         self._buffer = ""
         self._active_boundary = None
-        self._active_label = None
         self._pending_header = ""
-        self._in_quote = None
         self._in_inverted_body = False
         result = []
 

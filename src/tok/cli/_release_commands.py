@@ -175,6 +175,13 @@ def gate_check(
             help="Compression frontier JSON report from `tok dev compression-frontier`. Validates that the current-head release lane is stable enough for release.",
         ),
     ] = None,
+    benchmark_report: Annotated[
+        Path | None,
+        typer.Option(
+            "--benchmark-report",
+            help="Production benchmark JSON report from `tok dev live-benchmark --program catalog|both`.",
+        ),
+    ] = None,
     required_benchmarks: Annotated[
         str,
         typer.Option(
@@ -196,6 +203,7 @@ def gate_check(
         emit_metrics=emit_metrics,
         stability_dir=stability_dir,
         frontier_report=frontier_report,
+        benchmark_report=benchmark_report,
         required_benchmarks=required_benchmarks,
     )
 

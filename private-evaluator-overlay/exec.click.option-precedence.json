@@ -1,0 +1,5 @@
+{
+  "selectors": [
+    "tests/test_context.py::test_parameter_source"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "required_files": [
+    "src/tok/release_surface.py",
+    "tests/unit/test_release_surface.py"
+  ],
+  "required_symbols": [
+    "SUPPORTED_CLI_ROOT_COMMANDS",
+    "validate_release_surface"
+  ],
+  "answer_contract": "Answer in at most 6 sentences followed by an Evidence block with 2 to 4 citations.",
+  "accepted_facts": [
+    {
+      "label": "required_files",
+      "match": "all",
+      "terms": [
+        "src/tok/release_surface.py",
+        "tests/unit/test_release_surface.py"
+      ]
+    },
+    {
+      "label": "required_symbols",
+      "match": "all",
+      "terms": [
+        "SUPPORTED_CLI_ROOT_COMMANDS",
+        "validate_release_surface"
+      ]
+    }
+  ],
+  "alternates": [],
+  "supporting_spans": [
+    {
+      "file": "src/tok/release_surface.py",
+      "anchor": "SUPPORTED_CLI_ROOT_COMMANDS",
+      "why": "supported surface is declared here",
+      "start_line": 57,
+      "end_line": 57
+    },
+    {
+      "file": "tests/unit/test_release_surface.py",
+      "anchor": "test_release_surface_gate_passes_for_supported_bridge_story",
+      "why": "release-surface contract is enforced here",
+      "start_line": 12,
+      "end_line": 12
+    }
+  ]
+}

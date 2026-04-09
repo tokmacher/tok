@@ -412,8 +412,8 @@ def _messages_contain_tool_material(messages: list[dict[str, Any]]) -> bool:
 def _resolve_effective_tool_compatible(
     request: RuntimeRequest,
     session: _core.RuntimeSession,
-    translated_messages: list[dict[str, Any]],
-    normalized_tool_events: list[Any],
+    _translated_messages: list[dict[str, Any]],
+    _normalized_tool_events: list[Any],
     behavior_signals: dict[str, int],
 ) -> tuple[bool, list[str]]:
     if request.request_policy == "forced_baseline" or not request.tool_compatible:
@@ -575,6 +575,7 @@ def prepare_request_impl(
 ) -> PreparedRuntimeRequest:
     session._request_has_tools = bool(request.request_has_tools)
     session._answer_phase_expected_this_turn = False
+    session._natural_response_acceptable_this_turn = False
 
     body: dict[str, Any] = {
         "model": request.model,
@@ -821,6 +822,9 @@ def prepare_request_impl(
                 0, session._request_policy_tool_recovery_watch_turns - 1
             )
         session._request_policy_last_effective_tool_compatible = effective_tool_compatible
+        session._natural_response_acceptable_this_turn = bool(
+            request_policy == "natural_first" and request.tool_compatible and not effective_tool_compatible
+        )
 
         runtime_hints = [_speculative_macro_hint] if _speculative_macro_hint else []
         answer_phase_expected = (
@@ -1258,6 +1262,9 @@ def prepare_request_impl(
         session._save_bridge_memory()
     else:
         session._request_policy_last_effective_tool_compatible = effective_tool_compatible
+        session._natural_response_acceptable_this_turn = bool(
+            request_policy == "natural_first" and request.tool_compatible and not effective_tool_compatible
+        )
         prepared_prompt_tokens = session.prepared_prompt_tokens(body)
         baseline_prompt_tokens = prepared_prompt_tokens
         saved_prompt_tokens = 0

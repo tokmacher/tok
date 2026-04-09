@@ -1,0 +1,215 @@
+[project]
+name = "tok-protocol"
+version = "0.1.0"
+description = "Bridge-first CLI and runtime for Claude Code that compresses conversations and exposes savings and fallback health"
+authors = [
+    { name = "tokmacher", email = "tokmacher@protonmail.com" }
+]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["claude-code", "bridge", "compression", "llm", "developer-tools", "tokens"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "openai>=1.0.0,<2.0.0",
+    "tiktoken>=0.12.0,<1.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "typer>=0.9.0,<1.0.0",
+    "rich>=13.0.0,<14.0.0",
+    "fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.27.0,<1.0.0",
+    "httpx>=0.27.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2.1",
+    "hatchling>=1.25.0",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+    "pre-commit>=3.0",
+    "hypothesis>=6.0",
+    "safety>=2.0.0",
+    "requests>=2.33.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/tokmacher/tok"
+Documentation = "https://github.com/tokmacher/tok#readme"
+Issues = "https://github.com/tokmacher/tok/issues"
+Repository = "https://github.com/tokmacher/tok"
+
+[project.scripts]
+tok = "tok.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tok"]
+exclude = ["archive/", "research/", "results/", "tests/", "scripts/", "examples/"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["archive/", ".claude/", ".hypothesis/", ".mypy_cache/", ".ruff_cache/", "dist/", "tmp/"]
+
+[tool.ruff]
+line-length = 120
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# Ignore rules that conflict with formatter and other incompatible rules
+ignore = [
+    "D203", "D212",      # Incompatible with D211, D213
+    "E501",              # Line too long
+    "E402",              # Module level import not at top of file
+    "SLF001",            # Private member accessed
+    "ANN001",            # Missing type annotation for function argument
+    "UP038",             # Use X | Y in isinstance
+]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E501", "S101", "D103"]  # Examples can have long lines, asserts, missing docstrings
+"tests/*" = ["S101", "D103", "D102"]     # Tests can use asserts, have missing docstrings
+"scripts/*" = ["S101"]                    # Scripts can use asserts
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.pyright]
+typeCheckingMode = "off"
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportGeneralTypeIssues = "warning"
+reportOptionalMemberAccess = "warning"
+reportOptionalSubscript = "warning"
+reportOptionalCall = "warning"
+stubPath = "typings"
+extraPaths = ["src"]
+exclude = [
+    "archive",
+    "examples",
+    "scripts",
+    "tests",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+exclude = ["src/tok/gateway.py"]
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_calls = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = false
+strict_optional = false
+disable_error_code = ["unreachable"]
+warn_unreachable = true
+implicit_reexport = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tok.gateway"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "tok.gateway.*"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = [
+    "tests/unit",
+    "tests/unit/test_runtime_contract.py",
+    "tests/integration",
+]
+markers = [
+    "live: tests that hit real APIs (deselect with -m 'not live')",
+    "benchmark: performance benchmarks (deselect with -m 'not benchmark')",
+]
+addopts = "-m 'not live and not benchmark'"
+
+[tool.coverage.run]
+source = ["src/tok"]
+omit = [
+    "src/tok/analysis/*",
+    "src/tok/monitoring/*",
+    "src/tok/neuro/*",
+    "src/tok/testing/*",
+    "src/tok/adapters/*",
+    "src/tok/cli/_dev.py",
+    "src/tok/cli/_install.py",
+    "src/tok/cli/_protocol_tools.py",
+    "src/tok/evidence_review.py",
+    "src/tok/fixture_generator.py",
+    "src/tok/format_bridge.py",
+    "src/tok/encoder.py",
+    "src/tok/gateway.py",
+    "src/tok/gateway/__main__.py",
+    "src/tok/gateway/pricing.py",
+    "src/tok/gateway/stats.py",
+    "src/tok/gateway/telemetry.py",
+    "src/tok/gateway/utils.py",
+    "src/tok/live_benchmark.py",
+    "src/tok/live_runner.py",
+    "src/tok/parser.py",
+    "src/tok/pricing.py",
+    "src/tok/prompt.py",
+    "src/tok/prompt_analyzer.py",
+    "src/tok/protocol/*",
+    "src/tok/replay_metrics.py",
+    "src/tok/savings_tracker.py",
+    "src/tok/schema.py",
+    "src/tok/sifter.py",
+    "src/tok/smart_policy.py",
+    "src/tok/stress_harness.py",
+    "src/tok/telemetry.py",
+    "src/tok/tok_orchestrator.py",
+    "src/tok/transformer.py",
+    "src/tok/translator.py",
+    "src/tok/utils/batch_transform.py",
+    "src/tok/utils/delta.py",
+    "src/tok/utils/sifter.py",
+    "src/tok/utils/tok_linter.py",
+    "src/tok/utils/tok_registry.py",
+    "src/tok/utils/transformer.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.151.9",
+]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "semver"
+version_provider = "pep621"
+update_map_description = true

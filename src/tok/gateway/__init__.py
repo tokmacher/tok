@@ -61,20 +61,6 @@ PID_FILE = TOK_DIR / "bridge.pid"
 
 logger = logging.getLogger("tok.gateway")
 
-try:
-    import tiktoken
-
-    _ENC = tiktoken.get_encoding("cl100k_base")
-
-    def _tok_count(text: str) -> int:
-        return len(_ENC.encode(text))
-
-except Exception:
-
-    def _tok_count(text: str) -> int:
-        return len(text) // 4
-
-
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
 
 

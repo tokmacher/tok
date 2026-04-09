@@ -589,7 +589,7 @@ def _build_replay_turn_summaries(
     session_id: str,
     messages: list[dict[str, Any]],
     *,
-    workspace_root: Path,
+    _workspace_root: Path,
 ) -> list[DedupTurnSummary]:
     runtime = UniversalTokRuntime()
     with tempfile.TemporaryDirectory(prefix="tok-dedup-frontier-") as tmp_dir:
@@ -1452,7 +1452,7 @@ def run_dedup_frontier(
         for session_id, messages in _load_fixture_sessions(fixture_path):
             if not messages:
                 continue
-            turn_summaries = _build_replay_turn_summaries(session_id, messages, workspace_root=workspace_root)
+            turn_summaries = _build_replay_turn_summaries(session_id, messages, _workspace_root=workspace_root)
             events = _iter_tool_result_events(messages)
             source_classification = _classify_source(session_id, "replay_fixture", events, turn_summaries)
             opportunities = _analyze_events(

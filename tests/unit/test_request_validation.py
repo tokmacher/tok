@@ -883,8 +883,15 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, 
         threshold=0,
         tool_compatible=False,
         first_exact_evidence_seen=None,
+        preserve_exact_search_evidence=False,
     ):
-        del tool_use_id_to_context, threshold, tool_compatible, first_exact_evidence_seen
+        del (
+            tool_use_id_to_context,
+            threshold,
+            tool_compatible,
+            first_exact_evidence_seen,
+            preserve_exact_search_evidence,
+        )
         return messages, {"file": 128}
 
     monkeypatch.setattr(
@@ -1354,6 +1361,48 @@ def test_quarantine_invalid_tool_history_preserves_surrounding_text() -> None:
     ]
     assert signals["tok_bridge_invalid_tool_history_quarantined"] == 1
     assert signals["tok_bridge_quarantined_tool_use_blocks"] == 1
+    assert signals["tok_bridge_quarantined_tool_result_blocks"] == 1
+
+
+def test_quarantine_invalid_tool_history_removes_partial_tool_result_exchange() -> None:
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "I inspected the repo."},
+                {"type": "tool_use", "id": "tool_1", "name": "view_file", "input": {"path": "a.py"}},
+                {"type": "tool_use", "id": "tool_2", "name": "grep_search", "input": {"pattern": "TODO"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "tool_1", "content": "file contents"},
+                {"type": "text", "text": "Continue from preserved context."},
+            ],
+        },
+    ]
+
+    quarantined, changed, signals = quarantine_invalid_tool_history_messages(messages)
+
+    assert changed is True
+    assert quarantined == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "I inspected the repo."}],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Continue from preserved context.",
+                }
+            ],
+        },
+    ]
+    assert signals["tok_bridge_invalid_tool_history_quarantined"] == 1
+    assert signals["tok_bridge_quarantined_tool_use_blocks"] == 2
     assert signals["tok_bridge_quarantined_tool_result_blocks"] == 1
 
 

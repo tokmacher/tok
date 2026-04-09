@@ -852,3 +852,106 @@ def test_research_dual_scoring_can_fail_legacy_and_pass_repo_grounded(tmp_path) 
     assert result.task_success is False
     assert result.diagnostics["repo_grounded_task_success"] is True
     assert result.diagnostics["repo_grounded_failures"] == []
+
+
+def test_live_benchmark_non_structured_success_without_labeled_fields(tmp_path) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Is there drift?"}]}) + "\n")
+    definition = BenchmarkDefinition(
+        name="non-structured-loop",
+        fixture_path=fixture,
+        system_prompt="Classify drift.",
+        followup_prompt="Has the grammar drifted?",
+        success_terms=("yes", "no"),
+        min_success_terms=1,
+        require_file_field=False,
+        require_verification_field=False,
+    )
+    client = _FakeClient("No, the grammar has not drifted.")
+    runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
+
+    result = runner.run(definition, mode="baseline", turns=1)
+
+    assert result.task_success is True
+    assert "missing_file_field" not in result.notes
+    assert "missing_verification_field" not in result.notes
+
+
+def test_live_benchmark_structured_scoring_still_requires_labeled_fields(tmp_path) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Fix gateway"}]}) + "\n")
+    definition = BenchmarkDefinition(
+        name="coding-loop",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a coding loop.",
+        followup_prompt="File=<the file that was changed>\nVerification=<the result>",
+        success_terms=("gateway.py", "passed"),
+        min_success_terms=2,
+        expected_file_terms=("gateway.py",),
+        expected_verification_terms=("passed",),
+    )
+    client = _FakeClient("The fix passed.")
+    runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
+
+    result = runner.run(definition, mode="baseline", turns=1)
+
+    assert result.task_success is False
+    assert "missing_file_field" in result.notes
+    assert "missing_verification_field" in result.notes
+
+
+def test_live_benchmark_grammar_drift_accepts_plain_yes_no_response() -> None:
+    definition = load_benchmark_definition("grammar_drift")
+    client = _FakeClient("No, grammar has not drifted.")
+    runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
+
+    result = runner.run(definition, mode="baseline", turns=1)
+
+    assert result.task_success is True
+    assert "missing_file_field" not in result.notes
+    assert "missing_verification_field" not in result.notes
+
+
+def test_live_benchmark_non_structured_scoring_still_requires_success_terms(tmp_path) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Is there drift?"}]}) + "\n")
+    definition = BenchmarkDefinition(
+        name="non-structured-loop",
+        fixture_path=fixture,
+        system_prompt="Classify drift.",
+        followup_prompt="Has the grammar drifted?",
+        success_terms=("yes", "no"),
+        min_success_terms=1,
+        require_file_field=False,
+        require_verification_field=False,
+    )
+    client = _FakeClient("Maybe.")
+    runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
+
+    result = runner.run(definition, mode="baseline", turns=1)
+
+    assert result.task_success is False
+    assert "response_missing_success_terms" in result.notes
+
+
+def test_live_benchmark_grammar_drift_rejects_ambiguous_unknown_response() -> None:
+    definition = load_benchmark_definition("grammar_drift")
+    client = _FakeClient("Unknown from this excerpt.")
+    runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
+
+    result = runner.run(definition, mode="baseline", turns=1)
+
+    assert result.task_success is False
+    assert "response_missing_success_terms" in result.notes
+
+
+def test_live_benchmark_jit_loop_tok_universal_uses_textual_success_terms() -> None:
+    definition = load_benchmark_definition("jit-loop")
+    client = _FakeClient("I found parse_error in src/tok/cli.py and pytest src/tok/cli.py passed.")
+    runner = LiveBenchmarkRunner(model="deepseek/deepseek-v3.2", client=client)
+
+    result = runner.run(definition, mode="tok-universal", turns=1)
+
+    assert result.task_success is True
+    assert "missing_file_field" not in result.notes
+    assert "missing_verification_field" not in result.notes

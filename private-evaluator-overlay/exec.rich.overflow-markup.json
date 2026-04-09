@@ -1,0 +1,5 @@
+{
+  "selectors": [
+    "tests/test_text.py::test_wrap_overflow"
+  ]
+}

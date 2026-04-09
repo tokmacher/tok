@@ -95,7 +95,7 @@ def log_rolling_state(turn: int, entries_trimmed: int = 0) -> None:
         log_event("rolling_state", f"turn {turn}")
 
 
-def log_memory_promotion(field: str, value: str, bucket: str = "durable") -> None:
+def log_memory_promotion(_field: str, value: str, bucket: str = "durable") -> None:
     """Log when memory is promoted from hot to durable."""
     # Truncate value for readability
     val_display = value[:40] + "..." if len(value) > 40 else value

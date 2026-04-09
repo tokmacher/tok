@@ -144,6 +144,26 @@ def _looks_like_tool_intent_text(text: str) -> bool:
     return bool(text.strip() and _TOOL_INTENT_TEXT_RE.search(text))
 
 
+def is_safe_visible_contract_output(
+    visible_text: str,
+    *,
+    content_blocks: list[dict[str, Any]],
+    expected_labels: tuple[str, ...],
+    session: RuntimeSession | None,
+) -> bool:
+    if not visible_text.strip():
+        return False
+    if any(block.get("type") == "tool_use" for block in content_blocks):
+        return False
+    if _looks_like_tool_intent_text(visible_text):
+        return False
+    if expected_labels:
+        return _is_strict_structured_answer_response(visible_text, expected_labels=expected_labels)
+    if _answer_phase_context_active(session):
+        return _is_answer_like_visible_text(visible_text)
+    return True
+
+
 def _is_tool_intent_without_answer(
     content_blocks: list[dict[str, Any]],
     visible_text: str,

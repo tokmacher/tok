@@ -14,6 +14,107 @@ from ._cli_support import console
 dev_app = typer.Typer(help="Fixture generation and benchmarking commands")
 
 
+def _run_legacy_compare_benchmark(
+    *,
+    benchmark: str,
+    runner: Any,
+    output: Path,
+    turns: int | None,
+    repeats: int,
+) -> None:
+    from tok.testing.live_benchmark import (
+        compare_results,
+        load_benchmark_definition,
+        render_comparison_markdown,
+        render_stability_markdown,
+        select_preferred_mode,
+        summarize_compare_runs,
+        summarize_compare_triage,
+        write_result,
+    )
+
+    definition = load_benchmark_definition(benchmark)
+    effective_turns = turns if turns is not None else definition.default_turns
+    repeated_results: list[dict[str, Any]] = []
+    compare_modes = ("tok-universal",)
+    for run_index in range(max(1, repeats)):
+        console.print(f"[dim]Running mode: baseline (repeat {run_index + 1})...[/dim]")
+        baseline = runner.run(definition, mode="baseline", turns=effective_turns)
+        run_results: dict[str, Any] = {"baseline": baseline}
+        for compare_mode in compare_modes:
+            console.print(f"[dim]Running mode: {compare_mode} (repeat {run_index + 1})...[/dim]")
+            run_results[compare_mode] = runner.run(definition, mode=compare_mode, turns=effective_turns)
+        repeated_results.append(run_results)
+        write_result(output / f"{benchmark}_run{run_index + 1}_baseline.json", run_results["baseline"])
+        for compare_mode in compare_modes:
+            candidate = run_results[compare_mode]
+            write_result(output / f"{benchmark}_run{run_index + 1}_{compare_mode}.json", candidate)
+            write_result(
+                output / f"{benchmark}_run{run_index + 1}_compare_{compare_mode}.json",
+                compare_results(run_results["baseline"], candidate),
+            )
+
+    last_run = repeated_results[-1]
+    baseline = last_run["baseline"]
+    comparisons = [compare_results(baseline, last_run[compare_mode]) for compare_mode in compare_modes]
+    preferred_mode = select_preferred_mode(baseline, comparisons)
+    write_result(output / f"{benchmark}_baseline.json", baseline)
+    for compare_mode in compare_modes:
+        compare_result = last_run[compare_mode]
+        write_result(output / f"{benchmark}_{compare_mode}.json", compare_result)
+        write_result(
+            output / f"{benchmark}_compare_{compare_mode}.json",
+            compare_results(baseline, compare_result),
+        )
+    (output / f"{benchmark}_compare.md").write_text(
+        render_comparison_markdown(
+            baseline,
+            comparisons,
+        )
+    )
+    if repeats > 1:
+        stability_summary = summarize_compare_runs(repeated_results)
+        (output / f"{benchmark}_stability.json").write_text(json.dumps(stability_summary, indent=2))
+        (output / f"{benchmark}_stability.md").write_text(
+            render_stability_markdown(benchmark, str(getattr(runner, "model", "")), stability_summary)
+        )
+    triage_summary = summarize_compare_triage(repeated_results)
+    (output / f"{benchmark}_triage.json").write_text(json.dumps(triage_summary, indent=2))
+    console.print(
+        f"[green]✅ Live benchmark complete:[/green] {benchmark} "
+        f"baseline_tokens={baseline.provider_usage.total_tokens} "
+        f"preferred_tokens={last_run[preferred_mode].provider_usage.total_tokens if preferred_mode in last_run else baseline.provider_usage.total_tokens}"
+    )
+    console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_baseline.json'}")
+    for compare_mode in compare_modes:
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_{compare_mode}.json'}")
+    console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_compare.md'}")
+    console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_triage.json'}")
+    if repeats > 1:
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.json'}")
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.md'}")
+    console.print(f"[cyan]Best mode:[/cyan] {preferred_mode}")
+
+
+def _run_legacy_compare_suite(
+    *,
+    benchmarks: tuple[str, ...],
+    runner: Any,
+    output: Path,
+    turns: int | None,
+    repeats: int,
+) -> None:
+    output.mkdir(parents=True, exist_ok=True)
+    for benchmark in benchmarks:
+        _run_legacy_compare_benchmark(
+            benchmark=benchmark,
+            runner=runner,
+            output=output,
+            turns=turns,
+            repeats=repeats,
+        )
+
+
 @dev_app.command("generate-fixture")
 def generate_fixture(
     type: Annotated[str, typer.Argument(help="Fixture type: coding, search, pressure")],
@@ -64,6 +165,13 @@ def generate_fixture(
 @dev_app.command("live-benchmark")
 def live_benchmark(
     benchmark: Annotated[str, typer.Option("--benchmark", help="Benchmark definition to run")] = "coding-loop",
+    program: Annotated[
+        str,
+        typer.Option(
+            "--program",
+            help="Run the legacy replay harness, the catalog executor, or both",
+        ),
+    ] = "legacy",
     mode: Annotated[
         str,
         typer.Option(
@@ -76,6 +184,47 @@ def live_benchmark(
         Path | None,
         typer.Option("--output", "-o", help="Output directory for artifacts"),
     ] = None,
+    catalog_root: Annotated[
+        Path,
+        typer.Option("--catalog-root", help="Benchmark catalog root"),
+    ] = Path("benchmarks"),
+    family: Annotated[
+        str,
+        typer.Option(
+            "--family",
+            help="Comma-separated catalog families to run",
+        ),
+    ] = "execution_patch,repo_grounding",
+    task: Annotated[
+        list[str] | None,
+        typer.Option("--task", help="Specific catalog task id to run"),
+    ] = None,
+    lane: Annotated[
+        str,
+        typer.Option("--lane", help="Benchmark lane id for catalog runs"),
+    ] = "production_claude_lane",
+    include_advisory: Annotated[
+        bool,
+        typer.Option("--include-advisory", help="Include advisory real-session episodes"),
+    ] = False,
+    public_release_only: Annotated[
+        bool,
+        typer.Option("--public-release-only", help="Run only tasks with public_release=true"),
+    ] = False,
+    legacy_benchmarks: Annotated[
+        str | None,
+        typer.Option(
+            "--legacy-benchmarks",
+            help="Comma-separated replay benchmarks to run when --program both is used",
+        ),
+    ] = None,
+    local_debug: Annotated[
+        bool,
+        typer.Option(
+            "--local-debug",
+            help="Allow non-reportable local catalog runs against a dirty checkout",
+        ),
+    ] = False,
     temperature: Annotated[float, typer.Option("--temperature", help="Sampling temperature")] = 0.0,
     max_tokens: Annotated[int, typer.Option("--max-tokens", help="Completion token cap")] = 300,
     timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds")] = 120.0,
@@ -84,9 +233,16 @@ def live_benchmark(
         typer.Option("--turns", help="Number of benchmark turns to run"),
     ] = None,
     repeats: Annotated[
-        int,
+        int | None,
         typer.Option("--repeats", help="Repeat compare mode N times for stability"),
-    ] = 1,
+    ] = None,
+    private_evaluator_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--private-evaluator-root",
+            help="Path to a private evaluator overlay for claimable execution_patch tasks",
+        ),
+    ] = None,
     pricing_prompt: Annotated[
         float | None,
         typer.Option("--pricing-prompt", help="Prompt token price per 1M tokens (USD)"),
@@ -107,20 +263,17 @@ def live_benchmark(
     ] = None,
 ) -> None:
     """Run a controlled live benchmark in baseline, Tok, or compare mode."""
+    from tok.testing.benchmark_executor import (
+        render_combined_benchmark_summary,
+        run_catalog_benchmark_suite,
+    )
+    from tok.testing.benchmark_suite import load_benchmark_catalog, render_benchmark_report_markdown
     from tok.testing.live_benchmark import (
         LiveBenchmarkRunner,
-        compare_results,
         load_benchmark_definition,
-        render_comparison_markdown,
-        render_stability_markdown,
-        select_preferred_mode,
-        summarize_compare_runs,
-        summarize_compare_triage,
         write_result,
     )
 
-    definition = load_benchmark_definition(benchmark)
-    effective_turns = turns if turns is not None else definition.default_turns
     pricing: dict[str, float] | None = None
     if pricing_prompt is not None or pricing_completion is not None:
         pricing = {
@@ -145,73 +298,77 @@ def live_benchmark(
         provider_options=parsed_provider_options,
     )
 
+    if program not in {"legacy", "catalog", "both"}:
+        msg = f"--program must be one of legacy, catalog, both (got {program})"
+        raise typer.BadParameter(msg)
+
     if output is None:
         output = Path.cwd() / "tmp" / "live_benchmark"
     output.mkdir(parents=True, exist_ok=True)
+    effective_repeats = repeats if repeats is not None else (3 if program in {"catalog", "both"} else 1)
+
+    if program in {"catalog", "both"}:
+        if mode != "compare":
+            msg = "catalog benchmarks only support --mode compare"
+            raise typer.BadParameter(msg)
+        catalog = load_benchmark_catalog(catalog_root)
+        family_names = tuple(value.strip() for value in family.split(",") if value.strip())
+        task_ids = tuple(task or ())
+        catalog_output = output / "catalog" if program == "both" else output
+        catalog_run = run_catalog_benchmark_suite(
+            catalog=catalog,
+            lane_id=lane,
+            output_root=catalog_output,
+            repeats=max(1, effective_repeats),
+            families=family_names,
+            task_ids=task_ids,
+            include_advisory=include_advisory,
+            public_release_only=public_release_only,
+            local_debug=local_debug,
+            runner=runner,
+            repo_root=Path.cwd(),
+            private_evaluator_root=private_evaluator_root,
+        )
+        catalog_markdown = render_benchmark_report_markdown(catalog_run.report)
+        (catalog_output / "report.md").write_text(catalog_markdown)
+        console.print(f"[green]✅ Catalog benchmark complete:[/green] {catalog_output / 'report.json'}")
+        console.print(f"[cyan]Markdown:[/cyan] {catalog_output / 'report.md'}")
+        if program == "catalog":
+            return
+
+        selected_legacy = tuple(
+            value.strip()
+            for value in (legacy_benchmarks or "coding-loop-5,research-loop-5").split(",")
+            if value.strip()
+        )
+        legacy_output = output / "legacy"
+        _run_legacy_compare_suite(
+            benchmarks=selected_legacy,
+            runner=runner,
+            output=legacy_output,
+            turns=turns,
+            repeats=effective_repeats,
+        )
+        summary = render_combined_benchmark_summary(
+            legacy_benchmarks=selected_legacy,
+            catalog_run=catalog_run,
+            catalog_report_markdown=catalog_markdown,
+        )
+        (output / "summary.md").write_text(summary)
+        console.print(f"[green]✅ Combined benchmark summary:[/green] {output / 'summary.md'}")
+        return
+
+    definition = load_benchmark_definition(benchmark)
+    effective_turns = turns if turns is not None else definition.default_turns
 
     if mode == "compare":
-        repeated_results: list[dict[str, Any]] = []
-        compare_modes = ("tok-universal",)
-        for run_index in range(max(1, repeats)):
-            console.print(f"[dim]Running mode: baseline (repeat {run_index + 1})...[/dim]")
-            baseline = runner.run(definition, mode="baseline", turns=effective_turns)
-            run_results: dict[str, Any] = {"baseline": baseline}
-            for compare_mode in compare_modes:
-                console.print(f"[dim]Running mode: {compare_mode} (repeat {run_index + 1})...[/dim]")
-                run_results[compare_mode] = runner.run(definition, mode=compare_mode, turns=effective_turns)
-            repeated_results.append(run_results)
-            write_result(output / f"{benchmark}_run{run_index + 1}_baseline.json", run_results["baseline"])
-            for compare_mode in compare_modes:
-                candidate = run_results[compare_mode]
-                write_result(output / f"{benchmark}_run{run_index + 1}_{compare_mode}.json", candidate)
-                write_result(
-                    output / f"{benchmark}_run{run_index + 1}_compare_{compare_mode}.json",
-                    compare_results(run_results["baseline"], candidate),
-                )
-
-        last_run = repeated_results[-1]
-        baseline = last_run["baseline"]
-        comparisons = [compare_results(baseline, last_run[compare_mode]) for compare_mode in compare_modes]
-        preferred_mode = select_preferred_mode(
-            baseline,
-            comparisons,
+        _run_legacy_compare_benchmark(
+            benchmark=benchmark,
+            runner=runner,
+            output=output,
+            turns=effective_turns,
+            repeats=effective_repeats,
         )
-        write_result(output / f"{benchmark}_baseline.json", baseline)
-        for compare_mode in compare_modes:
-            compare_result = last_run[compare_mode]
-            write_result(output / f"{benchmark}_{compare_mode}.json", compare_result)
-            write_result(
-                output / f"{benchmark}_compare_{compare_mode}.json",
-                compare_results(baseline, compare_result),
-            )
-        (output / f"{benchmark}_compare.md").write_text(
-            render_comparison_markdown(
-                baseline,
-                comparisons,
-            )
-        )
-        if repeats > 1:
-            stability_summary = summarize_compare_runs(repeated_results)
-            (output / f"{benchmark}_stability.json").write_text(json.dumps(stability_summary, indent=2))
-            (output / f"{benchmark}_stability.md").write_text(
-                render_stability_markdown(benchmark, model, stability_summary)
-            )
-        triage_summary = summarize_compare_triage(repeated_results)
-        (output / f"{benchmark}_triage.json").write_text(json.dumps(triage_summary, indent=2))
-        console.print(
-            f"[green]✅ Live benchmark complete:[/green] {benchmark} "
-            f"baseline_tokens={baseline.provider_usage.total_tokens} "
-            f"preferred_tokens={last_run[preferred_mode].provider_usage.total_tokens if preferred_mode in last_run else baseline.provider_usage.total_tokens}"
-        )
-        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_baseline.json'}")
-        for compare_mode in compare_modes:
-            console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_{compare_mode}.json'}")
-        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_compare.md'}")
-        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_triage.json'}")
-        if repeats > 1:
-            console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.json'}")
-            console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.md'}")
-        console.print(f"[cyan]Best mode:[/cyan] {preferred_mode}")
         return
 
     if mode not in {
@@ -369,6 +526,76 @@ def compression_frontier(
 
     console.print(f"[green]✅ Compression frontier complete:[/green] {json_path}")
     console.print(f"[cyan]Markdown:[/cyan] {md_path}")
+
+
+@dev_app.command("benchmark-validate")
+def benchmark_validate(
+    root: Annotated[
+        Path,
+        typer.Option("--root", help="Benchmark catalog root"),
+    ] = Path("benchmarks"),
+) -> None:
+    """Validate the structured production benchmark catalog."""
+    from tok.testing.benchmark_suite import load_benchmark_catalog
+
+    catalog = load_benchmark_catalog(root)
+    family_counts = catalog.family_counts()
+
+    console.print(
+        "[green]✅ Benchmark catalog valid:[/green] "
+        f"headline={catalog.headline_lane().id} "
+        f"compatibility_lanes={len(catalog.compatibility_lanes())}"
+    )
+    for family in ("execution_patch", "repo_grounding", "real_session"):
+        console.print(f"[cyan]{family}:[/cyan] {family_counts.get(family, 0)} tasks")
+
+
+@dev_app.command("benchmark-report")
+def benchmark_report(
+    input: Annotated[
+        Path,
+        typer.Option("--input", help="JSON report payload to render"),
+    ],
+    root: Annotated[
+        Path,
+        typer.Option("--root", help="Benchmark catalog root for raw run payloads"),
+    ] = Path("benchmarks"),
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Optional markdown output path"),
+    ] = None,
+) -> None:
+    """Render a production benchmark markdown report from JSON."""
+    from tok.testing.benchmark_suite import (
+        BenchmarkComparisonRun,
+        build_benchmark_report,
+        load_benchmark_catalog,
+        load_benchmark_report,
+        render_benchmark_report_markdown,
+    )
+
+    payload = json.loads(input.read_text())
+    if "lane_summaries" in payload:
+        report = load_benchmark_report(input)
+    else:
+        catalog = load_benchmark_catalog(root)
+        runs = [BenchmarkComparisonRun.from_dict(item) for item in payload.get("runs", []) if isinstance(item, dict)]
+        if not runs:
+            msg = "raw benchmark report payload must contain a non-empty 'runs' list"
+            raise typer.BadParameter(msg)
+        report = build_benchmark_report(
+            catalog,
+            runs,
+            title=str(payload.get("title") or "Production Tok Benchmark Report"),
+        )
+
+    markdown = render_benchmark_report_markdown(report)
+    if output is not None:
+        output.write_text(markdown)
+        console.print(f"[green]✅ Benchmark report written:[/green] {output}")
+        return
+
+    console.print(markdown)
 
 
 @dev_app.command("stress-language")

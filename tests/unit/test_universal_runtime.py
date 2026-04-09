@@ -1305,6 +1305,76 @@ def test_runtime_process_response_updates_memory_and_family_mode() -> None:
     assert processed.family_mode == "tok-universal"
 
 
+def test_runtime_process_response_accepts_natural_recovered_output_without_friction() -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+    session._natural_response_acceptable_this_turn = True
+
+    processed = runtime.process_response(
+        "I verified the change and the final answer is ready.",
+        model="google/gemini-2.0-flash",
+        session=session,
+        tool_compatible=False,
+    )
+
+    assert processed.behavior_signals.get("response_contract_recovered_valid", 0) == 1
+    assert processed.behavior_signals.get("natural_response_contract_accepted", 0) == 1
+    assert processed.behavior_signals.get("non_tok_response", 0) == 0
+    assert processed.behavior_signals.get("fail_open_compat_response", 0) == 0
+    assert processed.behavior_signals.get("tok_drift_healed", 0) == 0
+
+
+def test_runtime_process_response_preserves_friction_for_healed_plain_prose() -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+
+    processed = runtime.process_response(
+        "Plain prose answer without Tok markers.",
+        model="google/gemini-2.0-flash",
+        session=session,
+        tool_compatible=False,
+    )
+
+    assert processed.behavior_signals.get("response_contract_recovered_valid", 0) == 1
+    assert processed.behavior_signals.get("non_tok_response", 0) == 1
+    assert processed.behavior_signals.get("tok_drift_healed", 0) == 1
+
+
+def test_runtime_process_response_preserves_malformed_warning_when_recovered_structured_output() -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+    session._last_user_prompt_labels = ("file", "verification")
+    session._last_user_prompt_text = "File=<...>\nVerification=<...>"
+
+    processed = runtime.process_response(
+        '>>> turns:1|goal:fix\n@tool(json={"name":"view_file"})\nFile=src/tok/gateway.py\nVerification=health',
+        model="google/gemini-2.0-flash",
+        session=session,
+        tool_compatible=False,
+    )
+
+    assert processed.behavior_signals.get("response_contract_recovered_valid", 0) == 1
+    assert processed.behavior_signals.get("malformed_tok_response", 0) == 1
+    assert processed.behavior_signals.get("malformed_tok_hybrid_tool", 0) == 1
+
+
+def test_runtime_process_response_keeps_friction_for_tool_intent_prose() -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+    session._natural_response_acceptable_this_turn = True
+
+    processed = runtime.process_response(
+        "I will call the tool next: @tool view_file path=src/tok/gateway.py",
+        model="google/gemini-2.0-flash",
+        session=session,
+        tool_compatible=False,
+    )
+
+    assert processed.behavior_signals.get("response_contract_recovered_valid", 0) == 0
+    assert processed.behavior_signals.get("non_tok_response", 0) == 1
+    assert processed.behavior_signals.get("fail_open_compat_response", 0) == 1
+
+
 def test_response_contract_for_mode_flags_mixed_answer_tool_event() -> None:
     contract = response_contract_for_mode(
         "@tool view_file id:call_1 path:src/tok/gateway.py\n\n"
@@ -3167,6 +3237,23 @@ def test_prepare_request_context_keeps_tools_expected_turns_out_of_quarantine(
     assert session._answer_phase_expected_this_turn is True
     assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
     assert any(block.get("type") == "tool_use" for block in processed.content_blocks)
+
+
+def test_prepare_request_sets_natural_response_acceptance_for_natural_first_baseline_turn(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        request_policy="natural_first",
+        messages=[{"role": "user", "content": "Summarize what we already know."}],
+    )
+
+    runtime.prepare_request(request, session)
+
+    assert session._natural_response_acceptable_this_turn is True
 
 
 def test_prepare_request_answer_phase_suppresses_read_plan_and_large_file_hints(

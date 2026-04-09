@@ -12,8 +12,8 @@ from tok.universal_runtime import RuntimeSession, _jit_context_matches
 
 @pytest.fixture(autouse=True)
 def isolate_macro_registry(monkeypatch) -> None:
-    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **kw: None)
-    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **kw: None)
+    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **_: None)
+    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **_: None)
 
 
 def test_context_requirements_defaults_to_empty_dict() -> None:

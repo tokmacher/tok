@@ -711,23 +711,6 @@ class SavingsTracker:
             total += int(model_stats.get("input_saved_tokens", 0))
         return total
 
-    def format_compact_session_summary(self) -> str | None:
-        """Return a one-line summary suitable for bridge stop/status flows."""
-        summary = self.session_summary()
-        if summary is None:
-            return None
-        verdict = "degraded to baseline" if bool(summary["baseline_only"]) else "active and helping"
-        return (
-            f"Saved ${float(summary['cost_saved_usd']):.4f} "
-            f"({float(summary['savings_pct']):.1f}%) this session | "
-            f"status={verdict} | "
-            f"quality={summary['session_quality']} | "
-            f"tokens_saved={int(summary['tokens_saved']):,} | "
-            f"fallbacks={int(summary['fallback_count'])} | "
-            f"baseline-only={'yes' if bool(summary['baseline_only']) else 'no'} | "
-            f"reason={summary['last_degradation_reason'] or 'none'}"
-        )
-
     def format_ledger(self) -> str | None:
         """Format lifetime ledger stats for display."""
         summary = self.lifetime_summary()
@@ -804,23 +787,6 @@ class SavingsTracker:
             ),
             "last_degradation_reason": str(entry.get("degradation_reason", "")),
         }
-
-    def format_last_session(self) -> str | None:
-        """Format the most recent completed session from the lifetime log."""
-        summary = self.last_session_summary()
-        if summary is None:
-            return None
-        return (
-            "Last completed session:\n"
-            f"- date: {summary['date']}\n"
-            f"- turns: {summary['turns']}\n"
-            f"- actual tokens: {int(summary['actual_tokens']):,}\n"
-            f"- baseline tokens: {int(summary['baseline_tokens']):,}\n"
-            f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
-            f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
-            f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
-            f"- cost saved: ${float(summary['cost_saved_usd']):.4f}"
-        )
 
     def recent_summary(self, recent_sessions: int) -> dict[str, int | float | str] | None:
         """Return an aggregate summary over the most recent completed sessions."""

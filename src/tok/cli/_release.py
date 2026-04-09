@@ -747,6 +747,7 @@ def gate_check_command(
     emit_metrics: Path | None = None,
     stability_dir: Path | None = None,
     frontier_report: Path | None = None,
+    benchmark_report: Path | None = None,
     required_benchmarks: str = "coding-loop-5,research-loop-5",
 ) -> None:
     """Run gate checks over a directory of replay fixtures."""
@@ -913,6 +914,13 @@ def gate_check_command(
         release_summary["frontier_release_profile"] = str(frontier_check.get("release_profile", "baseline"))
         release_summary["frontier_status"] = "pass" if frontier_check.get("passed", False) else "fail"
         release_summary["frontier_probe_present"] = bool(frontier_check.get("openrouter_probe_present", False))
+    benchmark_check = None
+    if benchmark_report is not None:
+        from tok.testing.benchmark_suite import check_benchmark_report
+
+        benchmark_check = check_benchmark_report(benchmark_report)
+        release_summary["benchmark_headline_lane"] = str(benchmark_check.get("headline_lane", ""))
+        release_summary["benchmark_status"] = "pass" if benchmark_check.get("passed", False) else "fail"
 
     if export is not None:
         payload: dict[str, Any] = {
@@ -925,6 +933,8 @@ def gate_check_command(
             payload["stability_check"] = stability_check
         if frontier_check is not None:
             payload["frontier_check"] = frontier_check
+        if benchmark_check is not None:
+            payload["benchmark_check"] = benchmark_check
         export.write_text(json.dumps(payload, indent=2))
         console.print(f"[green]Wrote gate results:[/green] {export}")
 
@@ -955,3 +965,14 @@ def gate_check_command(
             raise typer.Exit(1)
         console.print(f"[green]FRONTIER PASS[/green] profile={frontier_check.get('release_profile', 'unknown')}")
         console.print("[green]Compression frontier gate: PASS[/green]")
+
+    if benchmark_check is not None:
+        if not benchmark_check.get("passed", False):
+            reason = benchmark_check.get("reason", "headline_consistency_failed")
+            console.print(
+                f"[red]BENCHMARK FAIL[/red] lane={benchmark_check.get('headline_lane', 'unknown')} ({reason})"
+            )
+            console.print("[red]Production benchmark gate: FAIL[/red]")
+            raise typer.Exit(1)
+        console.print(f"[green]BENCHMARK PASS[/green] lane={benchmark_check.get('headline_lane', 'unknown')}")
+        console.print("[green]Production benchmark gate: PASS[/green]")

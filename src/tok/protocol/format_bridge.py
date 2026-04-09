@@ -26,11 +26,6 @@ Stability: Repeat headers every 10 rows as heartbeats.
 class Bridge(SerializationProtocol):
     """The Invisible Bridge: JSON/XML/MD <-> Tok with JIT Activation."""
 
-    @staticmethod
-    def dispatch_async_v7(callback_id: str, _payload: object) -> str:
-        """V7 asynchronous dispatch."""
-        return f"v7_async_{callback_id}"
-
     verified_agents: set[str] = set()
 
     @staticmethod
@@ -158,56 +153,6 @@ class Bridge(SerializationProtocol):
             "log",
         }
         return any(n.type.lower() in valid_types for n in nodes)
-
-    @staticmethod
-    def delegate(
-        llm_callable: Callable[[str], Any],
-        agent_id: str,
-        task: str,
-        bootstrap: str = "essentials",
-        is_external: bool = True,
-    ) -> dict[str, Any]:
-        """Hand off task to agent with tiered grammar bootstrapping."""
-        from tok.analysis.prompt import get_grammar_snippet
-
-        if agent_id in Bridge.verified_agents:
-            active_level = None
-        else:
-            active_level = "full" if is_external and bootstrap == "essentials" else bootstrap
-
-        grammar = get_grammar_snippet(active_level) if active_level else ""
-        if active_level:
-            prompt = f"{grammar}\n\n@Delegate agent:{agent_id}\n  task: {task}"
-        else:
-            prompt = (
-                f"@Delegate agent:{agent_id}\n  task: {task}\n\n"
-                "Respond using Tok format:\n"
-                "@msg role:assistant\n"
-                "  |> your response"
-            )
-
-        try:
-            result = llm_callable(prompt)
-
-            response = result[0] if isinstance(result, tuple) else result
-
-            if not Bridge.is_valid_tok_response(response):
-                full_grammar = get_grammar_snippet("full")
-                retry_prompt = (
-                    f"[PROTOCOL ERROR] Use Tok format.\n{full_grammar}\n\n@Delegate agent:{agent_id}\n  task: {task}"
-                )
-                result = llm_callable(retry_prompt)
-
-                response = result[0] if isinstance(result, tuple) else result
-
-                if not Bridge.is_valid_tok_response(response):
-                    return {"error": "protocol_mismatch", "raw": response}
-
-            Bridge.verified_agents.add(agent_id)
-            return cast("dict[str, Any]", json.loads(Bridge.to_json(response)))
-
-        except Exception as e:
-            return {"error": "transport_failure", "details": str(e)}
 
     @staticmethod
     def json(json_str: str) -> str:

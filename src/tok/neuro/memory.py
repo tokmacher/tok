@@ -9,22 +9,7 @@ rule storage, and lesson learning.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import Any
-
-
-class RetrievalPolicy(Enum):
-    """
-    Policy for memory retrieval operations.
-
-    Defines how different types of memories should be retrieved
-    and combined during operations.
-    """
-
-    MIXED = auto()
-    RULES_ONLY = auto()
-    EPISODES_ONLY = auto()
-    LESSONS_ONLY = auto()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -37,22 +22,10 @@ class TokMemory:
 
 
 @dataclass(frozen=True, kw_only=True)
-class RuleMemory(TokMemory):
-    rule_id: str
-    definition: str
-
-
-@dataclass(frozen=True, kw_only=True)
 class EpisodeMemory(TokMemory):
     question: str
     answer: str
     ok: bool | None
-
-
-@dataclass(frozen=True, kw_only=True)
-class PlanMemory(TokMemory):
-    plan_id: str
-    steps: tuple[str, ...]
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -1,0 +1,93 @@
+name: Benchmark Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Benchmark scope to run
+        required: true
+        type: choice
+        options:
+          - smoke
+          - public_full
+      model:
+        description: Model identifier to benchmark
+        required: false
+        default: anthropic/claude-sonnet-4.6
+        type: string
+      private-evaluator-ref:
+        description: Pinned tag or commit to check out from the private evaluator overlay repo
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Validate private evaluator configuration
+        env:
+          PRIVATE_EVALUATOR_REF: ${{ inputs.private-evaluator-ref }}
+          PRIVATE_EVALUATOR_REPO: ${{ vars.BENCHMARK_PRIVATE_EVALUATOR_REPO }}
+          PRIVATE_EVALUATOR_TOKEN: ${{ secrets.BENCHMARK_PRIVATE_EVALUATOR_TOKEN }}
+        run: |
+          if [ -z "$PRIVATE_EVALUATOR_REF" ]; then
+            echo "private-evaluator-ref must be set to a pinned tag or commit" >&2
+            exit 1
+          fi
+          case "$PRIVATE_EVALUATOR_REF" in
+            HEAD|head|main|master|trunk|refs/heads/*)
+              echo "private-evaluator-ref must be a pinned tag or commit, not a moving branch ref" >&2
+              exit 1
+              ;;
+          esac
+          if [ -z "$PRIVATE_EVALUATOR_REPO" ]; then
+            echo "BENCHMARK_PRIVATE_EVALUATOR_REPO must be configured for benchmark smoke runs" >&2
+            exit 1
+          fi
+          if [ -z "$PRIVATE_EVALUATOR_TOKEN" ]; then
+            echo "BENCHMARK_PRIVATE_EVALUATOR_TOKEN must be configured for benchmark smoke runs" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" uv
+
+      - name: Check out private evaluator overlay
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.BENCHMARK_PRIVATE_EVALUATOR_REPO }}
+          ref: ${{ inputs.private-evaluator-ref }}
+          path: private-evaluator-overlay
+          token: ${{ secrets.BENCHMARK_PRIVATE_EVALUATOR_TOKEN }}
+
+      - name: Run release smoke with benchmarks
+        env:
+          BENCHMARK_OUTPUT: ${{ github.workspace }}/tmp/benchmark-smoke
+          PRIVATE_EVALUATOR_ROOT: ${{ github.workspace }}/private-evaluator-overlay
+        run: |
+          args=(
+            python3 scripts/run_release_smoke.py
+            --benchmark-mode "${{ inputs.mode }}"
+            --benchmark-output "$BENCHMARK_OUTPUT"
+            --model "${{ inputs.model }}"
+          )
+          if [ -d "$PRIVATE_EVALUATOR_ROOT" ]; then
+            args+=(--private-evaluator-root "$PRIVATE_EVALUATOR_ROOT")
+          fi
+          "${args[@]}"
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-smoke-${{ inputs.mode }}
+          path: tmp/benchmark-smoke/

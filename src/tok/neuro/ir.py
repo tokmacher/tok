@@ -29,7 +29,6 @@ class Instruction:
 @dataclass(frozen=True)
 class MacroProvenance:
     source_code: str | None = None
-    episode_id: str | None = None
     source_file: str | None = None
     composed_of: tuple[str, ...] = ()  # Names of lower-level macros this abstracts
 
@@ -43,6 +42,7 @@ class MacroProvenance:
     def from_dict(cls, data: dict[str, Any]) -> MacroProvenance:
         return cls(
             source_code=data.get("source_code"),
+            source_file=data.get("source_file"),
             composed_of=tuple(data.get("composed_of", [])),
         )
 
@@ -301,9 +301,6 @@ class TokIR:
     ) -> None:
         self.instructions: list[Instruction] = list(instructions) if instructions is not None else []
         self.macros: list[Macro] = list(macros) if macros is not None else []
-
-    def add_instruction(self, ins: Instruction) -> None:
-        self.instructions.append(ins)
 
     def add_macro(self, macro: Macro) -> None:
         self.macros.append(macro)

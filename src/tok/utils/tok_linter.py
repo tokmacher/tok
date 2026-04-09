@@ -12,32 +12,11 @@ from tok.utils.token_utils import count_tokens
 class SemanticAuditor:
     """Audit Tok payloads for Reasoning-to-Noise Ratio and Structural Debt."""
 
-    RECURSION_LIMIT = 10
-
-    def check_recursion(self, depth: int) -> bool:
-        """Check if depth is within recursion limit."""
-        return depth < self.RECURSION_LIMIT
-
-    """
-    The Tok Semantic Auditor measures the efficiency and resilience of Tok payloads.
-    It focuses on Reasoning-to-Noise Ratio (RNR) and Structural Debt.
-    """
-
-    def __init__(self, model: str = "gpt-4", threshold: float = 1.0) -> None:
+    def __init__(self, _model: str = "gpt-4", threshold: float = 1.0) -> None:
         """Initialize auditor with threshold for structural debt analysis."""
         self.threshold = threshold
 
     count_tokens = staticmethod(count_tokens)
-
-    def audit_v7(self, text: str) -> bool:
-        """Check if text conforms to v7 strict typing protocol."""
-        # Check for strict typing (key: value without indent)
-        import re
-
-        lines = text.split("\n")
-        strict_types = all(not re.search(r"^\s+\w+:", line) for line in lines)
-        v7_headers = any("@protocol version:7.0" in line or "@shard version:7.0" in line for line in lines)
-        return strict_types and v7_headers
 
     def audit(self, text: str) -> dict[str, Any]:
         """Run full audit on Tok text and return comprehensive report."""

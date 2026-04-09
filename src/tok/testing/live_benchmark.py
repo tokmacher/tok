@@ -28,6 +28,7 @@ from tok.runtime.core import (
     calculate_invisible_pressure,
     count_tokens,
 )
+from tok.runtime.pipeline.response_processing import response_contract_for_mode
 from tok.utils.config import API_BASE
 
 
@@ -65,6 +66,12 @@ def _sum_warning_signals(signals: dict[str, int]) -> int:
     )
 
 
+def _success_term_matches(term: str, search_space: str) -> bool:
+    escaped_term = re.escape(term.lower())
+    pattern = rf"(?<![A-Za-z0-9_]){escaped_term}(?![A-Za-z0-9_])"
+    return bool(re.search(pattern, search_space))
+
+
 @dataclass(frozen=True)
 class BenchmarkDefinition:
     name: str
@@ -75,8 +82,16 @@ class BenchmarkDefinition:
     min_success_terms: int = 2
     expected_file_terms: tuple[str, ...] = ()
     expected_verification_terms: tuple[str, ...] = ()
+    require_file_field: bool | None = None
+    require_verification_field: bool | None = None
     default_turns: int = 3
     prompt_sequence: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.require_file_field is None:
+            object.__setattr__(self, "require_file_field", bool(self.expected_file_terms))
+        if self.require_verification_field is None:
+            object.__setattr__(self, "require_verification_field", bool(self.expected_verification_terms))
 
 
 @dataclass(frozen=True)
@@ -86,6 +101,20 @@ class ProviderUsageSnapshot:
     total_tokens: int
     latency_ms: float
     cost_usd: float | None = None
+
+
+@dataclass(frozen=True)
+class ConversationTurnResult:
+    mode: str
+    provider_usage: ProviderUsageSnapshot
+    compression_metrics: dict[str, Any]
+    prompt_metrics: dict[str, Any]
+    response_metrics: dict[str, Any]
+    diagnostics: dict[str, Any]
+    outbound_payload: dict[str, Any]
+    raw_response: str
+    visible_response: str
+    content_blocks: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -369,9 +398,8 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
             "Identify patterns and use JIT macros when offered to save time."
         ),
         followup_prompt=("Check src/tok/cli.py for the same pattern."),
-        success_terms=("jit_executed", "JIT Execution Result"),
-        min_success_terms=1,
-        expected_file_terms=("cli.py",),
+        success_terms=("cli.py", "parse_error", "pytest src/tok/cli.py"),
+        min_success_terms=2,
         expected_verification_terms=(),
         default_turns=1,
     ),
@@ -1065,39 +1093,44 @@ def _evaluate_task_success(
     for val in fields.values():
         search_space += f" {val.lower()}"
 
-    matched_terms = [term for term in definition.success_terms if term.lower() in search_space]
+    matched_terms = [term for term in definition.success_terms if _success_term_matches(term, search_space)]
     failures: list[str] = []
     file_value = fields.get("file", "")
     verification_value = fields.get("verification", "")
+    require_file_field = bool(definition.require_file_field)
+    require_verification_field = bool(definition.require_verification_field)
 
-    if not file_value:
-        failures.append("missing_file_field")
-    elif _looks_like_placeholder(file_value):
-        failures.append("placeholder_file_field")
-    elif definition.expected_file_terms:
-        # Normalize paths for matching: strip src/ prefix and common prefixes
-        normalized_file = file_value.lower()
-        for prefix in ("src/tok/", "src/", "tok/"):
-            if normalized_file.startswith(prefix):
-                normalized_file = normalized_file[len(prefix) :]
-                break
-        if not any(
-            term.lower() in normalized_file or term.lower() in file_value.lower()
-            for term in definition.expected_file_terms
+    if require_file_field:
+        if not file_value:
+            failures.append("missing_file_field")
+        elif _looks_like_placeholder(file_value):
+            failures.append("placeholder_file_field")
+        elif definition.expected_file_terms:
+            # Normalize paths for matching: strip src/ prefix and common prefixes
+            normalized_file = file_value.lower()
+            for prefix in ("src/tok/", "src/", "tok/"):
+                if normalized_file.startswith(prefix):
+                    normalized_file = normalized_file[len(prefix) :]
+                    break
+            if not any(
+                term.lower() in normalized_file or term.lower() in file_value.lower()
+                for term in definition.expected_file_terms
+            ):
+                failures.append("unexpected_file_field")
+
+    if require_verification_field:
+        if not verification_value:
+            failures.append("missing_verification_field")
+        elif _looks_like_placeholder(verification_value):
+            failures.append("placeholder_verification_field")
+        elif definition.expected_verification_terms and not any(
+            term.lower() in verification_value.lower() for term in definition.expected_verification_terms
         ):
-            failures.append("unexpected_file_field")
-
-    if not verification_value:
-        failures.append("missing_verification_field")
-    elif _looks_like_placeholder(verification_value):
-        failures.append("placeholder_verification_field")
-    elif definition.expected_verification_terms and not any(
-        term.lower() in verification_value.lower() for term in definition.expected_verification_terms
-    ):
-        failures.append("unexpected_verification_field")
+            failures.append("unexpected_verification_field")
 
     structured_valid = not failures
-    if not structured_valid and len(matched_terms) < definition.min_success_terms:
+    needs_textual_success_terms = not (require_file_field or require_verification_field)
+    if (needs_textual_success_terms or not structured_valid) and len(matched_terms) < definition.min_success_terms:
         failures.append("response_missing_success_terms")
 
     return not failures, matched_terms, failures
@@ -1187,13 +1220,190 @@ def select_preferred_mode(baseline: BenchmarkResult, comparisons: list[Benchmark
         return "baseline" if baseline.task_success else "none"
     best = min(
         viable,
-        key=lambda comparison: (comparison.candidate.provider_usage.total_tokens),
+        key=lambda comparison: comparison.candidate.provider_usage.total_tokens,
     )
     if not baseline.task_success:
         return best.candidate.mode
     if best.candidate.provider_usage.total_tokens < baseline.provider_usage.total_tokens:
         return best.candidate.mode
     return "baseline"
+
+
+_OPENAI_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "view_file": {
+        "type": "function",
+        "function": {
+            "name": "view_file",
+            "description": "Read the contents of a file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path to read"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    "grep_search": {
+        "type": "function",
+        "function": {
+            "name": "grep_search",
+            "description": "Search file contents using a regex pattern",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                    "path": {"type": "string", "description": "Directory to search in"},
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    "list_dir": {
+        "type": "function",
+        "function": {
+            "name": "list_dir",
+            "description": "List files and directories",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory path to list"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    "edit_file": {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Edit a file by replacing old text with new text",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path to edit"},
+                    "old_string": {"type": "string", "description": "Text to find"},
+                    "new_string": {"type": "string", "description": "Replacement text"},
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+        },
+    },
+    "run_tests": {
+        "type": "function",
+        "function": {
+            "name": "run_tests",
+            "description": "Run a pytest command",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The pytest command to run"},
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    "git_diff": {
+        "type": "function",
+        "function": {
+            "name": "git_diff",
+            "description": "Show git diff of changes",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path to diff"},
+                },
+                "required": [],
+            },
+        },
+    },
+}
+
+
+def _build_openai_tools_param(allowed_tools: tuple[str, ...]) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    for tool_name in allowed_tools:
+        schema = _OPENAI_TOOL_SCHEMAS.get(tool_name)
+        if schema:
+            tools.append(schema)
+    return tools
+
+
+def _convert_openai_tool_calls(raw_tool_calls: Any) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for tc in raw_tool_calls:
+        tool_id = str(getattr(tc, "id", "") or "")
+        func = getattr(tc, "function", None)
+        name = str(getattr(func, "name", "") or "") if func else ""
+        arguments_raw = str(getattr(func, "arguments", "{}") or "{}") if func else "{}"
+        try:
+            tool_input = json.loads(arguments_raw)
+        except (json.JSONDecodeError, TypeError):
+            tool_input = {}
+        blocks.append(
+            {
+                "type": "tool_use",
+                "id": tool_id,
+                "name": name,
+                "input": tool_input,
+            }
+        )
+    return blocks
+
+
+def _adapt_tool_results_for_openai(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    adapted: list[dict[str, Any]] = []
+    pending_tool_call_ids: dict[str, str] = {}
+
+    for msg in messages:
+        role = str(msg.get("role", "")).strip()
+        content = msg.get("content")
+
+        if role == "assistant" and isinstance(content, list):
+            tool_use_ids = {}
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    tc_id = str(block.get("id", ""))
+                    tc_name = str(block.get("name", ""))
+                    if tc_id:
+                        tool_use_ids[tc_id] = tc_name
+            if tool_use_ids:
+                pending_tool_call_ids = tool_use_ids
+            adapted.append(msg)
+            continue
+
+        if role == "user" and isinstance(content, list):
+            has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+            if has_tool_result and pending_tool_call_ids:
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    tool_use_id = str(block.get("tool_use_id", ""))
+                    if tool_use_id in pending_tool_call_ids:
+                        adapted.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_use_id,
+                                "content": _content_text(block.get("content", "")),
+                            }
+                        )
+                        pending_tool_call_ids.pop(tool_use_id, None)
+                    else:
+                        adapted.append(
+                            {
+                                "role": "user",
+                                "content": _content_text(block.get("content", "")),
+                            }
+                        )
+                if not pending_tool_call_ids:
+                    pending_tool_call_ids = {}
+                continue
+
+        adapted.append(msg)
+
+    return adapted
 
 
 class LiveBenchmarkRunner:
@@ -1224,7 +1434,359 @@ class LiveBenchmarkRunner:
             base_url=self.api_base,
             api_key=self.api_key,
             timeout=timeout,
-            max_retries=0,
+            max_retries=3,
+        )
+
+    def run_conversation_step(
+        self,
+        *,
+        conversation: list[dict[str, Any]],
+        system_prompt: str,
+        mode: str,
+        session: RuntimeSession,
+        bridge_session: BridgeSession | None = None,
+        adapter_kind: str = "text-loop",
+        allowed_tools: tuple[str, ...] | None = None,
+    ) -> ConversationTurnResult:
+        canonical_mode = "tok-universal" if mode in {"tok-tool-compatible", "tok-universal"} else mode
+        original_system_tokens = _estimate_tokens(system_prompt)
+        normalized_messages_tokens = _estimate_tokens(conversation)
+        baseline_prompt_estimate = original_system_tokens + normalized_messages_tokens
+        runtime = UniversalTokRuntime()
+        tool_compatible = canonical_mode in {"tok-universal", "tok-minimal"}
+        request_policy = default_request_policy() if canonical_mode == "tok-universal" else "legacy_tool_compatible"
+
+        prepared = None
+        prepared_body: dict[str, Any] | None = None
+        turn_tool_compatible = False
+        if canonical_mode == "baseline":
+            chat_messages = [
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                *conversation,
+            ]
+            compression_metrics: dict[str, Any] = {
+                "input_saved_tokens": 0,
+                "output_saved_tokens": 0,
+                "total_saved_tokens": 0,
+                "input_behavior_signals": {},
+                "type_breakdown": {},
+            }
+            prompt_metrics: dict[str, Any] = {
+                "system_prompt_tokens": original_system_tokens,
+                "normalized_messages_tokens": normalized_messages_tokens,
+                "prepared_messages_tokens": normalized_messages_tokens,
+                "system_tokens_estimate": original_system_tokens,
+                "directive_tokens_estimate": 0,
+                "state_payload_tokens_estimate": 0,
+                "tok_system_additions_tokens": 0,
+                "tok_overhead_tokens": 0,
+                "estimated_prompt_delta_tokens": 0,
+                "outbound_prompt_estimate_tokens": baseline_prompt_estimate,
+            }
+            response_metrics: dict[str, Any] = {
+                "response_behavior_signals": {},
+                "invisible_pressure": 0,
+                "reacquisition_cost_tokens": 0,
+                "family_mode": "",
+                "response_mode": "baseline",
+            }
+            diagnostics: dict[str, Any] = {
+                "tool_compatible_requested": False,
+                "request_policy": "forced_baseline",
+                "request_messages_before": len(conversation),
+                "request_messages_after": len(chat_messages),
+            }
+            outbound_payload: dict[str, Any] = {
+                "system": system_prompt,
+                "messages": conversation.copy(),
+            }
+        else:
+            if canonical_mode == "tok-universal":
+                active_bridge_session = bridge_session or BridgeSession()
+                bridge_request_body = {
+                    "model": self.model,
+                    "messages": copy.deepcopy(conversation),
+                    "system": system_prompt,
+                }
+                bridge_payload, preflight_response = prepare_bridge_payload(
+                    session=active_bridge_session,
+                    body=bridge_request_body,
+                    headers={},
+                    path="v1/messages",
+                )
+                if preflight_response is not None:
+                    msg = (
+                        "tok-universal benchmark bridge preflight rejected payload "
+                        f"(status={preflight_response.status_code})"
+                    )
+                    raise RuntimeError(msg)
+
+                prepared_body = apply_anthropic_optimizations(copy.deepcopy(bridge_payload.body))
+                request_policy = bridge_payload.request_policy
+                turn_tool_compatible = bridge_payload.request_tool_compatible
+                chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get("messages", [])
+                prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
+                prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
+                sys_val2 = prepared_body.get("system")
+                (
+                    system_tokens_estimate,
+                    directive_tokens_estimate,
+                    state_payload_tokens_estimate,
+                ) = _system_breakdown(
+                    system_prompt,
+                    sys_val2 if isinstance(sys_val2, (str, list, dict)) else "",
+                )
+                outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
+                tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
+                tok_overhead_tokens = max(
+                    0,
+                    outbound_prompt_estimate - baseline_prompt_estimate + bridge_payload.saved_toks,
+                )
+                compression_metrics = {
+                    "input_saved_tokens": bridge_payload.saved_toks,
+                    "output_saved_tokens": 0,
+                    "total_saved_tokens": bridge_payload.saved_toks,
+                    "input_behavior_signals": dict(bridge_payload.behavior_signals),
+                    "type_breakdown": dict(bridge_payload.tool_breakdown),
+                }
+                prompt_metrics = {
+                    "system_prompt_tokens": original_system_tokens,
+                    "normalized_messages_tokens": normalized_messages_tokens,
+                    "prepared_messages_tokens": prepared_messages_tokens,
+                    "system_tokens_estimate": system_tokens_estimate,
+                    "directive_tokens_estimate": directive_tokens_estimate,
+                    "state_payload_tokens_estimate": state_payload_tokens_estimate,
+                    "tok_system_additions_tokens": tok_system_additions_tokens,
+                    "tok_overhead_tokens": tok_overhead_tokens,
+                    "estimated_prompt_delta_tokens": outbound_prompt_estimate - baseline_prompt_estimate,
+                    "outbound_prompt_estimate_tokens": outbound_prompt_estimate,
+                }
+                response_metrics = {
+                    "response_behavior_signals": {},
+                    "invisible_pressure": 0,
+                    "reacquisition_cost_tokens": int(
+                        bridge_payload.behavior_signals.get("reacquisition_cost_tokens", 0)
+                    ),
+                    "family_mode": "",
+                    "response_mode": canonical_mode,
+                }
+                diagnostics = {
+                    "tool_compatible_requested": turn_tool_compatible,
+                    "request_policy": request_policy,
+                    "request_messages_before": len(conversation),
+                    "request_messages_after": len(chat_messages),
+                    "runtime_mode": "claude-bridge",
+                    "execution_path": "claude-bridge",
+                    "bridge_preflight_applied": 1,
+                }
+                if diagnostics["execution_path"] != "claude-bridge":
+                    msg = "tok-universal benchmark must execute through the claude-bridge path"
+                    raise RuntimeError(msg)
+                outbound_payload = {
+                    "system": prepared_body.get("system"),
+                    "messages": prepared_body.get("messages", []),
+                }
+            else:
+                prepared = runtime.prepare_request(
+                    RuntimeRequest(
+                        model=self.model,
+                        messages=conversation,
+                        system=system_prompt,
+                        adapter_kind=adapter_kind,
+                        tool_compatible=tool_compatible,
+                        request_policy=cast(
+                            "Literal['legacy_tool_compatible', 'natural_first', 'forced_baseline']",
+                            request_policy,
+                        ),
+                    ),
+                    session,
+                )
+                prepared_body = dict(prepared.body)
+                if canonical_mode == "tok-minimal":
+                    sys_val = prepared_body.get("system")
+                    prepared_body["system"] = _minimalize_system_prompt(
+                        sys_val if isinstance(sys_val, (str, list, dict)) else "",
+                        system_prompt,
+                    )
+                turn_tool_compatible = tool_compatible
+                chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get("messages", [])
+                prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
+                prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
+                sys_val2 = prepared_body.get("system")
+                (
+                    system_tokens_estimate,
+                    directive_tokens_estimate,
+                    state_payload_tokens_estimate,
+                ) = _system_breakdown(
+                    system_prompt,
+                    sys_val2 if isinstance(sys_val2, (str, list, dict)) else "",
+                )
+                outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
+                tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
+                tok_overhead_tokens = max(
+                    0,
+                    outbound_prompt_estimate - baseline_prompt_estimate + prepared.input_saved_tokens,
+                )
+                compression_metrics = {
+                    "input_saved_tokens": prepared.input_saved_tokens,
+                    "output_saved_tokens": 0,
+                    "total_saved_tokens": prepared.input_saved_tokens,
+                    "input_behavior_signals": dict(prepared.behavior_signals),
+                    "type_breakdown": dict(prepared.type_breakdown),
+                }
+                prompt_metrics = {
+                    "system_prompt_tokens": original_system_tokens,
+                    "normalized_messages_tokens": normalized_messages_tokens,
+                    "prepared_messages_tokens": prepared_messages_tokens,
+                    "system_tokens_estimate": system_tokens_estimate,
+                    "directive_tokens_estimate": directive_tokens_estimate,
+                    "state_payload_tokens_estimate": state_payload_tokens_estimate,
+                    "tok_system_additions_tokens": tok_system_additions_tokens,
+                    "tok_overhead_tokens": tok_overhead_tokens,
+                    "estimated_prompt_delta_tokens": outbound_prompt_estimate - baseline_prompt_estimate,
+                    "outbound_prompt_estimate_tokens": outbound_prompt_estimate,
+                }
+                response_metrics = {
+                    "response_behavior_signals": {},
+                    "invisible_pressure": 0,
+                    "reacquisition_cost_tokens": int(prepared.behavior_signals.get("reacquisition_cost_tokens", 0)),
+                    "family_mode": "",
+                    "response_mode": canonical_mode,
+                }
+                diagnostics = {
+                    "tool_compatible_requested": tool_compatible,
+                    "request_policy": request_policy,
+                    "request_messages_before": len(conversation),
+                    "request_messages_after": len(chat_messages),
+                    "runtime_mode": prepared.mode,
+                    "execution_path": "text-loop",
+                    "bridge_preflight_applied": 0,
+                }
+                outbound_payload = {
+                    "system": prepared_body.get("system"),
+                    "messages": prepared_body.get("messages", []),
+                }
+
+        started = time.time()
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": chat_messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        if self.provider_options:
+            create_kwargs["extra_body"] = self.provider_options
+
+        shape_before = _message_shape_forensics(chat_messages)
+        adapted_chat_messages = apply_schema_adaptations(chat_messages)
+        shape_after = _message_shape_forensics(adapted_chat_messages)
+
+        use_openai_tools = canonical_mode == "baseline" and allowed_tools and self.provider.lower() != "anthropic"
+        if use_openai_tools:
+            provider_messages = _adapt_tool_results_for_openai(adapted_chat_messages)
+        else:
+            provider_messages = _provider_safe_chat_messages(adapted_chat_messages, self.provider)
+
+        provider_shape = _message_shape_forensics(provider_messages)
+        compatibility_warnings: list[str] = []
+        if self.provider.lower() != "anthropic" and (
+            shape_after["tool_use_blocks"] > 0 or shape_after["tool_result_blocks"] > 0
+        ):
+            compatibility_warnings.append("non_anthropic_tool_block_payload")
+        if use_openai_tools:
+            compatibility_warnings.append("openai_tools_param_active")
+        outbound_system = prepared_body.get("system") if prepared_body is not None else system_prompt
+        outbound_payload = {
+            "system": outbound_system,
+            "messages": provider_messages,
+        }
+        diagnostics["schema_forensics"] = {
+            "provider": self.provider,
+            "before": shape_before,
+            "after": shape_after,
+            "provider_after": provider_shape,
+            "compatibility_warnings": compatibility_warnings,
+        }
+        create_kwargs["messages"] = provider_messages
+
+        if use_openai_tools:
+            openai_tools = _build_openai_tools_param(allowed_tools)
+            if openai_tools:
+                create_kwargs["tools"] = openai_tools
+
+        response = self.client.chat.completions.create(**create_kwargs)
+        latency_ms = (time.time() - started) * 1000
+        message_obj = response.choices[0].message if response.choices else None
+        raw_response = (message_obj.content or "") if message_obj and message_obj.content else ""
+        visible_response = raw_response
+
+        openai_tool_call_blocks: list[dict[str, Any]] = []
+        if use_openai_tools and message_obj is not None:
+            if hasattr(message_obj, "tool_calls") and message_obj.tool_calls:
+                openai_tool_call_blocks = _convert_openai_tool_calls(message_obj.tool_calls)
+                if not raw_response and openai_tool_call_blocks:
+                    raw_response = " ".join(f"Tool use ({b.get('name', '')})" for b in openai_tool_call_blocks)
+                    visible_response = raw_response
+
+        if canonical_mode != "baseline":
+            processed = runtime.process_response(
+                raw_response,
+                model=self.model,
+                session=session,
+                behavior_signals=compression_metrics["input_behavior_signals"],
+                tool_compatible=turn_tool_compatible,
+            )
+            content_blocks = processed.content_blocks
+            visible_response = (
+                "\n".join(block.get("text", "") for block in content_blocks if block.get("type") == "text").strip()
+                or raw_response
+            )
+            compression_metrics["output_saved_tokens"] = processed.output_saved_tokens
+            compression_metrics["total_saved_tokens"] = (
+                compression_metrics["input_saved_tokens"] + processed.output_saved_tokens
+            )
+            response_metrics["response_behavior_signals"] = dict(processed.behavior_signals)
+            response_metrics["family_mode"] = processed.family_mode
+            response_metrics["invisible_pressure"] = calculate_invisible_pressure(processed.behavior_signals)
+            response_metrics["reacquisition_cost_tokens"] = int(
+                processed.behavior_signals.get("reacquisition_cost_tokens", 0)
+                or response_metrics["reacquisition_cost_tokens"]
+            )
+            response_metrics["response_mode"] = processed.mode
+            if canonical_mode == "tok-universal" and response_metrics["response_mode"] == "tok-universal":
+                msg = "tok-universal benchmark must execute through runtime response-contract processing"
+                raise RuntimeError(msg)
+        else:
+            content_blocks = response_contract_for_mode(
+                raw_response, tool_compatible=False, session=session
+            ).content_blocks
+            if openai_tool_call_blocks:
+                content_blocks = openai_tool_call_blocks + [b for b in content_blocks if b.get("type") != "tool_use"]
+
+        usage = response.usage
+        provider_usage = ProviderUsageSnapshot(
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0)),
+            completion_tokens=int(getattr(usage, "completion_tokens", 0)),
+            total_tokens=int(getattr(usage, "total_tokens", 0)),
+            latency_ms=round(latency_ms, 2),
+        )
+        diagnostics["response_warning_signal_count"] = _sum_warning_signals(
+            response_metrics["response_behavior_signals"]
+        )
+        return ConversationTurnResult(
+            mode=canonical_mode,
+            provider_usage=provider_usage,
+            compression_metrics=compression_metrics,
+            prompt_metrics=prompt_metrics,
+            response_metrics=response_metrics,
+            diagnostics=diagnostics,
+            outbound_payload=outbound_payload,
+            raw_response=raw_response,
+            visible_response=visible_response,
+            content_blocks=content_blocks,
         )
 
     def run(self, definition: BenchmarkDefinition, *, mode: str, turns: int = 3) -> BenchmarkResult:
@@ -1244,7 +1806,6 @@ class LiveBenchmarkRunner:
         original_system_tokens = _estimate_tokens(definition.system_prompt)
         runtime = UniversalTokRuntime()
         tool_compatible = canonical_mode in {"tok-universal", "tok-minimal"}
-        request_policy = default_request_policy() if canonical_mode == "tok-universal" else "legacy_tool_compatible"
 
         # Identity logging for pointer registry continuity
         id(runtime)
@@ -1304,337 +1865,47 @@ class LiveBenchmarkRunner:
                 conversation.append(user_msg)
                 past_messages.append(user_msg)
 
-                normalized_messages_tokens = _estimate_tokens(conversation)
-                baseline_prompt_estimate = original_system_tokens + normalized_messages_tokens
-                prepared = None
-                prepared_body: dict[str, Any] | None = None
-                turn_tool_compatible = False
-
-                if canonical_mode == "baseline":
-                    chat_messages = [
-                        {
-                            "role": "system",
-                            "content": definition.system_prompt,
-                        },
-                        *conversation,
-                    ]
-                    turn_compression_metrics: dict[str, Any] = {
-                        "input_saved_tokens": 0,
-                        "output_saved_tokens": 0,
-                        "total_saved_tokens": 0,
-                        "input_behavior_signals": {},
-                        "type_breakdown": {},
-                    }
-                    turn_prompt_metrics: dict[str, Any] = {
-                        "system_prompt_tokens": original_system_tokens,
-                        "normalized_messages_tokens": normalized_messages_tokens,
-                        "prepared_messages_tokens": normalized_messages_tokens,
-                        "system_tokens_estimate": original_system_tokens,
-                        "directive_tokens_estimate": 0,
-                        "state_payload_tokens_estimate": 0,
-                        "tok_system_additions_tokens": 0,
-                        "tok_overhead_tokens": 0,
-                        "estimated_prompt_delta_tokens": 0,
-                        "outbound_prompt_estimate_tokens": baseline_prompt_estimate,
-                    }
-                    turn_response_metrics: dict[str, Any] = {
-                        "response_behavior_signals": {},
-                        "invisible_pressure": 0,
-                        "reacquisition_cost_tokens": 0,
-                        "family_mode": "",
-                        "response_mode": "baseline",
-                    }
-                    turn_diagnostics: dict[str, Any] = {
-                        "tool_compatible_requested": False,
-                        "request_policy": "forced_baseline",
-                        "request_messages_before": len(conversation),
-                        "request_messages_after": len(chat_messages),
-                    }
-                    outbound_payload: dict[str, Any] = {
-                        "system": definition.system_prompt,
-                        "messages": conversation.copy(),
-                    }
-                else:
-                    if canonical_mode == "tok-universal":
-                        bridge_request_body = {
-                            "model": self.model,
-                            "messages": copy.deepcopy(conversation),
-                            "system": definition.system_prompt,
-                        }
-                        bridge_payload, preflight_response = prepare_bridge_payload(
-                            session=bridge_session,
-                            body=bridge_request_body,
-                            headers={},
-                            path="v1/messages",
-                        )
-                        if preflight_response is not None:
-                            msg = (
-                                "tok-universal benchmark bridge preflight rejected payload "
-                                f"(status={preflight_response.status_code})"
-                            )
-                            raise RuntimeError(msg)
-
-                        prepared_body = apply_anthropic_optimizations(copy.deepcopy(bridge_payload.body))
-                        request_policy = bridge_payload.request_policy
-                        turn_tool_compatible = bridge_payload.request_tool_compatible
-                        chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get(
-                            "messages", []
-                        )
-                        prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
-                        prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
-                        sys_val2 = prepared_body.get("system")
-                        (
-                            system_tokens_estimate,
-                            directive_tokens_estimate,
-                            state_payload_tokens_estimate,
-                        ) = _system_breakdown(
-                            definition.system_prompt, sys_val2 if isinstance(sys_val2, (str, list, dict)) else ""
-                        )
-                        outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
-                        tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
-                        tok_overhead_tokens = max(
-                            0,
-                            outbound_prompt_estimate - baseline_prompt_estimate + bridge_payload.saved_toks,
-                        )
-                        turn_compression_metrics = {
-                            "input_saved_tokens": bridge_payload.saved_toks,
-                            "output_saved_tokens": 0,
-                            "total_saved_tokens": bridge_payload.saved_toks,
-                            "input_behavior_signals": dict(bridge_payload.behavior_signals),
-                            "type_breakdown": dict(bridge_payload.tool_breakdown),
-                        }
-                        turn_prompt_metrics = {
-                            "system_prompt_tokens": original_system_tokens,
-                            "normalized_messages_tokens": normalized_messages_tokens,
-                            "prepared_messages_tokens": prepared_messages_tokens,
-                            "system_tokens_estimate": system_tokens_estimate,
-                            "directive_tokens_estimate": directive_tokens_estimate,
-                            "state_payload_tokens_estimate": state_payload_tokens_estimate,
-                            "tok_system_additions_tokens": tok_system_additions_tokens,
-                            "tok_overhead_tokens": tok_overhead_tokens,
-                            "estimated_prompt_delta_tokens": outbound_prompt_estimate - baseline_prompt_estimate,
-                            "outbound_prompt_estimate_tokens": outbound_prompt_estimate,
-                        }
-                        turn_response_metrics = {
-                            "response_behavior_signals": {},
-                            "invisible_pressure": 0,
-                            "reacquisition_cost_tokens": int(
-                                bridge_payload.behavior_signals.get("reacquisition_cost_tokens", 0)
-                            ),
-                            "family_mode": "",
-                            "response_mode": canonical_mode,
-                        }
-                        turn_diagnostics = {
-                            "tool_compatible_requested": turn_tool_compatible,
-                            "request_policy": request_policy,
-                            "request_messages_before": len(conversation),
-                            "request_messages_after": len(chat_messages),
-                            "runtime_mode": "claude-bridge",
-                            "execution_path": "claude-bridge",
-                            "bridge_preflight_applied": 1,
-                        }
-                        if turn_diagnostics["execution_path"] != "claude-bridge":
-                            msg = "tok-universal benchmark must execute through the claude-bridge path"
-                            raise RuntimeError(msg)
-                        outbound_payload = {
-                            "system": prepared_body.get("system"),
-                            "messages": prepared_body.get("messages", []),
-                        }
-                    else:
-                        prepared = runtime.prepare_request(
-                            RuntimeRequest(
-                                model=self.model,
-                                messages=conversation,
-                                system=definition.system_prompt,
-                                adapter_kind="text-loop",
-                                tool_compatible=tool_compatible,
-                                request_policy=cast(
-                                    "Literal['legacy_tool_compatible', 'natural_first', 'forced_baseline']",
-                                    request_policy,
-                                ),
-                            ),
-                            session,
-                        )
-                        prepared_body = dict(prepared.body)
-                        if canonical_mode == "tok-minimal":
-                            sys_val = prepared_body.get("system")
-                            prepared_body["system"] = _minimalize_system_prompt(
-                                sys_val if isinstance(sys_val, (str, list, dict)) else "",
-                                definition.system_prompt,
-                            )
-                        turn_tool_compatible = tool_compatible
-                        chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get(
-                            "messages", []
-                        )
-                        prepared_system_tokens = _estimate_tokens(prepared_body.get("system"))
-                        prepared_messages_tokens = _estimate_tokens(prepared_body.get("messages", []))
-                        sys_val2 = prepared_body.get("system")
-                        (
-                            system_tokens_estimate,
-                            directive_tokens_estimate,
-                            state_payload_tokens_estimate,
-                        ) = _system_breakdown(
-                            definition.system_prompt, sys_val2 if isinstance(sys_val2, (str, list, dict)) else ""
-                        )
-                        outbound_prompt_estimate = prepared_system_tokens + prepared_messages_tokens
-                        tok_system_additions_tokens = max(0, prepared_system_tokens - original_system_tokens)
-                        tok_overhead_tokens = max(
-                            0,
-                            outbound_prompt_estimate - baseline_prompt_estimate + prepared.input_saved_tokens,
-                        )
-                        turn_compression_metrics = {
-                            "input_saved_tokens": prepared.input_saved_tokens,
-                            "output_saved_tokens": 0,
-                            "total_saved_tokens": prepared.input_saved_tokens,
-                            "input_behavior_signals": dict(prepared.behavior_signals),
-                            "type_breakdown": dict(prepared.type_breakdown),
-                        }
-                        turn_prompt_metrics = {
-                            "system_prompt_tokens": original_system_tokens,
-                            "normalized_messages_tokens": normalized_messages_tokens,
-                            "prepared_messages_tokens": prepared_messages_tokens,
-                            "system_tokens_estimate": system_tokens_estimate,
-                            "directive_tokens_estimate": directive_tokens_estimate,
-                            "state_payload_tokens_estimate": state_payload_tokens_estimate,
-                            "tok_system_additions_tokens": tok_system_additions_tokens,
-                            "tok_overhead_tokens": tok_overhead_tokens,
-                            "estimated_prompt_delta_tokens": outbound_prompt_estimate - baseline_prompt_estimate,
-                            "outbound_prompt_estimate_tokens": outbound_prompt_estimate,
-                        }
-                        turn_response_metrics = {
-                            "response_behavior_signals": {},
-                            "invisible_pressure": 0,
-                            "reacquisition_cost_tokens": int(
-                                prepared.behavior_signals.get("reacquisition_cost_tokens", 0)
-                            ),
-                            "family_mode": "",
-                            "response_mode": canonical_mode,
-                        }
-                        turn_diagnostics = {
-                            "tool_compatible_requested": tool_compatible,
-                            "request_policy": request_policy,
-                            "request_messages_before": len(conversation),
-                            "request_messages_after": len(chat_messages),
-                            "runtime_mode": prepared.mode,
-                            "execution_path": "text-loop",
-                            "bridge_preflight_applied": 0,
-                        }
-                        outbound_payload = {
-                            "system": prepared_body.get("system"),
-                            "messages": prepared_body.get("messages", []),
-                        }
-
-                started = time.time()
-                create_kwargs: dict[str, Any] = {
-                    "model": self.model,
-                    "messages": chat_messages,
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
-                }
-                if self.provider_options:
-                    create_kwargs["extra_body"] = self.provider_options
-
-                # Final safety pass for Bedrock/Gemini/OpenRouter compatibility
-                shape_before = _message_shape_forensics(chat_messages)
-                adapted_chat_messages = apply_schema_adaptations(chat_messages)
-                shape_after = _message_shape_forensics(adapted_chat_messages)
-                provider_messages = _provider_safe_chat_messages(adapted_chat_messages, self.provider)
-                provider_shape = _message_shape_forensics(provider_messages)
-                compatibility_warnings: list[str] = []
-                if self.provider.lower() != "anthropic" and (
-                    shape_after["tool_use_blocks"] > 0 or shape_after["tool_result_blocks"] > 0
-                ):
-                    compatibility_warnings.append("non_anthropic_tool_block_payload")
-                outbound_system = prepared_body.get("system") if prepared_body is not None else definition.system_prompt
-                outbound_payload = {
-                    "system": outbound_system,
-                    "messages": provider_messages,
-                }
-                turn_diagnostics["schema_forensics"] = {
-                    "provider": self.provider,
-                    "before": shape_before,
-                    "after": shape_after,
-                    "provider_after": provider_shape,
-                    "compatibility_warnings": compatibility_warnings,
-                }
-                create_kwargs["messages"] = provider_messages
-
-                response = self.client.chat.completions.create(**create_kwargs)
-                latency_ms = (time.time() - started) * 1000
-
-                raw_response = response.choices[0].message.content or ""
-                visible_response = raw_response
-                if canonical_mode != "baseline":
-                    processed = runtime.process_response(
-                        raw_response,
-                        model=self.model,
-                        session=session,
-                        behavior_signals=turn_compression_metrics["input_behavior_signals"],
-                        tool_compatible=turn_tool_compatible,
-                    )
-                    visible_response = (
-                        "\n".join(
-                            block.get("text", "") for block in processed.content_blocks if block.get("type") == "text"
-                        ).strip()
-                        or raw_response
-                    )
-                    turn_compression_metrics["output_saved_tokens"] = processed.output_saved_tokens
-                    turn_compression_metrics["total_saved_tokens"] = (
-                        turn_compression_metrics["input_saved_tokens"] + processed.output_saved_tokens
-                    )
-                    turn_response_metrics["response_behavior_signals"] = dict(processed.behavior_signals)
-                    turn_response_metrics["family_mode"] = processed.family_mode
-                    turn_response_metrics["invisible_pressure"] = calculate_invisible_pressure(
-                        processed.behavior_signals
-                    )
-                    turn_response_metrics["reacquisition_cost_tokens"] = int(
-                        processed.behavior_signals.get("reacquisition_cost_tokens", 0)
-                        or turn_response_metrics["reacquisition_cost_tokens"]
-                    )
-                    turn_response_metrics["response_mode"] = processed.mode
-                    if canonical_mode == "tok-universal" and turn_response_metrics["response_mode"] == "tok-universal":
-                        msg = "tok-universal benchmark must execute through runtime response-contract processing"
-                        raise RuntimeError(msg)
-
-                usage = response.usage
-                prompt_tokens = int(getattr(usage, "prompt_tokens", 0))
-                completion_tokens = int(getattr(usage, "completion_tokens", 0))
+                step_result = self.run_conversation_step(
+                    conversation=conversation,
+                    system_prompt=definition.system_prompt,
+                    mode=canonical_mode,
+                    session=session,
+                    bridge_session=bridge_session,
+                )
+                prompt_tokens = step_result.provider_usage.prompt_tokens
+                completion_tokens = step_result.provider_usage.completion_tokens
                 total_prompt_tokens += prompt_tokens
                 total_completion_tokens += completion_tokens
-                total_latency_ms += latency_ms
-                total_input_saved += int(turn_compression_metrics["input_saved_tokens"])
-                total_output_saved += int(turn_compression_metrics["output_saved_tokens"])
-                for key, value in turn_compression_metrics["type_breakdown"].items():
+                total_latency_ms += step_result.provider_usage.latency_ms
+                total_input_saved += int(step_result.compression_metrics["input_saved_tokens"])
+                total_output_saved += int(step_result.compression_metrics["output_saved_tokens"])
+                for key, value in step_result.compression_metrics["type_breakdown"].items():
                     total_type_breakdown[key] = total_type_breakdown.get(key, 0) + int(value)
-                for key, value in turn_compression_metrics["input_behavior_signals"].items():
+                for key, value in step_result.compression_metrics["input_behavior_signals"].items():
                     aggregate_input_behavior_signals[key] = aggregate_input_behavior_signals.get(key, 0) + int(value)
-                for key, value in turn_response_metrics["response_behavior_signals"].items():
+                for key, value in step_result.response_metrics["response_behavior_signals"].items():
                     aggregate_response_signals[key] = aggregate_response_signals.get(key, 0) + int(value)
-
-                turn_diagnostics["response_warning_signal_count"] = _sum_warning_signals(
-                    turn_response_metrics["response_behavior_signals"]
-                )
                 turn_results.append(
                     {
                         "turn": idx + 1,
                         "provider_usage": {
                             "prompt_tokens": prompt_tokens,
                             "completion_tokens": completion_tokens,
-                            "total_tokens": int(getattr(usage, "total_tokens", 0)),
-                            "latency_ms": round(latency_ms, 2),
+                            "total_tokens": step_result.provider_usage.total_tokens,
+                            "latency_ms": step_result.provider_usage.latency_ms,
                         },
-                        "compression_metrics": turn_compression_metrics,
-                        "prompt_metrics": turn_prompt_metrics,
-                        "response_metrics": turn_response_metrics,
-                        "diagnostics": turn_diagnostics,
-                        "outbound_payload": outbound_payload,
-                        "visible_response": visible_response,
-                        "raw_response": raw_response,
+                        "compression_metrics": step_result.compression_metrics,
+                        "prompt_metrics": step_result.prompt_metrics,
+                        "response_metrics": step_result.response_metrics,
+                        "diagnostics": step_result.diagnostics,
+                        "outbound_payload": step_result.outbound_payload,
+                        "visible_response": step_result.visible_response,
+                        "raw_response": step_result.raw_response,
                     }
                 )
-                final_visible_response = visible_response
-                final_raw_response = raw_response
-                conversation.append({"role": "assistant", "content": raw_response})
+                final_visible_response = step_result.visible_response
+                final_raw_response = step_result.raw_response
+                conversation.append({"role": "assistant", "content": step_result.raw_response})
 
             cost_usd: float | None = None
             if self.pricing is not None:
