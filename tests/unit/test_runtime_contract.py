@@ -292,3 +292,107 @@ def test_response_contract_prefers_existing_package_file_over_stale_module_ancho
 
     visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
     assert "File=src/tok/compression.py (src/tok/compression/__init__.py)" in visible
+
+
+def test_response_contract_quarantines_tool_intent_during_answer_phase(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/gateway.py",
+        score_delta=4,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:_response_contract_for_mode",
+        score_delta=4,
+    )
+    session._answer_phase_expected_this_turn = True
+    session._request_has_tools = False
+
+    contract = response_contract_for_mode(
+        "@tool view_file id:call_1 path:src/tok/gateway.py",
+        tool_compatible=True,
+        session=session,
+    )
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "Grounded evidence supports this answer." in visible
+    assert "File=src/tok/gateway.py" in visible
+    assert "Verification=_response_contract_for_mode" in visible
+    assert contract.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 1
+    assert not any(block.get("type") == "tool_use" for block in contract.content_blocks)
+
+
+def test_response_contract_applies_non_labeled_answer_phase_fallback(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/runtime/pipeline/response_processing.py",
+        score_delta=4,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:_repair_structured_answer_text",
+        score_delta=4,
+    )
+    session._answer_phase_expected_this_turn = True
+    session._request_has_tools = False
+    session._last_user_prompt_text = "Summarize the final answer now."
+    session._last_user_prompt_labels = ()
+
+    contract = response_contract_for_mode(
+        "I will inspect one more area before answering.",
+        tool_compatible=True,
+        session=session,
+    )
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "File=src/tok/runtime/pipeline/response_processing.py" in visible
+    assert "Verification=_repair_structured_answer_text" in visible
+    assert contract.behavior_signals.get("answer_phase_non_labeled_fallback_applied", 0) == 1
+
+
+def test_response_contract_answer_phase_fallback_fails_without_anchors(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._answer_phase_expected_this_turn = True
+    session._request_has_tools = False
+
+    contract = response_contract_for_mode(
+        "@tool view_file id:call_1 path:src/tok/gateway.py",
+        tool_compatible=True,
+        session=session,
+    )
+
+    assert contract.behavior_signals.get("answer_phase_fallback_failed_no_anchor", 0) == 1
+    assert any(block.get("type") == "tool_use" for block in contract.content_blocks)
+
+
+def test_response_contract_does_not_quarantine_when_tools_are_expected(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/gateway.py",
+        score_delta=4,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:_response_contract_for_mode",
+        score_delta=4,
+    )
+    session._answer_phase_expected_this_turn = True
+    session._request_has_tools = True
+
+    contract = response_contract_for_mode(
+        "@tool view_file id:call_1 path:src/tok/gateway.py",
+        tool_compatible=True,
+        session=session,
+    )
+
+    assert contract.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
+    assert any(block.get("type") == "tool_use" for block in contract.content_blocks)

@@ -3085,6 +3085,90 @@ def test_prepare_request_emits_answer_now_directive_when_answer_ready_from_ancho
     assert "Answer now using the existing File=/Verification= evidence." in prepared.body["system"]
 
 
+def test_prepare_request_context_is_consumed_for_same_turn_answer_phase_quarantine(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/gateway.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:health",
+        score_delta=3,
+    )
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        request_has_tools=False,
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+    processed = runtime.process_response(
+        "@tool view_file id:call_1 path:src/tok/gateway.py",
+        model="claude-sonnet-4",
+        session=session,
+        behavior_signals=prepared.behavior_signals,
+        tool_compatible=True,
+    )
+
+    visible = "\n".join(
+        block.get("text", "")
+        for block in processed.content_blocks
+        if block.get("type") == "text" and str(block.get("text", "")).strip()
+    )
+    assert session._request_has_tools is False
+    assert session._answer_phase_expected_this_turn is True
+    assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 1
+    assert "File=src/tok/gateway.py" in visible
+    assert "Verification=health" in visible
+
+
+def test_prepare_request_context_keeps_tools_expected_turns_out_of_quarantine(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/gateway.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:health",
+        score_delta=3,
+    )
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        request_has_tools=True,
+        messages=[{"role": "user", "content": "confirm the gateway entry point"}],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+    processed = runtime.process_response(
+        "@tool view_file id:call_1 path:src/tok/gateway.py",
+        model="claude-sonnet-4",
+        session=session,
+        behavior_signals=prepared.behavior_signals,
+        tool_compatible=True,
+    )
+
+    assert session._request_has_tools is True
+    assert session._answer_phase_expected_this_turn is True
+    assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
+    assert any(block.get("type") == "tool_use" for block in processed.content_blocks)
+
+
 def test_prepare_request_answer_phase_suppresses_read_plan_and_large_file_hints(
     tmp_path,
 ) -> None:

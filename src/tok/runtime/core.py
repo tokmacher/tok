@@ -238,6 +238,8 @@ class RuntimeSession:
     _files_fully_delivered: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _last_user_prompt_text: str = field(default="", init=False, repr=False)
     _last_user_prompt_labels: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
+    _request_has_tools: bool = field(default=False, init=False, repr=False)
+    _answer_phase_expected_this_turn: bool = field(default=False, init=False, repr=False)
 
     def record_fallback_event(self) -> None:
         """Increment the consecutive fail-open counter and degrade to baseline when threshold is reached."""

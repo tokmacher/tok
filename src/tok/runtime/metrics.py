@@ -66,6 +66,9 @@ def report_protocol_drift(
             "late_answer_followthrough_after_tool_only_repair",
             "mixed_answer_tool_event",
             "mixed_tool_visible_text",
+            "answer_phase_tool_intent_quarantined",
+            "answer_phase_non_labeled_fallback_applied",
+            "answer_phase_fallback_failed_no_anchor",
             "tok_drift_healed",
         )
     }

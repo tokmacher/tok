@@ -554,6 +554,91 @@ def test_live_benchmark_tok_universal_uses_shared_bridge_pipeline(tmp_path, monk
     assert result.turns[0]["diagnostics"]["bridge_preflight_applied"] == 1
 
 
+def test_live_benchmark_tok_universal_uses_runtime_response_contract_hook(tmp_path, monkeypatch) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Confirm the final answer format"},
+                ]
+            }
+        )
+        + "\n"
+    )
+    definition = BenchmarkDefinition(
+        name="coding-loop",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a coding loop.",
+        followup_prompt="File=<the file that was changed>\nVerification=<the result>",
+        success_terms=("gateway.py", "passed"),
+        min_success_terms=2,
+    )
+    runner = LiveBenchmarkRunner(
+        model="gpt-4o-mini",
+        client=_FakeClient("File=src/tok/gateway.py\nVerification=passed"),
+    )
+
+    def _fake_prepare_bridge_payload(*, session, body, headers, path, **kwargs):
+        del session, headers, kwargs
+        return (
+            BridgePreparedPayload(
+                body={
+                    "model": body.get("model", ""),
+                    "system": body.get("system", ""),
+                    "messages": list(body.get("messages", [])),
+                },
+                behavior_signals={},
+                request_policy=default_request_policy(),
+                request_tool_compatible=False,
+                compressed=False,
+                saved_toks=0,
+                tool_breakdown={},
+                prompt_metrics={
+                    "baseline_prompt_tokens": 0,
+                    "prepared_prompt_tokens": 0,
+                    "saved_prompt_tokens": 0,
+                    "hot_hint_tokens_added": 0,
+                    "reacquisition_tokens_avoided_estimate": 0,
+                },
+                retry_forbidden=False,
+            ),
+            None,
+        )
+
+    monkeypatch.setattr("tok.testing.live_benchmark.prepare_bridge_payload", _fake_prepare_bridge_payload)
+
+    import tok.runtime._runtime_orchestration as runtime_orchestration
+
+    captured_tool_compatible: list[bool] = []
+    original_contract = runtime_orchestration.response_contract_for_mode
+
+    def _capture_contract(
+        text: str,
+        tool_compatible: bool = False,
+        _family: str = "",
+        _model: str = "",
+        session=None,
+    ):
+        captured_tool_compatible.append(tool_compatible)
+        return original_contract(
+            text,
+            tool_compatible=tool_compatible,
+            _family=_family,
+            _model=_model,
+            session=session,
+        )
+
+    monkeypatch.setattr("tok.runtime._runtime_orchestration.response_contract_for_mode", _capture_contract)
+
+    result = runner.run(definition, mode="tok-universal", turns=1)
+
+    assert result.turns[0]["diagnostics"]["execution_path"] == "claude-bridge"
+    assert result.turns[0]["diagnostics"]["tool_compatible_requested"] is False
+    assert captured_tool_compatible
+    assert set(captured_tool_compatible) == {False}
+
+
 def test_live_benchmark_tok_universal_flattens_provider_payload_for_non_anthropic_models(
     tmp_path,
 ) -> None:

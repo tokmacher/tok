@@ -573,6 +573,9 @@ def prepare_request_impl(
     *,
     result_cache: dict[str, Any] | None = None,
 ) -> PreparedRuntimeRequest:
+    session._request_has_tools = bool(request.request_has_tools)
+    session._answer_phase_expected_this_turn = False
+
     body: dict[str, Any] = {
         "model": request.model,
         "messages": copy.deepcopy(request.messages),
@@ -904,6 +907,7 @@ def prepare_request_impl(
             if answer_ready_turn:
                 answer_phase_expected = True
             preserve_exact_search_evidence = bool(answer_ready_turn and has_answer_anchor)
+        session._answer_phase_expected_this_turn = bool(answer_phase_expected)
 
         session._save_bridge_memory()
         if stream_recovery_history_floor_active:
@@ -1162,6 +1166,7 @@ def prepare_request_impl(
                     or session._late_answer_followthrough_active
                     or session._late_answer_assembly_repair_active
                 )
+                session._answer_phase_expected_this_turn = answer_phase_now
                 if answer_phase_now and runtime_hints:
                     runtime_hints = [
                         hint for hint in runtime_hints if hint not in {TOK_READ_PLAN_HINT, TOK_LARGE_FILE_HINT}

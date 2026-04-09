@@ -1592,6 +1592,9 @@ class LiveBenchmarkRunner:
                         or turn_response_metrics["reacquisition_cost_tokens"]
                     )
                     turn_response_metrics["response_mode"] = processed.mode
+                    if canonical_mode == "tok-universal" and turn_response_metrics["response_mode"] == "tok-universal":
+                        msg = "tok-universal benchmark must execute through runtime response-contract processing"
+                        raise RuntimeError(msg)
 
                 usage = response.usage
                 prompt_tokens = int(getattr(usage, "prompt_tokens", 0))

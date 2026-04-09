@@ -25,6 +25,10 @@ _STRUCTURED_LABEL_RE = re.compile(r"(?<![\w-])(file|verification|related)(?![\w-
 _STRUCTURED_FIELD_NAMES = ("file", "verification", "related")
 _IDENTIFIER_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
 _PATH_RE = re.compile(r"(?:^|[\s`'\"])((?:src/)?[A-Za-z0-9_./-]+\.(?:py|ts|tsx|js|jsx|go|rs|rb))(?:[:#]L?\d+)?")
+_TOOL_INTENT_TEXT_RE = re.compile(
+    r"(@tool\b|tool_use\b|\"type\"\s*:\s*\"tool_use\"|'type'\s*:\s*'tool_use'|\bcall(?:ing)?\s+(?:the\s+)?tool\b)",
+    re.IGNORECASE,
+)
 _VERIFICATION_STOPWORDS = {
     "a",
     "an",
@@ -110,6 +114,48 @@ def _is_answer_like_visible_text(text: str) -> bool:
     return bool(fields.get("files")) or any(
         fact.startswith(("answer_file:", "answer_verification:")) for fact in fields.get("facts", [])
     )
+
+
+def _explicit_answer_phase_context(session: RuntimeSession | None) -> bool:
+    if session is None:
+        return False
+    return bool(
+        getattr(session, "_answer_ready_repair_active", False)
+        or getattr(session, "_late_answer_followthrough_active", False)
+        or getattr(session, "_late_answer_assembly_repair_active", False)
+    )
+
+
+def _answer_phase_context_active(session: RuntimeSession | None) -> bool:
+    if session is None:
+        return False
+    return bool(getattr(session, "_answer_phase_expected_this_turn", False) or _explicit_answer_phase_context(session))
+
+
+def _answer_phase_fallback_allowed(session: RuntimeSession | None) -> bool:
+    if session is None or not _answer_phase_context_active(session):
+        return False
+    if _explicit_answer_phase_context(session):
+        return True
+    return not bool(getattr(session, "_request_has_tools", False))
+
+
+def _looks_like_tool_intent_text(text: str) -> bool:
+    return bool(text.strip() and _TOOL_INTENT_TEXT_RE.search(text))
+
+
+def _is_tool_intent_without_answer(
+    content_blocks: list[dict[str, Any]],
+    visible_text: str,
+    *,
+    raw_text: str,
+) -> bool:
+    if _is_answer_like_visible_text(visible_text):
+        return False
+    has_tool_blocks = any(block.get("type") == "tool_use" for block in content_blocks)
+    if has_tool_blocks:
+        return True
+    return _looks_like_tool_intent_text(visible_text) or _looks_like_tool_intent_text(raw_text)
 
 
 def _expected_structured_labels(session: RuntimeSession | None) -> tuple[str, ...]:
@@ -511,6 +557,48 @@ def _repair_structured_answer_text(
     if backfilled:
         signals["structured_answer_backfilled"] = 1
     return repaired_text, signals
+
+
+def _synthesize_answer_phase_fallback_text(
+    session: RuntimeSession | None,
+) -> str:
+    if session is None:
+        return ""
+    known_files, known_verifications = _extract_session_answer_anchors(session)
+    if not known_files or not known_verifications:
+        return ""
+
+    file_value = ""
+    for candidate in known_files:
+        normalized = _canonicalize_repo_path(candidate, known_files)
+        if normalized:
+            file_value = normalized
+            break
+        cleaned = candidate.strip().strip("'\"")
+        if cleaned:
+            file_value = cleaned
+            break
+
+    verification_value = ""
+    for candidate in known_verifications:
+        normalized = _normalize_verification_value(candidate, known_verifications).strip()
+        if normalized:
+            verification_value = normalized
+            break
+        cleaned = candidate.strip().strip("'\"")
+        if cleaned:
+            verification_value = cleaned
+            break
+
+    if not file_value and verification_value:
+        inferred = _file_from_verification_value(verification_value, known_files)
+        if inferred:
+            file_value = inferred
+
+    if not file_value or not verification_value:
+        return ""
+
+    return f"Grounded evidence supports this answer.\nFile={file_value}\nVerification={verification_value}"
 
 
 def _tool_compatible_mixed_turn_signals(
@@ -1039,6 +1127,35 @@ def response_contract_for_mode(
         if repaired_text.strip():
             visible_text = repaired_text.strip()
             content_blocks = [{"type": "text", "text": visible_text}]
+
+    answer_phase_active = tool_compatible and _answer_phase_context_active(session)
+    fallback_allowed = tool_compatible and _answer_phase_fallback_allowed(session)
+    tool_intent_without_answer = _is_tool_intent_without_answer(
+        content_blocks,
+        visible_text,
+        raw_text=text,
+    )
+    if answer_phase_active and fallback_allowed and tool_intent_without_answer:
+        synthesized = _synthesize_answer_phase_fallback_text(session)
+        if synthesized:
+            visible_text = synthesized
+            content_blocks = [{"type": "text", "text": visible_text}]
+            signals["answer_phase_tool_intent_quarantined"] = 1
+        else:
+            signals["answer_phase_fallback_failed_no_anchor"] = 1
+    elif (
+        answer_phase_active
+        and fallback_allowed
+        and not expected_labels
+        and (bool(malformed_signals) or not _is_answer_like_visible_text(visible_text))
+    ):
+        synthesized = _synthesize_answer_phase_fallback_text(session)
+        if synthesized:
+            visible_text = synthesized
+            content_blocks = [{"type": "text", "text": visible_text}]
+            signals["answer_phase_non_labeled_fallback_applied"] = 1
+        else:
+            signals["answer_phase_fallback_failed_no_anchor"] = 1
 
     if session and hasattr(session, "_last_mode"):
         session._last_mode = mode
