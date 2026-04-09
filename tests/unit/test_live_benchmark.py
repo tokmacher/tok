@@ -19,6 +19,7 @@ from tok.testing.live_benchmark import (
     render_stability_markdown,
     select_preferred_mode,
     summarize_compare_runs,
+    summarize_compare_triage,
 )
 
 
@@ -58,7 +59,18 @@ def _result(
     response_signals: dict[str, int] | None = None,
     reacquisition_cost_tokens: int = 0,
     invisible_pressure: int = 0,
+    notes: list[str] | None = None,
+    diagnostics_extra: dict[str, Any] | None = None,
 ) -> BenchmarkResult:
+    diagnostics = {
+        "tool_compatible_requested": mode == "tok-universal",
+        "request_messages_before": 3,
+        "request_messages_after": 2,
+        "session_turns": 3,
+        "response_warning_signal_count": sum((response_signals or {}).values()),
+    }
+    if diagnostics_extra:
+        diagnostics.update(diagnostics_extra)
     return BenchmarkResult(
         benchmark="coding-loop",
         mode=mode,
@@ -94,13 +106,7 @@ def _result(
             "family_mode": "",
             "response_mode": mode,
         },
-        diagnostics={
-            "tool_compatible_requested": mode == "tok-universal",
-            "request_messages_before": 3,
-            "request_messages_after": 2,
-            "session_turns": 3,
-            "response_warning_signal_count": sum((response_signals or {}).values()),
-        },
+        diagnostics=diagnostics,
         task_success=success,
         matched_success_terms=["gateway.py", "passed"] if success else [],
         request_messages=2,
@@ -108,6 +114,7 @@ def _result(
         turns=[],
         visible_response="ok",
         raw_response="ok",
+        notes=notes or [],
     )
 
 
@@ -240,6 +247,31 @@ def test_bridge_fixture_normalization_preserves_tool_result_pairing() -> None:
     assert merged[1]["content"][0]["type"] == "tool_result"
 
 
+def test_bridge_fixture_normalization_downgrades_orphan_tool_results_to_text() -> None:
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "n7", "name": "view_file", "input": {"path": "src/tok/gateway.py"}},
+            ],
+        },
+        {"role": "tool_result", "tool_use_id": "n7", "content": "class Gateway:"},
+        {"role": "user", "content": "Summary please."},
+        # Orphan/replayed result: should not be emitted as structured tool_result for the bridge path.
+        {"role": "tool_result", "tool_use_id": "n7", "content": "class Gateway:"},
+    ]
+
+    normalized = normalize_fixture_messages_for_bridge(messages, "final prompt")
+
+    assert normalized[1]["role"] == "user"
+    assert isinstance(normalized[1]["content"], list)
+    assert normalized[1]["content"][0]["type"] == "tool_result"
+
+    assert normalized[3]["role"] == "user"
+    assert isinstance(normalized[3]["content"], str)
+    assert normalized[3]["content"].startswith("Tool result (n7):")
+
+
 def test_compare_results_emits_bootstrap_diagnosis() -> None:
     baseline = _result(mode="baseline", total_tokens=120, prompt_tokens=100)
     candidate = _result(
@@ -335,6 +367,15 @@ def test_load_benchmark_definition_supports_research_variant() -> None:
     assert "Related=<the related file or class mentioned during the investigation>" in prompts[3]
 
 
+def test_load_benchmark_definition_supports_research_current_variant() -> None:
+    definition = load_benchmark_definition("research-loop-current")
+
+    assert definition.default_turns == 3
+    assert definition.fixture_path.name == "research_loop.jsonl"
+    assert "compression/__init__.py" in definition.success_terms
+    assert "runtime/memory/bridge_memory.py" in definition.expected_file_terms
+
+
 def test_summarize_compare_runs_reports_preferred_counts_and_medians() -> None:
     run_one = {
         "baseline": _result(mode="baseline", total_tokens=120, prompt_tokens=100),
@@ -353,6 +394,35 @@ def test_summarize_compare_runs_reports_preferred_counts_and_medians() -> None:
     assert summary["mode_summaries"]["tok-universal"]["median_total_tokens"] == 82
     assert "Preferred Mode Counts" in markdown
     assert "tok-universal" in markdown
+
+
+def test_summarize_compare_triage_reports_dual_success_and_failures() -> None:
+    baseline = _result(
+        mode="baseline",
+        total_tokens=120,
+        prompt_tokens=100,
+        success=True,
+        diagnostics_extra={"repo_grounded_task_success": True},
+    )
+    tok = _result(
+        mode="tok-universal",
+        total_tokens=90,
+        prompt_tokens=70,
+        success=False,
+        response_signals={"non_tok_response": 1, "tok_drift_healed": 1},
+        notes=["response_contract_friction_detected"],
+        diagnostics_extra={"repo_grounded_task_success": False, "repo_grounded_failures": ["file_not_found"]},
+    )
+
+    summary = summarize_compare_triage([{"baseline": baseline, "tok-universal": tok}])
+
+    assert summary["runs"] == 1
+    assert summary["mode_summaries"]["baseline"]["legacy_success_rate"] == 1.0
+    assert summary["mode_summaries"]["tok-universal"]["legacy_success_rate"] == 0.0
+    assert summary["mode_summaries"]["tok-universal"]["repo_grounded_success_rate"] == 0.0
+    reasons = summary["mode_summaries"]["tok-universal"]["top_failure_reasons"]
+    assert any(item["reason"] == "repo_grounded:file_not_found" for item in reasons)
+    assert summary["mode_summaries"]["tok-universal"]["response_contract_friction_runs"] == 1
 
 
 def test_live_benchmark_runner_reports_prompt_and_response_metrics(
@@ -407,6 +477,12 @@ def test_live_benchmark_runner_reports_prompt_and_response_metrics(
     assert "state_resend_suppressed_turns" in universal.diagnostics
     assert "state_resend_delta_turns" in universal.diagnostics
     assert "state_resend_full_turns" in universal.diagnostics
+    assert "legacy_task_success" in universal.diagnostics
+    assert "repo_grounded_task_success" in universal.diagnostics
+    assert "repo_grounded_failures" in universal.diagnostics
+    assert "schema_forensics" in universal.turns[0]["diagnostics"]
+    assert "before" in universal.turns[0]["diagnostics"]["schema_forensics"]
+    assert "after" in universal.turns[0]["diagnostics"]["schema_forensics"]
     assert "directive_tokens_estimate" in universal.prompt_metrics
     assert "state_payload_tokens_estimate" in universal.prompt_metrics
     assert universal.turns[0]["diagnostics"]["request_policy"] == default_request_policy()
@@ -476,6 +552,101 @@ def test_live_benchmark_tok_universal_uses_shared_bridge_pipeline(tmp_path, monk
     assert captured_paths == ["v1/messages", "v1/messages"]
     assert result.turns[0]["diagnostics"]["execution_path"] == "claude-bridge"
     assert result.turns[0]["diagnostics"]["bridge_preflight_applied"] == 1
+
+
+def test_live_benchmark_tok_universal_flattens_provider_payload_for_non_anthropic_models(
+    tmp_path,
+) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Find the entry point"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "s1",
+                                "name": "grep_search",
+                                "input": {"search_path": "src", "query": "compress_history"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool_result",
+                        "tool_use_id": "s1",
+                        "content": "src/tok/compression.py:305: def compress_history(",
+                    },
+                ]
+            }
+        )
+        + "\n"
+    )
+    definition = BenchmarkDefinition(
+        name="research-loop",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a research loop.",
+        followup_prompt="File=<the primary file that answered the question>\nVerification=<the finding>",
+        success_terms=("compression.py", "compress_history"),
+        min_success_terms=2,
+        expected_file_terms=("compression.py",),
+        expected_verification_terms=("compress_history",),
+    )
+    runner = LiveBenchmarkRunner(
+        model="deepseek/deepseek-v3.2",
+        client=_FakeClient("File=src/tok/compression.py\nVerification=compress_history"),
+    )
+
+    captured_messages: list[dict[str, Any]] = []
+
+    def _capture_create(**kwargs):
+        captured_messages[:] = list(kwargs["messages"])
+        return runner.client.chat.completions._response  # type: ignore[attr-defined]
+
+    runner.client.chat.completions.create = _capture_create  # type: ignore[assignment]
+
+    result = runner.run(definition, mode="tok-universal", turns=1)
+
+    assert result.turns[0]["diagnostics"]["execution_path"] == "claude-bridge"
+    assert result.turns[0]["diagnostics"]["bridge_preflight_applied"] == 1
+    assert result.turns[0]["diagnostics"]["schema_forensics"]["provider_after"]["tool_use_blocks"] == 0
+    assert result.turns[0]["diagnostics"]["schema_forensics"]["provider_after"]["tool_result_blocks"] == 0
+    assert any(
+        "non_anthropic_tool_block_payload" in warning
+        for warning in result.turns[0]["diagnostics"]["schema_forensics"]["compatibility_warnings"]
+    )
+    assert captured_messages
+    assert all(isinstance(message.get("content"), str) for message in captured_messages)
+    assert any("Tool result" in message.get("content", "") for message in captured_messages)
+
+
+def test_live_benchmark_tok_universal_plain_structured_answer_avoids_contract_friction(
+    tmp_path,
+) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Inspect gateway"}]}) + "\n")
+    definition = BenchmarkDefinition(
+        name="coding-loop",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a coding loop.",
+        followup_prompt="File=<the file that was changed>\nVerification=<the result>",
+        success_terms=("gateway.py", "passed"),
+        min_success_terms=2,
+        expected_file_terms=("gateway.py",),
+        expected_verification_terms=("passed", "pytest"),
+    )
+    runner = LiveBenchmarkRunner(
+        model="deepseek/deepseek-v3.2",
+        client=_FakeClient("File=src/tok/gateway.py\nVerification=pytest tests/unit/test_gateway.py"),
+    )
+
+    result = runner.run(definition, mode="tok-universal", turns=1)
+
+    assert result.task_success is True
+    assert result.diagnostics["response_warning_signal_count"] == 0
+    assert "response_contract_friction_detected" not in result.notes
 
 
 def test_live_benchmark_runner_rejects_placeholder_success(tmp_path) -> None:
@@ -550,3 +721,49 @@ def test_live_benchmark_runner_rejects_bare_failed_verification(
 
     assert result.task_success is False
     assert "unexpected_verification_field" in result.notes
+
+
+def test_research_dual_scoring_can_pass_legacy_and_fail_repo_grounded(tmp_path) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Investigate compression"}]}) + "\n")
+    definition = BenchmarkDefinition(
+        name="research-loop",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a research loop.",
+        followup_prompt="File=<file>\nVerification=<verification>",
+        success_terms=("compression.py", "compress_history"),
+        min_success_terms=2,
+        expected_file_terms=("compression.py",),
+        expected_verification_terms=("compress_history",),
+    )
+    client = _FakeClient("File=src/compression.py\nVerification=compress_history in compression.py")
+    runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
+
+    result = runner.run(definition, mode="baseline", turns=1)
+
+    assert result.task_success is True
+    assert result.diagnostics["repo_grounded_task_success"] is False
+    assert "file_not_found" in result.diagnostics["repo_grounded_failures"]
+
+
+def test_research_dual_scoring_can_fail_legacy_and_pass_repo_grounded(tmp_path) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Investigate compression"}]}) + "\n")
+    definition = BenchmarkDefinition(
+        name="research-loop-current",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a research loop.",
+        followup_prompt="File=<file>\nVerification=<verification>",
+        success_terms=("compression.py", "compress_history"),
+        min_success_terms=2,
+        expected_file_terms=("compression.py",),
+        expected_verification_terms=("compress_history",),
+    )
+    client = _FakeClient("File=src/tok/compression/__init__.py\nVerification=compress_history")
+    runner = LiveBenchmarkRunner(model="gpt-4o-mini", client=client)
+
+    result = runner.run(definition, mode="baseline", turns=1)
+
+    assert result.task_success is False
+    assert result.diagnostics["repo_grounded_task_success"] is True
+    assert result.diagnostics["repo_grounded_failures"] == []

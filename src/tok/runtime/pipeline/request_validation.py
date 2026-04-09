@@ -495,11 +495,11 @@ def _user_messages_are_merge_compatible(prev: dict[str, Any], current: dict[str,
         curr_has_non_tool_result,
     ) = _user_message_tool_result_shape(current)
 
-    if prev_has_tool_result and prev_has_non_tool_result:
-        return False
-    if curr_has_tool_result and curr_has_non_tool_result:
-        return False
-    return prev_has_tool_result == curr_has_tool_result
+    # Only merge adjacent user messages when both are tool_result-only.
+    # This preserves prompt/instruction boundaries for text-bearing user turns.
+    if prev_has_tool_result and not prev_has_non_tool_result:
+        return curr_has_tool_result and not curr_has_non_tool_result
+    return False
 
 
 def _split_mixed_user_tool_result_messages(

@@ -218,6 +218,22 @@ def test_wire_state_prioritizes_answer_facts_over_generic_facts() -> None:
     assert "keep_turns:2" not in wire
 
 
+def test_wire_state_keeps_answer_anchor_diversity_with_small_fact_limit() -> None:
+    state = BridgeMemoryState()
+    state._upsert(state.hot, "facts", "answer_file:src/tok/runtime/policy/smart_policy.py", score_delta=3)
+    state._upsert(state.hot, "facts", "answer_verification:advance_state", score_delta=3)
+    state._upsert(state.hot, "facts", "answer_verification:MemoryProjectionProfile", score_delta=2)
+    state._upsert(state.hot, "facts", "answer_verification:HistoryCompressor", score_delta=1)
+    state._upsert(state.hot, "facts", "keep_turns:2", score_delta=1)
+
+    wire = state.wire_state(MemoryProjectionProfile(field_limits={"files": 1}, question_limit=0, fact_limit=1))
+
+    assert "answer_file:src/tok/runtime/policy/smart_policy.py" in wire
+    assert "answer_verification:advance_state" in wire
+    assert "answer_verification:MemoryProjectionProfile" in wire
+    assert "keep_turns:2" not in wire
+
+
 def test_wire_state_is_deterministic_for_identical_state() -> None:
     """Calling wire_state() twice on unchanged state must produce identical output."""
     state = BridgeMemoryState()

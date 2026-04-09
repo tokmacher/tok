@@ -24,7 +24,10 @@ from .pipeline.request_preparation import (
 )
 from .pipeline.response_handling import handle_answer_repair
 from .pipeline.response_processing import (
+    _expected_structured_labels,
     _is_answer_like_visible_text,
+    _is_strict_structured_answer_response,
+    _visible_text_from_content_blocks,
     heal_drift,
     response_behavior_signals,
     response_contract_for_mode,
@@ -201,19 +204,43 @@ def process_response_impl(
     from .types import ProcessedRuntimeResponse
 
     contract = response_contract_for_mode(text, tool_compatible=tool_compatible, session=session)
+    expected_labels = _expected_structured_labels(session)
+    strict_structured_answer = bool(
+        expected_labels
+        and _is_strict_structured_answer_response(
+            _visible_text_from_content_blocks(contract.content_blocks),
+            expected_labels=expected_labels,
+        )
+        and not any(block.get("type") == "tool_use" for block in contract.content_blocks)
+    )
+    response_side_signals = (
+        {}
+        if strict_structured_answer
+        else response_behavior_signals(
+            text,
+            tool_compatible=tool_compatible,
+            session=session,
+        )
+    )
     drift_signals = (
         runtime.semantic_validator.validate_drift(text, contract.behavior_signals) if not tool_compatible else {}
     )
     merged_signals: dict[str, int] = {
         **session.consume_behavior_signals(),
         **(behavior_signals or {}),
-        **response_behavior_signals(text, tool_compatible=tool_compatible),
+        **response_side_signals,
         **contract.behavior_signals,
         **drift_signals,
     }
+    if strict_structured_answer:
+        merged_signals.pop("non_tok_response", None)
+        merged_signals.pop("fail_open_compat_response", None)
+        merged_signals.pop("tok_drift_healed", None)
 
-    healed_text = heal_drift(text, merged_signals, tool_compatible=tool_compatible)
-    if healed_text != text:
+    healed_text = (
+        text if strict_structured_answer else heal_drift(text, merged_signals, tool_compatible=tool_compatible)
+    )
+    if not strict_structured_answer and healed_text != text:
         merged_signals["tok_drift_healed"] = 1
         contract = response_contract_for_mode(healed_text, tool_compatible=tool_compatible, session=session)
 

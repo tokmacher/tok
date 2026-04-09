@@ -512,7 +512,38 @@ class BridgeMemoryState:
     ) -> tuple[list[MemoryEntry], list[MemoryEntry]]:
         """Return (file_facts, other_facts)."""
         f_limit = profile.fact_limit if profile else HOT_LIMITS.get("facts", 4)
-        facts = self._get_merged_entries("facts", f_limit)
+        all_facts = self._get_merged_entries("facts", max(f_limit, HOT_LIMITS.get("facts", 4), 16))
+
+        answer_file_facts: list[MemoryEntry] = []
+        answer_verification_facts: list[MemoryEntry] = []
+        remaining_facts: list[MemoryEntry] = []
+        for fact in all_facts:
+            value = fact.value
+            if value.startswith("answer_file:"):
+                answer_file_facts.append(fact)
+            elif value.startswith("answer_verification:"):
+                answer_verification_facts.append(fact)
+            else:
+                remaining_facts.append(fact)
+
+        prioritized: list[MemoryEntry] = []
+        if answer_file_facts:
+            prioritized.append(answer_file_facts[0])
+        prioritized.extend(answer_verification_facts[:2])
+
+        # Keep answer anchors available in tool-compatible projection even when
+        # profile.fact_limit is small, then fill any remaining budget with other facts.
+        target_limit = max(f_limit, len(prioritized))
+        prioritized_values = {entry.value for entry in prioritized}
+        for fact in remaining_facts:
+            if len(prioritized) >= target_limit:
+                break
+            if fact.value in prioritized_values:
+                continue
+            prioritized.append(fact)
+            prioritized_values.add(fact.value)
+
+        facts = prioritized[:target_limit]
         file_facts = [f for f in facts if f.value.startswith("file[") and ":" in f.value]
         other_facts = [f for f in facts if not (f.value.startswith("file[") and ":" in f.value)]
         return file_facts, other_facts
@@ -950,6 +981,8 @@ class BridgeMemoryState:
         key = key.strip()
         raw_value = raw_value.strip()
         if not key or not raw_value:
+            return
+        if key in {"answer_verification", "answer_related"}:
             return
 
         bucket[field] = [

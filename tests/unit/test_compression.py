@@ -513,6 +513,18 @@ class TestInjectSystemAdditions:
             in result["system"]
         )
 
+    def test_tool_compatible_answer_only_prompt_uses_answer_directive(self) -> None:
+        body = {"system": "base", "messages": []}
+        result = inject_system_additions(
+            body,
+            None,
+            tool_compatible=True,
+            behavior_signals={"answer_ready_turn": 1},
+        )
+
+        assert "Answer-only turn. Do not call tools." in result["system"]
+        assert "Tool calls only. Omit all headers." not in result["system"]
+
 
 def _make_pytest_log(n_passed: int, n_failed: int = 0) -> str:
     lines = ["platform linux -- Python 3.12.0", "collected 80 items", ""]
@@ -766,6 +778,81 @@ class TestCompressToolResults:
         assert first_msgs[0]["content"] == content
         assert self._total_saved(second_breakdown) > 0
         assert second_msgs[0]["content"] != content
+
+    def test_preserve_exact_search_evidence_keeps_repeat_search_raw(self) -> None:
+        content = _make_grep_output(n_files=5, matches_per_file=20)
+        assert len(content) > 1_200
+        cache: dict[str, ResultCacheEntry] = {}
+        msgs = [
+            {
+                "role": "tool_result",
+                "tool_use_id": "search_id",
+                "content": content,
+            }
+        ]
+        ctx = {
+            "search_id": {
+                "name": "grep_search",
+                "path": "src",
+                "query": "match",
+                "args": {"path": "src", "query": "match"},
+            }
+        }
+        seen: set[str] = set()
+
+        first_msgs, first_breakdown = compress_tool_results(
+            msgs,
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+            first_exact_evidence_seen=seen,
+            preserve_exact_search_evidence=True,
+        )
+        second_msgs, second_breakdown = compress_tool_results(
+            [
+                {
+                    "role": "tool_result",
+                    "tool_use_id": "search_id",
+                    "content": content,
+                }
+            ],
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+            first_exact_evidence_seen=seen,
+            preserve_exact_search_evidence=True,
+        )
+
+        assert first_breakdown == {}
+        assert first_msgs[0]["content"] == content
+        assert second_breakdown == {}
+        assert second_msgs[0]["content"] == content
+
+    def test_search_result_with_symbolic_error_identifier_is_not_collapsed_to_err_stub(self) -> None:
+        content = "src/tok/parser.py:50: raise parse_error"
+        cache: dict[str, ResultCacheEntry] = {}
+        msgs = [
+            {
+                "role": "tool_result",
+                "tool_use_id": "search_id",
+                "content": content,
+            }
+        ]
+        ctx = {
+            "search_id": {
+                "name": "grep_search",
+                "path": "src",
+                "query": "parse_error",
+                "args": {"path": "src", "query": "parse_error"},
+            }
+        }
+
+        out, _breakdown = compress_tool_results(
+            msgs,
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+        )
+
+        assert "|err:syntax_error|" not in out[0]["content"]
+        assert "parse_error" in out[0]["content"]
 
     def test_pytest_tool_result_uses_tool_command_for_verification(
         self,

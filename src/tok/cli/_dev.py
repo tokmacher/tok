@@ -115,6 +115,7 @@ def live_benchmark(
         render_stability_markdown,
         select_preferred_mode,
         summarize_compare_runs,
+        summarize_compare_triage,
         write_result,
     )
 
@@ -195,6 +196,8 @@ def live_benchmark(
             (output / f"{benchmark}_stability.md").write_text(
                 render_stability_markdown(benchmark, model, stability_summary)
             )
+        triage_summary = summarize_compare_triage(repeated_results)
+        (output / f"{benchmark}_triage.json").write_text(json.dumps(triage_summary, indent=2))
         console.print(
             f"[green]✅ Live benchmark complete:[/green] {benchmark} "
             f"baseline_tokens={baseline.provider_usage.total_tokens} "
@@ -204,6 +207,7 @@ def live_benchmark(
         for compare_mode in compare_modes:
             console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_{compare_mode}.json'}")
         console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_compare.md'}")
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_triage.json'}")
         if repeats > 1:
             console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.json'}")
             console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_stability.md'}")

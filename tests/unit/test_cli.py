@@ -1709,6 +1709,7 @@ class TestCLI:
             assert (output_dir / f"coding-loop_run{run_index}_tok-universal.json").exists()
             assert (output_dir / f"coding-loop_run{run_index}_compare_tok-universal.json").exists()
         assert (output_dir / "coding-loop_compare.md").exists()
+        assert (output_dir / "coding-loop_triage.json").exists()
         assert (output_dir / "coding-loop_stability.json").exists()
         assert (output_dir / "coding-loop_stability.md").exists()
         assert "Best mode:" in result.output

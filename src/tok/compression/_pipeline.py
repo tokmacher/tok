@@ -99,6 +99,7 @@ def compress_tool_results_impl(
     first_exact_evidence_seen: set[str] | None = None,
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Compress tool results in messages using the history pipeline."""
     _sync_threshold()
@@ -115,6 +116,7 @@ def compress_tool_results_impl(
         first_exact_evidence_seen=first_exact_evidence_seen,
         current_turn=current_turn,
         keep_turns_window=keep_turns_window,
+        preserve_exact_search_evidence=preserve_exact_search_evidence,
     )
 
 
@@ -124,6 +126,7 @@ def compress_recent_window_impl(
     threshold: int = RECENT_WINDOW_THRESHOLD,
     tool_compatible: bool = False,
     first_exact_evidence_seen: set[str] | None = None,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     _sync_threshold()
@@ -133,4 +136,5 @@ def compress_recent_window_impl(
         threshold=threshold,
         tool_compatible=tool_compatible,
         first_exact_evidence_seen=first_exact_evidence_seen,
+        preserve_exact_search_evidence=preserve_exact_search_evidence,
     )

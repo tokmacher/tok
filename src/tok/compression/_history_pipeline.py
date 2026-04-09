@@ -31,6 +31,7 @@ from . import (
     TOK_OUTPUT_DIRECTIVE_MINIMAL,
     TOK_OUTPUT_DIRECTIVE_REINFORCED,
     TOK_PROTOCOL_LAW,
+    TOK_TOOL_COMPAT_ANSWER_ONLY_DIRECTIVE,
     TOK_TOOL_COMPAT_DIRECTIVE,
     _apply_result_cache,
     _compute_semantic_hash,
@@ -651,6 +652,7 @@ def compress_tool_results_impl(
     first_exact_evidence_seen: set[str] | None = None,
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
     last_file_read_ids = _build_last_file_read_ids(messages, tool_use_id_to_context)
@@ -753,6 +755,15 @@ def compress_tool_results_impl(
             _mark_file_fully_delivered(norm_path)
         return True
 
+    def _should_preserve_exact_search_observation(
+        context: dict[str, Any] | None,
+        raw: str,
+    ) -> bool:
+        if not preserve_exact_search_evidence or not context:
+            return False
+        tool_name = str(context.get("name", "")).lower()
+        return tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "exact_content"
+
     for msg in messages:
         content = msg.get("content")
         if not isinstance(content, list):
@@ -774,6 +785,9 @@ def compress_tool_results_impl(
                     continue
                 if context:
                     norm_path = _extract_normalized_path(context)
+                    if _should_preserve_exact_search_observation(context, content):
+                        msg["content"] = content
+                        continue
                     if _preserve_first_exact_observation(context, content, norm_path):
                         msg["content"] = content
                         continue
@@ -793,6 +807,7 @@ def compress_tool_results_impl(
                         compression_level=compression_level,
                         bypass_cache=bypass_result_cache,
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
+                        preserve_exact_search_evidence=preserve_exact_search_evidence,
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
@@ -822,6 +837,9 @@ def compress_tool_results_impl(
 
             if ctx:
                 norm_path = _extract_normalized_path(ctx)
+                if _should_preserve_exact_search_observation(ctx, raw):
+                    block["content"] = raw
+                    continue
                 if _preserve_first_exact_observation(ctx, raw, norm_path):
                     block["content"] = raw
                     continue
@@ -842,6 +860,9 @@ def compress_tool_results_impl(
                     if search_result_evidence_level(raw) == "navigation":
                         block["content"] = raw
                         continue
+                    if preserve_exact_search_evidence:
+                        block["content"] = raw
+                        continue
                     # Apply result cache compression for repeat search
                     if result_cache is not None and not bypass_result_cache:
                         compressed, saved = _apply_result_cache(
@@ -851,12 +872,16 @@ def compress_tool_results_impl(
                             compression_level=compression_level,
                             bypass_cache=bypass_result_cache,
                             ttl_seconds=RESULT_CACHE_TTL_SECONDS,
+                            preserve_exact_search_evidence=preserve_exact_search_evidence,
                         )
                         if saved > 0:
                             breakdown["search_repeat_cached"] = breakdown.get("search_repeat_cached", 0) + saved
                         block["content"] = compressed
                         continue
                     # Apply semantic hash compression for repeat search
+                    if preserve_exact_search_evidence:
+                        block["content"] = raw
+                        continue
                     if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                         cache_key = _make_semantic_cache_key(ctx, raw)
                         if cache_key is not None:
@@ -908,6 +933,7 @@ def compress_tool_results_impl(
                         compression_level=compression_level,
                         bypass_cache=bypass_result_cache,
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
+                        preserve_exact_search_evidence=preserve_exact_search_evidence,
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
@@ -1011,6 +1037,7 @@ def compress_tool_results_impl(
                         compression_level=compression_level,
                         bypass_cache=bypass_result_cache,
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
+                        preserve_exact_search_evidence=preserve_exact_search_evidence,
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
@@ -1075,6 +1102,21 @@ def inject_system_additions_impl(
     if not tool_compatible:
         directive_parts.append("=== MODE: TOK-NATIVE ===")
 
+    answer_only_tool_compatible = bool(
+        tool_compatible
+        and behavior_signals
+        and any(
+            behavior_signals.get(key, 0) > 0
+            for key in (
+                "answer_ready_turn",
+                "answer_ready_repair_active",
+                "late_answer_followthrough_active",
+                "late_answer_assembly_repair_active",
+                "late_answer_assembly_repair_answer_only",
+            )
+        )
+    )
+
     use_protocol_law = (
         not tool_compatible
         and 1 < pressure <= 50
@@ -1082,6 +1124,8 @@ def inject_system_additions_impl(
     )
     if use_protocol_law:
         directive_parts.append(TOK_PROTOCOL_LAW)
+    elif answer_only_tool_compatible:
+        directive_parts.append(TOK_TOOL_COMPAT_ANSWER_ONLY_DIRECTIVE)
     elif tool_compatible:
         directive_parts.append(TOK_TOOL_COMPAT_DIRECTIVE)
     elif pressure > 50 or (behavior_signals and behavior_signals.get("semantic_drift_detected")):
@@ -1155,6 +1199,7 @@ def compress_recent_window_impl(
     threshold: int = RECENT_WINDOW_THRESHOLD,
     tool_compatible: bool = False,
     first_exact_evidence_seen: set[str] | None = None,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to recent window messages."""
 
@@ -1212,6 +1257,15 @@ def compress_recent_window_impl(
         first_exact_evidence_seen.add(key)
         return True
 
+    def _should_preserve_exact_search_observation(
+        context: dict[str, Any] | None,
+        raw: str,
+    ) -> bool:
+        if not preserve_exact_search_evidence or not context:
+            return False
+        tool_name = str(context.get("name", "")).lower()
+        return tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "exact_content"
+
     breakdown: dict[str, int] = {}
     compressors: dict[str, Compressor] = {
         "file": _compress_file_read,
@@ -1235,6 +1289,8 @@ def compress_recent_window_impl(
                 continue
             tool_name = str(ctx.get("name", "")).lower()
             if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(content) == "navigation":
+                continue
+            if _should_preserve_exact_search_observation(ctx, content):
                 continue
             if _first_exact_guard(ctx, content):
                 msg["content"] = content
@@ -1278,6 +1334,8 @@ def compress_recent_window_impl(
                     breakdown["tok_bypass_cache_applied"] = breakdown.get("tok_bypass_cache_applied", 0) + 1
                     continue
 
+            if _should_preserve_exact_search_observation(tool_ctx, raw):
+                continue
             tool_name = str(tool_ctx.get("name", "")).lower() if tool_ctx else ""
             if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
                 continue

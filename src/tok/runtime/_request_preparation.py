@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -50,6 +51,7 @@ from .memory.session_helpers import extract_memory_items
 from .pipeline.request_preparation import (
     _capture_repeat_target_snapshots,
     _inject_system,
+    _is_answer_ready_turn,
     _is_read_only_audit_turn,
     collect_transient_error_snippets,
     mutation_signals,
@@ -88,6 +90,7 @@ globals().update(vars(_core))
 _RECENT_COMMAND_WINDOW = 10
 _DEFAULT_JIT_HIT_THRESHOLD = 3
 _DEFAULT_SPECULATIVE_HIT_THRESHOLD = 2
+_STRUCTURED_ANSWER_LABEL_RE = re.compile(r"(?<![\w-])(file|verification|related)(?![\w-])\s*[:=]", re.IGNORECASE)
 
 
 def _env_int_or_default(name: str, default: int) -> int:
@@ -95,6 +98,39 @@ def _env_int_or_default(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _extract_requested_answer_labels(text: str) -> tuple[str, ...]:
+    if not text.strip():
+        return ()
+    labels: list[str] = []
+    seen: set[str] = set()
+    for match in _STRUCTURED_ANSWER_LABEL_RE.finditer(text):
+        label = match.group(1).lower()
+        if label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return tuple(labels)
+
+
+def _record_structured_answer_expectation(
+    session: _core.RuntimeSession,
+    body: dict[str, Any],
+) -> None:
+    latest_user_prompt = ""
+    messages = body.get("messages", [])
+    if isinstance(messages, list):
+        for message in reversed(messages):
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("role", "")).strip() != "user":
+                continue
+            latest_user_prompt = text_of(cast("Any", message.get("content", ""))).strip()
+            if latest_user_prompt:
+                break
+    session._last_user_prompt_text = latest_user_prompt
+    session._last_user_prompt_labels = _extract_requested_answer_labels(latest_user_prompt)
 
 
 def observe_repeat_target_result_impl(
@@ -784,22 +820,37 @@ def prepare_request_impl(
         session._request_policy_last_effective_tool_compatible = effective_tool_compatible
 
         runtime_hints = [_speculative_macro_hint] if _speculative_macro_hint else []
+        answer_phase_expected = (
+            effective_tool_compatible
+            and not session._baseline_only
+            and (
+                session._answer_ready_repair_pending
+                or session._late_answer_followthrough_pending
+                or session._late_answer_assembly_repair_pending
+            )
+        )
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
             runtime_hints.append(TOK_REPEAT_COMMAND_SUPPRESSION_HINT)
             behavior_signals["repeat_command_suppression_hint_injected"] = 1
         file_read_count = sum(
             1 for event in normalized_tool_events if getattr(event, "compressibility_class", "") == "file_read"
         )
-        if effective_tool_compatible and (
-            file_read_count >= FILE_READ_DENSITY_THRESHOLD or len(normalized_tool_events) >= TOOL_USE_DENSITY_THRESHOLD
+        if (
+            effective_tool_compatible
+            and not answer_phase_expected
+            and (
+                file_read_count >= FILE_READ_DENSITY_THRESHOLD
+                or len(normalized_tool_events) >= TOOL_USE_DENSITY_THRESHOLD
+            )
         ):
             runtime_hints.append(TOK_READ_PLAN_HINT)
             behavior_signals["read_plan_hint_injected"] = 1
-        if effective_tool_compatible:
+        if effective_tool_compatible and not answer_phase_expected:
             runtime_hints.append(TOK_LARGE_FILE_HINT)
         answer_ready = False
         resend_signals: dict[str, int] = {}
         has_answer_anchor = False
+        preserve_exact_search_evidence = False
         read_only_audit_turn = effective_tool_compatible and _is_read_only_audit_turn(translated_messages)
         late_answer_followthrough_active = (
             effective_tool_compatible
@@ -836,6 +887,24 @@ def prepare_request_impl(
             for key, value in repeat_snapshot_signals.items():
                 behavior_signals[key] = behavior_signals.get(key, 0) + value
 
+        if effective_tool_compatible:
+            has_answer_facts = any(
+                entry.value.startswith("answer_")
+                for bucket in (session.bridge_memory.hot, session.bridge_memory.durable)
+                for entry in bucket.get("facts", [])
+            )
+            seen_exact_evidence = bool(session._first_exact_evidence_seen or session._pending_exact_evidence_keys)
+            has_answer_anchor = bool(has_answer_facts or seen_exact_evidence)
+            answer_ready_turn = _is_answer_ready_turn(
+                translated_messages,
+                tool_compatible=effective_tool_compatible,
+                has_answer_anchor=has_answer_anchor,
+                baseline_only=session._baseline_only,
+            )
+            if answer_ready_turn:
+                answer_phase_expected = True
+            preserve_exact_search_evidence = bool(answer_ready_turn and has_answer_anchor)
+
         session._save_bridge_memory()
         if stream_recovery_history_floor_active:
             body["messages"] = translated_messages
@@ -852,6 +921,7 @@ def prepare_request_impl(
                 first_exact_evidence_seen=session._first_exact_evidence_seen,
                 current_turn=session.bridge_memory.turn,
                 keep_turns_window=TOK_FILE_DELIVERY_STALE_TURNS,
+                preserve_exact_search_evidence=preserve_exact_search_evidence,
             )
             tool_saved = sum(type_breakdown.values()) // 4
             if tool_saved > 0:
@@ -940,6 +1010,7 @@ def prepare_request_impl(
                 tool_use_id_to_context=id_to_context,
                 tool_compatible=effective_tool_compatible,
                 first_exact_evidence_seen=session._first_exact_evidence_seen,
+                preserve_exact_search_evidence=preserve_exact_search_evidence,
             )
             if request.adapter_kind == "claude-bridge" and not recent and body["messages"]:
                 recent, tok_state = compress_history(
@@ -953,6 +1024,7 @@ def prepare_request_impl(
                     tool_use_id_to_context=id_to_context,
                     tool_compatible=effective_tool_compatible,
                     first_exact_evidence_seen=session._first_exact_evidence_seen,
+                    preserve_exact_search_evidence=preserve_exact_search_evidence,
                 )
                 behavior_signals["bridge_minimum_tail_preserved"] = 1
             if request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(recent):
@@ -1084,6 +1156,16 @@ def prepare_request_impl(
                     should_skip_history=should_skip_history,
                     _recent_messages=recent,
                 )
+                answer_phase_now = bool(
+                    answer_ready
+                    or session._answer_ready_repair_active
+                    or session._late_answer_followthrough_active
+                    or session._late_answer_assembly_repair_active
+                )
+                if answer_phase_now and runtime_hints:
+                    runtime_hints = [
+                        hint for hint in runtime_hints if hint not in {TOK_READ_PLAN_HINT, TOK_LARGE_FILE_HINT}
+                    ]
                 if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
                     runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
                 body = _inject_system(
@@ -1124,6 +1206,7 @@ def prepare_request_impl(
                 session._pending_exact_evidence_keys.clear()
             session._bump_signals(_mut_signals)
             session._save_bridge_memory()
+            _record_structured_answer_expectation(session, body)
             return PreparedRuntimeRequest(
                 body=body,
                 compressed=False,
@@ -1191,6 +1274,7 @@ def prepare_request_impl(
     if _restore_latest_assistant_thinking(body.get("messages", []), _thinking_snapshot):
         logger.debug("thinking_block_restore: restored latest assistant thinking blocks after canonicalization")
 
+    _record_structured_answer_expectation(session, body)
     return PreparedRuntimeRequest(
         body=body,
         compressed=compressed,

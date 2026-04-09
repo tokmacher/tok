@@ -78,6 +78,86 @@ def test_invalid_tool_ids_are_sanitized_after_adjacent_user_merge() -> None:
     assert rewritten_id == canonical[2]["content"][0]["tool_use_id"]
 
 
+def test_adjacent_user_text_messages_are_not_merged() -> None:
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Summary please."},
+        {"role": "user", "content": "Respond in exactly two lines: File=... Verification=..."},
+    ]
+    canonical, changed, signals = canonicalize_anthropic_bridge_messages(messages)
+
+    assert changed is True
+    assert signals.get("tok_bridge_adjacent_user_merged", 0) == 0
+    assert len(canonical) == 2
+    assert canonical[0]["content"][0] == {"type": "text", "text": "Summary please."}
+    assert canonical[1]["content"][0] == {
+        "type": "text",
+        "text": "Respond in exactly two lines: File=... Verification=...",
+    }
+
+
+def test_adjacent_user_tool_result_only_messages_are_merged() -> None:
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Start work."},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "t1", "name": "view_file", "input": {}},
+                {"type": "tool_use", "id": "t2", "name": "grep", "input": {}},
+            ],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "result 1"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "result 2"}]},
+    ]
+    canonical, changed, signals = canonicalize_anthropic_bridge_messages(messages)
+
+    assert changed is True
+    assert signals.get("tok_bridge_adjacent_user_merged", 0) == 1
+    assert len(canonical) == 3
+    assert canonical[2]["role"] == "user"
+    assert len(canonical[2]["content"]) == 2
+    assert canonical[2]["content"][0]["type"] == "tool_result"
+    assert canonical[2]["content"][1]["type"] == "tool_result"
+
+
+def test_double_prompt_tail_remains_split_after_tool_results() -> None:
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "n7", "name": "view_file", "input": {"path": "src/tok/gateway.py"}},
+                {"type": "tool_use", "id": "n8", "name": "grep", "input": {"query": "parse_error"}},
+                {"type": "tool_use", "id": "n9", "name": "run_terminal", "input": {"command": "pytest"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "n7", "content": "class Gateway:"},
+                {"type": "tool_result", "tool_use_id": "n8", "content": "not found"},
+                {"type": "tool_result", "tool_use_id": "n9", "content": "PASSED"},
+            ],
+        },
+        {"role": "user", "content": "Summary please."},
+        {
+            "role": "user",
+            "content": (
+                "Based on the conversation so far, respond in exactly two lines:\n"
+                "File=<the primary file that answered the question>\n"
+                "Verification=<the function, class, or finding that supports the answer>"
+            ),
+        },
+    ]
+    canonical, changed, signals = canonicalize_anthropic_bridge_messages(messages)
+
+    assert changed is True
+    assert signals.get("tok_bridge_adjacent_user_merged", 0) == 0
+    assert len(canonical) == 4
+    assert canonical[2]["role"] == "user"
+    assert canonical[3]["role"] == "user"
+    assert canonical[2]["content"][0]["text"] == "Summary please."
+    assert "respond in exactly two lines" in canonical[3]["content"][0]["text"].lower()
+
+
 def test_validator_rejects_invalid_roles() -> None:
     body = {
         "model": "claude-3-5",

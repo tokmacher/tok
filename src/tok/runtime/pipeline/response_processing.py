@@ -6,6 +6,7 @@ import copy
 import logging
 import re
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tok.protocol.models import TokNode
@@ -20,6 +21,34 @@ if TYPE_CHECKING:
     from tok.runtime.core import RuntimeSession
 
 logger = logging.getLogger("tok.runtime")
+_STRUCTURED_LABEL_RE = re.compile(r"(?<![\w-])(file|verification|related)(?![\w-])\s*[:=]\s*([^\n|]+)", re.IGNORECASE)
+_STRUCTURED_FIELD_NAMES = ("file", "verification", "related")
+_IDENTIFIER_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
+_PATH_RE = re.compile(r"(?:^|[\s`'\"])((?:src/)?[A-Za-z0-9_./-]+\.(?:py|ts|tsx|js|jsx|go|rs|rb))(?:[:#]L?\d+)?")
+_VERIFICATION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "by",
+    "class",
+    "for",
+    "from",
+    "function",
+    "in",
+    "is",
+    "line",
+    "method",
+    "of",
+    "on",
+    "or",
+    "result",
+    "the",
+    "to",
+    "via",
+    "with",
+}
 
 
 def heal_drift(
@@ -43,8 +72,19 @@ def heal_drift(
     return text
 
 
-def response_behavior_signals(text: str, *, tool_compatible: bool = False) -> dict[str, int]:
+def response_behavior_signals(
+    text: str,
+    *,
+    tool_compatible: bool = False,
+    session: RuntimeSession | None = None,
+) -> dict[str, int]:
     """Detect response-side protocol drift."""
+    expected_labels = _expected_structured_labels(session)
+    if expected_labels and _is_strict_structured_answer_response(
+        text,
+        expected_labels=expected_labels,
+    ):
+        return {}
     if not tool_compatible and text.strip() and not IS_TOK.search(text):
         return {"non_tok_response": 1}
     return {}
@@ -70,6 +110,407 @@ def _is_answer_like_visible_text(text: str) -> bool:
     return bool(fields.get("files")) or any(
         fact.startswith(("answer_file:", "answer_verification:")) for fact in fields.get("facts", [])
     )
+
+
+def _expected_structured_labels(session: RuntimeSession | None) -> tuple[str, ...]:
+    if session is None:
+        return ()
+    labels = tuple(getattr(session, "_last_user_prompt_labels", ()) or ())
+    if labels:
+        return labels
+    prompt_text = str(getattr(session, "_last_user_prompt_text", "") or "")
+    if not prompt_text.strip():
+        return ()
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for match in _STRUCTURED_LABEL_RE.finditer(prompt_text):
+        label = match.group(1).lower()
+        if label in seen:
+            continue
+        seen.add(label)
+        ordered.append(label)
+    return tuple(ordered)
+
+
+def _extract_labeled_fields(text: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for match in _STRUCTURED_LABEL_RE.finditer(text):
+        key = match.group(1).lower()
+        value = match.group(2).strip().rstrip(".,;")
+        if value:
+            fields[key] = value
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("|>"):
+            line = line[2:].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().lower()
+        if key not in _STRUCTURED_FIELD_NAMES:
+            continue
+        cleaned = value.strip().rstrip(".,;")
+        if cleaned and key not in fields:
+            fields[key] = cleaned
+    return fields
+
+
+def _canonicalize_repo_path(candidate: str, known_files: list[str]) -> str:
+    cleaned = candidate.strip().strip("'\"")
+    if not cleaned:
+        return ""
+    cleaned = re.sub(r"[:#]L?\d+$", "", cleaned).removeprefix("./")
+    candidate_path = Path.cwd() / cleaned
+    if candidate_path.is_file():
+        return cleaned
+    if cleaned.startswith("src/"):
+        alt_path = Path.cwd() / cleaned[4:]
+        if alt_path.is_file():
+            return cleaned
+    package_forms: list[str] = []
+    if cleaned.endswith(".py"):
+        module_base = cleaned[:-3]
+        package_forms = [f"{module_base}/__init__.py"]
+        if module_base.startswith("src/"):
+            package_forms.append(f"{module_base[4:]}/__init__.py")
+        else:
+            package_forms.append(f"src/{module_base}/__init__.py")
+        for form in package_forms:
+            if (Path.cwd() / form).is_file():
+                return f"{cleaned} ({form})"
+    if cleaned in known_files:
+        return cleaned
+    if cleaned.startswith("src/") and cleaned[4:] in known_files:
+        return cleaned[4:]
+    for known in known_files:
+        if known.endswith(cleaned) or cleaned.endswith(known):
+            return known
+    base = cleaned.rsplit("/", 1)[-1]
+    candidates = [known for known in known_files if known.rsplit("/", 1)[-1] == base]
+    if len(candidates) == 1:
+        return candidates[0]
+    if package_forms:
+        for form in package_forms:
+            if (Path.cwd() / form).is_file():
+                return form
+        for form in package_forms:
+            if form in known_files:
+                return form
+        for known in known_files:
+            if any(known.endswith(form) for form in package_forms):
+                return known
+    return ""
+
+
+def _extract_session_answer_anchors(
+    session: RuntimeSession,
+) -> tuple[list[str], list[str]]:
+    file_entries: list[tuple[int, int, str]] = []
+    verification_entries: list[tuple[int, int, str]] = []
+    for bucket in (session.bridge_memory.hot, session.bridge_memory.durable):
+        for entry in bucket.get("facts", []):
+            value = str(getattr(entry, "value", "")).strip()
+            score = int(getattr(entry, "score", 0))
+            last_seen = int(getattr(entry, "last_seen_turn", 0))
+            if value.startswith("answer_file:"):
+                file_value = value.split(":", 1)[1].strip()
+                if file_value:
+                    file_entries.append((score, last_seen, file_value))
+            elif value.startswith("answer_verification:"):
+                verification_value = value.split(":", 1)[1].strip()
+                if verification_value:
+                    verification_entries.append((score, last_seen, verification_value))
+        for entry in bucket.get("files", []):
+            value = str(getattr(entry, "value", "")).strip()
+            if not value:
+                continue
+            score = int(getattr(entry, "score", 0))
+            last_seen = int(getattr(entry, "last_seen_turn", 0))
+            file_entries.append((score, last_seen, value))
+    file_entries.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    verification_entries.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    dedup_files: list[str] = []
+    seen_files: set[str] = set()
+    for _score, _last_seen, value in file_entries:
+        if value in seen_files:
+            continue
+        seen_files.add(value)
+        dedup_files.append(value)
+    dedup_verifications: list[str] = []
+    seen_verifications: set[str] = set()
+    for _score, _last_seen, value in verification_entries:
+        if value in seen_verifications:
+            continue
+        seen_verifications.add(value)
+        dedup_verifications.append(value)
+    return dedup_files, dedup_verifications
+
+
+def _normalize_verification_value(value: str, known_verifications: list[str]) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+
+    def _tokenize_phrase(text: str) -> list[str]:
+        tokens: list[str] = []
+        for token in _IDENTIFIER_RE.findall(text):
+            lowered_token = token.lower()
+            if lowered_token in _VERIFICATION_STOPWORDS:
+                continue
+            tokens.append(lowered_token)
+        return tokens
+
+    def _split_identifier_parts(token: str) -> list[str]:
+        chunks = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", token).replace("_", " ").split()
+        return [chunk.lower() for chunk in chunks if chunk]
+
+    def _is_meaningful_anchor(anchor: str) -> bool:
+        normalized = anchor.strip().strip("'\"`")
+        if not normalized:
+            return False
+        parts = _tokenize_phrase(normalized)
+        if not parts:
+            return False
+        if len(parts) == 1 and (parts[0] in _VERIFICATION_STOPWORDS or len(parts[0]) <= 2):
+            return False
+        return True
+
+    def _fuzzy_token_match(left: str, right: str) -> bool:
+        if left == right:
+            return True
+        if len(left) >= 4 and right.startswith(left):
+            return True
+        if len(right) >= 4 and left.startswith(right):
+            return True
+        return False
+
+    def _anchor_supported_by_phrase(anchor: str, phrase_tokens: list[str]) -> bool:
+        anchor_tokens = _IDENTIFIER_RE.findall(anchor)
+        if not anchor_tokens:
+            return False
+        anchor_parts: list[str] = []
+        for token in anchor_tokens:
+            anchor_parts.extend(_split_identifier_parts(token))
+        anchor_parts = [part for part in anchor_parts if part and part not in _VERIFICATION_STOPWORDS]
+        if not anchor_parts:
+            return False
+        return all(any(_fuzzy_token_match(part, token) for token in phrase_tokens) for part in anchor_parts)
+
+    def _single_identifier_reference(text: str, anchor: str) -> bool:
+        phrase_tokens = _tokenize_phrase(text)
+        if len(phrase_tokens) != 1:
+            return False
+        anchor_tokens = _tokenize_phrase(anchor)
+        return len(anchor_tokens) == 1 and phrase_tokens[0] == anchor_tokens[0]
+
+    lowered = cleaned.lower()
+    phrase_tokens = _tokenize_phrase(cleaned)
+    usable_anchors = [anchor for anchor in known_verifications if _is_meaningful_anchor(anchor)]
+
+    exact_matches: list[str] = []
+    for anchor in usable_anchors:
+        if anchor.lower() in lowered:
+            exact_matches.append(anchor)
+
+    inferred_matches: list[str] = []
+    for anchor in usable_anchors:
+        if anchor in exact_matches:
+            continue
+        if _anchor_supported_by_phrase(anchor, phrase_tokens):
+            inferred_matches.append(anchor)
+
+    if len(exact_matches) >= 2:
+        return cleaned
+    if len(exact_matches) == 1 and inferred_matches:
+        return f"{exact_matches[0]}, {inferred_matches[0]}"
+    if len(exact_matches) == 1:
+        if _single_identifier_reference(cleaned, exact_matches[0]):
+            return exact_matches[0]
+        return cleaned
+    if len(inferred_matches) >= 2:
+        return f"{inferred_matches[0]}, {inferred_matches[1]}"
+    if len(inferred_matches) == 1:
+        return inferred_matches[0]
+
+    if phrase_tokens:
+        best_anchor = ""
+        best_score = 0.0
+        for anchor in usable_anchors:
+            anchor_tokens = _IDENTIFIER_RE.findall(anchor)
+            if not anchor_tokens:
+                continue
+            anchor_parts: list[str] = []
+            for token in anchor_tokens:
+                anchor_parts.extend(_split_identifier_parts(token))
+            anchor_parts = [part for part in anchor_parts if part and part not in _VERIFICATION_STOPWORDS]
+            if not anchor_parts:
+                continue
+            overlap = sum(
+                1 for part in anchor_parts if any(_fuzzy_token_match(part, phrase) for phrase in phrase_tokens)
+            )
+            score = overlap / max(1, len(anchor_parts))
+            if score > best_score:
+                best_score = score
+                best_anchor = anchor
+        if best_anchor and best_score >= 0.5:
+            return best_anchor
+
+    if len(phrase_tokens) > 2:
+        return cleaned
+
+    backtick_match = re.search(r"`([A-Za-z_][A-Za-z0-9_]*)`", cleaned)
+    if backtick_match:
+        return backtick_match.group(1)
+    definition_match = re.search(r"\b(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)\b", cleaned, re.IGNORECASE)
+    if definition_match:
+        return definition_match.group(1)
+    call_match = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", cleaned)
+    if call_match:
+        return call_match.group(1)
+    filtered_identifiers = [
+        candidate
+        for candidate in _IDENTIFIER_RE.findall(cleaned)
+        if candidate.lower() not in _VERIFICATION_STOPWORDS and candidate.lower() != "line"
+    ]
+    return filtered_identifiers[0] if filtered_identifiers else cleaned
+
+
+def _looks_like_placeholder_value(value: str) -> bool:
+    lowered = value.strip().lower()
+    if not lowered:
+        return True
+    return any(
+        marker in lowered
+        for marker in (
+            "<the",
+            "<file",
+            "<verification",
+            "specific filename from the code change",
+            "command run or test outcome",
+        )
+    )
+
+
+def _file_from_verification_value(verification: str, known_files: list[str]) -> str:
+    for match in _PATH_RE.finditer(verification):
+        candidate = match.group(1).strip()
+        if known_files:
+            resolved = _canonicalize_repo_path(candidate, known_files)
+            if resolved:
+                return resolved
+        elif candidate:
+            return re.sub(r"[:#]L?\d+$", "", candidate).removeprefix("./")
+    lowered = verification.lower()
+    for known in known_files:
+        if known.lower() in lowered or known.rsplit("/", 1)[-1].lower() in lowered:
+            return known
+    return ""
+
+
+def _is_strict_structured_answer_response(
+    text: str,
+    *,
+    expected_labels: tuple[str, ...],
+) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if "@tool" in stripped.lower() or "tool use" in stripped.lower():
+        return False
+    fields = _extract_labeled_fields(stripped)
+    if not fields:
+        return False
+    if expected_labels and any(label not in fields for label in expected_labels):
+        return False
+    allowed_labels = set(expected_labels) if expected_labels else set(_STRUCTURED_FIELD_NAMES)
+    for line in stripped.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        if cleaned.startswith("|>"):
+            cleaned = cleaned[2:].strip()
+        key_match = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*[:=]", cleaned)
+        if key_match and key_match.group(1).lower() not in allowed_labels:
+            return False
+    return True
+
+
+def _repair_structured_answer_text(
+    visible_text: str,
+    *,
+    expected_labels: tuple[str, ...],
+    session: RuntimeSession | None,
+) -> tuple[str, dict[str, int]]:
+    if not expected_labels:
+        return visible_text, {}
+    fields = _extract_labeled_fields(visible_text)
+    if not fields and not visible_text.strip():
+        return visible_text, {"structured_answer_repair_failed": 1}
+    if session is None:
+        return visible_text, {}
+
+    known_files, known_verifications = _extract_session_answer_anchors(session)
+    repaired = dict(fields)
+    backfilled = False
+    changed = False
+    verification_value = repaired.get("verification", "")
+    file_value = repaired.get("file", "")
+    verification_placeholder = _looks_like_placeholder_value(verification_value) if verification_value else False
+    file_placeholder = _looks_like_placeholder_value(file_value) if file_value else False
+
+    if "verification" in expected_labels and verification_value and not verification_placeholder:
+        normalized_verification = _normalize_verification_value(repaired["verification"], known_verifications)
+        if normalized_verification and normalized_verification != repaired["verification"]:
+            repaired["verification"] = normalized_verification
+            changed = True
+
+    if "file" in expected_labels and file_value and not file_placeholder:
+        resolved = _canonicalize_repo_path(repaired["file"], known_files)
+        if resolved and resolved != repaired["file"]:
+            repaired["file"] = resolved
+            changed = True
+
+    if (
+        "verification" in expected_labels
+        and (not repaired.get("verification") or verification_placeholder)
+        and known_verifications
+    ):
+        repaired["verification"] = known_verifications[0]
+        backfilled = True
+        changed = True
+
+    if "file" in expected_labels and (not repaired.get("file") or file_placeholder) and known_files:
+        repaired["file"] = known_files[0]
+        backfilled = True
+        changed = True
+
+    if "file" in expected_labels and repaired.get("verification") and known_files:
+        inferred_file = _file_from_verification_value(repaired["verification"], known_files)
+        if inferred_file and inferred_file != repaired.get("file", ""):
+            repaired["file"] = inferred_file
+            changed = True
+
+    rebuilt_lines: list[str] = []
+    for label in expected_labels:
+        value = repaired.get(label, "").strip()
+        if value:
+            rebuilt_lines.append(f"{label.capitalize()}={value}")
+
+    if not rebuilt_lines:
+        return visible_text, {"structured_answer_repair_failed": 1}
+
+    repaired_text = "\n".join(rebuilt_lines)
+    signals: dict[str, int] = {}
+    missing_expected = [
+        label for label in expected_labels if label not in repaired or not repaired.get(label, "").strip()
+    ]
+    if missing_expected:
+        signals["structured_answer_repair_failed"] = 1
+    if changed or repaired_text != visible_text.strip():
+        signals["structured_answer_repaired"] = 1
+    if backfilled:
+        signals["structured_answer_backfilled"] = 1
+    return repaired_text, signals
 
 
 def _tool_compatible_mixed_turn_signals(
@@ -584,6 +1025,20 @@ def response_contract_for_mode(
                 fallback_mode,
                 has_tok_protocol,
             )
+
+    expected_labels = _expected_structured_labels(session)
+    has_tool_blocks = any(block.get("type") == "tool_use" for block in content_blocks)
+    if expected_labels and not has_tool_blocks:
+        repaired_text, repair_signals = _repair_structured_answer_text(
+            visible_text,
+            expected_labels=expected_labels,
+            session=session,
+        )
+        if repair_signals:
+            signals.update(repair_signals)
+        if repaired_text.strip():
+            visible_text = repaired_text.strip()
+            content_blocks = [{"type": "text", "text": visible_text}]
 
     if session and hasattr(session, "_last_mode"):
         session._last_mode = mode

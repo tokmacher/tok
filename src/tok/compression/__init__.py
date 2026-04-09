@@ -186,7 +186,10 @@ _ERROR_EQUIVALENCE_PATTERNS = [
         "import_error",
     ),
     (
-        re.compile(r"syntaxerror|parse.?error|parse error", re.IGNORECASE),
+        re.compile(
+            r"syntaxerror|\bsyntax\s+error\b|\bparse\s+error\b|\bparse-error\b",
+            re.IGNORECASE,
+        ),
         "syntax_error",
     ),
     (
@@ -240,6 +243,41 @@ def _normalize_error_content(raw: str) -> str | None:
         if pattern.search(raw):
             return f"|err:{error_type}|"
     return None
+
+
+_SOURCE_EVIDENCE_LINE_RE = re.compile(
+    r"(?m)^\s*(?:\.?/)?[A-Za-z0-9_./-]+\.(?:py|ts|tsx|js|jsx|go|rs|rb|java|c|cc|cpp|h):\d+(?::|\s|$)"
+)
+_SOURCE_EVIDENCE_SEARCH_TOOLS = frozenset(
+    {
+        "grep",
+        "grep_search",
+        "search",
+        "search_files",
+        "ripgrep",
+        "rg",
+    }
+)
+
+
+def _looks_like_source_evidence(raw: str) -> bool:
+    if not raw.strip():
+        return False
+    return bool(_SOURCE_EVIDENCE_LINE_RE.search(raw))
+
+
+def _should_preserve_source_evidence_for_error_stub(
+    raw_text: str,
+    *,
+    tool_name: str | None,
+    context: dict[str, Any] | None = None,
+) -> bool:
+    normalized_tool_name = str(tool_name or "").lower().strip()
+    if not normalized_tool_name and isinstance(context, dict):
+        normalized_tool_name = str(context.get("name", "")).lower().strip()
+    if normalized_tool_name not in _SOURCE_EVIDENCE_SEARCH_TOOLS:
+        return False
+    return _looks_like_source_evidence(raw_text)
 
 
 CANONICAL_MEMORY_FIELDS = (
@@ -328,6 +366,9 @@ Reply normally using plain text. Use tools naturally when needed.
 """
 
 TOK_TOOL_COMPAT_DIRECTIVE = "Plain text. Tool calls only. Omit all headers.\n"
+TOK_TOOL_COMPAT_ANSWER_ONLY_DIRECTIVE = (
+    "Plain text. Answer-only turn. Do not call tools. Emit only the requested labeled answer fields.\n"
+)
 
 TOK_OUTPUT_DIRECTIVE_MINIMAL = "[Tok Mode] Natural responses allowed. No special formatting required.\n"
 
@@ -611,6 +652,7 @@ def _apply_result_cache(
     compression_level: str = "balanced",
     bypass_cache: bool = False,
     ttl_seconds: int = 1800,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[str, int]:
     """
     Apply general result cache dedup for any tool result.
@@ -699,6 +741,7 @@ def _apply_result_cache(
         cached_raw,
         cached_raw_text,
         compression_level,
+        preserve_exact_search_evidence=preserve_exact_search_evidence,
     )
 
 
@@ -717,6 +760,7 @@ def _process_cache_hit(
     cached_raw: str,
     cached_raw_text: str,
     compression_level: str,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[str, int]:
     """Process a cache hit and return compressed result."""
     host_stub_replayed = _should_replay_host_stub(
@@ -751,6 +795,7 @@ def _process_cache_hit(
             cached_raw,
             host_stub_replayed=True,
             compression_level=compression_level,
+            preserve_exact_search_evidence=preserve_exact_search_evidence,
         )
 
     if _is_content_hash_match(raw_text, cached_raw_text):
@@ -779,6 +824,7 @@ def _process_cache_hit(
             cached_raw,
             host_stub_replayed=False,
             compression_level=compression_level,
+            preserve_exact_search_evidence=preserve_exact_search_evidence,
         )
 
     # Content changed - need to compute diff
@@ -833,7 +879,11 @@ def _store_cache_entry(
                 break
     if is_file_like:
         return raw, 0
-    if prefer_normalized_error and normalized_error:
+    if (
+        prefer_normalized_error
+        and normalized_error
+        and not _should_preserve_source_evidence_for_error_stub(raw_text, tool_name=tool_name, context=context)
+    ):
         return normalized_error, len(raw_text) - len(normalized_error)
     compressed = tok_tool_result(
         raw_text,
@@ -972,7 +1022,11 @@ def _handle_hash_mismatch_result(
     context: dict[str, Any],
 ) -> tuple[str, int]:
     """Handle the case when content hash doesn't match (content changed)."""
-    if normalized_error:
+    if normalized_error and not _should_preserve_source_evidence_for_error_stub(
+        raw_text,
+        tool_name=tool_name,
+        context=context,
+    ):
         stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
         saved = len(raw_text) - len(stub)
         if saved < 0:
@@ -999,7 +1053,11 @@ def _handle_diff_result(
 ) -> tuple[str, int]:
     """Handle the case when diff is empty or too large."""
     # Content differs but diff is empty (edge case with trailing newlines)
-    if normalized_error:
+    if normalized_error and not _should_preserve_source_evidence_for_error_stub(
+        raw_text,
+        tool_name=tool_name,
+        context=context,
+    ):
         stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
         saved = len(raw_text) - len(stub)
         if saved < 0:
@@ -1064,6 +1122,7 @@ def _serve_cached_content_hash_match(
     cached_raw: str,
     host_stub_replayed: bool,
     compression_level: str,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[str, int]:
     current_time = time_module.time()
     if is_precision_read:
@@ -1076,6 +1135,16 @@ def _serve_cached_content_hash_match(
             current_time,
         )
         return content_to_return, 0
+
+    if preserve_exact_search_evidence:
+        try:
+            from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS, search_result_evidence_level
+
+            tool_name_normalized = str(tool_name or "").lower()
+            if tool_name_normalized in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw_text) == "exact_content":
+                return raw, 0
+        except Exception:
+            pass
 
     if normalized_tool_name in FILE_LIKE_TOOLS:
         payload = _build_stable_result_payload(
@@ -1222,6 +1291,7 @@ def compress_tool_results(
     first_exact_evidence_seen: set[str] | None = None,
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
@@ -1239,6 +1309,7 @@ def compress_tool_results(
         first_exact_evidence_seen=first_exact_evidence_seen,
         current_turn=current_turn,
         keep_turns_window=keep_turns_window,
+        preserve_exact_search_evidence=preserve_exact_search_evidence,
     )
 
 
@@ -1296,6 +1367,7 @@ def compress_recent_window(
     threshold: int = RECENT_WINDOW_THRESHOLD,
     tool_compatible: bool = False,
     first_exact_evidence_seen: set[str] | None = None,
+    preserve_exact_search_evidence: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     from ._pipeline import compress_recent_window_impl
@@ -1306,6 +1378,7 @@ def compress_recent_window(
         threshold=threshold,
         tool_compatible=tool_compatible,
         first_exact_evidence_seen=first_exact_evidence_seen,
+        preserve_exact_search_evidence=preserve_exact_search_evidence,
     )
 
 

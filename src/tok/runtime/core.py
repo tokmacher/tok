@@ -236,6 +236,8 @@ class RuntimeSession:
     _pending_exact_evidence_keys: set[str] = field(default_factory=set, init=False, repr=False)
     _files_read_this_session: set[str] = field(default_factory=set, init=False, repr=False)
     _files_fully_delivered: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _last_user_prompt_text: str = field(default="", init=False, repr=False)
+    _last_user_prompt_labels: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
 
     def record_fallback_event(self) -> None:
         """Increment the consecutive fail-open counter and degrade to baseline when threshold is reached."""

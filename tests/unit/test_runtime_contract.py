@@ -1,4 +1,5 @@
 from tok.runtime.memory.bridge_memory import BridgeMemoryState
+from tok.runtime.pipeline.response_processing import response_behavior_signals
 from tok.universal_runtime import (
     RuntimeSession,
     normalize_tool_events,
@@ -112,3 +113,182 @@ def test_normalize_tool_events_captures_file_command_search_classes() -> None:
     assert events[1].command == "pytest -q"
     assert events[2].compressibility_class == "search"
     assert events[2].query == "pattern"
+
+
+def test_response_contract_repairs_structured_answer_from_session_anchors(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/parser.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:parse_error",
+        score_delta=3,
+    )
+    session._last_user_prompt_text = (
+        "Based on the conversation so far, respond in exactly two lines:\n"
+        "File=<the primary file that answered the question>\n"
+        "Verification=<the function, class, or finding that supports the answer>"
+    )
+    session._last_user_prompt_labels = ("file", "verification")
+
+    contract = response_contract_for_mode(
+        "Verification=Parser.parse() method is empty (pass) and pytest fails",
+        tool_compatible=False,
+        session=session,
+    )
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "File=src/tok/parser.py" in visible
+    assert "Verification=parse_error" in visible
+    assert contract.behavior_signals.get("structured_answer_repaired", 0) == 1
+    assert contract.behavior_signals.get("structured_answer_backfilled", 0) == 1
+
+
+def test_response_behavior_signals_exempts_expected_strict_structured_answer(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._last_user_prompt_labels = ("file", "verification")
+    session._last_user_prompt_text = "File=<...> Verification=<...>"
+
+    signals = response_behavior_signals(
+        "File=src/tok/parser.py\nVerification=parse_error",
+        tool_compatible=False,
+        session=session,
+    )
+
+    assert signals == {}
+
+
+def test_response_contract_repairs_research_verification_with_anchor_inference(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/runtime/policy/smart_policy.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:BridgeMemoryState",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:compress_history",
+        score_delta=3,
+    )
+    session._last_user_prompt_labels = ("file", "verification")
+    session._last_user_prompt_text = "File=<...>\nVerification=<...>"
+
+    contract = response_contract_for_mode(
+        "File=src/tok/runtime/policy/smart_policy.py\n"
+        "Verification=class SmartPolicy, BridgeMemoryState, and the history compression methods within",
+        tool_compatible=False,
+        session=session,
+    )
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "File=src/tok/runtime/policy/smart_policy.py" in visible
+    assert "Verification=BridgeMemoryState, compress_history" in visible
+    assert contract.behavior_signals.get("structured_answer_repaired", 0) == 1
+
+
+def test_response_contract_repair_ignores_low_quality_verification_anchor(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/runtime/policy/smart_policy.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:and",
+        score_delta=5,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:BridgeMemoryState",
+        score_delta=3,
+    )
+    session._last_user_prompt_labels = ("file", "verification")
+    session._last_user_prompt_text = "File=<...>\nVerification=<...>"
+
+    contract = response_contract_for_mode(
+        "File=src/tok/runtime/policy/smart_policy.py\n"
+        "Verification=class SmartPolicy, BridgeMemoryState, and the history compression methods within",
+        tool_compatible=False,
+        session=session,
+    )
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "Verification=and" not in visible
+    assert "BridgeMemoryState" in visible
+
+
+def test_response_contract_canonicalizes_module_file_to_package_init(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/compression/__init__.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:compress_history",
+        score_delta=3,
+    )
+    session._last_user_prompt_labels = ("file", "verification")
+    session._last_user_prompt_text = "File=<...>\nVerification=<...>"
+
+    contract = response_contract_for_mode(
+        "File=src/tok/compression.py\nVerification=compress_history",
+        tool_compatible=False,
+        session=session,
+    )
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "File=src/tok/compression.py (src/tok/compression/__init__.py)" in visible
+
+
+def test_response_contract_prefers_existing_package_file_over_stale_module_anchor(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/compression.py",
+        score_delta=5,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/compression/__init__.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:compress_history",
+        score_delta=3,
+    )
+    session._last_user_prompt_labels = ("file", "verification")
+    session._last_user_prompt_text = "File=<...>\nVerification=<...>"
+
+    contract = response_contract_for_mode(
+        "File=src/tok/compression.py\nVerification=compress_history",
+        tool_compatible=False,
+        session=session,
+    )
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "File=src/tok/compression.py (src/tok/compression/__init__.py)" in visible

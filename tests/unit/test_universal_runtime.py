@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from tok.runtime.config import TOK_READ_PLAN_HINT
+from tok.runtime.config import TOK_LARGE_FILE_HINT, TOK_READ_PLAN_HINT
 from tok.runtime.core import (
     TOOL_COMPAT_MEMORY_PROFILE,
     RuntimeSession,
@@ -2695,6 +2695,139 @@ def test_answer_anchor_present_forces_full_resend_on_answer_ready_turn(
     assert second.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 0
 
 
+def test_prepare_request_preserves_exact_search_evidence_on_anchor_turn(tmp_path) -> None:
+    from tok.compression import text_of
+    from tok.runtime.core import (
+        RuntimeRequest,
+        RuntimeSession,
+        UniversalTokRuntime,
+    )
+
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/compression.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:compress_history",
+        score_delta=3,
+    )
+    raw_search = "\n".join(f"src/tok/compression.py:305: def compress_history({idx})" for idx in range(40))
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "s1",
+                        "name": "grep_search",
+                        "input": {"query": "compress_history", "search_path": "src/tok"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "s1",
+                        "content": raw_search,
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "s2",
+                        "name": "grep_search",
+                        "input": {"query": "compress_history", "search_path": "src/tok"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "s2",
+                        "content": raw_search,
+                    }
+                ],
+            },
+            {"role": "user", "content": "confirm the gateway entry point"},
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    user_texts = [text_of(msg["content"]) for msg in prepared.body["messages"] if msg.get("role") == "user"]
+    assert prepared.behavior_signals.get("answer_anchor_present", 0) == 1
+    assert any(text == raw_search for text in user_texts)
+    assert all("unchanged|cached" not in text for text in user_texts)
+
+
+def test_prepare_request_preserves_exact_search_evidence_with_pending_anchor(
+    tmp_path,
+) -> None:
+    from tok.compression import text_of
+    from tok.runtime.core import (
+        RuntimeRequest,
+        RuntimeSession,
+        UniversalTokRuntime,
+    )
+
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._pending_exact_evidence_keys.add("search|compress_history")
+
+    raw_search = "\n".join(f"src/tok/compression.py:305: def compress_history({idx})" for idx in range(40))
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        adapter_kind="claude-bridge",
+        messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "s1",
+                        "name": "grep_search",
+                        "input": {"query": "compress_history", "search_path": "src/tok"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "s1",
+                        "content": raw_search,
+                    }
+                ],
+            },
+            {"role": "user", "content": "Please summarize the answer."},
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    user_texts = [text_of(msg["content"]) for msg in prepared.body["messages"] if msg.get("role") == "user"]
+    assert any(text == raw_search for text in user_texts)
+    assert all("unchanged|cached" not in text for text in user_texts)
+
+
 def test_answer_anchor_present_can_delta_when_state_changes(tmp_path) -> None:
     from tok.runtime.core import (
         RuntimeRequest,
@@ -2950,6 +3083,53 @@ def test_prepare_request_emits_answer_now_directive_when_answer_ready_from_ancho
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
     assert "Answer now using the existing File=/Verification= evidence." in prepared.body["system"]
+
+
+def test_prepare_request_answer_phase_suppresses_read_plan_and_large_file_hints(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/gateway.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:health",
+        score_delta=3,
+    )
+    dense_messages: list[dict[str, Any]] = [{"role": "user", "content": "confirm the gateway entry point"}]
+    for idx in range(6):
+        dense_messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": f"read_{idx}",
+                        "name": "read_file",
+                        "input": {"path": f"src/tok/file_{idx}.py"},
+                    }
+                ],
+            }
+        )
+
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=dense_messages,
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
+    assert "Answer-only turn. Do not call tools." in prepared.body["system"]
+    assert TOK_READ_PLAN_HINT not in prepared.body["system"]
+    assert TOK_LARGE_FILE_HINT not in prepared.body["system"]
 
 
 def test_prepare_request_does_not_emit_answer_now_directive_when_fresh_evidence_still_required(

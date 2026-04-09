@@ -9,6 +9,7 @@ import re
 import statistics
 import tempfile
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -205,6 +206,36 @@ DEFAULT_BENCHMARKS: dict[str, BenchmarkDefinition] = {
         min_success_terms=2,
         expected_file_terms=("compression.py",),
         expected_verification_terms=("compress_history",),
+        default_turns=3,
+        prompt_sequence=(
+            "Respond in exactly one line: File=<the primary file that answered the original question>",
+            "Respond in exactly one line: Verification=<the function, class, or finding that supports the answer>",
+            "Based on the conversation so far, respond in exactly two lines:\n"
+            "File=<the primary file that answered the question>\n"
+            "Verification=<the function, class, or finding that supports the answer>",
+        ),
+    ),
+    "research-loop-current": BenchmarkDefinition(
+        name="research-loop-current",
+        fixture_path=Path("tests/fixtures/replay/research_loop.jsonl"),
+        system_prompt=(
+            "You are evaluating a completed codebase research session. "
+            "Answer briefly and cite exact filenames and identifiers when possible."
+        ),
+        followup_prompt=(
+            "Based on the conversation so far, respond in exactly two lines:\n"
+            "File=<the primary file that answered the question>\n"
+            "Verification=<the function, class, or finding that supports the answer>"
+        ),
+        success_terms=(
+            "compression/__init__.py",
+            "bridge_memory.py",
+            "compress_history",
+            "BridgeMemoryState",
+        ),
+        min_success_terms=2,
+        expected_file_terms=("compression/__init__.py", "runtime/memory/bridge_memory.py"),
+        expected_verification_terms=("compress_history", "BridgeMemoryState"),
         default_turns=3,
         prompt_sequence=(
             "Respond in exactly one line: File=<the primary file that answered the original question>",
@@ -556,16 +587,39 @@ def normalize_fixture_messages(messages: list[dict[str, Any]], followup_prompt: 
 
 def normalize_fixture_messages_for_bridge(messages: list[dict[str, Any]], followup_prompt: str) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
+    pending_tool_use_ids: set[str] = set()
     for msg in messages:
         role = str(msg.get("role", "")).strip() or "user"
+        if role == "assistant":
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                tool_use_ids = [
+                    str(block.get("id", "")).strip()
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "tool_use"
+                ]
+                # Track the most recent tool_use batch so we can keep strict pairing
+                # and downgrade orphan/replayed tool_results to plain text.
+                pending_tool_use_ids = {tool_id for tool_id in tool_use_ids if tool_id}
         if role == "tool_result":
             tool_id = str(msg.get("tool_use_id", "")).strip()
-            tool_result_block: dict[str, Any] = {
-                "type": "tool_result",
-                "tool_use_id": tool_id,
-                "content": copy.deepcopy(msg.get("content", "")),
-            }
-            normalized.append({"role": "user", "content": [tool_result_block]})
+            tool_content = copy.deepcopy(msg.get("content", ""))
+            if tool_id and tool_id in pending_tool_use_ids:
+                tool_result_block: dict[str, Any] = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": tool_content,
+                }
+                normalized.append({"role": "user", "content": [tool_result_block]})
+                pending_tool_use_ids.discard(tool_id)
+            else:
+                # Orphan/replayed tool_result: stringify to avoid invalid tool history upstream.
+                normalized.append(
+                    {
+                        "role": "user",
+                        "content": f"Tool result ({tool_id or 'unknown'}): {_content_text(tool_content)}",
+                    }
+                )
             continue
 
         content = msg.get("content", "")
@@ -581,6 +635,56 @@ def normalize_fixture_messages_for_bridge(messages: list[dict[str, Any]], follow
 
     normalized.append({"role": "user", "content": followup_prompt})
     return normalized
+
+
+def _flatten_message_content_for_provider(message: dict[str, Any]) -> dict[str, Any]:
+    role = str(message.get("role", "")).strip() or "user"
+    content = message.get("content")
+    if isinstance(content, str):
+        return {"role": role, "content": content}
+    if not isinstance(content, list):
+        return {"role": role, "content": _content_text(content)}
+
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            text = str(block).strip()
+            if text:
+                parts.append(text)
+            continue
+
+        block_type = str(block.get("type", "")).strip()
+        if block_type == "text":
+            text = str(block.get("text", "")).strip()
+            if text:
+                parts.append(text)
+            continue
+        if block_type == "tool_use":
+            tool_name = str(block.get("name", "unknown")).strip() or "unknown"
+            tool_input = _content_text(block.get("input", "")).strip()
+            parts.append(f"Tool use ({tool_name})" + (f": {tool_input}" if tool_input else ""))
+            continue
+        if block_type == "tool_result":
+            tool_id = str(block.get("tool_use_id", "")).strip() or "unknown"
+            tool_content = _content_text(block.get("content", "")).strip()
+            parts.append(f"Tool result ({tool_id})" + (f": {tool_content}" if tool_content else ""))
+            continue
+        if block_type in {"thinking", "redacted_thinking"}:
+            block_text = _content_text(block.get("thinking", block.get("data", ""))).strip()
+            if block_text:
+                parts.append(block_text)
+            continue
+        block_text = _content_text(block).strip()
+        if block_text:
+            parts.append(block_text)
+
+    return {"role": role, "content": "\n".join(parts).strip()}
+
+
+def _provider_safe_chat_messages(messages: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
+    if provider.lower() == "anthropic":
+        return copy.deepcopy(messages)
+    return [_flatten_message_content_for_provider(message) for message in messages]
 
 
 def _turn_prompts(definition: BenchmarkDefinition, turns: int) -> list[str]:
@@ -785,6 +889,166 @@ def _looks_like_placeholder(value: str) -> bool:
             "command run or test outcome",
         )
     )
+
+
+def _is_research_benchmark(definition: BenchmarkDefinition) -> bool:
+    return definition.name.startswith("research-loop")
+
+
+def _repo_python_files(repo_root: Path) -> set[str]:
+    src_root = repo_root / "src"
+    if not src_root.exists():
+        return set()
+    return {str(path.relative_to(repo_root)).replace("\\", "/") for path in src_root.rglob("*.py") if path.is_file()}
+
+
+def _repo_symbol_index(repo_root: Path) -> set[str]:
+    symbols: set[str] = set()
+    src_root = repo_root / "src"
+    if not src_root.exists():
+        return symbols
+    pattern = re.compile(r"^\s*(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+    for path in src_root.rglob("*.py"):
+        if not path.is_file():
+            continue
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                match = pattern.match(line)
+                if match:
+                    symbols.add(match.group(1))
+    return symbols
+
+
+def _extract_repo_candidates(value: str) -> list[str]:
+    cleaned = value.strip().strip("'\"")
+    if not cleaned:
+        return []
+    candidates: list[str] = [cleaned]
+    for match in re.findall(r"(?:src/)?[A-Za-z0-9_./-]+\.py(?::\d+)?", cleaned):
+        candidates.append(match)
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        c = candidate.strip().strip("'\"")
+        c = re.sub(r":\d+$", "", c)
+        c = c.removeprefix("./")
+        if c and c not in seen:
+            seen.add(c)
+            normalized.append(c)
+    return normalized
+
+
+def _resolve_repo_file(
+    raw_value: str,
+    *,
+    repo_files: set[str],
+    aliases: dict[str, str],
+) -> tuple[str | None, list[str]]:
+    warnings: list[str] = []
+    basenames: dict[str, list[str]] = {}
+    for repo_path in repo_files:
+        basenames.setdefault(Path(repo_path).name, []).append(repo_path)
+
+    for candidate in _extract_repo_candidates(raw_value):
+        normalized = candidate.replace("\\", "/")
+        candidate_forms = [normalized]
+        if not normalized.startswith("src/"):
+            candidate_forms.append(f"src/{normalized}")
+        for form in candidate_forms:
+            if form in repo_files:
+                return form, warnings
+            if form in aliases:
+                mapped = aliases[form]
+                if mapped in repo_files:
+                    warnings.append("fixture_reference_stale")
+                    return mapped, warnings
+        base = Path(normalized).name
+        if base and base in basenames and len(basenames[base]) == 1:
+            return basenames[base][0], warnings
+    return None, warnings
+
+
+def _evaluate_repo_grounded_research_success(
+    definition: BenchmarkDefinition,
+    visible_response: str,
+    *,
+    repo_root: Path,
+    session: RuntimeSession | None = None,
+) -> tuple[bool, list[str], list[str]]:
+    fields = _extract_labeled_fields(visible_response, session=session)
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    file_value = fields.get("file", "")
+    verification_value = fields.get("verification", "")
+
+    repo_files = _repo_python_files(repo_root)
+    symbols = _repo_symbol_index(repo_root)
+    aliases = {
+        "src/tok/compression.py": "src/tok/compression/__init__.py",
+        "src/tok/bridge_memory.py": "src/tok/runtime/memory/bridge_memory.py",
+    }
+
+    resolved_file: str | None = None
+    if not file_value:
+        failures.append("missing_file_field")
+    elif _looks_like_placeholder(file_value):
+        failures.append("placeholder_file_field")
+    else:
+        resolved_file, resolve_warnings = _resolve_repo_file(file_value, repo_files=repo_files, aliases=aliases)
+        warnings.extend(resolve_warnings)
+        if resolved_file is None:
+            failures.append("file_not_found")
+
+    if not verification_value:
+        failures.append("missing_verification_field")
+    elif _looks_like_placeholder(verification_value):
+        failures.append("placeholder_verification_field")
+    else:
+        verification_identifiers = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", verification_value)
+        expected_hits = [
+            term
+            for term in definition.expected_verification_terms
+            if term.lower() in verification_value.lower() and term in symbols
+        ]
+        identifier_hits = [ident for ident in verification_identifiers if ident in symbols]
+        if not expected_hits and not identifier_hits:
+            failures.append("identifier_not_found")
+
+    if resolved_file and definition.name == "research-loop" and resolved_file.endswith("compression/__init__.py"):
+        warnings.append("fixture_reference_stale")
+
+    return not failures, sorted(set(failures)), sorted(set(warnings))
+
+
+def _message_shape_forensics(messages: list[dict[str, Any]]) -> dict[str, int]:
+    shape = {
+        "total_messages": 0,
+        "content_str_messages": 0,
+        "content_list_messages": 0,
+        "content_other_messages": 0,
+        "tool_use_blocks": 0,
+        "tool_result_blocks": 0,
+    }
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        shape["total_messages"] += 1
+        content = message.get("content")
+        if isinstance(content, str):
+            shape["content_str_messages"] += 1
+        elif isinstance(content, list):
+            shape["content_list_messages"] += 1
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use":
+                    shape["tool_use_blocks"] += 1
+                elif block.get("type") == "tool_result":
+                    shape["tool_result_blocks"] += 1
+        else:
+            shape["content_other_messages"] += 1
+    return shape
 
 
 def _evaluate_task_success(
@@ -1271,8 +1535,29 @@ class LiveBenchmarkRunner:
                     create_kwargs["extra_body"] = self.provider_options
 
                 # Final safety pass for Bedrock/Gemini/OpenRouter compatibility
-                chat_messages = apply_schema_adaptations(chat_messages)
-                create_kwargs["messages"] = chat_messages
+                shape_before = _message_shape_forensics(chat_messages)
+                adapted_chat_messages = apply_schema_adaptations(chat_messages)
+                shape_after = _message_shape_forensics(adapted_chat_messages)
+                provider_messages = _provider_safe_chat_messages(adapted_chat_messages, self.provider)
+                provider_shape = _message_shape_forensics(provider_messages)
+                compatibility_warnings: list[str] = []
+                if self.provider.lower() != "anthropic" and (
+                    shape_after["tool_use_blocks"] > 0 or shape_after["tool_result_blocks"] > 0
+                ):
+                    compatibility_warnings.append("non_anthropic_tool_block_payload")
+                outbound_system = prepared_body.get("system") if prepared_body is not None else definition.system_prompt
+                outbound_payload = {
+                    "system": outbound_system,
+                    "messages": provider_messages,
+                }
+                turn_diagnostics["schema_forensics"] = {
+                    "provider": self.provider,
+                    "before": shape_before,
+                    "after": shape_after,
+                    "provider_after": provider_shape,
+                    "compatibility_warnings": compatibility_warnings,
+                }
+                create_kwargs["messages"] = provider_messages
 
                 response = self.client.chat.completions.create(**create_kwargs)
                 latency_ms = (time.time() - started) * 1000
@@ -1366,6 +1651,21 @@ class LiveBenchmarkRunner:
             notes = list(failures)
             if canonical_mode != "baseline" and _sum_warning_signals(aggregate_response_signals):
                 notes.append("response_contract_friction_detected")
+            repo_grounded_task_success = task_success
+            repo_grounded_failures: list[str] = []
+            repo_grounded_warnings: list[str] = []
+            if _is_research_benchmark(definition):
+                (
+                    repo_grounded_task_success,
+                    repo_grounded_failures,
+                    repo_grounded_warnings,
+                ) = _evaluate_repo_grounded_research_success(
+                    definition,
+                    final_visible_response,
+                    repo_root=Path.cwd(),
+                    session=session,
+                )
+                notes.extend(f"repo_grounded:{reason}" for reason in repo_grounded_failures)
 
             prompt_metrics = {
                 "system_prompt_tokens": original_system_tokens,
@@ -1419,6 +1719,10 @@ class LiveBenchmarkRunner:
                 ),
                 "state_resend_delta_turns": aggregate_input_behavior_signals.get("state_resend_delta_turn", 0),
                 "state_resend_full_turns": aggregate_input_behavior_signals.get("state_resend_full_turn", 0),
+                "legacy_task_success": task_success,
+                "repo_grounded_task_success": repo_grounded_task_success,
+                "repo_grounded_failures": repo_grounded_failures,
+                "repo_grounded_warnings": repo_grounded_warnings,
             }
             if canonical_mode != "baseline" and turn_results:
                 diagnostics["runtime_mode"] = turn_results[-1]["diagnostics"].get("runtime_mode", "")
@@ -1570,6 +1874,65 @@ def summarize_compare_runs(
     return {
         "runs": len(repeated_results),
         "preferred_mode_counts": preferred_mode_counts,
+        "mode_summaries": mode_summaries,
+    }
+
+
+def summarize_compare_triage(
+    repeated_results: list[dict[str, BenchmarkResult]],
+) -> dict[str, Any]:
+    mode_order = ("baseline", "tok-universal")
+    mode_summaries: dict[str, Any] = {}
+
+    for mode in mode_order:
+        if mode == "tok-universal":
+            results = [
+                run.get("tok-universal") or run.get("tok-tool-compatible")
+                for run in repeated_results
+                if (run.get("tok-universal") or run.get("tok-tool-compatible")) is not None
+            ]
+        else:
+            results = [run.get("baseline") for run in repeated_results if run.get("baseline") is not None]
+        if not results:
+            continue
+
+        legacy_success_count = sum(1 for result in results if result and result.task_success)
+        repo_success_count = sum(
+            1
+            for result in results
+            if result and bool(result.diagnostics.get("repo_grounded_task_success", result.task_success))
+        )
+        failure_counter: Counter[str] = Counter()
+        response_contract_friction_runs = 0
+        response_contract_friction_signals = 0
+        for result in results:
+            if result is None:
+                continue
+            for reason in result.notes:
+                if isinstance(reason, str) and reason.startswith("repo_grounded:"):
+                    continue
+                failure_counter[str(reason)] += 1
+            for reason in result.diagnostics.get("repo_grounded_failures", []):
+                failure_counter[f"repo_grounded:{reason}"] += 1
+            warnings = _sum_warning_signals(result.response_metrics.get("response_behavior_signals", {}))
+            response_contract_friction_signals += warnings
+            if warnings > 0:
+                response_contract_friction_runs += 1
+
+        top_failures = [{"reason": reason, "count": count} for reason, count in failure_counter.most_common(10)]
+        mode_summaries[mode] = {
+            "runs": len(results),
+            "legacy_success_rate": round(legacy_success_count / len(results), 3),
+            "legacy_success_count": legacy_success_count,
+            "repo_grounded_success_rate": round(repo_success_count / len(results), 3),
+            "repo_grounded_success_count": repo_success_count,
+            "response_contract_friction_runs": response_contract_friction_runs,
+            "response_contract_friction_signals": response_contract_friction_signals,
+            "top_failure_reasons": top_failures,
+        }
+
+    return {
+        "runs": len(repeated_results),
         "mode_summaries": mode_summaries,
     }
 
