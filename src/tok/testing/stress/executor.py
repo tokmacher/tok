@@ -76,6 +76,60 @@ class ReadOnlyToolExecutor:
             path = self.workspace_root / path
         return path.resolve()
 
+    def _top_level_entries(self) -> list[str]:
+        if not self.workspace_root.exists() or not self.workspace_root.is_dir():
+            return []
+        names = sorted(item.name for item in self.workspace_root.iterdir())
+        return names[:8]
+
+    def _resolve_workspace_path(
+        self, raw_path: str | None, *, expect_dir: bool | None = None
+    ) -> tuple[Path | None, str]:
+        path_text = _strip_answer_labels(str(raw_path or "")).strip()
+        if not path_text:
+            return self.workspace_root, ""
+
+        direct = self._resolved_path(path_text)
+        if direct.exists() and (expect_dir is None or direct.is_dir() == expect_dir):
+            return direct, ""
+
+        raw = Path(path_text)
+        if raw.is_absolute():
+            return None, ""
+
+        candidates: list[Path] = []
+        seen: set[Path] = set()
+        for prefix in ("src", "tests", "testing"):
+            prefixed = self.workspace_root / prefix / raw
+            if prefixed.exists() and (expect_dir is None or prefixed.is_dir() == expect_dir):
+                resolved = prefixed.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    candidates.append(resolved)
+
+        wanted_suffix = raw.as_posix().lstrip("./")
+        if wanted_suffix:
+            for candidate in self.workspace_root.rglob(raw.name):
+                if not candidate.exists():
+                    continue
+                if expect_dir is not None and candidate.is_dir() != expect_dir:
+                    continue
+                rel = candidate.relative_to(self.workspace_root).as_posix()
+                if rel == wanted_suffix or rel.endswith("/" + wanted_suffix):
+                    resolved = candidate.resolve()
+                    if resolved not in seen:
+                        seen.add(resolved)
+                        candidates.append(resolved)
+
+        if len(candidates) == 1:
+            return candidates[0], ""
+        if len(candidates) > 1:
+            options = ", ".join(path.relative_to(self.workspace_root).as_posix() for path in candidates[:5])
+            return None, f"ambiguous path '{path_text}'. Candidates: {options}"
+
+        roots = ", ".join(self._top_level_entries()) or "."
+        return None, f"path '{path_text}' not found. Available top-level entries: {roots}"
+
     def _truncate(self, text: str) -> str:
         if len(text) <= self.max_output_chars:
             return text
@@ -91,16 +145,18 @@ class ReadOnlyToolExecutor:
         }
 
     def _view_file(self, block: dict[str, Any], tool_input: dict[str, Any]) -> dict[str, Any]:
-        path = self._resolved_path(tool_input.get("path") or tool_input.get("file_path") or tool_input.get("text"))
-        if not any(tool_input.get(key) for key in ("path", "file_path", "text")):
+        requested_path = tool_input.get("path") or tool_input.get("file_path") or tool_input.get("text")
+        if not requested_path:
             return self._blocked_tool(block, "path is required", "bad_tool_args")
+        path, hint = self._resolve_workspace_path(requested_path, expect_dir=False)
         start = tool_input.get("start") or tool_input.get("StartLine")
         end = tool_input.get("end") or tool_input.get("EndLine")
-        if not path.exists() or not path.is_file():
+        if path is None or not path.exists() or not path.is_file():
+            detail = f" ({hint})" if hint else ""
             return {
                 "role": "tool_result",
                 "tool_use_id": block.get("id", ""),
-                "content": f"ERROR: file not found: {path}",
+                "content": f"ERROR: file not found: {requested_path}{detail}",
                 "is_error": True,
                 "contract_signal": "bad_tool_args",
             }
@@ -131,7 +187,8 @@ class ReadOnlyToolExecutor:
             or ""
         )
         query = _strip_answer_labels(query).strip()
-        search_path = self._resolved_path(tool_input.get("search_path") or tool_input.get("path") or ".")
+        raw_search_path = tool_input.get("search_path") or tool_input.get("path") or "."
+        search_path, hint = self._resolve_workspace_path(raw_search_path, expect_dir=None)
         if not query:
             return {
                 "role": "tool_result",
@@ -140,11 +197,12 @@ class ReadOnlyToolExecutor:
                 "is_error": True,
                 "contract_signal": "bad_tool_args",
             }
-        if not search_path.exists():
+        if search_path is None or not search_path.exists():
+            detail = f" ({hint})" if hint else ""
             return {
                 "role": "tool_result",
                 "tool_use_id": block.get("id", ""),
-                "content": f"ERROR: search path not found: {search_path}",
+                "content": f"ERROR: search path not found: {raw_search_path}{detail}",
                 "is_error": True,
                 "contract_signal": "bad_tool_args",
             }
@@ -173,12 +231,14 @@ class ReadOnlyToolExecutor:
         }
 
     def _list_dir(self, block: dict[str, Any], tool_input: dict[str, Any]) -> dict[str, Any]:
-        path = self._resolved_path(tool_input.get("path") or tool_input.get("text") or ".")
-        if not path.exists() or not path.is_dir():
+        raw_path = tool_input.get("path") or tool_input.get("text") or "."
+        path, hint = self._resolve_workspace_path(raw_path, expect_dir=True)
+        if path is None or not path.exists() or not path.is_dir():
+            detail = f" ({hint})" if hint else ""
             return {
                 "role": "tool_result",
                 "tool_use_id": block.get("id", ""),
-                "content": f"ERROR: directory not found: {path}",
+                "content": f"ERROR: directory not found: {raw_path}{detail}",
                 "is_error": True,
             }
         entries = sorted(item.name for item in path.iterdir())

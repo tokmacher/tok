@@ -21,8 +21,6 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
     module = _load_module()
     commands: list[tuple[str, ...]] = []
     output_root = tmp_path / "artifacts"
-    private_root = tmp_path / "private"
-    private_root.mkdir()
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         command_tuple = tuple(str(part) for part in command)
@@ -46,8 +44,6 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
             str(output_root),
             "--model",
             "anthropic/test-model",
-            "--private-evaluator-root",
-            str(private_root),
         ]
     )
 
@@ -65,9 +61,6 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
     assert "qa.pluggy.hook-discovery" in live_command
     assert "qa.rich.markup-pipeline" in live_command
     assert "qa.tok.api-base-plumbing" in live_command
-    assert "--private-evaluator-root" in live_command
-    assert str(private_root) in live_command
-
     assert "--stability-dir" in gate_command
     assert str(output_root / "legacy") in gate_command
     assert "--benchmark-report" in gate_command

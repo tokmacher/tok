@@ -1,5 +1,0 @@
-{
-  "selectors": [
-    "testing/test_invocations.py::test_call_order"
-  ]
-}

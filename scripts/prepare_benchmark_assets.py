@@ -356,8 +356,8 @@ def _verify_task_asset(task: BenchmarkTaskManifest, *, root: Path) -> list[str]:
         seed_patch = asset_root / task.seed_patch
         if not seed_patch.exists():
             errors.append(f"{task.id}: seed.patch missing")
-        if task.public_release and not task.hidden_evaluator_ref():
-            errors.append(f"{task.id}: public execution task missing hidden_evaluator_ref")
+        if task.public_release and not task.evaluator_spec_ref():
+            errors.append(f"{task.id}: public execution task missing success_evaluator.evaluator_spec")
         for allowed_path in task.allowed_paths:
             if not (workspace_root / allowed_path).exists():
                 errors.append(f"{task.id}: allowed path missing from workspace ({allowed_path})")

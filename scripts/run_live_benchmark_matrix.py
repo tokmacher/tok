@@ -5,28 +5,14 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import subprocess
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from tok.testing.benchmark_executor import FamilyEvaluator
-from tok.testing.benchmark_suite import load_benchmark_catalog
-
 ROOT = Path(__file__).resolve().parent.parent
 UV_RUN_PREFIX: tuple[str, ...] = ("uv", "run")
 DEFAULT_MODELS: tuple[str, ...] = ("deepseek/deepseek-v3.2",)
-ENV_PRIVATE_EVALUATOR_ROOTS = ("TOK_PRIVATE_EVALUATOR_ROOT", "PRIVATE_EVALUATOR_ROOT")
-DISCOVERY_DIR_NAMES = (
-    "private-evaluator-overlay",
-    "private_evaluator_overlay",
-    "benchmark-private-evaluator-overlay",
-)
-DISCOVERY_GLOBS = ("*private*evaluator*", "*evaluator*overlay*")
-DEFAULT_PRIVATE_EVALUATOR_FILENAMES = ("evaluator.json",)
 TARGETED_BENCHMARKS: tuple[str, ...] = (
     "coding-loop",
     "research-loop-15",
@@ -73,31 +59,6 @@ def _safe_model_name(model: str) -> str:
     return "".join(safe)
 
 
-def _search_roots() -> tuple[Path, ...]:
-    home = Path.home()
-    roots = (
-        ROOT,
-        ROOT.parent,
-        home,
-        home / "Desktop",
-        home / "code",
-        home / "src",
-    )
-    return tuple(root.resolve() for root in roots if root.exists())
-
-
-def _unique_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
-    seen: set[Path] = set()
-    unique: list[Path] = []
-    for path in paths:
-        resolved = path.expanduser().resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        unique.append(resolved)
-    return tuple(unique)
-
-
 def _selected_benchmarks(*, profile: str, explicit: tuple[str, ...]) -> tuple[str, ...]:
     if explicit:
         return explicit
@@ -114,104 +75,6 @@ def _catalog_report_path(output_dir: Path) -> Path:
     return output_dir / "catalog" / "report.json"
 
 
-def _public_execution_hidden_refs(catalog_root: Path) -> tuple[str, ...]:
-    catalog = load_benchmark_catalog(catalog_root)
-    refs: list[str] = []
-    for task in catalog.tasks:
-        hidden_ref = task.hidden_evaluator_ref()
-        if task.public_release and task.family == "execution_patch" and hidden_ref:
-            refs.append(hidden_ref)
-    return tuple(refs)
-
-
-def _public_execution_tasks(catalog_root: Path) -> tuple[object, ...]:
-    catalog = load_benchmark_catalog(catalog_root)
-    return tuple(
-        task
-        for task in catalog.tasks
-        if task.public_release and task.family == "execution_patch" and task.hidden_evaluator_ref()
-    )
-
-
-def _candidate_overlay_dirs(explicit_root: Path | None) -> tuple[Path, ...]:
-    candidates: list[Path] = []
-    if explicit_root is not None:
-        candidates.append(explicit_root)
-    for env_name in ENV_PRIVATE_EVALUATOR_ROOTS:
-        env_value = os.environ.get(env_name)
-        if env_value:
-            candidates.append(Path(env_value))
-    for root in _search_roots():
-        for name in DISCOVERY_DIR_NAMES:
-            candidates.append(root / name)
-        for pattern in DISCOVERY_GLOBS:
-            candidates.extend(sorted(path for path in root.glob(pattern) if path.is_dir()))
-    return _unique_paths(candidates)
-
-
-def _hidden_spec_has_runner(spec: dict[str, object]) -> bool:
-    if str(spec.get("command") or "").strip():
-        return True
-    selectors = spec.get("selectors") or spec.get("hidden_tests") or ()
-    return bool(tuple(str(item) for item in selectors))
-
-
-def _overlay_is_usable(overlay_root: Path, *, catalog_root: Path) -> bool:
-    tasks = _public_execution_tasks(catalog_root)
-    if not tasks:
-        return False
-    evaluator = FamilyEvaluator(private_evaluator_root=overlay_root)
-    try:
-        evaluator.validate_private_overlay(tasks, require_private_overlay=True)
-        for task in tasks:
-            payload = evaluator._load_hidden_evaluator_spec(task)
-            if not _hidden_spec_has_runner(payload):
-                return False
-    except (RuntimeError, json.JSONDecodeError):
-        return False
-    return True
-
-
-def _overlay_search_paths(*, explicit_root: Path | None = None) -> tuple[Path, ...]:
-    return _candidate_overlay_dirs(explicit_root)
-
-
-def _overlay_search_message(*, explicit_root: Path | None = None) -> str:
-    searched = _overlay_search_paths(explicit_root=explicit_root)
-    searched_text = "\n".join(f"- {path}" for path in searched) if searched else "- <none>"
-    return (
-        "No usable private evaluator overlay was found for the public execution_patch tasks.\n"
-        "Set TOK_PRIVATE_EVALUATOR_ROOT, pass --private-evaluator-root, or use "
-        "--catalog-profile grounding-only for a debug-only subset.\n"
-        "Searched:\n"
-        f"{searched_text}"
-    )
-
-
-def _overlay_has_hidden_specs(overlay_root: Path, *, catalog_root: Path) -> bool:
-    hidden_refs = _public_execution_hidden_refs(catalog_root)
-    if not hidden_refs:
-        return False
-    if _overlay_is_usable(overlay_root, catalog_root=catalog_root):
-        return True
-    for hidden_ref in hidden_refs:
-        candidates = [
-            overlay_root / f"{hidden_ref}.json",
-            overlay_root / hidden_ref,
-            *(overlay_root / hidden_ref / name for name in DEFAULT_PRIVATE_EVALUATOR_FILENAMES),
-        ]
-        if not any(candidate.is_file() for candidate in candidates):
-            return False
-    return True
-
-
-def discover_private_evaluator_root(*, catalog_root: Path, explicit_root: Path | None = None) -> Path | None:
-    for candidate in _candidate_overlay_dirs(explicit_root):
-        if candidate.is_dir() and _overlay_has_hidden_specs(candidate, catalog_root=catalog_root):
-            return candidate
-    return None
-
-
 def _build_step(
     *,
     benchmark: str,
@@ -225,7 +88,7 @@ def _build_step(
         "dev",
         "live-benchmark",
         "--program",
-        "legacy",
+        "replay",
         "--benchmark",
         benchmark,
         "--mode",
@@ -249,8 +112,6 @@ def _build_catalog_step(
     output_dir: Path,
     catalog_root: Path,
     repeats: int | None,
-    catalog_profile: str,
-    private_evaluator_root: Path | None,
 ) -> MatrixStep:
     command: list[str] = [
         *UV_RUN_PREFIX,
@@ -267,19 +128,16 @@ def _build_catalog_step(
         str(catalog_root),
         "--output",
         str(output_dir / "catalog"),
+        "--public-release-only",
+        "--family",
+        "execution_patch",
+        "--family",
+        "repo_grounding",
     ]
     if repeats is not None:
         command.extend(["--repeats", str(repeats)])
-    if catalog_profile == "public":
-        command.append("--public-release-only")
-        if private_evaluator_root is not None:
-            command.extend(["--private-evaluator-root", str(private_evaluator_root)])
-    elif catalog_profile == "grounding-only":
-        command.extend(["--family", "repo_grounding", "--public-release-only"])
-    else:
-        raise ValueError(f"unsupported catalog profile: {catalog_profile}")
     return MatrixStep(
-        name=f"{model} :: catalog ({catalog_profile})",
+        name=f"{model} :: catalog",
         command=tuple(command),
     )
 
@@ -297,9 +155,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--suite",
-        choices=("legacy", "catalog", "both"),
+        choices=("replay", "catalog", "both", "legacy"),
         default="both",
-        help="Run only the older legacy probes, only the new catalog benchmarks, or both",
+        help="Run only the replay probes, only the catalog benchmarks, or both",
     )
     parser.add_argument(
         "--profile",
@@ -311,7 +169,7 @@ def _parser() -> argparse.ArgumentParser:
         "--benchmark",
         action="append",
         default=[],
-        help="Legacy benchmark name to run; repeat to select a custom set",
+        help="Replay benchmark name to run; repeat to select a custom set",
     )
     parser.add_argument(
         "--model",
@@ -332,27 +190,15 @@ def _parser() -> argparse.ArgumentParser:
         help="Optional repeat count passed through to tok dev live-benchmark",
     )
     parser.add_argument(
-        "--catalog-profile",
-        choices=("auto", "public", "grounding-only", "none"),
-        default="public",
-        help="How to include the new production catalog benchmarks",
-    )
-    parser.add_argument(
         "--catalog-root",
         type=Path,
         default=ROOT / "benchmarks",
         help="Benchmark catalog root for the new production suite",
     )
     parser.add_argument(
-        "--private-evaluator-root",
-        type=Path,
-        default=None,
-        help="Optional explicit private evaluator overlay root for public execution_patch tasks",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
-        help="Re-run benchmarks even when legacy triage or catalog report artifacts already exist",
+        help="Re-run benchmarks even when replay triage or catalog report artifacts already exist",
     )
     parser.add_argument(
         "--keep-going",
@@ -373,30 +219,14 @@ def main(argv: list[str] | None = None) -> int:
     models = tuple(args.model) or DEFAULT_MODELS
     benchmarks = _selected_benchmarks(profile=args.profile, explicit=tuple(args.benchmark))
     catalog_root = args.catalog_root.resolve()
-    private_evaluator_root: Path | None = None
-    if args.catalog_profile in {"auto", "public"}:
-        private_evaluator_root = discover_private_evaluator_root(
-            catalog_root=catalog_root,
-            explicit_root=args.private_evaluator_root,
-        )
-    if args.catalog_profile == "auto":
-        effective_catalog_profile = "public" if private_evaluator_root is not None else "grounding-only"
-    elif args.catalog_profile == "public":
-        if private_evaluator_root is None:
-            raise SystemExit(_overlay_search_message(explicit_root=args.private_evaluator_root))
-        effective_catalog_profile = "public"
-    else:
-        effective_catalog_profile = args.catalog_profile
-    if effective_catalog_profile == "public":
-        print(f"[matrix] using full public catalog benchmarks with overlay: {private_evaluator_root}")
-    elif effective_catalog_profile == "grounding-only":
-        print("[matrix] no usable private evaluator overlay found; running public repo-grounding catalog tasks only")
     had_failure = False
+
+    suite = "replay" if args.suite == "legacy" else args.suite
 
     for model in models:
         model_output = output_root / _safe_model_name(model)
         model_output.mkdir(parents=True, exist_ok=True)
-        if args.suite in {"legacy", "both"}:
+        if suite in {"replay", "both"}:
             for benchmark in benchmarks:
                 triage_path = _triage_path(model_output, benchmark)
                 if triage_path.exists() and not args.force:
@@ -415,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
                     had_failure = True
                     if not args.keep_going:
                         return exit_code
-        if args.suite in {"catalog", "both"} and effective_catalog_profile != "none":
+        if suite in {"catalog", "both"}:
             report_path = _catalog_report_path(model_output)
             if report_path.exists() and not args.force:
                 print(f"[matrix] skipping {model} :: catalog (found {report_path})")
@@ -426,8 +256,6 @@ def main(argv: list[str] | None = None) -> int:
                         output_dir=model_output,
                         catalog_root=catalog_root,
                         repeats=args.repeats,
-                        catalog_profile=effective_catalog_profile,
-                        private_evaluator_root=private_evaluator_root,
                     ),
                     dry_run=bool(args.dry_run),
                 )

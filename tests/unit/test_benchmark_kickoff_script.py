@@ -25,8 +25,6 @@ def test_kickoff_phase_runs_preflight_and_local_smoke_and_writes_handoff(
 ) -> None:
     module = _load_module()
     commands: list[tuple[str, ...]] = []
-    private_root = tmp_path / "private"
-    private_root.mkdir()
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         del cwd, check
@@ -44,10 +42,6 @@ def test_kickoff_phase_runs_preflight_and_local_smoke_and_writes_handoff(
             "20260409",
             "--output-root",
             str(tmp_path / "out"),
-            "--private-evaluator-root",
-            str(private_root),
-            "--private-evaluator-ref",
-            "refs/tags/private-bench-20260409",
         ]
     )
 
@@ -72,8 +66,6 @@ def test_kickoff_phase_runs_preflight_and_local_smoke_and_writes_handoff(
         str((tmp_path / "out" / "20260409-local-smoke").resolve()),
         "--model",
         "anthropic/claude-sonnet-4.6",
-        "--private-evaluator-root",
-        str(private_root.resolve()),
     )
     handoff_path = tmp_path / "out" / "20260409-workflow-dispatch.md"
     assert handoff_path.exists()
@@ -81,7 +73,6 @@ def test_kickoff_phase_runs_preflight_and_local_smoke_and_writes_handoff(
     assert "benchmark-smoke.yml" in handoff
     assert "mode=smoke" in handoff
     assert "mode=public_full" in handoff
-    assert "refs/tags/private-bench-20260409" in handoff
 
 
 def test_supplemental_phase_runs_expected_catalog_tasks(
@@ -90,8 +81,6 @@ def test_supplemental_phase_runs_expected_catalog_tasks(
 ) -> None:
     module = _load_module()
     commands: list[tuple[str, ...]] = []
-    private_root = tmp_path / "private"
-    private_root.mkdir()
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         del cwd, check
@@ -109,8 +98,6 @@ def test_supplemental_phase_runs_expected_catalog_tasks(
             "20260409",
             "--output-root",
             str(tmp_path / "out"),
-            "--private-evaluator-root",
-            str(private_root),
         ]
     )
 
@@ -136,19 +123,3 @@ def test_supplemental_phase_runs_expected_catalog_tasks(
         "session.answer-anchor.patch",
     ):
         assert task_id in supplemental_command
-
-
-def test_print_hosted_rejects_moving_private_overlay_ref(tmp_path: Path) -> None:
-    module = _load_module()
-
-    with pytest.raises(SystemExit):
-        module.main(
-            [
-                "--phase",
-                "print-hosted",
-                "--output-root",
-                str(tmp_path / "out"),
-                "--private-evaluator-ref",
-                "main",
-            ]
-        )

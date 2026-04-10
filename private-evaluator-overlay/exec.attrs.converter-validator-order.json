@@ -1,5 +1,0 @@
-{
-  "selectors": [
-    "tests/test_make.py::TestConverter::test_converter"
-  ]
-}

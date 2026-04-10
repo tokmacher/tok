@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import subprocess
 import sys
 from pathlib import Path
-
-from tok.testing.benchmark_suite import load_benchmark_catalog
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_ROOT = REPO_ROOT / "benchmarks"
@@ -23,26 +20,9 @@ def _load_module() -> object:
     return module
 
 
-def _write_public_execution_overlay(overlay_root: Path) -> None:
-    overlay_root.mkdir(parents=True, exist_ok=True)
-    catalog = load_benchmark_catalog(BENCHMARK_ROOT)
-    for task in catalog.tasks:
-        hidden_ref = task.hidden_evaluator_ref()
-        if not task.public_release or task.family != "execution_patch" or not hidden_ref:
-            continue
-        (overlay_root / f"{hidden_ref}.json").write_text(
-            json.dumps({"selectors": ["tests/test_placeholder.py::test_placeholder"]})
-        )
-
-
-def test_main_defaults_to_deepseek_and_autodiscovers_overlay(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_main_defaults_to_deepseek(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
     commands: list[tuple[str, ...]] = []
-    overlay_root = tmp_path / "private-evaluator-overlay"
-    _write_public_execution_overlay(overlay_root)
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         del cwd, check
@@ -51,7 +31,6 @@ def test_main_defaults_to_deepseek_and_autodiscovers_overlay(
         return subprocess.CompletedProcess(command_tuple, 0)
 
     monkeypatch.setattr(module.subprocess, "run", _fake_run)
-    monkeypatch.setattr(module, "_search_roots", lambda: (tmp_path,))
 
     exit_code = module.main(
         [
@@ -83,16 +62,12 @@ def test_main_defaults_to_deepseek_and_autodiscovers_overlay(
         str((tmp_path / "out" / "deepseek_deepseek-v3.2").resolve()),
         "--model",
         "deepseek/deepseek-v3.2",
-        "--private-evaluator-root",
-        str(overlay_root.resolve()),
     )
 
 
 def test_main_loops_multiple_models(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
     commands: list[tuple[str, ...]] = []
-    overlay_root = tmp_path / "private-evaluator-overlay"
-    _write_public_execution_overlay(overlay_root)
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         del cwd, check
@@ -101,7 +76,6 @@ def test_main_loops_multiple_models(tmp_path: Path, monkeypatch) -> None:
         return subprocess.CompletedProcess(command_tuple, 0)
 
     monkeypatch.setattr(module.subprocess, "run", _fake_run)
-    monkeypatch.setattr(module, "_search_roots", lambda: (tmp_path,))
 
     exit_code = module.main(
         [
@@ -124,15 +98,3 @@ def test_main_loops_multiple_models(tmp_path: Path, monkeypatch) -> None:
     assert commands[0][5] == "public_full"
     assert str((tmp_path / "out" / "deepseek_deepseek-v3.2").resolve()) in commands[0]
     assert str((tmp_path / "out" / "openai_gpt-4.1").resolve()) in commands[1]
-
-
-def test_discover_private_evaluator_root_errors_when_no_overlay_found(tmp_path: Path, monkeypatch) -> None:
-    module = _load_module()
-    monkeypatch.setattr(module, "_search_roots", lambda: (tmp_path,))
-
-    try:
-        module.discover_private_evaluator_root(catalog_root=BENCHMARK_ROOT)
-    except RuntimeError as exc:
-        assert "Could not find a usable private evaluator overlay" in str(exc)
-    else:
-        raise AssertionError("expected discovery to fail without an overlay")

@@ -39,6 +39,13 @@ def _run(**overrides: object) -> BenchmarkComparisonRun:
         "reacquisition_events": 0,
         "invalid_tool_calls": 0,
         "paired_result_stable": True,
+        "baseline_grounding_success": True,
+        "tok_grounding_success": True,
+        "baseline_tool_calls": 2,
+        "tok_tool_calls": 2,
+        "format_contract_violations": [],
+        "tool_engagement_stats": {},
+        "matched_completion_pair": True,
     }
     payload.update(overrides)
     return BenchmarkComparisonRun.from_dict(payload)
@@ -170,6 +177,91 @@ def test_headline_public_claim_is_disabled_on_regression_or_instability(tmp_path
     assert checked["headline_lane"] == "production_claude_lane"
 
 
+def test_headline_public_claim_is_disabled_when_all_runs_fail_even_without_delta_regression() -> None:
+    catalog = load_benchmark_catalog(BENCHMARK_ROOT)
+    report = build_benchmark_report(
+        catalog,
+        [
+            _run(
+                baseline_success=False, tok_success=False, baseline_grounding_success=False, tok_grounding_success=False
+            ),
+        ],
+    )
+
+    headline = report.headline_summary()
+    assert headline.consistency_gate_passed is False
+    assert headline.public_claim_allowed is False
+    assert "tok_success_below_absolute_floor" in headline.notes
+    assert "tok_grounding_below_absolute_floor" in headline.notes
+    assert "all_conditions_failed" in headline.notes
+
+
+def test_headline_public_claim_requires_quality_gate_floor() -> None:
+    catalog = load_benchmark_catalog(BENCHMARK_ROOT)
+    report = build_benchmark_report(
+        catalog,
+        [
+            _run(quality_gate_passed=False),
+        ],
+    )
+
+    headline = report.headline_summary()
+    assert headline.consistency_gate_passed is False
+    assert headline.public_claim_allowed is False
+    assert "quality_gate_below_absolute_floor" in headline.notes
+
+
+def test_summary_keeps_advisory_format_violations_separate_from_completion_failures() -> None:
+    catalog = load_benchmark_catalog(BENCHMARK_ROOT)
+    report = build_benchmark_report(
+        catalog,
+        [
+            _run(
+                quality_gate_passed=True,
+                baseline_success=True,
+                tok_success=True,
+                format_contract_violations=["evidence_block_count", "invalid_citations"],
+            ),
+        ],
+    )
+
+    headline = report.headline_summary()
+    assert headline.consistency_gate_passed is True
+    assert headline.public_claim_allowed is True
+    assert headline.format_contract_violations["evidence_block_count"] == 1
+    assert headline.format_contract_violations["invalid_citations"] == 1
+    assert "advisory_format_contract_violations_present" in headline.notes
+
+
+def test_repo_grounding_manifest_allows_zero_min_grounded_retrieval_steps() -> None:
+    manifest = BenchmarkTaskManifest.from_dict(
+        {
+            "id": "qa.local.relaxed-grounding",
+            "family": "repo_grounding",
+            "title": "Relaxed grounding",
+            "summary": "Completion-first manifest validation.",
+            "repo": "tok",
+            "ref": "HEAD",
+            "setup_script": "no_setup_required",
+            "prompt": "Where is answer_symbol defined?",
+            "allowed_tools": ["view_file", "grep_search"],
+            "time_budget_minutes": 1,
+            "step_budget": 4,
+            "success_evaluator": {"kind": "repo_grounding", "min_grounded_retrieval_steps": 0},
+            "artifact_policy": {"publish_answer": True},
+            "public_release": False,
+            "asset_dir": "assets/qa.local.relaxed-grounding",
+            "workspace_source": {"kind": "local_checkout", "path": "."},
+            "family_payload": {"gold_answer_path": "gold_answer.json"},
+            "required_files": ["src/app.py"],
+            "required_symbols": ["answer_symbol"],
+            "supporting_spans": [{"file": "src/app.py", "anchor": "def answer_symbol", "why": "impl"}],
+            "answer_contract": "Answer with concise grounding.",
+        }
+    )
+    assert manifest.success_evaluator["min_grounded_retrieval_steps"] == 0
+
+
 def test_internal_headline_runs_stay_out_of_public_production_summary() -> None:
     catalog = load_benchmark_catalog(BENCHMARK_ROOT)
     report = build_benchmark_report(
@@ -246,3 +338,7 @@ def test_benchmark_report_cli_renders_from_raw_runs(tmp_path: Path) -> None:
     assert BENCHMARK_REPORT_STATEMENT in rendered
     assert "Supplemental Internal/Advisory Tasks" in rendered
     assert "adapter_gemini_compat_lane" in rendered
+
+
+def test_benchmarks_tree_has_no_unapproved_evaluators_directory() -> None:
+    assert not (BENCHMARK_ROOT / "evaluators").exists()

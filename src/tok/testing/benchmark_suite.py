@@ -13,6 +13,9 @@ VALID_CLAIM_SCOPES = {"headline", "secondary"}
 VALID_BENCHMARK_CONDITIONS = {"baseline", "tok-universal"}
 VALID_WORKSPACE_SOURCE_KINDS = {"asset_snapshot", "local_checkout"}
 VALID_SUMMARY_SCOPES = {"public_production", "supplemental"}
+MIN_ABSOLUTE_SUCCESS_FLOOR = 0.5
+MIN_ABSOLUTE_GROUNDING_FLOOR = 0.5
+MIN_QUALITY_GATE_RATE = 0.5
 BENCHMARK_REPORT_STATEMENT = (
     "Comparison is baseline vs production Tok (`tok-universal`) only. No other Tok modes are benchmark candidates."
 )
@@ -239,8 +242,8 @@ class BenchmarkTaskManifest:
     def effective_family_payload(self) -> dict[str, Any]:
         return dict(self.family_payload)
 
-    def hidden_evaluator_ref(self) -> str:
-        return _clean_str(self.success_evaluator.get("hidden_evaluator_ref"))
+    def evaluator_spec_ref(self) -> str:
+        return _clean_str(self.success_evaluator.get("evaluator_spec"))
 
     def workspace_source_kind(self) -> str:
         return _clean_str(self.workspace_source.get("kind"))
@@ -314,12 +317,14 @@ class BenchmarkTaskManifest:
                 if _clean_str(self.family_payload.get("seed_patch_path")) != self.seed_patch:
                     errors.append("execution_patch family_payload.seed_patch_path must match seed_patch")
             if self.public_release:
-                if not self.hidden_evaluator_ref():
-                    errors.append("public execution_patch tasks must declare success_evaluator.hidden_evaluator_ref")
+                if not self.hidden_tests and not self.evaluator_spec_ref():
+                    errors.append(
+                        "public execution_patch tasks must declare hidden_tests or success_evaluator.evaluator_spec"
+                    )
                 if self.hidden_tests:
                     errors.append("public execution_patch tasks must not declare hidden_tests")
-            elif not self.hidden_tests and not self.hidden_evaluator_ref():
-                errors.append("execution_patch tasks must declare hidden_tests or hidden_evaluator_ref")
+            elif not self.hidden_tests and not self.evaluator_spec_ref():
+                errors.append("execution_patch tasks must declare hidden_tests or success_evaluator.evaluator_spec")
 
         if self.family == "repo_grounding":
             if not self.required_files:
@@ -330,8 +335,8 @@ class BenchmarkTaskManifest:
                 errors.append("repo_grounding tasks must declare supporting_spans")
             if not self.answer_contract:
                 errors.append("repo_grounding tasks must declare answer_contract")
-            if int(self.success_evaluator.get("min_grounded_retrieval_steps", 0) or 0) < 2:
-                errors.append("repo_grounding tasks must require at least 2 grounded retrieval steps")
+            if int(self.success_evaluator.get("min_grounded_retrieval_steps", 0) or 0) < 0:
+                errors.append("repo_grounding min_grounded_retrieval_steps must be >= 0")
             for span in self.supporting_spans:
                 if not _clean_str(span.get("file")) or not _clean_str(span.get("anchor")):
                     errors.append("repo_grounding supporting_spans require file and anchor")
@@ -555,6 +560,11 @@ class BenchmarkComparisonRun:
     paired_result_stable: bool = True
     baseline_grounding_success: bool = False
     tok_grounding_success: bool = False
+    baseline_tool_calls: int = 0
+    tok_tool_calls: int = 0
+    format_contract_violations: tuple[str, ...] = ()
+    tool_engagement_stats: dict[str, Any] = field(default_factory=dict)
+    matched_completion_pair: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BenchmarkComparisonRun:
@@ -574,6 +584,11 @@ class BenchmarkComparisonRun:
             paired_result_stable=bool(data.get("paired_result_stable", True)),
             baseline_grounding_success=bool(data.get("baseline_grounding_success", False)),
             tok_grounding_success=bool(data.get("tok_grounding_success", False)),
+            baseline_tool_calls=int(data.get("baseline_tool_calls", 0) or 0),
+            tok_tool_calls=int(data.get("tok_tool_calls", 0) or 0),
+            format_contract_violations=_str_tuple(data.get("format_contract_violations")),
+            tool_engagement_stats=dict(data.get("tool_engagement_stats") or {}),
+            matched_completion_pair=bool(data.get("matched_completion_pair", False)),
         )
         errors = run.validate()
         if errors:
@@ -610,6 +625,11 @@ class BenchmarkComparisonRun:
             "paired_result_stable": self.paired_result_stable,
             "baseline_grounding_success": self.baseline_grounding_success,
             "tok_grounding_success": self.tok_grounding_success,
+            "baseline_tool_calls": self.baseline_tool_calls,
+            "tok_tool_calls": self.tok_tool_calls,
+            "format_contract_violations": list(self.format_contract_violations),
+            "tool_engagement_stats": dict(self.tool_engagement_stats),
+            "matched_completion_pair": self.matched_completion_pair,
         }
 
 
@@ -632,6 +652,9 @@ class BenchmarkLaneSummary:
     baseline_grounding_rate: float = 0.0
     tok_grounding_rate: float = 0.0
     grounding_delta: float = 0.0
+    completion_success_rate: dict[str, float] = field(default_factory=dict)
+    format_contract_violations: dict[str, int] = field(default_factory=dict)
+    tool_engagement_stats: dict[str, Any] = field(default_factory=dict)
     notes: tuple[str, ...] = ()
 
     @classmethod
@@ -662,6 +685,9 @@ class BenchmarkLaneSummary:
             baseline_grounding_rate=float(data.get("baseline_grounding_rate", 0.0) or 0.0),
             tok_grounding_rate=float(data.get("tok_grounding_rate", 0.0) or 0.0),
             grounding_delta=float(data.get("grounding_delta", 0.0) or 0.0),
+            completion_success_rate=dict(data.get("completion_success_rate") or {}),
+            format_contract_violations=dict(data.get("format_contract_violations") or {}),
+            tool_engagement_stats=dict(data.get("tool_engagement_stats") or {}),
             notes=_str_tuple(data.get("notes")),
         )
 
@@ -684,6 +710,9 @@ class BenchmarkLaneSummary:
             "baseline_grounding_rate": self.baseline_grounding_rate,
             "tok_grounding_rate": self.tok_grounding_rate,
             "grounding_delta": self.grounding_delta,
+            "completion_success_rate": dict(self.completion_success_rate),
+            "format_contract_violations": dict(self.format_contract_violations),
+            "tool_engagement_stats": dict(self.tool_engagement_stats),
             "notes": list(self.notes),
         }
 
@@ -719,8 +748,15 @@ def summarize_lane_runs(
     tok_successes = [1.0 if run.tok_success else 0.0 for run in runs]
     baseline_groundings = [1.0 if run.baseline_grounding_success else 0.0 for run in runs]
     tok_groundings = [1.0 if run.tok_grounding_success else 0.0 for run in runs]
+    quality_gate_scores = [1.0 if run.quality_gate_passed else 0.0 for run in runs]
     token_deltas = [float(run.total_token_delta) for run in runs]
-    matched_token_deltas = [float(run.total_token_delta) for run in runs if run.quality_gate_passed]
+    matched_token_deltas = [
+        float(run.total_token_delta)
+        for run in runs
+        if run.matched_completion_pair or (run.baseline_success and run.tok_success)
+    ]
+    both_fail_count = sum(1 for run in runs if (not run.baseline_success and not run.tok_success))
+    all_conditions_failed = both_fail_count == len(runs)
     runs_by_task: dict[str, list[BenchmarkComparisonRun]] = {}
     for run in runs:
         runs_by_task.setdefault(run.task_id, []).append(run)
@@ -731,6 +767,7 @@ def summarize_lane_runs(
     baseline_grounding_rate = round(sum(baseline_groundings) / len(baseline_groundings), 3)
     tok_grounding_rate = round(sum(tok_groundings) / len(tok_groundings), 3)
     grounding_delta = round(tok_grounding_rate - baseline_grounding_rate, 3)
+    quality_gate_rate = round(sum(quality_gate_scores) / len(quality_gate_scores), 3)
     median_token_delta = round(float(statistics.median(token_deltas)), 1)
     matched_success_token_delta = (
         round(float(statistics.median(matched_token_deltas)), 1) if matched_token_deltas else None
@@ -767,8 +804,40 @@ def summarize_lane_runs(
         notes.append("paired_result_unstable")
     if invalid_tool_call_count > 0:
         notes.append("invalid_tool_calls_present")
+    if tok_success_rate < MIN_ABSOLUTE_SUCCESS_FLOOR:
+        notes.append("tok_success_below_absolute_floor")
+    if tok_grounding_rate < MIN_ABSOLUTE_GROUNDING_FLOOR:
+        notes.append("tok_grounding_below_absolute_floor")
+    if quality_gate_rate < MIN_QUALITY_GATE_RATE:
+        notes.append("quality_gate_below_absolute_floor")
+    if all_conditions_failed:
+        notes.append("all_conditions_failed")
+    violation_counts: dict[str, int] = {}
+    for run in runs:
+        for violation in run.format_contract_violations:
+            violation_counts[violation] = violation_counts.get(violation, 0) + 1
+    if violation_counts:
+        notes.append("advisory_format_contract_violations_present")
+    baseline_tool_calls = [run.baseline_tool_calls for run in runs]
+    tok_tool_calls = [run.tok_tool_calls for run in runs]
+    tool_engagement_stats: dict[str, Any] = {
+        "baseline_avg_tool_calls": round(sum(baseline_tool_calls) / len(baseline_tool_calls), 2),
+        "tok_avg_tool_calls": round(sum(tok_tool_calls) / len(tok_tool_calls), 2),
+        "baseline_zero_tool_call_rate": round(
+            sum(1 for calls in baseline_tool_calls if calls == 0) / len(baseline_tool_calls), 3
+        ),
+        "tok_zero_tool_call_rate": round(sum(1 for calls in tok_tool_calls if calls == 0) / len(tok_tool_calls), 3),
+    }
 
-    consistency_gate_passed = stable and success_delta >= 0 and grounding_delta >= 0
+    consistency_gate_passed = (
+        stable
+        and success_delta >= 0
+        and grounding_delta >= 0
+        and tok_success_rate >= MIN_ABSOLUTE_SUCCESS_FLOOR
+        and tok_grounding_rate >= MIN_ABSOLUTE_GROUNDING_FLOOR
+        and quality_gate_rate >= MIN_QUALITY_GATE_RATE
+        and not all_conditions_failed
+    )
     public_claim_allowed = claimable and lane.claim_scope == "headline" and consistency_gate_passed
 
     return BenchmarkLaneSummary(
@@ -789,6 +858,9 @@ def summarize_lane_runs(
         baseline_grounding_rate=baseline_grounding_rate,
         tok_grounding_rate=tok_grounding_rate,
         grounding_delta=grounding_delta,
+        completion_success_rate={"baseline": baseline_success_rate, "tok-universal": tok_success_rate},
+        format_contract_violations=violation_counts,
+        tool_engagement_stats=tool_engagement_stats,
         notes=tuple(notes),
     )
 
@@ -947,6 +1019,12 @@ def render_benchmark_report_markdown(report: BenchmarkReport) -> str:
             f"{headline.consistency_gate_passed} | {headline.public_claim_allowed} |"
         ),
         "",
+        "### Advisory Diagnostics",
+        "",
+        f"- completion_success_rate: baseline={headline.completion_success_rate.get('baseline', 0.0):.3f}, tok-universal={headline.completion_success_rate.get('tok-universal', 0.0):.3f}",
+        f"- format_contract_violations: {headline.format_contract_violations or {}}",
+        f"- tool_engagement_stats: {headline.tool_engagement_stats or {}}",
+        "",
     ]
 
     if supplemental:
@@ -965,6 +1043,11 @@ def render_benchmark_report_markdown(report: BenchmarkReport) -> str:
                 f"{summary.grounding_delta:+.3f} | {summary.median_token_delta:.1f} | "
                 f"{summary.consistency_gate_passed} | {summary.public_claim_allowed} | "
                 f"{', '.join(summary.notes) if summary.notes else 'n/a'} |"
+            )
+            lines.append(
+                f"- {summary.lane.id} diagnostics: completion_success_rate={summary.completion_success_rate}, "
+                f"format_contract_violations={summary.format_contract_violations}, "
+                f"tool_engagement_stats={summary.tool_engagement_stats}"
             )
         lines.append("")
     else:

@@ -394,7 +394,6 @@ def _benchmark_steps(
     benchmark_mode: str,
     benchmark_output: Path,
     model: str,
-    private_evaluator_root: Path | None,
 ) -> tuple[SmokeStep, ...]:
     if benchmark_mode == "none":
         return ()
@@ -424,9 +423,6 @@ def _benchmark_steps(
         live_benchmark_command.append("--public-release-only")
     else:
         raise ValueError(f"unsupported benchmark mode: {benchmark_mode}")
-    if private_evaluator_root is not None:
-        live_benchmark_command.extend(["--private-evaluator-root", str(private_evaluator_root.resolve())])
-
     gate_check_command = [
         *UV_RUN_PREFIX,
         "tok",
@@ -449,7 +445,6 @@ def build_steps(
     benchmark_mode: str,
     benchmark_output: Path,
     model: str,
-    private_evaluator_root: Path | None,
 ) -> tuple[SmokeStep, ...]:
     return (
         *SMOKE_STEPS,
@@ -457,7 +452,6 @@ def build_steps(
             benchmark_mode=benchmark_mode,
             benchmark_output=benchmark_output,
             model=model,
-            private_evaluator_root=private_evaluator_root,
         ),
     )
 
@@ -481,12 +475,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="anthropic/claude-sonnet-4.6",
         help="Model identifier to use for live benchmark smoke",
     )
-    parser.add_argument(
-        "--private-evaluator-root",
-        type=Path,
-        default=None,
-        help="Optional private evaluator overlay for claimable execution benchmarks",
-    )
     return parser.parse_args(argv)
 
 
@@ -496,7 +484,6 @@ def main(argv: list[str] | None = None) -> int:
         benchmark_mode=args.benchmark_mode,
         benchmark_output=args.benchmark_output,
         model=args.model,
-        private_evaluator_root=args.private_evaluator_root,
     ):
         exit_code = _run_step(step)
         if exit_code != 0:

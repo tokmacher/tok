@@ -1234,11 +1234,13 @@ _OPENAI_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "view_file",
-            "description": "Read the contents of a file",
+            "description": "Read the contents of a file, optionally a line range",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "File path to read"},
+                    "start": {"type": "integer", "description": "Start line number (1-based, inclusive)"},
+                    "end": {"type": "integer", "description": "End line number (inclusive)"},
                 },
                 "required": ["path"],
             },
@@ -1253,7 +1255,7 @@ _OPENAI_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "Regex pattern to search for"},
-                    "path": {"type": "string", "description": "Directory to search in"},
+                    "path": {"type": "string", "description": "Directory or file to search in"},
                 },
                 "required": ["pattern"],
             },
@@ -1449,6 +1451,7 @@ class LiveBenchmarkRunner:
         allowed_tools: tuple[str, ...] | None = None,
     ) -> ConversationTurnResult:
         canonical_mode = "tok-universal" if mode in {"tok-tool-compatible", "tok-universal"} else mode
+        use_openai_tools = bool(allowed_tools) and self.provider.lower() != "anthropic"
         original_system_tokens = _estimate_tokens(system_prompt)
         normalized_messages_tokens = _estimate_tokens(conversation)
         baseline_prompt_estimate = original_system_tokens + normalized_messages_tokens
@@ -1510,7 +1513,12 @@ class LiveBenchmarkRunner:
                     "model": self.model,
                     "messages": copy.deepcopy(conversation),
                     "system": system_prompt,
+                    "max_tokens": self.max_tokens,
                 }
+                if use_openai_tools:
+                    openai_tools = _build_openai_tools_param(allowed_tools or ())
+                    if openai_tools:
+                        bridge_request_body["tools"] = openai_tools
                 bridge_payload, preflight_response = prepare_bridge_payload(
                     session=active_bridge_session,
                     body=bridge_request_body,
@@ -1684,7 +1692,6 @@ class LiveBenchmarkRunner:
         adapted_chat_messages = apply_schema_adaptations(chat_messages)
         shape_after = _message_shape_forensics(adapted_chat_messages)
 
-        use_openai_tools = canonical_mode == "baseline" and allowed_tools and self.provider.lower() != "anthropic"
         if use_openai_tools:
             provider_messages = _adapt_tool_results_for_openai(adapted_chat_messages)
         else:
@@ -1759,6 +1766,8 @@ class LiveBenchmarkRunner:
             if canonical_mode == "tok-universal" and response_metrics["response_mode"] == "tok-universal":
                 msg = "tok-universal benchmark must execute through runtime response-contract processing"
                 raise RuntimeError(msg)
+            if openai_tool_call_blocks:
+                content_blocks = openai_tool_call_blocks + [b for b in content_blocks if b.get("type") != "tool_use"]
         else:
             content_blocks = response_contract_for_mode(
                 raw_response, tool_compatible=False, session=session

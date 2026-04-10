@@ -133,7 +133,6 @@ def live_benchmark(
         timeout=timeout,
         turns=turns,
         repeats=repeats,
-        private_evaluator_root=None,
         pricing_prompt=pricing_prompt,
         pricing_completion=pricing_completion,
         provider_options=provider_options,

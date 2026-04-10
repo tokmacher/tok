@@ -14,6 +14,20 @@ from ._cli_support import console
 dev_app = typer.Typer(help="Fixture generation and benchmarking commands")
 
 
+def _patch_suite_benchmark_name(size: str) -> str:
+    mapping = {
+        "tiny": "tiny-patch",
+        "small": "small-patch",
+        "medium": "medium-patch",
+        "large": "large-patch",
+    }
+    try:
+        return mapping[size]
+    except KeyError as exc:
+        msg = f"--size must be one of tiny, small, medium, large (got {size})"
+        raise typer.BadParameter(msg) from exc
+
+
 def _run_legacy_compare_benchmark(
     *,
     benchmark: str,
@@ -22,6 +36,26 @@ def _run_legacy_compare_benchmark(
     turns: int | None,
     repeats: int,
 ) -> None:
+    from tok.testing.tiny_patch_benchmark import is_patch_suite_benchmark, run_patch_suite_benchmark
+
+    if is_patch_suite_benchmark(benchmark):
+        catalog_run, summary, markdown = run_patch_suite_benchmark(
+            benchmark_name=benchmark,
+            runner=runner,
+            output_root=output,
+            repeats=max(1, repeats),
+            repo_root=Path.cwd(),
+        )
+        (output / f"{benchmark}_summary.json").write_text(json.dumps(summary, indent=2))
+        (output / f"{benchmark}_summary.md").write_text(markdown)
+        console.print(
+            f"[green]✅ Patch benchmark complete:[/green] benchmark={benchmark} tasks={len(catalog_run.selected_task_ids)} "
+            f"runs={summary.get('runs', 0)}"
+        )
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_summary.json'}")
+        console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_summary.md'}")
+        return
+
     from tok.testing.live_benchmark import (
         compare_results,
         load_benchmark_definition,
@@ -162,6 +196,67 @@ def generate_fixture(
     console.print(f"[green]✅ Generated {type} fixture: {name}[/green]")
 
 
+@dev_app.command("patch-benchmark")
+def patch_benchmark(
+    size: Annotated[
+        str,
+        typer.Option(
+            "--size",
+            help="Patch suite size to run (tiny, small, medium, large)",
+        ),
+    ] = "tiny",
+    model: Annotated[str, typer.Option("--model", help="Model identifier to use")] = "deepseek/deepseek-v3.2",
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Output directory for artifacts"),
+    ] = None,
+    repeats: Annotated[
+        int,
+        typer.Option("--repeats", help="Repeat compare mode N times for stability"),
+    ] = 1,
+    temperature: Annotated[float, typer.Option("--temperature", help="Sampling temperature")] = 0.0,
+    max_tokens: Annotated[int, typer.Option("--max-tokens", help="Completion token cap")] = 300,
+    timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds")] = 120.0,
+    provider_options: Annotated[
+        str | None,
+        typer.Option(
+            "--provider-options",
+            help="JSON object passed as extra_body to the provider (e.g. OpenRouter routing options)",
+        ),
+    ] = None,
+) -> None:
+    """Run the tiny/small/medium patch compare benchmark with a minimal CLI."""
+    from tok.testing.live_benchmark import LiveBenchmarkRunner
+
+    benchmark = _patch_suite_benchmark_name(size)
+    if output is None:
+        output = Path.cwd() / "tmp" / f"{benchmark}_run"
+    output.mkdir(parents=True, exist_ok=True)
+
+    parsed_provider_options: dict[str, Any] | None = None
+    if provider_options:
+        try:
+            parsed_provider_options = json.loads(provider_options)
+        except Exception as exc:
+            msg = f"--provider-options must be valid JSON: {exc}"
+            raise typer.BadParameter(msg) from exc
+
+    runner = LiveBenchmarkRunner(
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        provider_options=parsed_provider_options,
+    )
+    _run_legacy_compare_benchmark(
+        benchmark=benchmark,
+        runner=runner,
+        output=output,
+        turns=None,
+        repeats=max(1, repeats),
+    )
+
+
 @dev_app.command("live-benchmark")
 def live_benchmark(
     benchmark: Annotated[str, typer.Option("--benchmark", help="Benchmark definition to run")] = "coding-loop",
@@ -169,9 +264,9 @@ def live_benchmark(
         str,
         typer.Option(
             "--program",
-            help="Run the legacy replay harness, the catalog executor, or both",
+            help="Run the replay harness, the catalog executor, or both",
         ),
-    ] = "legacy",
+    ] = "replay",
     mode: Annotated[
         str,
         typer.Option(
@@ -236,13 +331,6 @@ def live_benchmark(
         int | None,
         typer.Option("--repeats", help="Repeat compare mode N times for stability"),
     ] = None,
-    private_evaluator_root: Annotated[
-        Path | None,
-        typer.Option(
-            "--private-evaluator-root",
-            help="Path to a private evaluator overlay for claimable execution_patch tasks",
-        ),
-    ] = None,
     pricing_prompt: Annotated[
         float | None,
         typer.Option("--pricing-prompt", help="Prompt token price per 1M tokens (USD)"),
@@ -298,8 +386,11 @@ def live_benchmark(
         provider_options=parsed_provider_options,
     )
 
-    if program not in {"legacy", "catalog", "both"}:
-        msg = f"--program must be one of legacy, catalog, both (got {program})"
+    if program == "legacy":
+        program = "replay"
+
+    if program not in {"replay", "catalog", "both"}:
+        msg = f"--program must be one of replay, catalog, both (got {program})"
         raise typer.BadParameter(msg)
 
     if output is None:
@@ -327,7 +418,6 @@ def live_benchmark(
             local_debug=local_debug,
             runner=runner,
             repo_root=Path.cwd(),
-            private_evaluator_root=private_evaluator_root,
         )
         catalog_markdown = render_benchmark_report_markdown(catalog_run.report)
         (catalog_output / "report.md").write_text(catalog_markdown)
@@ -341,7 +431,7 @@ def live_benchmark(
             for value in (legacy_benchmarks or "coding-loop-5,research-loop-5").split(",")
             if value.strip()
         )
-        legacy_output = output / "legacy"
+        legacy_output = output / "replay"
         _run_legacy_compare_suite(
             benchmarks=selected_legacy,
             runner=runner,
@@ -358,10 +448,21 @@ def live_benchmark(
         console.print(f"[green]✅ Combined benchmark summary:[/green] {output / 'summary.md'}")
         return
 
-    definition = load_benchmark_definition(benchmark)
-    effective_turns = turns if turns is not None else definition.default_turns
-
     if mode == "compare":
+        from tok.testing.tiny_patch_benchmark import is_patch_suite_benchmark
+
+        if is_patch_suite_benchmark(benchmark):
+            _run_legacy_compare_benchmark(
+                benchmark=benchmark,
+                runner=runner,
+                output=output,
+                turns=turns,
+                repeats=effective_repeats,
+            )
+            return
+
+        definition = load_benchmark_definition(benchmark)
+        effective_turns = turns if turns is not None else definition.default_turns
         _run_legacy_compare_benchmark(
             benchmark=benchmark,
             runner=runner,
@@ -370,6 +471,9 @@ def live_benchmark(
             repeats=effective_repeats,
         )
         return
+
+    definition = load_benchmark_definition(benchmark)
+    effective_turns = turns if turns is not None else definition.default_turns
 
     if mode not in {
         "baseline",

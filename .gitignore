@@ -80,3 +80,6 @@ refactoring_plan.txt
 release-plan.txt
 release_ready.txt
 .markdownlint.yaml
+
+# Benchmark results
+Benchmark/assets/

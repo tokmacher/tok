@@ -309,6 +309,64 @@ class TestFileTargetedGrepReliability:
         assert result.get("contract_signal", "") == ""
         assert not str(result["content"]).startswith("ERROR:")
 
+    def test_view_file_falls_back_to_src_prefixed_path(self, tmp_path) -> None:
+        workspace = tmp_path / "workspace"
+        target = workspace / "src" / "click" / "core.py"
+        target.parent.mkdir(parents=True)
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        executor = ReadOnlyToolExecutor(workspace_root=workspace, max_output_chars=5000)
+
+        result, blocked = executor.execute(
+            {
+                "id": "v1",
+                "name": "view_file",
+                "input": {"path": "click/core.py"},
+            }
+        )
+
+        assert blocked is False
+        assert result.get("is_error") is not True
+        assert "VALUE = 1" in result["content"]
+
+    def test_list_dir_falls_back_to_src_prefixed_directory(self, tmp_path) -> None:
+        workspace = tmp_path / "workspace"
+        target_dir = workspace / "src" / "click"
+        target_dir.mkdir(parents=True)
+        (target_dir / "core.py").write_text("VALUE = 1\n", encoding="utf-8")
+        executor = ReadOnlyToolExecutor(workspace_root=workspace, max_output_chars=5000)
+
+        result, blocked = executor.execute(
+            {
+                "id": "l1",
+                "name": "list_dir",
+                "input": {"path": "click"},
+            }
+        )
+
+        assert blocked is False
+        assert result.get("is_error") is not True
+        assert "core.py" in result["content"]
+
+    def test_path_fallback_reports_ambiguous_suffix_matches(self, tmp_path) -> None:
+        workspace = tmp_path / "workspace"
+        (workspace / "src" / "click" / "core.py").parent.mkdir(parents=True)
+        (workspace / "tests" / "click" / "core.py").parent.mkdir(parents=True)
+        (workspace / "src" / "click" / "core.py").write_text("SRC\n", encoding="utf-8")
+        (workspace / "tests" / "click" / "core.py").write_text("TEST\n", encoding="utf-8")
+        executor = ReadOnlyToolExecutor(workspace_root=workspace, max_output_chars=5000)
+
+        result, blocked = executor.execute(
+            {
+                "id": "v2",
+                "name": "view_file",
+                "input": {"path": "click/core.py"},
+            }
+        )
+
+        assert blocked is False
+        assert result.get("is_error") is True
+        assert "ambiguous path 'click/core.py'" in result["content"]
+
 
 class TestFirstPassSearchEvidenceLevel:
     """
