@@ -72,7 +72,7 @@ class TestIsSafeCut:
             "role": "user",
             "content": [{"type": "tool_result", "tool_use_id": "x", "content": "y"}],
         }
-        assert is_safe_cut(msg) is False
+        assert is_safe_cut(msg) is True
 
     def test_user_with_text_blocks(self) -> None:
         msg = {"role": "user", "content": [{"type": "text", "text": "hello"}]}
@@ -97,10 +97,21 @@ class TestClassifyCutEligibility:
         result = classify_cut_eligibility(msg)
         assert result == CutEligibility(False, "top_level_tool_result")
 
-    def test_user_list_with_tool_result_block_rejected(self) -> None:
+    def test_user_list_with_only_tool_result_blocks_is_eligible(self) -> None:
         msg = {
             "role": "user",
             "content": [{"type": "tool_result", "tool_use_id": "x", "content": "y"}],
+        }
+        result = classify_cut_eligibility(msg)
+        assert result == CutEligibility(True, "eligible")
+
+    def test_user_list_with_mixed_tool_result_and_text_is_rejected(self) -> None:
+        msg = {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "x", "content": "y"},
+                {"type": "text", "text": "hello"},
+            ],
         }
         result = classify_cut_eligibility(msg)
         assert result == CutEligibility(False, "user_contains_tool_result_block")

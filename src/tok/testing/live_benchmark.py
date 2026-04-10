@@ -160,6 +160,14 @@ class BenchmarkComparison:
     pressure_delta: int
     task_success_equal_or_better: bool
     provider_total_token_winner: str
+    provider_cost_winner: str
+    baseline_cost_usd: float | None
+    candidate_cost_usd: float | None
+    cost_delta_usd: float | None
+    cost_delta_pct: float | None
+    token_savings_without_cost_savings: bool
+    cost_savings_without_token_savings: bool
+    fairness_diagnostics: dict[str, Any]
     diagnosis: str
     tok_improved: bool
 
@@ -179,6 +187,14 @@ class BenchmarkComparison:
             "pressure_delta": self.pressure_delta,
             "task_success_equal_or_better": self.task_success_equal_or_better,
             "provider_total_token_winner": self.provider_total_token_winner,
+            "provider_cost_winner": self.provider_cost_winner,
+            "baseline_cost_usd": self.baseline_cost_usd,
+            "candidate_cost_usd": self.candidate_cost_usd,
+            "cost_delta_usd": self.cost_delta_usd,
+            "cost_delta_pct": self.cost_delta_pct,
+            "token_savings_without_cost_savings": self.token_savings_without_cost_savings,
+            "cost_savings_without_token_savings": self.cost_savings_without_token_savings,
+            "fairness_diagnostics": dict(self.fairness_diagnostics),
             "diagnosis": self.diagnosis,
             "tok_improved": self.tok_improved,
         }
@@ -1182,6 +1198,18 @@ def compare_results(baseline: BenchmarkResult, candidate: BenchmarkResult) -> Be
     provider_total_token_winner = (
         candidate.mode if candidate.provider_usage.total_tokens < baseline.provider_usage.total_tokens else "baseline"
     )
+    baseline_cost = baseline.provider_usage.cost_usd
+    candidate_cost = candidate.provider_usage.cost_usd
+    cost_delta_usd: float | None = None
+    cost_delta_pct: float | None = None
+    provider_cost_winner = "unknown"
+    if baseline_cost is not None and candidate_cost is not None:
+        cost_delta_usd = round(candidate_cost - baseline_cost, 6)
+        if baseline_cost > 0:
+            cost_delta_pct = round((cost_delta_usd / baseline_cost) * 100.0, 2)
+        provider_cost_winner = candidate.mode if candidate_cost < baseline_cost else "baseline"
+
+    fairness_diagnostics = _build_fairness_diagnostics(baseline, candidate)
     diagnosis = _diagnose_comparison(
         baseline,
         candidate,
@@ -1190,6 +1218,8 @@ def compare_results(baseline: BenchmarkResult, candidate: BenchmarkResult) -> Be
         pressure_delta=candidate_pressure - baseline_pressure,
     )
     tok_improved = task_success_equal_or_better and total_delta <= 0
+    token_savings_without_cost_savings = bool(total_delta < 0 and cost_delta_usd is not None and cost_delta_usd >= 0)
+    cost_savings_without_token_savings = bool(cost_delta_usd is not None and cost_delta_usd < 0 and total_delta >= 0)
 
     return BenchmarkComparison(
         benchmark=candidate.benchmark,
@@ -1209,6 +1239,14 @@ def compare_results(baseline: BenchmarkResult, candidate: BenchmarkResult) -> Be
         pressure_delta=candidate_pressure - baseline_pressure,
         task_success_equal_or_better=task_success_equal_or_better,
         provider_total_token_winner=provider_total_token_winner,
+        provider_cost_winner=provider_cost_winner,
+        baseline_cost_usd=baseline_cost,
+        candidate_cost_usd=candidate_cost,
+        cost_delta_usd=cost_delta_usd,
+        cost_delta_pct=cost_delta_pct,
+        token_savings_without_cost_savings=token_savings_without_cost_savings,
+        cost_savings_without_token_savings=cost_savings_without_token_savings,
+        fairness_diagnostics=fairness_diagnostics,
         diagnosis=diagnosis,
         tok_improved=tok_improved,
     )
@@ -1406,6 +1444,44 @@ def _adapt_tool_results_for_openai(
         adapted.append(msg)
 
     return adapted
+
+
+def _extract_result_warnings(result: BenchmarkResult) -> set[str]:
+    warnings: set[str] = set()
+    for turn in result.turns:
+        diagnostics = turn.get("diagnostics", {}) if isinstance(turn, dict) else {}
+        schema_forensics = diagnostics.get("schema_forensics", {}) if isinstance(diagnostics, dict) else {}
+        for warning in schema_forensics.get("compatibility_warnings", []) or []:
+            warnings.add(str(warning))
+        for warning in diagnostics.get("tool_block_adaptation_warnings", []) or []:
+            warnings.add(str(warning))
+    return warnings
+
+
+def _message_normalization_path(result: BenchmarkResult) -> str:
+    raw = result.diagnostics.get("message_normalization_path", "")
+    return str(raw).strip()
+
+
+def _build_fairness_diagnostics(baseline: BenchmarkResult, candidate: BenchmarkResult) -> dict[str, Any]:
+    baseline_path = _message_normalization_path(baseline)
+    candidate_path = _message_normalization_path(candidate)
+    baseline_warnings = sorted(_extract_result_warnings(baseline))
+    candidate_warnings = sorted(_extract_result_warnings(candidate))
+
+    asymmetry_flags: list[str] = []
+    if baseline_path and candidate_path and baseline_path != candidate_path:
+        asymmetry_flags.append("message_normalization_path_mismatch")
+    if set(baseline_warnings) != set(candidate_warnings):
+        asymmetry_flags.append("tool_block_warning_mismatch")
+
+    return {
+        "baseline_message_normalization_path": baseline_path,
+        "candidate_message_normalization_path": candidate_path,
+        "baseline_tool_block_warnings": baseline_warnings,
+        "candidate_tool_block_warnings": candidate_warnings,
+        "asymmetry_flags": asymmetry_flags,
+    }
 
 
 class LiveBenchmarkRunner:
@@ -1717,6 +1793,16 @@ class LiveBenchmarkRunner:
             "provider_after": provider_shape,
             "compatibility_warnings": compatibility_warnings,
         }
+        diagnostics["provider_message_normalization_path"] = (
+            "apply_schema_adaptations -> _adapt_tool_results_for_openai"
+            if use_openai_tools
+            else (
+                "apply_schema_adaptations -> passthrough_messages"
+                if self.provider.lower() == "anthropic"
+                else "apply_schema_adaptations -> _provider_safe_chat_messages"
+            )
+        )
+        diagnostics["tool_block_adaptation_warnings"] = list(compatibility_warnings)
         create_kwargs["messages"] = provider_messages
 
         if use_openai_tools:
@@ -2006,6 +2092,16 @@ class LiveBenchmarkRunner:
                 "repo_grounded_task_success": repo_grounded_task_success,
                 "repo_grounded_failures": repo_grounded_failures,
                 "repo_grounded_warnings": repo_grounded_warnings,
+                "message_normalization_path": (
+                    "normalize_fixture_messages_for_bridge"
+                    if canonical_mode == "tok-universal"
+                    else "normalize_fixture_messages"
+                ),
+                "provider_message_normalization_path": (
+                    turn_results[-1]["diagnostics"].get("provider_message_normalization_path", "")
+                    if turn_results
+                    else ""
+                ),
             }
             if canonical_mode != "baseline" and turn_results:
                 diagnostics["runtime_mode"] = turn_results[-1]["diagnostics"].get("runtime_mode", "")
@@ -2090,6 +2186,11 @@ def render_comparison_markdown(baseline: BenchmarkResult, comparisons: list[Benc
                 f"- Candidate task success: `{comparison.candidate.task_success}`",
                 f"- Candidate notes: `{', '.join(comparison.candidate.notes) or 'none'}`",
                 f"- Provider total token winner: `{comparison.provider_total_token_winner}`",
+                f"- Provider cost winner: `{comparison.provider_cost_winner}`",
+                f"- Cost delta (USD): `{comparison.cost_delta_usd if comparison.cost_delta_usd is not None else 'n/a'}`",
+                f"- Token savings without cost savings: `{comparison.token_savings_without_cost_savings}`",
+                f"- Cost savings without token savings: `{comparison.cost_savings_without_token_savings}`",
+                f"- Fairness asymmetry flags: `{', '.join(comparison.fairness_diagnostics.get('asymmetry_flags', [])) or 'none'}`",
                 f"- Diagnosis: `{comparison.diagnosis}`",
                 "",
             ]
@@ -2101,25 +2202,31 @@ def render_comparison_markdown(baseline: BenchmarkResult, comparisons: list[Benc
 
 def summarize_compare_runs(
     repeated_results: list[dict[str, BenchmarkResult]],
+    *,
+    run_fingerprint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not repeated_results:
-        return {
+        payload = {
             "runs": 0,
             "preferred_mode_counts": {},
             "mode_summaries": {},
         }
+        if run_fingerprint is not None:
+            payload["run_fingerprint"] = run_fingerprint
+        return payload
 
     mode_order = ("baseline", "tok-universal")
     preferred_mode_counts: dict[str, int] = {}
     mode_summaries: dict[str, Any] = {}
+    comparisons_all: list[BenchmarkComparison] = []
 
     for run in repeated_results:
         baseline = run["baseline"]
         candidate = run.get("tok-universal") or run.get("tok-tool-compatible")
         if candidate is None:
             continue
-        comparisons = []
-        comparisons.append(compare_results(baseline, candidate))
+        comparisons = [compare_results(baseline, candidate)]
+        comparisons_all.extend(comparisons)
         if not comparisons:
             continue
         preferred = select_preferred_mode(baseline, comparisons)
@@ -2152,20 +2259,52 @@ def summarize_compare_runs(
             "median_prompt_tokens": int(statistics.median(prompt_tokens)),
             "median_completion_tokens": int(statistics.median(completion_tokens)),
             "median_latency_ms": round(statistics.median(latency_ms), 2),
+            "total_token_variance": round(float(statistics.pvariance(total_tokens)), 2)
+            if len(total_tokens) > 1
+            else 0.0,
         }
 
-    return {
+    total_comparisons = len(comparisons_all)
+    token_win_count = sum(
+        1
+        for comparison in comparisons_all
+        if comparison.total_token_delta < 0 and comparison.task_success_equal_or_better
+    )
+    cost_comparable = [comparison for comparison in comparisons_all if comparison.cost_delta_usd is not None]
+    cost_win_count = sum(
+        1 for comparison in cost_comparable if comparison.cost_delta_usd is not None and comparison.cost_delta_usd < 0
+    )
+    dominant_mode = ""
+    dominant_rate = 0.0
+    if preferred_mode_counts:
+        dominant_mode, dominant_count = max(preferred_mode_counts.items(), key=lambda item: item[1])
+        dominant_rate = round(dominant_count / max(1, len(repeated_results)), 3)
+
+    payload = {
         "runs": len(repeated_results),
         "preferred_mode_counts": preferred_mode_counts,
         "mode_summaries": mode_summaries,
+        "confidence_summary": {
+            "dominant_preferred_mode": dominant_mode,
+            "dominant_preferred_rate": dominant_rate,
+            "token_win_rate": round(token_win_count / total_comparisons, 3) if total_comparisons else 0.0,
+            "cost_win_rate": round(cost_win_count / len(cost_comparable), 3) if cost_comparable else None,
+        },
     }
+    if run_fingerprint is not None:
+        payload["run_fingerprint"] = run_fingerprint
+    return payload
 
 
 def summarize_compare_triage(
     repeated_results: list[dict[str, BenchmarkResult]],
+    *,
+    run_fingerprint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     mode_order = ("baseline", "tok-universal")
     mode_summaries: dict[str, Any] = {}
+    comparisons_all: list[BenchmarkComparison] = []
+    fairness_flag_counter: Counter[str] = Counter()
 
     for mode in mode_order:
         if mode == "tok-universal":
@@ -2214,10 +2353,58 @@ def summarize_compare_triage(
             "top_failure_reasons": top_failures,
         }
 
-    return {
+    for run in repeated_results:
+        baseline = run.get("baseline")
+        candidate = run.get("tok-universal") or run.get("tok-tool-compatible")
+        if baseline is None or candidate is None:
+            continue
+        comparison = compare_results(baseline, candidate)
+        comparisons_all.append(comparison)
+        for flag in comparison.fairness_diagnostics.get("asymmetry_flags", []):
+            fairness_flag_counter[str(flag)] += 1
+
+    total_comparisons = len(comparisons_all)
+    token_win_count = sum(1 for comparison in comparisons_all if comparison.total_token_delta < 0)
+    token_without_cost_count = sum(1 for comparison in comparisons_all if comparison.token_savings_without_cost_savings)
+    cost_comparable = [comparison for comparison in comparisons_all if comparison.cost_delta_usd is not None]
+    cost_win_count = sum(
+        1 for comparison in cost_comparable if comparison.cost_delta_usd is not None and comparison.cost_delta_usd < 0
+    )
+    dominant_mode = ""
+    dominant_rate = 0.0
+    preferred_mode_counts: Counter[str] = Counter()
+    for run in repeated_results:
+        baseline = run.get("baseline")
+        candidate = run.get("tok-universal") or run.get("tok-tool-compatible")
+        if baseline is None or candidate is None:
+            continue
+        preferred_mode_counts[select_preferred_mode(baseline, [compare_results(baseline, candidate)])] += 1
+    if preferred_mode_counts:
+        dominant_mode, dominant_count = preferred_mode_counts.most_common(1)[0]
+        dominant_rate = round(dominant_count / max(1, len(repeated_results)), 3)
+
+    payload = {
         "runs": len(repeated_results),
         "mode_summaries": mode_summaries,
+        "fairness_summary": {
+            "asymmetry_runs": sum(
+                1 for comparison in comparisons_all if comparison.fairness_diagnostics.get("asymmetry_flags")
+            ),
+            "asymmetry_flag_counts": dict(fairness_flag_counter),
+        },
+        "cost_summary": {
+            "token_win_rate": round(token_win_count / total_comparisons, 3) if total_comparisons else 0.0,
+            "cost_win_rate": round(cost_win_count / len(cost_comparable), 3) if cost_comparable else None,
+            "token_win_without_cost_win_runs": token_without_cost_count,
+        },
+        "repeat_confidence": {
+            "dominant_preferred_mode": dominant_mode,
+            "dominant_preferred_rate": dominant_rate,
+        },
     }
+    if run_fingerprint is not None:
+        payload["run_fingerprint"] = run_fingerprint
+    return payload
 
 
 def render_stability_markdown(

@@ -709,79 +709,38 @@ def test_bridge_tail_with_adaptive_keep_zero_still_strictly_valid(
     assert failures == []
 
 
-def test_tool_heavy_bridge_request_passes_canonicalization_and_strict_validation(
+def test_tool_heavy_bridge_request_compresses_without_pairing_degradation(
     tmp_path,
 ) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
-    messages: list[dict[str, Any]] = [{"role": "user", "content": "Help me with these files"}]
-    messages.extend(
-        [
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": "t0",
-                        "name": "view_file",
-                        "input": {"path": "src/tok/file_0.py"},
-                    }
-                ],
-            },
-            {
-                "role": "tool_result",
-                "tool_use_id": "t0",
-                "content": "file 0 " * 120,
-            },
-            {"role": "user", "content": "Thanks, now help with this"},
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": "t1",
-                        "name": "view_file",
-                        "input": {"path": "src/tok/file_1.py"},
-                    }
-                ],
-            },
-            {
-                "role": "tool_result",
-                "tool_use_id": "t1",
-                "content": "file 1 " * 120,
-            },
-            {"role": "user", "content": "Great, one more"},
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": "t2",
-                        "name": "view_file",
-                        "input": {"path": "src/tok/file_2.py"},
-                    },
-                    {
-                        "type": "tool_use",
-                        "id": "t3",
-                        "name": "view_file",
-                        "input": {"path": "src/tok/file_3.py"},
-                    },
-                ],
-            },
-            {
-                "role": "tool_result",
-                "tool_use_id": "t2",
-                "content": "file 2 " * 120,
-            },
-            {
-                "role": "tool_result",
-                "tool_use_id": "t3",
-                "content": "file 3 " * 120,
-            },
-            {"role": "user", "content": "Now help with more"},
-            {"role": "assistant", "content": "I'll help with more files."},
-        ]
-    )
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Help me with these files"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t0",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/file_0.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t0",
+                    "content": "file 0 " * 120,
+                }
+            ],
+        },
+        {"role": "assistant", "content": "I found the issue."},
+        {"role": "user", "content": "Now continue"},
+        {"role": "assistant", "content": "Done."},
+    ]
 
     prepared = runtime.prepare_request(
         RuntimeRequest(
@@ -794,18 +753,174 @@ def test_tool_heavy_bridge_request_passes_canonicalization_and_strict_validation
     )
     canonical, _changed, _signals = canonicalize_anthropic_bridge_body(prepared.body)
 
-    assert prepared.behavior_signals.get("tok_history_pairing_safety_degraded", 0) == 1
-    assert prepared.behavior_signals.get("tool_compatible_compression", 0) == 0
+    assert prepared.compressed is True
+    assert prepared.behavior_signals.get("bridge_history_cut_search_used", 0) == 1
+    assert prepared.behavior_signals.get("tok_history_pairing_safety_degraded", 0) == 0
+    assert prepared.behavior_signals.get("tool_compatible_compression", 0) == 1
+    assert len(prepared.body["messages"]) < len(messages)
     assert validate_anthropic_bridge_body(canonical) == []
     assert {message["role"] for message in canonical["messages"]} <= {
         "user",
         "assistant",
     }
-    assert any(
-        any(block.get("type") == "tool_result" for block in message["content"])
-        for message in canonical["messages"]
-        if message["role"] == "user"
+
+
+def test_prepare_request_bridge_cut_search_extends_to_valid_suffix(tmp_path, monkeypatch) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    original_messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": "Help me with these files and keep going until you find the cleanest safe cut.",
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_0",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/file_0.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_0",
+                    "content": "file 0 " * 80,
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/file_1.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "content": "file 1 " * 80,
+                }
+            ],
+        },
+        {"role": "assistant", "content": "I found the issue."},
+        {"role": "user", "content": "Now continue"},
+        {"role": "assistant", "content": "Done."},
+    ]
+
+    invalid_recent = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/file_1.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "content": "file 1 " * 80,
+                }
+            ],
+        },
+    ]
+
+    valid_recent = [
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Now continue",
+                }
+            ],
+            "role": "user",
+        },
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Done.",
+                }
+            ],
+            "role": "assistant",
+        },
+    ]
+
+    compress_history_calls: list[int] = []
+
+    def _fake_compress_history(messages, keep_turns=2, profile=None, prune_tool_results=False):
+        del messages, prune_tool_results
+        compress_history_calls.append(keep_turns)
+        bridge_search_enabled = bool(profile and profile.get("_bridge_cut_search"))
+        assert bridge_search_enabled is True
+        if keep_turns == 2:
+            return invalid_recent, "compressed tail"
+        if keep_turns == 1:
+            return valid_recent, "compressed tail"
+        return invalid_recent, "compressed tail"
+
+    def _fake_compress_recent_window(
+        messages,
+        tool_use_id_to_context=None,
+        threshold=0,
+        tool_compatible=False,
+        first_exact_evidence_seen=None,
+        preserve_exact_search_evidence=False,
+    ):
+        del (
+            tool_use_id_to_context,
+            threshold,
+            tool_compatible,
+            first_exact_evidence_seen,
+            preserve_exact_search_evidence,
+        )
+        return messages, {}
+
+    monkeypatch.setattr(
+        request_preparation_module,
+        "compress_history",
+        _fake_compress_history,
     )
+    monkeypatch.setattr(
+        request_preparation_module,
+        "compress_recent_window",
+        _fake_compress_recent_window,
+    )
+
+    prepared = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4-6",
+            adapter_kind="claude-bridge",
+            tool_compatible=True,
+            messages=original_messages,
+        ),
+        session,
+    )
+
+    assert compress_history_calls[:2] == [2, 1]
+    assert prepared.behavior_signals.get("bridge_history_cut_search_used", 0) == 1
+    assert prepared.behavior_signals.get("bridge_history_cut_search_extended", 0) == 1
+    assert prepared.behavior_signals.get("tok_history_pairing_safety_degraded", 0) == 0
+    assert prepared.body["messages"] == valid_recent
 
 
 def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, monkeypatch) -> None:

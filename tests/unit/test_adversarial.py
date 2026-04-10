@@ -24,7 +24,7 @@ def _recursive_data() -> st.SearchStrategy[Any]:
 
     return st.recursive(
         base,
-        lambda children: (st.lists(children, max_size=3) | st.dictionaries(letter_text, children, max_size=3)),
+        lambda children: st.lists(children, max_size=3) | st.dictionaries(letter_text, children, max_size=3),
         max_leaves=30,
     )
 

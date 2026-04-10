@@ -23,6 +23,8 @@ def _load_module() -> object:
 def test_main_defaults_to_deepseek(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
     commands: list[tuple[str, ...]] = []
+    catalog_root = tmp_path / "benchmarks"
+    (catalog_root / "lanes").mkdir(parents=True, exist_ok=True)
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         del cwd, check
@@ -35,7 +37,7 @@ def test_main_defaults_to_deepseek(tmp_path: Path, monkeypatch) -> None:
     exit_code = module.main(
         [
             "--catalog-root",
-            str(BENCHMARK_ROOT),
+            str(catalog_root),
             "--output-root",
             str(tmp_path / "out"),
         ]
@@ -48,7 +50,7 @@ def test_main_defaults_to_deepseek(tmp_path: Path, monkeypatch) -> None:
         "python",
         "scripts/prepare_benchmark_assets.py",
         "--root",
-        str(BENCHMARK_ROOT.resolve()),
+        str(catalog_root.resolve()),
         "verify",
     )
     assert commands[1] == (
@@ -62,12 +64,18 @@ def test_main_defaults_to_deepseek(tmp_path: Path, monkeypatch) -> None:
         str((tmp_path / "out" / "deepseek_deepseek-v3.2").resolve()),
         "--model",
         "deepseek/deepseek-v3.2",
+        "--catalog-root",
+        str(catalog_root.resolve()),
+        "--repeats",
+        "5",
     )
 
 
 def test_main_loops_multiple_models(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
     commands: list[tuple[str, ...]] = []
+    catalog_root = tmp_path / "benchmarks"
+    (catalog_root / "lanes").mkdir(parents=True, exist_ok=True)
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         del cwd, check
@@ -80,7 +88,7 @@ def test_main_loops_multiple_models(tmp_path: Path, monkeypatch) -> None:
     exit_code = module.main(
         [
             "--catalog-root",
-            str(BENCHMARK_ROOT),
+            str(catalog_root),
             "--skip-asset-verify",
             "--mode",
             "public_full",

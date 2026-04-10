@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -12,6 +13,67 @@ import typer
 from ._cli_support import console
 
 dev_app = typer.Typer(help="Fixture generation and benchmarking commands")
+
+
+def _safe_git_commit(cwd: Path) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return "unknown"
+    if completed.returncode != 0:
+        return "unknown"
+    return (completed.stdout or "").strip() or "unknown"
+
+
+def _build_run_fingerprint(
+    *,
+    benchmark: str,
+    runner: Any,
+    turns: int | None,
+    repeats: int,
+) -> dict[str, Any]:
+    pricing = getattr(runner, "pricing", None)
+    provider_options = getattr(runner, "provider_options", None)
+    return {
+        "version": "1",
+        "git_commit": _safe_git_commit(Path.cwd()),
+        "benchmark": benchmark,
+        "model": str(getattr(runner, "model", "")),
+        "provider": str(getattr(runner, "provider", "")),
+        "turns": turns,
+        "repeats": repeats,
+        "pricing_profile": dict(pricing) if isinstance(pricing, dict) else {},
+        "provider_options": dict(provider_options) if isinstance(provider_options, dict) else {},
+    }
+
+
+def _build_catalog_run_fingerprint(
+    *,
+    model: str,
+    repeats: int,
+    catalog_root: Path,
+    lane: str,
+    families: tuple[str, ...],
+    provider_options: dict[str, Any] | None,
+    pricing: dict[str, float] | None,
+) -> dict[str, Any]:
+    return {
+        "version": "1",
+        "git_commit": _safe_git_commit(Path.cwd()),
+        "model": model,
+        "repeats": repeats,
+        "catalog_root": str(catalog_root.resolve()),
+        "lane": lane,
+        "families": list(families),
+        "provider_options": dict(provider_options or {}),
+        "pricing_profile": dict(pricing or {}),
+    }
 
 
 def _patch_suite_benchmark_name(size: str) -> str:
@@ -69,6 +131,12 @@ def _run_legacy_compare_benchmark(
 
     definition = load_benchmark_definition(benchmark)
     effective_turns = turns if turns is not None else definition.default_turns
+    run_fingerprint = _build_run_fingerprint(
+        benchmark=benchmark,
+        runner=runner,
+        turns=effective_turns,
+        repeats=max(1, repeats),
+    )
     repeated_results: list[dict[str, Any]] = []
     compare_modes = ("tok-universal",)
     for run_index in range(max(1, repeats)):
@@ -107,13 +175,14 @@ def _run_legacy_compare_benchmark(
         )
     )
     if repeats > 1:
-        stability_summary = summarize_compare_runs(repeated_results)
+        stability_summary = summarize_compare_runs(repeated_results, run_fingerprint=run_fingerprint)
         (output / f"{benchmark}_stability.json").write_text(json.dumps(stability_summary, indent=2))
         (output / f"{benchmark}_stability.md").write_text(
             render_stability_markdown(benchmark, str(getattr(runner, "model", "")), stability_summary)
         )
-    triage_summary = summarize_compare_triage(repeated_results)
+    triage_summary = summarize_compare_triage(repeated_results, run_fingerprint=run_fingerprint)
     (output / f"{benchmark}_triage.json").write_text(json.dumps(triage_summary, indent=2))
+    (output / f"{benchmark}_fingerprint.json").write_text(json.dumps(run_fingerprint, indent=2))
     console.print(
         f"[green]✅ Live benchmark complete:[/green] {benchmark} "
         f"baseline_tokens={baseline.provider_usage.total_tokens} "
@@ -396,7 +465,7 @@ def live_benchmark(
     if output is None:
         output = Path.cwd() / "tmp" / "live_benchmark"
     output.mkdir(parents=True, exist_ok=True)
-    effective_repeats = repeats if repeats is not None else (3 if program in {"catalog", "both"} else 1)
+    effective_repeats = repeats if repeats is not None else (5 if mode == "compare" else 1)
 
     if program in {"catalog", "both"}:
         if mode != "compare":
@@ -421,6 +490,34 @@ def live_benchmark(
         )
         catalog_markdown = render_benchmark_report_markdown(catalog_run.report)
         (catalog_output / "report.md").write_text(catalog_markdown)
+        report_path = catalog_output / "report.json"
+        try:
+            report_payload = json.loads(report_path.read_text())
+        except Exception:
+            report_payload = {}
+        if isinstance(report_payload, dict):
+            catalog_fingerprint = _build_catalog_run_fingerprint(
+                model=model,
+                repeats=max(1, effective_repeats),
+                catalog_root=catalog_root,
+                lane=lane,
+                families=family_names,
+                provider_options=parsed_provider_options,
+                pricing=pricing,
+            )
+            headline = catalog_run.report.headline_summary()
+            report_payload["run_fingerprint"] = catalog_fingerprint
+            report_payload["repeat_confidence"] = {
+                "sample_size": headline.sample_size,
+                "token_win_rate": headline.token_win_rate,
+                "repeat_to_repeat_variance": headline.repeat_to_repeat_variance,
+                "latency_variance": headline.latency_variance,
+            }
+            report_payload["cost_summary"] = {
+                "available": False,
+                "reason": "catalog report currently tracks token/quality outcomes but not cost deltas",
+            }
+            report_path.write_text(json.dumps(report_payload, indent=2))
         console.print(f"[green]✅ Catalog benchmark complete:[/green] {catalog_output / 'report.json'}")
         console.print(f"[cyan]Markdown:[/cyan] {catalog_output / 'report.md'}")
         if program == "catalog":

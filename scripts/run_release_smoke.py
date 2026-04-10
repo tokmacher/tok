@@ -394,6 +394,11 @@ def _benchmark_steps(
     benchmark_mode: str,
     benchmark_output: Path,
     model: str,
+    catalog_root: Path,
+    repeats: int,
+    pricing_prompt: float | None,
+    pricing_completion: float | None,
+    provider_options: str | None,
 ) -> tuple[SmokeStep, ...]:
     if benchmark_mode == "none":
         return ()
@@ -411,11 +416,21 @@ def _benchmark_steps(
         "compare",
         "--model",
         model,
+        "--catalog-root",
+        str(catalog_root.resolve()),
         "--output",
         str(benchmark_output),
         "--legacy-benchmarks",
         legacy_benchmarks,
+        "--repeats",
+        str(max(1, repeats)),
     ]
+    if pricing_prompt is not None:
+        live_benchmark_command.extend(["--pricing-prompt", str(pricing_prompt)])
+    if pricing_completion is not None:
+        live_benchmark_command.extend(["--pricing-completion", str(pricing_completion)])
+    if provider_options:
+        live_benchmark_command.extend(["--provider-options", provider_options])
     if benchmark_mode == "smoke":
         for task_id in SMOKE_CATALOG_TASKS:
             live_benchmark_command.extend(["--task", task_id])
@@ -429,7 +444,7 @@ def _benchmark_steps(
         "gate-check",
         "tests/fixtures/replay",
         "--stability-dir",
-        str(benchmark_output / "legacy"),
+        str(benchmark_output / "replay"),
         "--benchmark-report",
         str(benchmark_output / "catalog" / "report.json"),
         "--continue-on-error",
@@ -445,6 +460,11 @@ def build_steps(
     benchmark_mode: str,
     benchmark_output: Path,
     model: str,
+    catalog_root: Path,
+    repeats: int,
+    pricing_prompt: float | None,
+    pricing_completion: float | None,
+    provider_options: str | None,
 ) -> tuple[SmokeStep, ...]:
     return (
         *SMOKE_STEPS,
@@ -452,8 +472,44 @@ def build_steps(
             benchmark_mode=benchmark_mode,
             benchmark_output=benchmark_output,
             model=model,
+            catalog_root=catalog_root,
+            repeats=repeats,
+            pricing_prompt=pricing_prompt,
+            pricing_completion=pricing_completion,
+            provider_options=provider_options,
         ),
     )
+
+
+def _preflight_benchmark_environment(*, benchmark_mode: str, catalog_root: Path) -> tuple[bool, str]:
+    if benchmark_mode == "none":
+        return True, ""
+    lanes_dir = catalog_root.resolve() / "lanes"
+    if not lanes_dir.exists():
+        return False, f"benchmark catalog lanes missing: {lanes_dir}"
+    return True, ""
+
+
+def _validate_benchmark_outputs(*, benchmark_mode: str, benchmark_output: Path, repeats: int) -> tuple[bool, str]:
+    if benchmark_mode == "none":
+        return True, ""
+    required_paths = [
+        benchmark_output / "catalog" / "report.json",
+        benchmark_output / "replay" / "coding-loop-5_triage.json",
+        benchmark_output / "replay" / "research-loop-5_triage.json",
+        benchmark_output / "summary.md",
+    ]
+    if repeats > 1:
+        required_paths.extend(
+            [
+                benchmark_output / "replay" / "coding-loop-5_stability.json",
+                benchmark_output / "replay" / "research-loop-5_stability.json",
+            ]
+        )
+    missing = [str(path) for path in required_paths if not path.exists()]
+    if missing:
+        return False, "missing benchmark artifacts: " + ", ".join(missing)
+    return True, ""
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -475,19 +531,70 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="anthropic/claude-sonnet-4.6",
         help="Model identifier to use for live benchmark smoke",
     )
+    parser.add_argument(
+        "--catalog-root",
+        type=Path,
+        default=ROOT / "benchmarks",
+        help="Benchmark catalog root for live benchmark runs",
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="Repeat count for live benchmark compare runs (release-grade default: 5)",
+    )
+    parser.add_argument(
+        "--pricing-prompt",
+        type=float,
+        default=None,
+        help="Prompt token price per 1M tokens (USD)",
+    )
+    parser.add_argument(
+        "--pricing-completion",
+        type=float,
+        default=None,
+        help="Completion token price per 1M tokens (USD)",
+    )
+    parser.add_argument(
+        "--provider-options",
+        default=None,
+        help="JSON provider options passed to tok dev live-benchmark",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    preflight_ok, preflight_reason = _preflight_benchmark_environment(
+        benchmark_mode=args.benchmark_mode,
+        catalog_root=args.catalog_root,
+    )
+    if not preflight_ok:
+        print(f"[release-smoke] benchmark preflight failed: {preflight_reason}")
+        return 2
+
     for step in build_steps(
         benchmark_mode=args.benchmark_mode,
         benchmark_output=args.benchmark_output,
         model=args.model,
+        catalog_root=args.catalog_root,
+        repeats=max(1, int(args.repeats)),
+        pricing_prompt=args.pricing_prompt,
+        pricing_completion=args.pricing_completion,
+        provider_options=args.provider_options,
     ):
         exit_code = _run_step(step)
         if exit_code != 0:
             return exit_code
+
+    outputs_ok, outputs_reason = _validate_benchmark_outputs(
+        benchmark_mode=args.benchmark_mode,
+        benchmark_output=args.benchmark_output.resolve(),
+        repeats=max(1, int(args.repeats)),
+    )
+    if not outputs_ok:
+        print(f"[release-smoke] benchmark artifact validation failed: {outputs_reason}")
+        return 3
 
     return 0
 

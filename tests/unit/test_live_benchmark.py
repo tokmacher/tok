@@ -61,6 +61,7 @@ def _result(
     invisible_pressure: int = 0,
     notes: list[str] | None = None,
     diagnostics_extra: dict[str, Any] | None = None,
+    cost_usd: float | None = None,
 ) -> BenchmarkResult:
     diagnostics = {
         "tool_compatible_requested": mode == "tok-universal",
@@ -82,6 +83,7 @@ def _result(
             completion_tokens=total_tokens - prompt_tokens,
             total_tokens=total_tokens,
             latency_ms=10.0,
+            cost_usd=cost_usd,
         ),
         compression_metrics={
             "input_saved_tokens": max(0, total_saved_tokens),
@@ -303,6 +305,36 @@ def test_compare_results_emits_response_drift_diagnosis() -> None:
     comparison = compare_results(baseline, candidate)
 
     assert comparison.diagnosis == "lost_on_response_drift"
+
+
+def test_compare_results_detects_message_normalization_asymmetry() -> None:
+    baseline = _result(
+        mode="baseline",
+        total_tokens=120,
+        prompt_tokens=100,
+        diagnostics_extra={"message_normalization_path": "normalize_fixture_messages"},
+    )
+    candidate = _result(
+        mode="tok-universal",
+        total_tokens=110,
+        prompt_tokens=90,
+        diagnostics_extra={"message_normalization_path": "normalize_fixture_messages_for_bridge"},
+    )
+
+    comparison = compare_results(baseline, candidate)
+
+    assert "message_normalization_path_mismatch" in comparison.fairness_diagnostics["asymmetry_flags"]
+
+
+def test_compare_results_flags_token_savings_without_cost_savings() -> None:
+    baseline = _result(mode="baseline", total_tokens=120, prompt_tokens=100, cost_usd=0.25)
+    candidate = _result(mode="tok-universal", total_tokens=100, prompt_tokens=80, cost_usd=0.30)
+
+    comparison = compare_results(baseline, candidate)
+
+    assert comparison.total_token_delta < 0
+    assert comparison.cost_delta_usd is not None and comparison.cost_delta_usd > 0
+    assert comparison.token_savings_without_cost_savings is True
 
 
 def test_select_preferred_mode_ignores_failing_candidate() -> None:

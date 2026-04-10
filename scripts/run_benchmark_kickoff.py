@@ -40,31 +40,60 @@ def _run_step(step: KickoffStep) -> int:
     return int(completed.returncode)
 
 
-def _preflight_step() -> KickoffStep:
+def _preflight_step(*, catalog_root: Path) -> KickoffStep:
     return KickoffStep(
         "Verify benchmark assets",
-        (*UV_RUN_PREFIX, "python", "scripts/prepare_benchmark_assets.py", "--root", "benchmarks", "verify"),
+        (*UV_RUN_PREFIX, "python", "scripts/prepare_benchmark_assets.py", "--root", str(catalog_root), "verify"),
     )
 
 
-def _local_smoke_step(*, output_root: Path, model: str) -> KickoffStep:
+def _local_smoke_step(
+    *,
+    output_root: Path,
+    model: str,
+    catalog_root: Path,
+    repeats: int,
+    pricing_prompt: float | None,
+    pricing_completion: float | None,
+    provider_options: str | None,
+) -> KickoffStep:
+    command: list[str] = [
+        *UV_RUN_PREFIX,
+        "python",
+        "scripts/run_release_smoke.py",
+        "--benchmark-mode",
+        "smoke",
+        "--benchmark-output",
+        str(output_root),
+        "--model",
+        model,
+        "--catalog-root",
+        str(catalog_root),
+        "--repeats",
+        str(max(1, repeats)),
+    ]
+    if pricing_prompt is not None:
+        command.extend(["--pricing-prompt", str(pricing_prompt)])
+    if pricing_completion is not None:
+        command.extend(["--pricing-completion", str(pricing_completion)])
+    if provider_options:
+        command.extend(["--provider-options", provider_options])
     return KickoffStep(
         "Run local smoke shakedown",
-        (
-            *UV_RUN_PREFIX,
-            "python",
-            "scripts/run_release_smoke.py",
-            "--benchmark-mode",
-            "smoke",
-            "--benchmark-output",
-            str(output_root),
-            "--model",
-            model,
-        ),
+        tuple(command),
     )
 
 
-def _supplemental_step(*, output_root: Path, model: str) -> KickoffStep:
+def _supplemental_step(
+    *,
+    output_root: Path,
+    model: str,
+    catalog_root: Path,
+    repeats: int,
+    pricing_prompt: float | None,
+    pricing_completion: float | None,
+    provider_options: str | None,
+) -> KickoffStep:
     command: list[str] = [
         *UV_RUN_PREFIX,
         "tok",
@@ -76,13 +105,30 @@ def _supplemental_step(*, output_root: Path, model: str) -> KickoffStep:
         "compare",
         "--model",
         model,
+        "--catalog-root",
+        str(catalog_root),
         "--output",
         str(output_root),
         "--include-advisory",
+        "--repeats",
+        str(max(1, repeats)),
     ]
+    if pricing_prompt is not None:
+        command.extend(["--pricing-prompt", str(pricing_prompt)])
+    if pricing_completion is not None:
+        command.extend(["--pricing-completion", str(pricing_completion)])
+    if provider_options:
+        command.extend(["--provider-options", provider_options])
     for task_id in SUPPLEMENTAL_TASKS:
         command.extend(["--task", task_id])
     return KickoffStep("Run supplemental diagnostics", tuple(command))
+
+
+def _preflight_catalog_root(catalog_root: Path) -> tuple[bool, str]:
+    lanes_dir = catalog_root.resolve() / "lanes"
+    if not lanes_dir.exists():
+        return False, f"benchmark lanes directory not found: {lanes_dir}"
+    return True, ""
 
 
 def _render_workflow_dispatch_markdown(
@@ -181,6 +227,35 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_MODEL,
         help="Model identifier to use for kickoff benchmark commands",
     )
+    parser.add_argument(
+        "--catalog-root",
+        type=Path,
+        default=ROOT / "benchmarks",
+        help="Benchmark catalog root used by kickoff preflight/smoke runs",
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="Repeat count for benchmark compare commands (release-grade default: 5)",
+    )
+    parser.add_argument(
+        "--pricing-prompt",
+        type=float,
+        default=None,
+        help="Prompt token price per 1M tokens (USD)",
+    )
+    parser.add_argument(
+        "--pricing-completion",
+        type=float,
+        default=None,
+        help="Completion token price per 1M tokens (USD)",
+    )
+    parser.add_argument(
+        "--provider-options",
+        default=None,
+        help="JSON provider options passed through to benchmark commands",
+    )
     return parser
 
 
@@ -199,12 +274,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    steps = [_preflight_step()]
+    ok, reason = _preflight_catalog_root(args.catalog_root)
+    if not ok:
+        print(f"[kickoff] benchmark preflight failed: {reason}")
+        return 2
+
+    steps = [_preflight_step(catalog_root=args.catalog_root.resolve())]
     if args.phase == "kickoff":
         steps.append(
             _local_smoke_step(
                 output_root=smoke_output_root,
                 model=args.model,
+                catalog_root=args.catalog_root.resolve(),
+                repeats=max(1, int(args.repeats)),
+                pricing_prompt=args.pricing_prompt,
+                pricing_completion=args.pricing_completion,
+                provider_options=args.provider_options,
             )
         )
     elif args.phase == "supplemental":
@@ -212,6 +297,11 @@ def main(argv: list[str] | None = None) -> int:
             _supplemental_step(
                 output_root=supplemental_output_root,
                 model=args.model,
+                catalog_root=args.catalog_root.resolve(),
+                repeats=max(1, int(args.repeats)),
+                pricing_prompt=args.pricing_prompt,
+                pricing_completion=args.pricing_completion,
+                provider_options=args.provider_options,
             )
         )
 

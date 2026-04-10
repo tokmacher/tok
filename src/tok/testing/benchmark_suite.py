@@ -640,6 +640,7 @@ class BenchmarkLaneSummary:
     sample_size: int
     baseline_success_rate: float
     tok_success_rate: float
+    token_win_rate: float
     success_delta: float
     median_token_delta: float
     matched_success_token_delta: float | None
@@ -669,6 +670,7 @@ class BenchmarkLaneSummary:
             sample_size=int(data.get("sample_size", 0) or 0),
             baseline_success_rate=float(data.get("baseline_success_rate", 0.0) or 0.0),
             tok_success_rate=float(data.get("tok_success_rate", 0.0) or 0.0),
+            token_win_rate=float(data.get("token_win_rate", 0.0) or 0.0),
             success_delta=float(data.get("success_delta", 0.0) or 0.0),
             median_token_delta=float(data.get("median_token_delta", 0.0) or 0.0),
             matched_success_token_delta=(
@@ -698,6 +700,7 @@ class BenchmarkLaneSummary:
             "sample_size": self.sample_size,
             "baseline_success_rate": self.baseline_success_rate,
             "tok_success_rate": self.tok_success_rate,
+            "token_win_rate": self.token_win_rate,
             "success_delta": self.success_delta,
             "median_token_delta": self.median_token_delta,
             "matched_success_token_delta": self.matched_success_token_delta,
@@ -732,6 +735,7 @@ def summarize_lane_runs(
             sample_size=0,
             baseline_success_rate=0.0,
             tok_success_rate=0.0,
+            token_win_rate=0.0,
             success_delta=0.0,
             median_token_delta=0.0,
             matched_success_token_delta=None,
@@ -746,6 +750,7 @@ def summarize_lane_runs(
 
     baseline_successes = [1.0 if run.baseline_success else 0.0 for run in runs]
     tok_successes = [1.0 if run.tok_success else 0.0 for run in runs]
+    token_wins = [1.0 if (run.total_token_delta < 0 and run.tok_success) else 0.0 for run in runs]
     baseline_groundings = [1.0 if run.baseline_grounding_success else 0.0 for run in runs]
     tok_groundings = [1.0 if run.tok_grounding_success else 0.0 for run in runs]
     quality_gate_scores = [1.0 if run.quality_gate_passed else 0.0 for run in runs]
@@ -763,6 +768,7 @@ def summarize_lane_runs(
 
     baseline_success_rate = round(sum(baseline_successes) / len(baseline_successes), 3)
     tok_success_rate = round(sum(tok_successes) / len(tok_successes), 3)
+    token_win_rate = round(sum(token_wins) / len(token_wins), 3)
     success_delta = round(tok_success_rate - baseline_success_rate, 3)
     baseline_grounding_rate = round(sum(baseline_groundings) / len(baseline_groundings), 3)
     tok_grounding_rate = round(sum(tok_groundings) / len(tok_groundings), 3)
@@ -846,6 +852,7 @@ def summarize_lane_runs(
         sample_size=len(runs),
         baseline_success_rate=baseline_success_rate,
         tok_success_rate=tok_success_rate,
+        token_win_rate=token_win_rate,
         success_delta=success_delta,
         median_token_delta=median_token_delta,
         matched_success_token_delta=matched_success_token_delta,
@@ -1007,15 +1014,15 @@ def render_benchmark_report_markdown(report: BenchmarkReport) -> str:
         "",
         "## Public Production Lane",
         "",
-        "| Lane | Provider | Tok Success | Baseline Success | Success Delta | Tok Grounding | Baseline Grounding | Grounding Delta | Median Token Delta | Repeat Variance | Latency Variance | Consistency Gate | Public Claim |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Lane | Provider | Tok Success | Baseline Success | Success Delta | Tok Grounding | Baseline Grounding | Grounding Delta | Median Token Delta | Token Win Rate | Repeat Variance | Latency Variance | Consistency Gate | Public Claim |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
         (
             f"| {headline.lane.id} | {headline.lane.provider} | {headline.tok_success_rate:.3f} | "
             f"{headline.baseline_success_rate:.3f} | {headline.success_delta:+.3f} | "
             f"{headline.tok_grounding_rate:.3f} | {headline.baseline_grounding_rate:.3f} | "
             f"{headline.grounding_delta:+.3f} | "
             f"{headline.median_token_delta:.1f} | "
-            f"{headline.repeat_to_repeat_variance:.2f} | {headline.latency_variance:.2f} | "
+            f"{headline.token_win_rate:.3f} | {headline.repeat_to_repeat_variance:.2f} | {headline.latency_variance:.2f} | "
             f"{headline.consistency_gate_passed} | {headline.public_claim_allowed} |"
         ),
         "",
@@ -1032,15 +1039,15 @@ def render_benchmark_report_markdown(report: BenchmarkReport) -> str:
             [
                 "## Supplemental Internal/Advisory Tasks",
                 "",
-                "| Lane | Scope | Provider | Tok Grounding | Baseline Grounding | Grounding Delta | Median Token Delta | Consistency Gate | Public Claim | Notes |",
-                "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |",
+                "| Lane | Scope | Provider | Tok Grounding | Baseline Grounding | Grounding Delta | Median Token Delta | Token Win Rate | Consistency Gate | Public Claim | Notes |",
+                "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
             ]
         )
         for summary in supplemental:
             lines.append(
                 f"| {summary.lane.id} | {summary.lane.claim_scope} | {summary.lane.provider} | "
                 f"{summary.tok_grounding_rate:.3f} | {summary.baseline_grounding_rate:.3f} | "
-                f"{summary.grounding_delta:+.3f} | {summary.median_token_delta:.1f} | "
+                f"{summary.grounding_delta:+.3f} | {summary.median_token_delta:.1f} | {summary.token_win_rate:.3f} | "
                 f"{summary.consistency_gate_passed} | {summary.public_claim_allowed} | "
                 f"{', '.join(summary.notes) if summary.notes else 'n/a'} |"
             )

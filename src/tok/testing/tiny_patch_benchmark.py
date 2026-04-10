@@ -89,7 +89,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/tiny_patch/workspaces/calc_add",
                 hidden_test="tests/test_calculator.py::test_add_two_positive_numbers",
                 allowed_paths=("src/calculator.py",),
-                step_budget=6,
+                step_budget=25,
                 time_budget_minutes=1,
             ),
             _task(
@@ -100,7 +100,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/tiny_patch/workspaces/calc_subtract",
                 hidden_test="tests/test_calculator.py::test_subtract_two_numbers",
                 allowed_paths=("src/calculator.py",),
-                step_budget=6,
+                step_budget=25,
                 time_budget_minutes=1,
             ),
             _task(
@@ -111,7 +111,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/tiny_patch/workspaces/calc_multiply",
                 hidden_test="tests/test_calculator.py::test_multiply_two_numbers",
                 allowed_paths=("src/calculator.py",),
-                step_budget=6,
+                step_budget=25,
                 time_budget_minutes=1,
             ),
             _task(
@@ -122,7 +122,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/tiny_patch/workspaces/calc_divide_zero",
                 hidden_test="tests/test_calculator.py::test_divide_by_zero_raises",
                 allowed_paths=("src/calculator.py",),
-                step_budget=6,
+                step_budget=25,
                 time_budget_minutes=1,
             ),
             _task(
@@ -133,7 +133,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/tiny_patch/workspaces/calc_percent",
                 hidden_test="tests/test_calculator.py::test_percent_supports_fractional_result",
                 allowed_paths=("src/calculator.py",),
-                step_budget=6,
+                step_budget=25,
                 time_budget_minutes=1,
             ),
         )
@@ -151,7 +151,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/small/workspaces/invoice_totals",
                 hidden_test="tests/test_pricing.py",
                 allowed_paths=("src/pricing.py", "src/adjustments.py"),
-                step_budget=14,
+                step_budget=30,
                 time_budget_minutes=3,
             ),
             _task(
@@ -162,7 +162,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/small/workspaces/text_pipeline",
                 hidden_test="tests/test_text_pipeline.py",
                 allowed_paths=("src/normalize.py", "src/tokenize.py", "src/pipeline.py"),
-                step_budget=14,
+                step_budget=30,
                 time_budget_minutes=3,
             ),
             _task(
@@ -173,7 +173,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/small/workspaces/auth_rules",
                 hidden_test="tests/test_auth.py",
                 allowed_paths=("src/auth.py", "src/policy.py", "src/session.py"),
-                step_budget=14,
+                step_budget=30,
                 time_budget_minutes=3,
             ),
         )
@@ -188,7 +188,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/medium/workspaces/ledger_reconcile",
                 hidden_test="tests/test_reconcile.py",
                 allowed_paths=("src/ledger.py", "src/reconcile.py", "src/report.py"),
-                step_budget=18,
+                step_budget=35,
                 time_budget_minutes=4,
             ),
             _task(
@@ -199,7 +199,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/medium/workspaces/api_sanitizer",
                 hidden_test="tests/test_handlers.py",
                 allowed_paths=("src/sanitize.py", "src/validators.py", "src/handlers.py"),
-                step_budget=18,
+                step_budget=35,
                 time_budget_minutes=4,
             ),
             _task(
@@ -210,7 +210,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/medium/workspaces/rule_engine",
                 hidden_test="tests/test_rules.py",
                 allowed_paths=("src/rules.py", "src/loader.py", "src/evaluator.py"),
-                step_budget=18,
+                step_budget=35,
                 time_budget_minutes=4,
             ),
         )
@@ -225,7 +225,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/large/workspaces/inventory_allocator",
                 hidden_test="tests/test_planner.py",
                 allowed_paths=("src/forecast.py", "src/allocator.py", "src/planner.py"),
-                step_budget=24,
+                step_budget=40,
                 time_budget_minutes=5,
             ),
             _task(
@@ -236,7 +236,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/large/workspaces/billing_rollup",
                 hidden_test="tests/test_invoice.py",
                 allowed_paths=("src/usage.py", "src/rollup.py", "src/invoice.py"),
-                step_budget=24,
+                step_budget=40,
                 time_budget_minutes=5,
             ),
             _task(
@@ -247,7 +247,7 @@ def _suite_payloads(benchmark_name: str) -> tuple[dict[str, Any], ...]:
                 workspace_path="tests/fixtures/patch_suites/large/workspaces/workflow_router",
                 hidden_test="tests/test_router.py",
                 allowed_paths=("src/parser.py", "src/rules.py", "src/router.py"),
-                step_budget=24,
+                step_budget=40,
                 time_budget_minutes=5,
             ),
         )

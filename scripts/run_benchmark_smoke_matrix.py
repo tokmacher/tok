@@ -60,21 +60,44 @@ def _smoke_step(
     model: str,
     mode: str,
     output_root: Path,
+    catalog_root: Path,
+    repeats: int,
+    pricing_prompt: float | None,
+    pricing_completion: float | None,
+    provider_options: str | None,
 ) -> MatrixStep:
+    command: list[str] = [
+        *UV_RUN_PREFIX,
+        "python",
+        "scripts/run_release_smoke.py",
+        "--benchmark-mode",
+        mode,
+        "--benchmark-output",
+        str(output_root),
+        "--model",
+        model,
+        "--catalog-root",
+        str(catalog_root),
+        "--repeats",
+        str(max(1, repeats)),
+    ]
+    if pricing_prompt is not None:
+        command.extend(["--pricing-prompt", str(pricing_prompt)])
+    if pricing_completion is not None:
+        command.extend(["--pricing-completion", str(pricing_completion)])
+    if provider_options:
+        command.extend(["--provider-options", provider_options])
     return MatrixStep(
         f"Run {mode} for {model}",
-        (
-            *UV_RUN_PREFIX,
-            "python",
-            "scripts/run_release_smoke.py",
-            "--benchmark-mode",
-            mode,
-            "--benchmark-output",
-            str(output_root),
-            "--model",
-            model,
-        ),
+        tuple(command),
     )
+
+
+def _preflight_catalog_root(catalog_root: Path) -> tuple[bool, str]:
+    lanes_dir = catalog_root.resolve() / "lanes"
+    if not lanes_dir.exists():
+        return False, f"benchmark lanes directory not found: {lanes_dir}"
+    return True, ""
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -104,6 +127,29 @@ def _parser() -> argparse.ArgumentParser:
         help="Model identifier to run; repeat to run multiple models",
     )
     parser.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="Repeat count passed through to scripts/run_release_smoke.py (release-grade default: 5)",
+    )
+    parser.add_argument(
+        "--pricing-prompt",
+        type=float,
+        default=None,
+        help="Prompt token price per 1M tokens (USD)",
+    )
+    parser.add_argument(
+        "--pricing-completion",
+        type=float,
+        default=None,
+        help="Completion token price per 1M tokens (USD)",
+    )
+    parser.add_argument(
+        "--provider-options",
+        default=None,
+        help="JSON provider options passed through to scripts/run_release_smoke.py",
+    )
+    parser.add_argument(
         "--skip-asset-verify",
         action="store_true",
         help="Skip the benchmark asset verification preflight",
@@ -124,6 +170,10 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     catalog_root = args.catalog_root.resolve()
+    ok, reason = _preflight_catalog_root(catalog_root)
+    if not ok:
+        print(f"[matrix] benchmark preflight failed: {reason}")
+        return 2
     output_root = args.output_root.resolve()
     models = tuple(args.model) or DEFAULT_MODELS
 
@@ -136,6 +186,11 @@ def main(argv: list[str] | None = None) -> int:
                 model=model,
                 mode=args.mode,
                 output_root=output_root / _safe_model_name(model),
+                catalog_root=catalog_root,
+                repeats=max(1, int(args.repeats)),
+                pricing_prompt=args.pricing_prompt,
+                pricing_completion=args.pricing_completion,
+                provider_options=args.provider_options,
             )
         )
 

@@ -21,6 +21,8 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
     module = _load_module()
     commands: list[tuple[str, ...]] = []
     output_root = tmp_path / "artifacts"
+    catalog_root = tmp_path / "benchmarks"
+    (catalog_root / "lanes").mkdir(parents=True, exist_ok=True)
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         command_tuple = tuple(str(part) for part in command)
@@ -28,9 +30,14 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
         if "live-benchmark" in command_tuple:
             output_index = command_tuple.index("--output") + 1
             live_output = Path(command_tuple[output_index])
-            (live_output / "legacy").mkdir(parents=True, exist_ok=True)
+            replay_output = live_output / "replay"
+            replay_output.mkdir(parents=True, exist_ok=True)
             (live_output / "catalog").mkdir(parents=True, exist_ok=True)
             (live_output / "catalog" / "report.json").write_text("{}")
+            (replay_output / "coding-loop-5_triage.json").write_text("{}")
+            (replay_output / "research-loop-5_triage.json").write_text("{}")
+            (replay_output / "coding-loop-5_stability.json").write_text("{}")
+            (replay_output / "research-loop-5_stability.json").write_text("{}")
             (live_output / "summary.md").write_text("# summary\n")
         return subprocess.CompletedProcess(command_tuple, 0)
 
@@ -44,6 +51,8 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
             str(output_root),
             "--model",
             "anthropic/test-model",
+            "--catalog-root",
+            str(catalog_root),
         ]
     )
 
@@ -54,6 +63,10 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
 
     assert "--legacy-benchmarks" in live_command
     assert "coding-loop-5,research-loop-5" in live_command
+    assert "--catalog-root" in live_command
+    assert str(catalog_root) in live_command
+    assert "--repeats" in live_command
+    assert "5" in live_command
     assert live_command.count("--task") == 6
     assert "exec.click.option-precedence" in live_command
     assert "exec.rich.overflow-markup" in live_command
@@ -62,10 +75,10 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
     assert "qa.rich.markup-pipeline" in live_command
     assert "qa.tok.api-base-plumbing" in live_command
     assert "--stability-dir" in gate_command
-    assert str(output_root / "legacy") in gate_command
+    assert str(output_root / "replay") in gate_command
     assert "--benchmark-report" in gate_command
     assert str(output_root / "catalog" / "report.json") in gate_command
 
-    assert (output_root / "legacy").exists()
+    assert (output_root / "replay").exists()
     assert (output_root / "catalog" / "report.json").exists()
     assert (output_root / "summary.md").exists()

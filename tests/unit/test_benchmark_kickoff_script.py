@@ -25,6 +25,8 @@ def test_kickoff_phase_runs_preflight_and_local_smoke_and_writes_handoff(
 ) -> None:
     module = _load_module()
     commands: list[tuple[str, ...]] = []
+    catalog_root = tmp_path / "benchmarks"
+    (catalog_root / "lanes").mkdir(parents=True, exist_ok=True)
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         del cwd, check
@@ -42,6 +44,8 @@ def test_kickoff_phase_runs_preflight_and_local_smoke_and_writes_handoff(
             "20260409",
             "--output-root",
             str(tmp_path / "out"),
+            "--catalog-root",
+            str(catalog_root),
         ]
     )
 
@@ -52,7 +56,7 @@ def test_kickoff_phase_runs_preflight_and_local_smoke_and_writes_handoff(
         "python",
         "scripts/prepare_benchmark_assets.py",
         "--root",
-        "benchmarks",
+        str(catalog_root.resolve()),
         "verify",
     )
     assert commands[1] == (
@@ -66,6 +70,10 @@ def test_kickoff_phase_runs_preflight_and_local_smoke_and_writes_handoff(
         str((tmp_path / "out" / "20260409-local-smoke").resolve()),
         "--model",
         "anthropic/claude-sonnet-4.6",
+        "--catalog-root",
+        str(catalog_root.resolve()),
+        "--repeats",
+        "5",
     )
     handoff_path = tmp_path / "out" / "20260409-workflow-dispatch.md"
     assert handoff_path.exists()
@@ -81,6 +89,8 @@ def test_supplemental_phase_runs_expected_catalog_tasks(
 ) -> None:
     module = _load_module()
     commands: list[tuple[str, ...]] = []
+    catalog_root = tmp_path / "benchmarks"
+    (catalog_root / "lanes").mkdir(parents=True, exist_ok=True)
 
     def _fake_run(command, cwd=None, check=False):  # type: ignore[no-untyped-def]
         del cwd, check
@@ -98,6 +108,8 @@ def test_supplemental_phase_runs_expected_catalog_tasks(
             "20260409",
             "--output-root",
             str(tmp_path / "out"),
+            "--catalog-root",
+            str(catalog_root),
         ]
     )
 
@@ -113,6 +125,10 @@ def test_supplemental_phase_runs_expected_catalog_tasks(
         "--program",
     )
     assert "--include-advisory" in supplemental_command
+    assert "--catalog-root" in supplemental_command
+    assert str(catalog_root.resolve()) in supplemental_command
+    assert "--repeats" in supplemental_command
+    assert "5" in supplemental_command
     assert str((tmp_path / "out" / "20260409-local-supplemental").resolve()) in supplemental_command
     for task_id in (
         "exec.tok.bridge-canonicalization",

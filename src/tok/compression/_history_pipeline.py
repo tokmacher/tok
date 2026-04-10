@@ -78,6 +78,44 @@ __all__ = [
 TOOL_COMPRESS_THRESHOLD = 0
 
 
+def _is_tool_result_only_user_message(message: dict[str, Any]) -> bool:
+    if str(message.get("role", "")).strip() != "user":
+        return False
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        return False
+    return all(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+
+
+def _advance_cut_index_past_tool_result_only_users(
+    messages: list[dict[str, Any]],
+    cut_index: int,
+) -> int | None:
+    """
+    Move the cut boundary to the next plain user message when a candidate lands on a
+    tool_result-only user turn.
+
+    The retained recent suffix must still begin with a user message for Anthropic
+    bridge validity, so a tool_result-only candidate is only useful as a marker that
+    the next plain user turn can be a safe split point.
+    """
+    if cut_index >= len(messages) or not isinstance(messages[cut_index], dict):
+        return None
+    if not _is_tool_result_only_user_message(messages[cut_index]):
+        return cut_index
+
+    for next_index in range(cut_index + 1, len(messages)):
+        next_message = messages[next_index]
+        if not isinstance(next_message, dict):
+            continue
+        if str(next_message.get("role", "")).strip() != "user":
+            continue
+        if _is_tool_result_only_user_message(next_message):
+            continue
+        return next_index
+    return None
+
+
 def compress_history_impl(
     messages: list[dict[str, Any]],
     keep_turns: int = 2,
@@ -100,10 +138,14 @@ def compress_history_impl(
             elif cls.reason in _CUT_REJECTION_REASONS:
                 rejection_counts[cls.reason] = rejection_counts.get(cls.reason, 0) + 1
 
+        bridge_cut_search = bool(profile and profile.get("_bridge_cut_search"))
         for i in reversed(eligible_indices):
+            adjusted_cut_index = i if bridge_cut_search else _advance_cut_index_past_tool_result_only_users(messages, i)
+            if adjusted_cut_index is None:
+                continue
             turns_seen += 1
             if turns_seen == keep_turns:
-                cut_index = i
+                cut_index = adjusted_cut_index
                 break
 
         if cut_index is None:
@@ -125,6 +167,7 @@ def compress_history_impl(
                 len(eligible_indices),
                 rejection_counts,
             )
+
             return messages, ""
 
         old = messages[:cut_index]

@@ -116,8 +116,12 @@ def classify_cut_eligibility(msg: dict[str, Any]) -> CutEligibility:
     if isinstance(content, str):
         return CutEligibility(True, "eligible")
     if isinstance(content, list):
-        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+        has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+        has_non_tool_result = any(not (isinstance(b, dict) and b.get("type") == "tool_result") for b in content)
+        if has_tool_result and has_non_tool_result:
             return CutEligibility(False, "user_contains_tool_result_block")
+        if has_tool_result:
+            return CutEligibility(True, "eligible")
         return CutEligibility(True, "eligible")
     return CutEligibility(True, "eligible")
 
