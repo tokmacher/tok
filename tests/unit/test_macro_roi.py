@@ -201,3 +201,18 @@ def test_hypothesis_promotion_via_ingest_wire_state() -> None:
 
     # Question should be resolved
     assert not state.hot.get("questions"), "Question should be cleared after fact answers it"
+
+
+def test_hypothesis_promotion_does_not_recount_existing_durable_fact() -> None:
+    state = BridgeMemoryState()
+    question_text = "where does release_summary get written to the export path?"
+    fact_text = "release_summary export path is export/release_summary.json"
+
+    state.hot["questions"] = [MemoryEntry(value=question_text, score=2, last_seen_turn=1)]
+    state.hot["facts"] = [MemoryEntry(value=fact_text, score=3, last_seen_turn=2)]
+    state.durable["facts"] = [MemoryEntry(value=fact_text, score=3, last_seen_turn=1)]
+
+    metrics = state._promote_facts_for_questions()
+
+    assert metrics.get("hypothesis_promotions", 0) == 0
+    assert "questions" not in state.hot or not state.hot["questions"]

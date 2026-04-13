@@ -13,6 +13,7 @@ from tok.compression import (
     _make_semantic_cache_key,
     compress_tool_results,
 )
+from tok.compression import _history_pipeline as history_pipeline
 from tok.compression import _pipeline as compression_pipeline
 from tok.neuro.ir import Instruction, Macro
 from tok.runtime.config import (
@@ -102,8 +103,7 @@ class TestSpeculativeMacroInjection:
         prepared = runtime.prepare_request(self._request_with_message(), session)
 
         system = prepared.body.get("system", "")
-        assert "@fix_imports" in system
-        assert "Available macros" in system
+        assert "Available macros" not in system
 
     def test_speculative_hint_absent_when_no_macros(self) -> None:
         session = RuntimeSession(bridge_memory=BridgeMemoryState(load_global_macros=False))
@@ -136,8 +136,8 @@ class TestSpeculativeMacroInjection:
         prepared = runtime.prepare_request(self._request_with_message(), session)
 
         system = prepared.body.get("system", "")
-        assert "@macro_a" in system
-        assert "@macro_b" in system
+        assert "@macro_a" not in system
+        assert "@macro_b" not in system
 
     def test_speculative_signal_recorded(self) -> None:
         macro = self._simple_macro("sig_macro", hit_count=3)
@@ -145,12 +145,8 @@ class TestSpeculativeMacroInjection:
         runtime = UniversalTokRuntime()
 
         runtime.prepare_request(self._request_with_message(), session)
-
-        # The signal may already be consumed into behavior, but the macro count
-        # should be reflected or the key should have been set.
-        # We verify by checking that the hint appeared in the system prompt as a proxy.
         prepared = runtime.prepare_request(self._request_with_message(), session)
-        assert "@sig_macro" in prepared.body.get("system", "")
+        assert "@sig_macro" not in prepared.body.get("system", "")
 
 
 class TestComputeSemanticHash:
@@ -703,3 +699,117 @@ class TestSemanticDedupSignal:
         # The explanation for @stable_result should be injected into the system prompt
         assert "@stable_result" in system2
         assert "unchanged" in system2
+
+
+class TestFeatureFlaggedDeltaCompression:
+    def test_file_overlap_delta_for_precision_reads(self, monkeypatch) -> None:
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_FILE_OVERLAP_DELTA", True)
+        path = "src/tok/foo.py"
+        first = "\n".join(f"line {i} with verbose payload " + ("x" * 80) for i in range(0, 60))
+        second = "\n".join(f"line {i} with verbose payload " + ("x" * 80) for i in range(20, 80))
+        messages = [
+            _make_tool_result_block("t1", first),
+            _make_tool_result_block("t2", second),
+        ]
+        id_to_ctx = {
+            "t1": {"name": "Read", "path": path, "args": {"file_path": path, "offset": 0, "limit": 20}},
+            "t2": {"name": "Read", "path": path, "args": {"file_path": path, "offset": 10, "limit": 20}},
+        }
+
+        out, breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+
+        second_content = out[1]["content"][0]["content"]
+        assert second_content.startswith(">>> tool:file_read_overlap_delta|")
+        assert "overlap_lines:" in second_content
+        assert breakdown.get("file_overlap_delta", 0) > 0
+
+    def test_file_reread_diff_for_small_changes(self, monkeypatch) -> None:
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_FILE_REREAD_DIFF", True)
+        path = "src/tok/foo.py"
+        previous = "\n".join(f"value_{i}" for i in range(200))
+        current_lines = [f"value_{i}" for i in range(200)]
+        current_lines[42] = "value_42_changed"
+        current_lines[155] = "value_155_changed"
+        current = "\n".join(current_lines)
+        messages = [
+            _make_tool_result_block("t1", previous),
+            _make_tool_result_block("t2", current),
+        ]
+        id_to_ctx = {
+            "t1": {"name": "Read", "path": path, "args": {"file_path": path}},
+            "t2": {"name": "Read", "path": path, "args": {"file_path": path}},
+        }
+
+        out, breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+
+        second_content = out[1]["content"][0]["content"]
+        assert second_content.startswith(">>> tool:file_reread_diff|")
+        assert "changed_lines:" in second_content
+        assert breakdown.get("file_reread_diff", 0) > 0
+
+    def test_search_overlap_delta_for_repeated_scope(self, monkeypatch) -> None:
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_SEARCH_OVERLAP_DELTA", True)
+        first = "\n".join(
+            [
+                "src/a.py:10:def alpha(): " + ("payload " * 20),
+                "src/a.py:20:def beta(): " + ("payload " * 20),
+                "src/b.py:30:def gamma(): " + ("payload " * 20),
+            ]
+        )
+        second = "\n".join(
+            [
+                "src/a.py:20:def beta(): " + ("payload " * 20),
+                "src/b.py:30:def gamma(): " + ("payload " * 20),
+                "src/c.py:40:def delta(): " + ("payload " * 20),
+            ]
+        )
+        messages = [
+            _make_tool_result_block("s1", first),
+            _make_tool_result_block("s2", second),
+        ]
+        id_to_ctx = {
+            "s1": {"name": "grep_search", "path": "src", "query": "def alpha", "args": {"path": "src"}},
+            "s2": {"name": "grep_search", "path": "src", "query": "def", "args": {"path": "src"}},
+        }
+
+        out, breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+
+        second_content = out[1]["content"][0]["content"]
+        assert second_content.startswith(">>> tool:search_overlap_delta|")
+        assert "new_matches:1" in second_content
+        assert "src/c.py:40:def delta():" in second_content
+        assert breakdown.get("search_overlap_delta", 0) > 0
+
+    def test_stack_repeat_delta_for_top_frame_changes(self, monkeypatch) -> None:
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_STACK_REPEAT_DELTA", True)
+        trace1 = "\n".join(
+            [
+                "Traceback (most recent call last):",
+                '  File "/repo/a.py", line 10, in run',
+                '  File "/repo/common.py", line 20, in worker',
+                "ValueError: boom",
+            ]
+        )
+        trace2 = "\n".join(
+            [
+                "Traceback (most recent call last):",
+                '  File "/repo/b.py", line 12, in run',
+                '  File "/repo/common.py", line 20, in worker',
+                "ValueError: boom",
+            ]
+        )
+        messages = [
+            _make_tool_result_block("e1", trace1),
+            _make_tool_result_block("e2", trace2),
+        ]
+        id_to_ctx = {
+            "e1": {"name": "bash", "path": "", "args": {"command": "pytest -q"}},
+            "e2": {"name": "bash", "path": "", "args": {"command": "pytest -q"}},
+        }
+
+        out, breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+
+        second_content = out[1]["content"][0]["content"]
+        assert second_content.startswith(">>> tool:stack_trace_delta|")
+        assert "ValueError: boom" in second_content
+        assert breakdown.get("stack_repeat_delta", 0) > 0

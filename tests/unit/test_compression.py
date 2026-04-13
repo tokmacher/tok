@@ -29,7 +29,10 @@ from tok.compression import (
     text_of,
     tok_tool_result,
 )
+from tok.compression import _history_pipeline as history_pipeline
+from tok.compression import _tool_result_codecs as tool_result_codecs
 from tok.compression._tool_result_codecs import (
+    _compress_config_json,
     _compress_pytest,
     _compress_search_results,
 )
@@ -447,18 +450,16 @@ class TestInjectSystemAdditions:
     def test_string_system_prompt(self) -> None:
         body = {"system": "You are helpful.", "messages": []}
         result = inject_system_additions(body, None, pressure=2)
-        assert "=== MODE: TOK-NATIVE ===" in result["system"]
-        assert "[Tok law]" in result["system"]
-        assert "Natural responses" not in result["system"]
+        assert "=== MODE: TOK-NATIVE ===" not in result["system"]
+        assert "[Tok law]" not in result["system"]
         assert "You are helpful." in result["system"]
         assert result["system"].startswith("You are helpful.")
 
     def test_empty_system_prompt(self) -> None:
         body = {"system": "", "messages": []}
         result = inject_system_additions(body, None, pressure=2)
-        assert "=== MODE: TOK-NATIVE ===" in result["system"]
-        assert "[Tok law]" in result["system"]
-        assert "Natural responses" not in result["system"]
+        assert "=== MODE: TOK-NATIVE ===" not in result["system"]
+        assert "[Tok law]" not in result["system"]
 
     def test_list_system_prompt(self) -> None:
         body = {
@@ -473,13 +474,8 @@ class TestInjectSystemAdditions:
         }
         result = inject_system_additions(body, None, pressure=2)
         assert isinstance(result["system"], list)
-        assert len(result["system"]) == 3
+        assert len(result["system"]) == 1
         assert result["system"][0]["cache_control"]["type"] == "ephemeral"
-        assert result["system"][1]["text"].startswith("[Tok File Freshness System]")
-        assert "=== MODE: TOK-NATIVE ===" in result["system"][-1]["text"]
-        assert "[Tok law]" in result["system"][-1]["text"]
-        assert "Natural responses" not in result["system"][-1]["text"]
-        assert "cache_control" not in result["system"][-1]
 
     def test_with_tok_state(self) -> None:
         body = {"system": "base", "messages": []}
@@ -495,8 +491,7 @@ class TestInjectSystemAdditions:
         result = inject_system_additions(body, None, tool_compatible=True)
 
         assert "=== MODE: TOOL-COMPATIBLE ===" not in result["system"]
-        assert "Plain text. Tool calls only. Omit all headers." in result["system"]
-        assert "Omit all headers." in result["system"]
+        assert "Plain text. Tool calls only. Omit all headers." not in result["system"]
         assert "Respond in Tok-native mode." not in result["system"]
 
     def test_runtime_hints_not_added_when_absent(self) -> None:
@@ -518,7 +513,7 @@ class TestInjectSystemAdditions:
             ],
         )
 
-        assert "Plain text. Tool calls only. Omit all headers." in result["system"]
+        assert "Plain text. Tool calls only. Omit all headers." not in result["system"]
         assert (
             "Reuse existing File=/Verification= facts when they already answer the request; reacquire only if the compressed history is insufficient."
             in result["system"]
@@ -533,7 +528,7 @@ class TestInjectSystemAdditions:
             behavior_signals={"answer_ready_turn": 1},
         )
 
-        assert "Answer-only turn. Do not call tools." in result["system"]
+        assert "Answer-only turn. Do not call tools." not in result["system"]
         assert "Tool calls only. Omit all headers." not in result["system"]
 
 
@@ -650,6 +645,30 @@ class TestTokToolResult:
         assert len(content) > TOOL_COMPRESS_THRESHOLD
         out = tok_tool_result(content)
         assert len(out) < len(content)
+
+    def test_tok_cli_repetitive_output_passthrough_with_wrapped_command(self) -> None:
+        lines = [f"│ panel row {i}: value={i}" for i in range(80)]
+        content = "\n".join(lines)
+        out = tok_tool_result(
+            content,
+            tool_context={
+                "name": "bash",
+                "args": {"command": "/bin/zsh -lc 'TOK_DEBUG=1 tok stats'"},
+            },
+        )
+        assert out == content
+
+    def test_uv_run_tok_repetitive_output_passthrough(self) -> None:
+        lines = [f"│ diagnostics row {i}: field={i}" for i in range(80)]
+        content = "\n".join(lines)
+        out = tok_tool_result(
+            content,
+            tool_context={
+                "name": "bash",
+                "args": {"command": "uv run tok doctor"},
+            },
+        )
+        assert out == content
 
     # --- file read (skeleton) ---
 
@@ -1033,6 +1052,32 @@ class TestNewCompressors:
         text = _make_install_output(10)
         result = _compress_install(text)
         assert result.startswith(">>> tool:install|")
+
+    def test_install_failure_keeps_error_tail(self) -> None:
+        lines = []
+        for idx in range(40):
+            lines.append(f"Collecting pkg-{idx}")
+            lines.append(f"Downloading pkg-{idx}.whl")
+            lines.append(f"Installing collected package pkg-{idx}")
+        lines.extend(
+            [
+                "ERROR: Could not build wheels for pkg-a",
+                "Traceback (most recent call last):",
+                '  File "/tmp/build.py", line 1, in <module>',
+                "RuntimeError: build failed",
+            ]
+        )
+        text = "\n".join(lines)
+        result = _compress_install(text)
+        assert "status:failed" in result
+        assert "Traceback (most recent call last):" in result
+        assert "RuntimeError: build failed" in result
+
+    def test_config_json_nonexpansion_guard(self, monkeypatch) -> None:
+        flat = "{" + ",".join(f'"k{i}":"v{i}"' for i in range(600)) + "}"
+        monkeypatch.setattr(tool_result_codecs, "TOK_ENABLE_JSON_NONEXPANSION_GUARD", True)
+        result = _compress_config_json(flat)
+        assert result == flat
 
     # --- git log ---
 
@@ -1466,8 +1511,19 @@ class TestCompressRecentWindow:
         assert len(large_pytest) > 8_000
         msg = self._make_result_msg(large_pytest)
         _msgs, breakdown = compress_recent_window([msg])
+        assert "pytest" not in breakdown
+
+    def test_large_pytest_output_compresses_when_flag_enabled(self, monkeypatch) -> None:
+        lines = ["tests/test_foo.py::test_bar PASSED\n" for _ in range(400)]
+        lines += ["tests/test_foo.py::test_bad FAILED\n"]
+        lines += ["1 failed, 400 passed in 3.2s\n"]
+        large_pytest = "".join(lines)
+        msg = self._make_result_msg(large_pytest)
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_PYTEST_FAIL_COMPRESSION", True)
+        msgs, breakdown = compress_recent_window([msg])
         assert "pytest" in breakdown
         assert breakdown["pytest"] > 0
+        assert "passed:400" in msgs[0]["content"][0]["content"]
 
     def test_non_tool_result_blocks_untouched(self) -> None:
         msg = {
@@ -1555,7 +1611,7 @@ class TestPerTurnInjectionBudget:
     def test_law_present_at_two_signals(self) -> None:
         """TOK_PROTOCOL_LAW MUST be present when pressure>=2."""
         sys = _inject(tok_state=_TYPICAL_STATE, pressure=2)
-        assert TOK_PROTOCOL_LAW_MARKER in sys, "TOK_PROTOCOL_LAW missing at pressure=2"
+        assert TOK_PROTOCOL_LAW_MARKER not in sys, "TOK_PROTOCOL_LAW should not be injected (invisible bridge)"
 
     def test_grammar_never_injected_by_gateway_path(self) -> None:
         """The full grammar (TOK_SYSTEM_PROMPT) must never appear when grammar=None."""
@@ -1566,15 +1622,13 @@ class TestPerTurnInjectionBudget:
             )
 
     def test_directive_escalates_above_pressure_50(self) -> None:
-        """Above pressure=50 the reinforced directive replaces the minimal one."""
+        """Above pressure=50 the directive remains minimal (no reinforced escalation)."""
         sys_below = _inject(tok_state=_TYPICAL_STATE, pressure=50)
         sys_above = _inject(tok_state=_TYPICAL_STATE, pressure=51)
-        assert REINFORCED_MARKER not in sys_below, (
-            "Reinforced directive appeared at pressure=50 (threshold should be >50)"
+        assert REINFORCED_MARKER not in sys_below, "Reinforced directive appeared at pressure=50"
+        assert REINFORCED_MARKER not in sys_above, (
+            "Reinforced directive should not be injected (invisible bridge principle)"
         )
-        assert REINFORCED_MARKER in sys_above, "Reinforced directive missing at pressure=51"
-        # Reinforced is larger than minimal: escalation adds tokens
-        assert _token_count(sys_above) > _token_count(sys_below)
 
     def test_pressure_escalation_token_delta(self) -> None:
         """Measure and document the token cost of pressure escalation."""

@@ -38,7 +38,22 @@ _SKIP_COPY_NAMES = {
 }
 ASSET_LOCK_FILENAME = "asset.lock.json"
 DEFAULT_EVALUATOR_BUNDLE_DIR = "evaluators"
-_TEST_COMMAND_RE = re.compile(r"^(?:uv run )?(?:python -m )?pytest\b")
+_EXECUTION_PATCH_REQUIRED_TOOLS = ("edit_file", "run_tests")
+_READ_ONLY_LOOP_TOOLS = frozenset({"list_dir", "view_file", "grep_search"})
+_READ_ONLY_LOOP_REPEAT_THRESHOLD = 3
+_REDUNDANT_RUN_TESTS_SUPPRESSION_THRESHOLD = 2
+_EDIT_SEARCH_MISS_ESCALATION_THRESHOLD = 3
+_PYTEST_PREFIX_PATTERNS = (
+    re.compile(r"^\s*pytest\b(?P<tail>.*)$"),
+    re.compile(r"^\s*python\s+-m\s+pytest\b(?P<tail>.*)$"),
+    re.compile(r"^\s*uv\s+run\s+pytest\b(?P<tail>.*)$"),
+    re.compile(r"^\s*uv\s+run\s+python\s+-m\s+pytest\b(?P<tail>.*)$"),
+)
+_PYTEST_CD_WRAPPER_PATTERN = re.compile(r"^\s*cd\s+(.+?)\s*&&\s*(?P<rest>.+)$")
+_LOOP_ASYMMETRY_DELTA_THRESHOLD = 2
+_LOOP_ASYMMETRY_ABSOLUTE_THRESHOLD = 3
+_TOK_CONTROLLED_CONDITION = "tok-controlled"
+_TOK_RUNTIME_CONDITIONS = frozenset({"tok-universal", _TOK_CONTROLLED_CONDITION})
 
 
 def _truncate(text: str, limit: int = 12000) -> str:
@@ -112,6 +127,32 @@ def _count_reacquisition_events(signals: dict[str, int]) -> int:
     return 1 if int(signals.get("reacquisition_cost_tokens", 0)) > 0 else 0
 
 
+def _count_note_prefix(notes: tuple[str, ...], prefix: str) -> int:
+    return sum(1 for note in notes if note.startswith(prefix))
+
+
+def _normalize_pytest_command(command: str) -> str | None:
+    raw = command.strip()
+    if not raw:
+        return None
+    # Accept wrapper forms like "cd <workspace> && pytest ...".
+    cd_match = _PYTEST_CD_WRAPPER_PATTERN.match(raw)
+    while cd_match:
+        raw = str(cd_match.group("rest") or "").strip()
+        cd_match = _PYTEST_CD_WRAPPER_PATTERN.match(raw)
+    if not raw:
+        return None
+    for pattern in _PYTEST_PREFIX_PATTERNS:
+        match = pattern.match(raw)
+        if not match:
+            continue
+        tail = str(match.group("tail") or "").strip()
+        if tail:
+            return f"python -m pytest {tail}"
+        return "python -m pytest"
+    return None
+
+
 def _file_mentioned(path: str, text: str) -> bool:
     if path in text:
         return True
@@ -159,6 +200,67 @@ def _evidence_lines(text: str) -> list[str]:
 
 def _normalize_pytest_output(text: str) -> str:
     return re.sub(r"in \d+(?:\.\d+)?s", "in <time>s", text)
+
+
+@dataclass(frozen=True)
+class ShellCommandResult:
+    command: str
+    argv: tuple[str, ...]
+    returncode: int
+    stdout: str
+    stderr: str
+    execution_error: str = ""
+
+    @property
+    def command_invoked(self) -> bool:
+        return not bool(self.execution_error)
+
+    def as_completed_process(self) -> subprocess.CompletedProcess[str]:
+        stderr = self.stderr
+        if self.execution_error:
+            stderr = f"{stderr}\n{self.execution_error}".strip() if stderr else self.execution_error
+        return subprocess.CompletedProcess(list(self.argv), self.returncode, self.stdout, stderr)
+
+
+def _run_zsh_command(
+    command: str,
+    *,
+    cwd: Path,
+    timeout_seconds: int,
+    env: dict[str, str] | None = None,
+) -> ShellCommandResult:
+    argv = ("/bin/zsh", "-lc", command)
+    effective_env = dict(os.environ)
+    effective_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if env:
+        effective_env.update(env)
+    try:
+        completed = subprocess.run(
+            list(argv),
+            cwd=cwd,
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=effective_env,
+            check=False,
+        )
+    except Exception as exc:
+        return ShellCommandResult(
+            command=command,
+            argv=argv,
+            returncode=127,
+            stdout="",
+            stderr="",
+            execution_error=str(exc),
+        )
+    return ShellCommandResult(
+        command=command,
+        argv=argv,
+        returncode=int(completed.returncode),
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
+    )
 
 
 @dataclass(frozen=True)
@@ -514,17 +616,12 @@ class TaskMaterializer:
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         if extra_env:
             env.update(extra_env)
-        return subprocess.run(
+        return _run_zsh_command(
             command,
             cwd=cwd,
-            shell=False,
-            executable="/bin/zsh",
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
+            timeout_seconds=timeout_seconds,
             env=env,
-            check=False,
-        )
+        ).as_completed_process()
 
 
 class BenchmarkToolExecutor:
@@ -627,10 +724,13 @@ class BenchmarkToolExecutor:
             return ()
         files: list[str] = []
         for raw_line in completed.stdout.splitlines():
-            line = raw_line.strip()
-            if not line:
+            if not raw_line.strip():
                 continue
-            files.append(line[3:].strip())
+            path_field = raw_line[3:].strip() if len(raw_line) >= 4 else ""
+            if " -> " in path_field:
+                path_field = path_field.split(" -> ", 1)[1].strip()
+            if path_field:
+                files.append(path_field)
         return tuple(sorted(files))
 
     def _canonical_tool_name(self, name: str) -> str:
@@ -711,24 +811,27 @@ class BenchmarkToolExecutor:
         command = str(tool_input.get("command") or tool_input.get("cmd") or tool_input.get("text") or "").strip()
         if not command:
             return "ERROR: run_tests requires a pytest command", True, "bad_tool_args"
-        if not _TEST_COMMAND_RE.match(command):
+        normalized_command = _normalize_pytest_command(command)
+        if normalized_command is None:
             return "ERROR: only pytest commands are allowed in run_tests", True, "invalid_tool"
-        completed = subprocess.run(
-            command,
+        command_result = _run_zsh_command(
+            normalized_command,
             cwd=self.workspace_root,
-            shell=False,
-            executable="/bin/zsh",
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_seconds,
-            check=False,
+            timeout_seconds=self.timeout_seconds,
         )
-        output = completed.stdout.strip()
-        if completed.stderr.strip():
-            output = f"{output}\n{completed.stderr.strip()}".strip()
-        content = f"$ {command}\n{output}".strip()
-        is_error = completed.returncode != 0
-        signal = "command_failed" if is_error else ""
+        output = command_result.stdout.strip()
+        if command_result.stderr.strip():
+            output = f"{output}\n{command_result.stderr.strip()}".strip()
+        if command_result.execution_error:
+            output = f"{output}\nexecution_error: {command_result.execution_error}".strip()
+        content = f"$ {normalized_command}\n{output}".strip()
+        is_error = command_result.returncode != 0 or bool(command_result.execution_error)
+        if command_result.execution_error:
+            signal = "command_execution_error"
+        elif command_result.returncode != 0:
+            signal = "command_failed"
+        else:
+            signal = ""
         return content, is_error, signal
 
     def _git_diff(self, tool_input: dict[str, Any]) -> tuple[str, bool, str]:
@@ -902,10 +1005,14 @@ class ToolLoopExecutor:
             timeout_seconds=max(30, timeout_seconds),
         )
         condition = materialized.condition
-        bridge_session = (
-            BridgeSession(memory_dir=workspace_root / ".tok_benchmark_memory") if condition == "tok-universal" else None
-        )
+        bridge_session: BridgeSession | None = None
+        if condition in _TOK_RUNTIME_CONDITIONS:
+            bridge_kwargs: dict[str, Any] = {"memory_dir": workspace_root / ".tok_benchmark_memory"}
+            if condition == _TOK_CONTROLLED_CONDITION:
+                bridge_kwargs["request_policy_default"] = "forced_baseline"
+            bridge_session = BridgeSession(**bridge_kwargs)
         session = bridge_session.runtime_session if bridge_session is not None else RuntimeSession()
+        runtime_mode = "tok-universal" if condition in _TOK_RUNTIME_CONDITIONS else condition
         conversation: list[dict[str, Any]] = [{"role": "user", "content": task.prompt}]
         turns: list[dict[str, Any]] = []
         tool_records: list[ToolExecutionRecord] = []
@@ -915,6 +1022,17 @@ class ToolLoopExecutor:
         invalid_tool_calls = 0
         tool_calls = 0
         reacquisition_events = 0
+        saw_edit_file = False
+        saw_run_tests = False
+        read_only_loop_signature: str | None = None
+        read_only_loop_repeats = 0
+        loop_recovery_trigger_count = 0
+        search_miss_recovery_count = 0
+        post_test_finalize_nudge_sent = False
+        redundant_run_tests_suppressed_count = 0
+        saw_successful_edit = False
+        saw_successful_run_tests_after_edit = False
+        successful_run_tests_since_last_edit: dict[str, int] = {}
         answer_text = ""
         raw_response = ""
         clean_exit = False
@@ -924,7 +1042,7 @@ class ToolLoopExecutor:
             step = self._run_conversation_step_with_retry(
                 conversation=conversation,
                 system_prompt=self._system_prompt(task, condition),
-                mode=condition,
+                mode=runtime_mode,
                 session=session,
                 bridge_session=bridge_session,
                 allowed_tools=task.allowed_tools,
@@ -967,12 +1085,43 @@ class ToolLoopExecutor:
             raw_response = step.raw_response
             if not tool_blocks:
                 proposed_answer = step.visible_response or step.raw_response
-                if self._requires_more_tooling(task, tool_calls):
+                if task.family == "execution_patch" and saw_successful_edit and not saw_successful_run_tests_after_edit:
+                    notes.append(f"premature_final_step_{step_index}")
+                    notes.append(f"premature_final_after_failed_tests_step_{step_index}")
+                    conversation.append(
+                        {
+                            "role": "user",
+                            "content": self._tooling_recovery_prompt(
+                                task=task,
+                                tool_calls=tool_calls,
+                                missing_requirements=self._missing_execution_patch_requirements(
+                                    saw_edit_file=saw_edit_file,
+                                    saw_run_tests=saw_run_tests,
+                                ),
+                                reason="failed_tests_after_edit",
+                            ),
+                        }
+                    )
+                    continue
+                missing_requirements = self._missing_execution_patch_requirements(
+                    saw_edit_file=saw_edit_file,
+                    saw_run_tests=saw_run_tests,
+                )
+                if self._requires_more_tooling(
+                    task,
+                    tool_calls=tool_calls,
+                    missing_requirements=missing_requirements,
+                ):
                     notes.append(f"premature_final_step_{step_index}")
                     conversation.append(
                         {
                             "role": "user",
-                            "content": self._tooling_recovery_prompt(task=task, tool_calls=tool_calls),
+                            "content": self._tooling_recovery_prompt(
+                                task=task,
+                                tool_calls=tool_calls,
+                                missing_requirements=missing_requirements,
+                                reason="premature_final",
+                            ),
                         }
                     )
                     continue
@@ -980,14 +1129,165 @@ class ToolLoopExecutor:
                 clean_exit = True
                 break
 
+            step_records: list[ToolExecutionRecord] = []
+            step_has_successful_run_tests = False
+            step_edit_file_search_miss_paths: list[str] = []
             for block in tool_blocks:
+                canonical_name = tool_executor._canonical_tool_name(str(block.get("name", "")).strip())
+                tool_input = block.get("input", {})
+                if not isinstance(tool_input, dict):
+                    tool_input = {}
+
+                if (
+                    task.family == "execution_patch"
+                    and canonical_name == "run_tests"
+                    and saw_successful_edit
+                    and saw_successful_run_tests_after_edit
+                ):
+                    raw_command = self._run_tests_command_from_input(tool_input)
+                    normalized_command = _normalize_pytest_command(raw_command)
+                    if normalized_command is not None:
+                        run_count = successful_run_tests_since_last_edit.get(normalized_command, 0)
+                        if run_count >= _REDUNDANT_RUN_TESTS_SUPPRESSION_THRESHOLD:
+                            suppressed_content = self._redundant_run_tests_suppressed_prompt(normalized_command)
+                            tool_message = tool_executor._tool_result_message(
+                                block,
+                                suppressed_content,
+                                signal="redundant_run_tests_suppressed",
+                            )
+                            record = ToolExecutionRecord(
+                                step_index=step_index,
+                                tool_name=str(block.get("name", "")).strip(),
+                                canonical_tool_name="run_tests",
+                                tool_input=dict(tool_input),
+                                invalid=False,
+                                is_error=False,
+                                content_preview=_truncate(suppressed_content),
+                            )
+                            tool_calls += 1
+                            tool_records.append(record)
+                            step_records.append(record)
+                            conversation.append(tool_message)
+                            redundant_run_tests_suppressed_count += 1
+                            notes.append(f"redundant_run_tests_suppressed_step_{step_index}")
+                            continue
+
                 tool_message, invalid, record = tool_executor.execute_tool(block, step_index=step_index)
                 tool_calls += 1
                 invalid_tool_calls += int(invalid)
                 tool_records.append(record)
+                step_records.append(record)
                 conversation.append(tool_message)
+                if record.canonical_tool_name == "edit_file":
+                    saw_edit_file = True
+                    if not record.is_error:
+                        saw_successful_edit = True
+                        saw_successful_run_tests_after_edit = False
+                        successful_run_tests_since_last_edit.clear()
+                    if self._is_edit_file_search_miss(record):
+                        raw_path = (
+                            record.tool_input.get("path")
+                            or record.tool_input.get("file_path")
+                            or record.tool_input.get("target")
+                        )
+                        if isinstance(raw_path, str) and raw_path.strip():
+                            step_edit_file_search_miss_paths.append(raw_path.strip())
+                elif record.canonical_tool_name == "run_tests":
+                    saw_run_tests = True
+                    if not record.is_error:
+                        step_has_successful_run_tests = True
+                        if saw_successful_edit:
+                            saw_successful_run_tests_after_edit = True
+                        normalized_command = _normalize_pytest_command(
+                            self._run_tests_command_from_input(record.tool_input)
+                        )
+                        if normalized_command is not None:
+                            successful_run_tests_since_last_edit[normalized_command] = (
+                                successful_run_tests_since_last_edit.get(normalized_command, 0) + 1
+                            )
+
+            if task.family == "execution_patch" and step_edit_file_search_miss_paths:
+                search_miss_recovery_count += len(step_edit_file_search_miss_paths)
+                notes.append(f"edit_file_search_miss_recovery_step_{step_index}")
+                conversation.append(
+                    {
+                        "role": "user",
+                        "content": self._edit_search_miss_recovery_prompt(
+                            file_paths=tuple(step_edit_file_search_miss_paths),
+                            miss_count=search_miss_recovery_count,
+                        ),
+                    }
+                )
+
+            if (
+                task.family == "execution_patch"
+                and saw_edit_file
+                and saw_successful_run_tests_after_edit
+                and step_has_successful_run_tests
+                and not post_test_finalize_nudge_sent
+            ):
+                notes.append(f"post_test_finalize_nudge_step_{step_index}")
+                conversation.append(
+                    {
+                        "role": "user",
+                        "content": self._post_test_finalize_prompt(),
+                    }
+                )
+                post_test_finalize_nudge_sent = True
+
+            execution_contract_met = saw_edit_file and saw_run_tests
+            if task.family != "execution_patch" or execution_contract_met:
+                read_only_loop_signature = None
+                read_only_loop_repeats = 0
+                continue
+
+            step_signature = self._read_only_step_signature(step_records)
+            if not step_signature:
+                read_only_loop_signature = None
+                read_only_loop_repeats = 0
+                continue
+
+            if step_signature == read_only_loop_signature:
+                read_only_loop_repeats += 1
+            else:
+                read_only_loop_signature = step_signature
+                read_only_loop_repeats = 1
+
+            if read_only_loop_repeats >= _READ_ONLY_LOOP_REPEAT_THRESHOLD:
+                loop_recovery_trigger_count += 1
+                notes.append(f"read_only_loop_recovery_step_{step_index}")
+                conversation.append(
+                    {
+                        "role": "user",
+                        "content": self._tooling_recovery_prompt(
+                            task=task,
+                            tool_calls=tool_calls,
+                            missing_requirements=self._missing_execution_patch_requirements(
+                                saw_edit_file=saw_edit_file,
+                                saw_run_tests=saw_run_tests,
+                            ),
+                            reason="read_only_loop",
+                        ),
+                    }
+                )
+                read_only_loop_signature = None
+                read_only_loop_repeats = 0
         else:
             notes.append("step_budget_exhausted")
+
+        if task.family == "execution_patch":
+            if saw_edit_file:
+                notes.append("execution_contract_edit_file_seen")
+            else:
+                notes.append("execution_contract_missing_edit_file")
+            if saw_run_tests:
+                notes.append("execution_contract_run_tests_seen")
+            else:
+                notes.append("execution_contract_missing_run_tests")
+            notes.append("execution_contract_met" if (saw_edit_file and saw_run_tests) else "execution_contract_unmet")
+            notes.append(f"read_only_loop_recovery_count_{loop_recovery_trigger_count}")
+            notes.append(f"edit_file_search_miss_recovery_count_{search_miss_recovery_count}")
+            notes.append(f"redundant_run_tests_suppressed_count_{redundant_run_tests_suppressed_count}")
 
         evaluation = self.evaluator.evaluate(
             materialized,
@@ -1073,23 +1373,121 @@ class ToolLoopExecutor:
         msg = "retry loop exhausted without raising final exception"
         raise RuntimeError(msg)
 
-    def _requires_more_tooling(self, task: BenchmarkTaskManifest, tool_calls: int) -> bool:
+    def _requires_more_tooling(
+        self,
+        task: BenchmarkTaskManifest,
+        *,
+        tool_calls: int,
+        missing_requirements: tuple[str, ...],
+    ) -> bool:
         if task.family == "repo_grounding":
             return False
         if task.family == "execution_patch":
-            return tool_calls < 1
+            return bool(missing_requirements) or tool_calls < 1
         return False
 
-    def _tooling_recovery_prompt(self, *, task: BenchmarkTaskManifest, tool_calls: int) -> str:
+    def _missing_execution_patch_requirements(
+        self,
+        *,
+        saw_edit_file: bool,
+        saw_run_tests: bool,
+    ) -> tuple[str, ...]:
+        missing: list[str] = []
+        for tool_name in _EXECUTION_PATCH_REQUIRED_TOOLS:
+            if tool_name == "edit_file" and not saw_edit_file:
+                missing.append(tool_name)
+            if tool_name == "run_tests" and not saw_run_tests:
+                missing.append(tool_name)
+        return tuple(missing)
+
+    def _read_only_step_signature(self, records: list[ToolExecutionRecord]) -> str:
+        if not records:
+            return ""
+        parts: list[str] = []
+        for record in records:
+            if record.canonical_tool_name not in _READ_ONLY_LOOP_TOOLS:
+                return ""
+            normalized_input = json.dumps(record.tool_input, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            parts.append(f"{record.canonical_tool_name}:{normalized_input}")
+        return "|".join(parts)
+
+    def _is_edit_file_search_miss(self, record: ToolExecutionRecord) -> bool:
+        if record.canonical_tool_name != "edit_file":
+            return False
+        if not record.invalid:
+            return False
+        preview = record.content_preview.lower()
+        return "search string not found" in preview
+
+    def _run_tests_command_from_input(self, tool_input: dict[str, Any]) -> str:
+        return str(tool_input.get("command") or tool_input.get("cmd") or tool_input.get("text") or "").strip()
+
+    def _edit_search_miss_recovery_prompt(self, *, file_paths: tuple[str, ...], miss_count: int) -> str:
+        escalation = (
+            " You have hit this mismatch multiple times; copy the exact current lines from view_file before editing again."
+            if miss_count >= _EDIT_SEARCH_MISS_ESCALATION_THRESHOLD
+            else ""
+        )
+        if file_paths:
+            files = ", ".join(f"`{path}`" for path in sorted(set(file_paths)))
+            return (
+                "Your edit_file search text did not match the current file content. "
+                f"Inspect {files} with view_file, then retry edit_file with an exact current snippet "
+                "or provide full replacement content." + escalation
+            )
+        return (
+            "Your edit_file search text did not match the current file content. "
+            "Use view_file to inspect the latest file, then retry edit_file with an exact snippet "
+            "or full replacement content." + escalation
+        )
+
+    def _redundant_run_tests_suppressed_prompt(self, command: str) -> str:
+        return (
+            "run_tests suppressed: this command already succeeded without a new edit. "
+            f"Command: `{command}`. Finalize now, or make another edit before re-running tests."
+        )
+
+    def _post_test_finalize_prompt(self) -> str:
+        return (
+            "You have applied an edit and completed run_tests successfully. "
+            "If the fix is complete, provide the final answer now instead of continuing extra tool calls."
+        )
+
+    def _tooling_recovery_prompt(
+        self,
+        *,
+        task: BenchmarkTaskManifest,
+        tool_calls: int,
+        missing_requirements: tuple[str, ...] = (),
+        reason: str = "premature_final",
+    ) -> str:
         if task.family == "repo_grounding":
             return (
                 "Continue investigating with the allowed tools as needed before finalizing. "
                 f"You currently have {tool_calls} tool calls. Prefer grounded citations in your final answer when possible."
             )
         if task.family == "execution_patch":
+            requirement_hint = ""
+            if missing_requirements:
+                requirement_hint = (
+                    " Required before finalizing: " + ", ".join(f"`{item}`" for item in missing_requirements) + "."
+                )
+            if reason == "failed_tests_after_edit":
+                return (
+                    "Your latest patch has not produced a passing run_tests result yet. "
+                    "Use view_file/edit_file to fix the failure, then run_tests again before finalizing."
+                    + requirement_hint
+                )
+            if reason == "read_only_loop":
+                return (
+                    "You are repeating read-only inspection without patch progress. "
+                    "Pick one concrete allowed file, apply the fix with edit_file, then run_tests to verify."
+                    + requirement_hint
+                )
             return (
                 "Continue using the allowed tools before finalizing. "
                 "Run the necessary read/edit/test steps to verify the fix, then provide the final answer."
+                + requirement_hint
             )
         return "Continue using the allowed tools and then provide the final answer."
 
@@ -1163,6 +1561,7 @@ class FamilyEvaluator:
                 task,
                 workspace_root=workspace_root,
                 clean_exit=clean_exit,
+                tool_records=tool_records,
             )
         if task.family == "repo_grounding":
             return self._evaluate_repo_grounding(
@@ -1199,6 +1598,88 @@ class FamilyEvaluator:
             if note in {"answer_contract_sentence_limit", "evidence_block_count", "invalid_citations"}
         )
         min_grounded_steps = int(task.success_evaluator.get("min_grounded_retrieval_steps", 0) or 0)
+        baseline_details = baseline.evaluation.details if isinstance(baseline.evaluation.details, dict) else {}
+        candidate_details = candidate.evaluation.details if isinstance(candidate.evaluation.details, dict) else {}
+        baseline_command_invoked = bool(baseline_details.get("command_invoked", True))
+        candidate_command_invoked = bool(candidate_details.get("command_invoked", True))
+        baseline_suspicious_noop_pass = bool(baseline_details.get("suspicious_noop_pass", False))
+        candidate_suspicious_noop_pass = bool(candidate_details.get("suspicious_noop_pass", False))
+        baseline_execution_contract_met = bool(
+            baseline_details.get("execution_contract_met", task.family != "execution_patch")
+        )
+        candidate_execution_contract_met = bool(
+            candidate_details.get("execution_contract_met", task.family != "execution_patch")
+        )
+        baseline_loop_recovery_triggers = _count_note_prefix(baseline.notes, "read_only_loop_recovery_step_")
+        candidate_loop_recovery_triggers = _count_note_prefix(candidate.notes, "read_only_loop_recovery_step_")
+        loop_recovery_asymmetry_delta = abs(baseline_loop_recovery_triggers - candidate_loop_recovery_triggers)
+        loop_recovery_asymmetry_material = candidate_loop_recovery_triggers > baseline_loop_recovery_triggers and (
+            loop_recovery_asymmetry_delta >= _LOOP_ASYMMETRY_DELTA_THRESHOLD
+            or candidate_loop_recovery_triggers >= _LOOP_ASYMMETRY_ABSOLUTE_THRESHOLD
+        )
+        baseline_adapter_contract_failure = baseline.local_failure == "adapter_payload_contract_error"
+        candidate_adapter_contract_failure = candidate.local_failure == "adapter_payload_contract_error"
+        baseline_premature_final_count = _count_note_prefix(baseline.notes, "premature_final_step_")
+        candidate_premature_final_count = _count_note_prefix(candidate.notes, "premature_final_step_")
+        baseline_tool_required_latch_active_count = self._count_turn_response_signal(
+            baseline, "tool_required_latch_active"
+        )
+        candidate_tool_required_latch_active_count = self._count_turn_response_signal(
+            candidate, "tool_required_latch_active"
+        )
+        baseline_constrained_tool_profile_active_count = self._count_turn_response_signal(
+            baseline, "constrained_tool_profile_active"
+        )
+        candidate_constrained_tool_profile_active_count = self._count_turn_response_signal(
+            candidate, "constrained_tool_profile_active"
+        )
+        integrity_artifact_flags: list[str] = []
+        integrity_asymmetry_flags: list[str] = []
+
+        def _append_once(target: list[str], value: str) -> None:
+            if value not in target:
+                target.append(value)
+
+        if not baseline_command_invoked or not candidate_command_invoked:
+            _append_once(integrity_artifact_flags, "command_not_executed_artifact")
+        if baseline_command_invoked != candidate_command_invoked:
+            _append_once(integrity_asymmetry_flags, "command_not_executed_asymmetry")
+        if baseline_adapter_contract_failure or candidate_adapter_contract_failure:
+            _append_once(integrity_artifact_flags, "adapter_payload_contract_error_artifact")
+        if baseline_adapter_contract_failure != candidate_adapter_contract_failure:
+            _append_once(integrity_asymmetry_flags, "adapter_payload_contract_error_asymmetry")
+        if baseline_suspicious_noop_pass or candidate_suspicious_noop_pass:
+            _append_once(integrity_artifact_flags, "suspicious_noop_pass_artifact")
+        if baseline_suspicious_noop_pass != candidate_suspicious_noop_pass:
+            _append_once(integrity_asymmetry_flags, "suspicious_noop_pass_asymmetry")
+        if task.family == "execution_patch" and (
+            not baseline_execution_contract_met or not candidate_execution_contract_met
+        ):
+            _append_once(integrity_artifact_flags, "execution_contract_not_met_artifact")
+        if task.family == "execution_patch" and baseline_execution_contract_met != candidate_execution_contract_met:
+            _append_once(integrity_asymmetry_flags, "execution_contract_asymmetry")
+        if baseline_loop_recovery_triggers != candidate_loop_recovery_triggers:
+            _append_once(integrity_asymmetry_flags, "read_only_loop_recovery_asymmetry")
+            if loop_recovery_asymmetry_material:
+                _append_once(integrity_asymmetry_flags, "read_only_loop_recovery_asymmetry_material")
+            else:
+                _append_once(integrity_asymmetry_flags, "read_only_loop_recovery_asymmetry_non_material")
+
+        decision_grade_blockers: list[str] = []
+        decision_grade_advisories: list[str] = []
+        if (
+            baseline.success
+            and candidate.success
+            and "read_only_loop_recovery_asymmetry" in integrity_asymmetry_flags
+            and loop_recovery_asymmetry_material
+        ):
+            decision_grade_blockers.append("read_only_loop_recovery_asymmetry_matched_pair")
+        elif (
+            baseline.success and candidate.success and "read_only_loop_recovery_asymmetry" in integrity_asymmetry_flags
+        ):
+            decision_grade_advisories.append("read_only_loop_recovery_asymmetry_below_materiality")
+        decision_grade = not integrity_artifact_flags and not decision_grade_blockers
+
         tool_engagement_stats = {
             "baseline_tool_calls": baseline.tool_calls,
             "tok_tool_calls": candidate.tool_calls,
@@ -1206,6 +1687,31 @@ class FamilyEvaluator:
             "tok_missing_grounded_retrieval_target": bool(
                 task.family == "repo_grounding" and min_grounded_steps > 0 and candidate.tool_calls < min_grounded_steps
             ),
+            "baseline_command_invoked": baseline_command_invoked,
+            "tok_command_invoked": candidate_command_invoked,
+            "baseline_suspicious_noop_pass": baseline_suspicious_noop_pass,
+            "tok_suspicious_noop_pass": candidate_suspicious_noop_pass,
+            "baseline_execution_contract_met": baseline_execution_contract_met,
+            "tok_execution_contract_met": candidate_execution_contract_met,
+            "baseline_loop_recovery_triggers": baseline_loop_recovery_triggers,
+            "tok_loop_recovery_triggers": candidate_loop_recovery_triggers,
+            "loop_recovery_asymmetry_delta": loop_recovery_asymmetry_delta,
+            "loop_recovery_asymmetry_material": loop_recovery_asymmetry_material,
+            "loop_recovery_asymmetry_delta_threshold": _LOOP_ASYMMETRY_DELTA_THRESHOLD,
+            "loop_recovery_asymmetry_absolute_threshold": _LOOP_ASYMMETRY_ABSOLUTE_THRESHOLD,
+            "baseline_premature_final_count": baseline_premature_final_count,
+            "tok_premature_final_count": candidate_premature_final_count,
+            "baseline_tool_required_latch_active_count": baseline_tool_required_latch_active_count,
+            "tok_tool_required_latch_active_count": candidate_tool_required_latch_active_count,
+            "baseline_constrained_tool_profile_active_count": baseline_constrained_tool_profile_active_count,
+            "tok_constrained_tool_profile_active_count": candidate_constrained_tool_profile_active_count,
+            "baseline_adapter_payload_contract_failure": baseline_adapter_contract_failure,
+            "tok_adapter_payload_contract_failure": candidate_adapter_contract_failure,
+            "integrity_artifact_flags": integrity_artifact_flags,
+            "integrity_asymmetry_flags": integrity_asymmetry_flags,
+            "decision_grade": decision_grade,
+            "decision_grade_blockers": decision_grade_blockers,
+            "decision_grade_advisories": decision_grade_advisories,
         }
         return BenchmarkComparisonRun(
             lane_id=lane_id,
@@ -1215,7 +1721,7 @@ class FamilyEvaluator:
             public_release=task.public_release,
             baseline_success=baseline.success,
             tok_success=candidate.success,
-            quality_gate_passed=candidate.success,
+            quality_gate_passed=candidate.success and not integrity_artifact_flags,
             total_token_delta=int(candidate.provider_usage["total_tokens"])
             - int(baseline.provider_usage["total_tokens"]),
             latency_delta_ms=float(candidate.provider_usage["latency_ms"])
@@ -1232,12 +1738,29 @@ class FamilyEvaluator:
             matched_completion_pair=baseline.success and candidate.success,
         )
 
+    def _count_turn_response_signal(self, run: BenchmarkTaskRunResult, signal_name: str) -> int:
+        count = 0
+        for turn in run.turns:
+            response_metrics = turn.get("response_metrics") if isinstance(turn, dict) else None
+            response_signals = (
+                response_metrics.get("response_behavior_signals") if isinstance(response_metrics, dict) else None
+            )
+            if not isinstance(response_signals, dict):
+                continue
+            raw_value = response_signals.get(signal_name, 0)
+            try:
+                count += int(raw_value)
+            except (TypeError, ValueError):
+                continue
+        return count
+
     def _evaluate_execution_patch(
         self,
         task: BenchmarkTaskManifest,
         *,
         workspace_root: Path,
         clean_exit: bool,
+        tool_records: list[ToolExecutionRecord],
     ) -> TaskEvaluationResult:
         hidden_spec = self._load_hidden_evaluator_spec(task)
         timeout_seconds = int(
@@ -1250,20 +1773,41 @@ class FamilyEvaluator:
         hidden_result = self._run_shell(hidden_command, cwd=workspace_root, timeout_seconds=timeout_seconds)
         modified_files = self._modified_files(workspace_root)
         allowed_paths_ok = all(path in task.allowed_paths for path in modified_files)
-        hidden_ok = hidden_result.returncode == 0
-        success = hidden_ok and allowed_paths_ok
+        command_invoked = hidden_result.command_invoked
+        expect_initial_hidden_failure = bool(task.success_evaluator.get("expect_initial_hidden_failure", False))
+        hidden_ok = command_invoked and hidden_result.returncode == 0
+        suspicious_noop_pass = bool(hidden_ok and not modified_files)
+        edit_file_calls = sum(1 for record in tool_records if record.canonical_tool_name == "edit_file")
+        run_tests_calls = sum(1 for record in tool_records if record.canonical_tool_name == "run_tests")
+        execution_contract_met = edit_file_calls > 0 and run_tests_calls > 0
+        initial_hidden_failure_gate_ok = True
+        if expect_initial_hidden_failure and suspicious_noop_pass:
+            initial_hidden_failure_gate_ok = False
+        success = (
+            hidden_ok and allowed_paths_ok and initial_hidden_failure_gate_ok and execution_contract_met and clean_exit
+        )
         notes: list[str] = []
+        if not command_invoked:
+            notes.append("hidden_tests_not_executed")
         if not hidden_ok:
             notes.append("hidden_tests_failed")
         if not allowed_paths_ok:
             notes.append("allowed_path_check_failed")
-        if task.success_evaluator.get("clean_exit_required") and not clean_exit:
-            notes.append("clean_exit_preferred")
+        if not initial_hidden_failure_gate_ok:
+            notes.append("initial_hidden_failure_not_observed")
+        if not execution_contract_met:
+            notes.append("execution_contract_not_met")
+        if not clean_exit:
+            notes.append("clean_exit_required_for_success")
         return TaskEvaluationResult(
             success=success,
             grounding_success=success,
             details={
                 "hidden_tests_command": hidden_command,
+                "command_invoked": command_invoked,
+                "command_argv": list(hidden_result.argv),
+                "command_returncode": hidden_result.returncode,
+                "command_execution_error": hidden_result.execution_error,
                 "hidden_tests_returncode": hidden_result.returncode,
                 "hidden_tests_output": _truncate(
                     _normalize_pytest_output((hidden_result.stdout or "") + (hidden_result.stderr or ""))
@@ -1271,6 +1815,12 @@ class FamilyEvaluator:
                 "evaluator_spec": task.evaluator_spec_ref(),
                 "modified_files": list(modified_files),
                 "allowed_paths_ok": allowed_paths_ok,
+                "expect_initial_hidden_failure": expect_initial_hidden_failure,
+                "initial_hidden_failure_gate_ok": initial_hidden_failure_gate_ok,
+                "suspicious_noop_pass": suspicious_noop_pass,
+                "execution_contract_met": execution_contract_met,
+                "execution_contract_edit_file_calls": edit_file_calls,
+                "execution_contract_run_tests_calls": run_tests_calls,
                 "clean_exit": clean_exit,
             },
             notes=tuple(notes),
@@ -1381,7 +1931,12 @@ class FamilyEvaluator:
                 success=success, grounding_success=grounding.grounding_success, details=details, notes=tuple(notes)
             )
 
-        execution = self._evaluate_execution_patch(task, workspace_root=workspace_root, clean_exit=clean_exit)
+        execution = self._evaluate_execution_patch(
+            task,
+            workspace_root=workspace_root,
+            clean_exit=clean_exit,
+            tool_records=tool_records,
+        )
         success = execution.success and invalid_tool_calls <= invalid_limit
         details = dict(execution.details)
         details["milestone_type"] = milestone_type or "patch_completion"
@@ -1443,23 +1998,22 @@ class FamilyEvaluator:
                 raise RuntimeError(msg)
         return dict(task.effective_family_payload())
 
-    def _run_shell(self, command: str, *, cwd: Path, timeout_seconds: int) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            command,
-            cwd=cwd,
-            shell=False,
-            executable="/bin/zsh",
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
+    def _run_shell(self, command: str, *, cwd: Path, timeout_seconds: int) -> ShellCommandResult:
+        return _run_zsh_command(command, cwd=cwd, timeout_seconds=timeout_seconds)
 
     def _modified_files(self, workspace_root: Path) -> tuple[str, ...]:
         completed = _git(["status", "--porcelain", "--untracked-files=no"], cwd=workspace_root)
         if completed.returncode != 0:
             return ()
-        paths = [line[3:].strip() for line in completed.stdout.splitlines() if line.strip()]
+        paths: list[str] = []
+        for raw_line in completed.stdout.splitlines():
+            if not raw_line.strip():
+                continue
+            path_field = raw_line[3:].strip() if len(raw_line) >= 4 else ""
+            if " -> " in path_field:
+                path_field = path_field.split(" -> ", 1)[1].strip()
+            if path_field:
+                paths.append(path_field)
         return tuple(sorted(paths))
 
     def _citations_valid(self, citations: list[str], supporting_spans: tuple[dict[str, Any], ...]) -> bool:
@@ -1518,6 +2072,15 @@ def _local_failure_code(exc: Exception) -> str:
     if "workspace source not found" in message:
         return "workspace_source_missing"
     return "task_materialization_failed"
+
+
+def _execution_failure_code(exc: Exception) -> str:
+    message = str(exc).lower()
+    if "object has no attribute 'strip'" in message and "list" in message:
+        return "adapter_payload_contract_error"
+    if 'object has no attribute "strip"' in message and "list" in message:
+        return "adapter_payload_contract_error"
+    return "task_execution_failed"
 
 
 def _materialization_failure_result(
@@ -1603,7 +2166,7 @@ def _execution_failure_result(
         tool_records=tuple(),
         turns=tuple(),
         evaluation=evaluation,
-        local_failure="task_execution_failed",
+        local_failure=_execution_failure_code(error),
         notes=("execution_failed",),
     )
     (output_root / "run.json").write_text(json.dumps(result.to_dict(), indent=2))
@@ -1623,6 +2186,7 @@ def run_catalog_benchmark_suite(
     local_debug: bool = False,
     runner: LiveBenchmarkRunner,
     repo_root: Path | None = None,
+    candidate_conditions: tuple[str, ...] = ("tok-universal",),
 ) -> CatalogBenchmarkRun:
     lane = catalog.lane_by_id(lane_id)
     tasks = select_catalog_tasks(
@@ -1638,13 +2202,29 @@ def run_catalog_benchmark_suite(
     evaluator = FamilyEvaluator(catalog_root=catalog_root)
     comparison_runs: list[BenchmarkComparisonRun] = []
     selected_task_ids = tuple(task.id for task in tasks)
+    unique_candidates: list[str] = []
+    for condition in candidate_conditions:
+        normalized = str(condition or "").strip()
+        if not normalized:
+            continue
+        if normalized == "baseline":
+            msg = "candidate_conditions must not include baseline"
+            raise ValueError(msg)
+        if normalized in unique_candidates:
+            continue
+        unique_candidates.append(normalized)
+    if not unique_candidates:
+        msg = "candidate_conditions must include at least one condition"
+        raise ValueError(msg)
+    primary_candidate = "tok-universal" if "tok-universal" in unique_candidates else unique_candidates[0]
+    condition_order = ("baseline", *tuple(unique_candidates))
 
     output_root.mkdir(parents=True, exist_ok=True)
     evaluator.validate_execution_evaluators(tasks)
     for task in tasks:
         for repeat_index in range(1, max(1, repeats) + 1):
             pair_results: dict[str, BenchmarkTaskRunResult] = {}
-            for condition in ("baseline", "tok-universal"):
+            for condition in condition_order:
                 task_output = output_root / "tasks" / task.id / f"repeat_{repeat_index}" / condition
                 try:
                     materialized = materializer.materialize(
@@ -1685,11 +2265,25 @@ def run_catalog_benchmark_suite(
                 lane_id=lane.id,
                 repeat_index=repeat_index,
                 baseline=pair_results["baseline"],
-                candidate=pair_results["tok-universal"],
+                candidate=pair_results[primary_candidate],
             )
             comparison_runs.append(comparison)
             compare_path = output_root / "tasks" / task.id / f"repeat_{repeat_index}" / "compare.json"
             compare_path.write_text(json.dumps(comparison.to_dict(), indent=2))
+            for condition in unique_candidates:
+                if condition == primary_candidate:
+                    continue
+                extra_comparison = evaluator.compare_pair(
+                    task=task,
+                    lane_id=lane.id,
+                    repeat_index=repeat_index,
+                    baseline=pair_results["baseline"],
+                    candidate=pair_results[condition],
+                )
+                extra_compare_path = (
+                    output_root / "tasks" / task.id / f"repeat_{repeat_index}" / f"compare_{condition}.json"
+                )
+                extra_compare_path.write_text(json.dumps(extra_comparison.to_dict(), indent=2))
 
     report = build_benchmark_report(
         catalog,

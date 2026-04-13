@@ -7,6 +7,9 @@ import os
 import re
 from typing import Any
 
+from tok.runtime.config import TOK_ENABLE_JSON_NONEXPANSION_GUARD
+from tok.utils.token_utils import count_tokens
+
 __all__ = [
     "_compress_config_json",
     "_compress_env_ps",
@@ -38,11 +41,27 @@ _GREP_ADVISORY_TOKEN_THRESHOLD = 2000  # Estimated tokens
 # This is a module-level cache that gets cleared between sessions
 _advisory_cooldown: dict[str, int] = {}
 _ADVISORY_COOLDOWN_TURNS = 3
+_TOK_CLI_TOKEN_RE = re.compile(r"(?<![\w./-])tok(?![\w-])")
 
 
 def _estimate_tokens(text: str) -> int:
     """Rough token estimation: ~4 chars per token on average for code."""
     return len(text) // 4
+
+
+def _is_tok_cli_command(command: str) -> bool:
+    """
+    Best-effort detection of tok CLI invocations in shell command strings.
+
+    Handles direct calls (`tok stats`) and common wrappers (`env X=1 tok ...`,
+    `bash -lc 'tok ...'`, `uv run tok ...`).
+    """
+    cleaned = " ".join((command or "").strip().split())
+    if not cleaned:
+        return False
+    if cleaned.startswith("tok "):
+        return True
+    return bool(_TOK_CLI_TOKEN_RE.search(cleaned))
 
 
 def _build_search_advisory(
@@ -332,7 +351,10 @@ def _compress_grep(text: str) -> str:
     return "\n".join(result)
 
 
-def _compress_repetitive(text: str) -> str:
+def _compress_repetitive(text: str, command: str = "") -> str:
+    if _is_tok_cli_command(command):
+        return text
+
     lines = text.splitlines()
     result: list[str] = []
     i = 0
@@ -520,6 +542,7 @@ def _compress_ls(text: str) -> str:
 
     names: list[str] = []
     dirs: list[str] = []
+    name_to_info: dict[str, str] = {}
 
     for line in lines:
         if is_la:
@@ -533,6 +556,10 @@ def _compress_ls(text: str) -> str:
                 dirs.append(name)
             else:
                 names.append(name)
+                # If we have size info (typical ls -la), keep it
+                if len(parts) >= 5:
+                    size = parts[-5]
+                    name_to_info[name] = size
         else:
             names.append(line.strip())
 
@@ -546,12 +573,22 @@ def _compress_ls(text: str) -> str:
             unusual.append(name)
 
     result_lines = [f">>> tool:ls|total:{len(names) + len(dirs)}|dirs:{len(dirs)}"]
-    for ext, count in sorted(ext_counts.items(), key=lambda item: -item[1]):
-        result_lines.append(f"  .{ext}: {count}")
+
+    # If small directory, include actual filenames
+    if len(names) > 0 and len(names) <= 20:
+        file_list = []
+        for n in names:
+            info = name_to_info.get(n)
+            file_list.append(f"{n} ({info})" if info else n)
+        result_lines.append(f"  files: {', '.join(file_list)}")
+    else:
+        for ext, count in sorted(ext_counts.items(), key=lambda item: -item[1]):
+            result_lines.append(f"  .{ext}: {count}")
+        if unusual:
+            result_lines.append(f"  other: {', '.join(unusual[:10])}" + (" ..." if len(unusual) > 10 else ""))
+
     if dirs:
         result_lines.append(f"  dirs: {', '.join(dirs[:10])}" + (" ..." if len(dirs) > 10 else ""))
-    if unusual:
-        result_lines.append(f"  other: {', '.join(unusual[:10])}" + (" ..." if len(unusual) > 10 else ""))
 
     result = "\n".join(result_lines)
     if len(result) >= len(text):
@@ -571,6 +608,10 @@ _INSTALL_SUMMARY_RE = re.compile(
     r"(Successfully installed|installed \d+|added \d+|in \d+\.\d+s|\d+ packages?)",
     re.IGNORECASE,
 )
+_INSTALL_FAILURE_SIGNAL_RE = re.compile(
+    r"(\berror\b|\bfailed\b|traceback|exception|npm err!|pip subprocess|could not build wheels)",
+    re.IGNORECASE,
+)
 
 
 def _compress_install(text: str) -> str:
@@ -579,8 +620,11 @@ def _compress_install(text: str) -> str:
     summary_line = ""
     packages = 0
     duration = ""
+    failure_index: int | None = None
 
-    for line in lines:
+    for idx, line in enumerate(lines):
+        if failure_index is None and _INSTALL_FAILURE_SIGNAL_RE.search(line):
+            failure_index = idx
         if _INSTALL_SUMMARY_RE.search(line):
             summary_line = line
             match = re.search(r"in\s+(\d+\.\d+s)", line)
@@ -594,6 +638,13 @@ def _compress_install(text: str) -> str:
             packages += 1
             continue
         kept.append(line)
+
+    if failure_index is not None:
+        start = max(0, failure_index - 2)
+        failure_tail = lines[start:]
+        header = f">>> tool:install|packages:{packages}|duration:{duration or 'unknown'}|status:failed"
+        result = header + "\n" + "\n".join(failure_tail)
+        return result if len(result) < len(text) else text
 
     if summary_line:
         kept.append(summary_line)
@@ -927,7 +978,10 @@ def _compress_config_json(text: str) -> str:
         compressed = json.dumps(skeleton, indent=2)
 
         header = f">>> tool:json_skeleton|original_chars:{len(text)}|saved_chars:{len(text) - len(compressed)}"
-        return header + "\n" + compressed
+        candidate = header + "\n" + compressed
+        if TOK_ENABLE_JSON_NONEXPANSION_GUARD and count_tokens(candidate) >= count_tokens(text):
+            return text
+        return candidate if len(candidate) < len(text) else text
     except Exception:
         return text
 

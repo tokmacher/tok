@@ -32,17 +32,14 @@ from .config import (
     TOK_HOT_FILE_MAX_LINES,
     TOK_HOT_SEARCH_MAX_CHARS,
     TOK_HOT_SEARCH_MAX_LINES,
-    TOK_LARGE_FILE_HINT,
     TOK_NEIGHBORHOOD_TRIGGER_ANCHORS,
     TOK_NEIGHBORHOOD_WINDOW_TURNS,
     TOK_REACQUIRE_STUCK_COUNT,
     TOK_REACQUIRE_STUCK_WINDOW_TURNS,
     TOK_REACQUIRE_TRIGGER_COUNT,
     TOK_REACQUIRE_WINDOW_TURNS,
-    TOK_READ_PLAN_HINT,
-    TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
     TOK_REQUEST_POLICY_STICKY_TURNS,
-    TOK_STABLE_RESULT_INFO_HINT,
+    TOK_TOOL_REQUIRED_LATCH_THRESHOLD,
     TOOL_USE_DENSITY_THRESHOLD,
 )
 from .core import UniversalTokRuntime, logger
@@ -50,6 +47,7 @@ from .memory.bridge_memory import clean_system_context
 from .memory.session_helpers import extract_memory_items
 from .pipeline.request_preparation import (
     _capture_repeat_target_snapshots,
+    _has_unresolved_tool_required_conditions,
     _inject_system,
     _is_answer_ready_turn,
     _is_read_only_audit_turn,
@@ -92,6 +90,7 @@ _DEFAULT_SPECULATIVE_HIT_THRESHOLD = 2
 _BRIDGE_CUT_SEARCH_MAX_EXTRA_TURNS = 4
 _BRIDGE_CUT_SEARCH_MIN_SAVED_TOKENS = 16
 _STRUCTURED_ANSWER_LABEL_RE = re.compile(r"(?<![\w-])(file|verification|related)(?![\w-])\s*[:=]", re.IGNORECASE)
+_PATCH_TOOL_PROFILE_TOOLS = frozenset({"list_dir", "view_file", "grep_search", "edit_file", "run_tests"})
 
 
 def _env_int_or_default(name: str, default: int) -> int:
@@ -99,6 +98,25 @@ def _env_int_or_default(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _has_exact_search_evidence(evidence_keys: set[str]) -> bool:
+    for key in evidence_keys:
+        if str(key).startswith("search|"):
+            return True
+    return False
+
+
+def _is_constrained_patch_tool_profile(request: RuntimeRequest) -> bool:
+    allowed_tools = request.allowed_tools or ()
+    if not allowed_tools:
+        return False
+    normalized = {str(tool).strip().lower() for tool in allowed_tools if str(tool).strip()}
+    if not normalized:
+        return False
+    if not {"edit_file", "run_tests"}.issubset(normalized):
+        return False
+    return normalized.issubset(_PATCH_TOOL_PROFILE_TOOLS)
 
 
 def _extract_requested_answer_labels(text: str) -> tuple[str, ...]:
@@ -139,9 +157,12 @@ def _bridge_candidate_body(
     request: RuntimeRequest,
     messages: list[dict[str, Any]],
     system: Any,
+    seen_mutation_pairs: set[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     candidate_body = {"model": request.model, "messages": messages, "system": system}
-    canonical_body, changed, canonical_signals = canonicalize_anthropic_bridge_body(candidate_body)
+    canonical_body, changed, canonical_signals = canonicalize_anthropic_bridge_body(
+        candidate_body, seen_mutation_pairs=seen_mutation_pairs
+    )
     if changed:
         candidate_body = canonical_body
     return candidate_body, dict(canonical_signals)
@@ -154,11 +175,13 @@ def _bridge_history_cut_candidate(
     messages: list[dict[str, Any]],
     system: Any,
     history_baseline_prompt_tokens: int,
+    seen_mutation_pairs: set[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, int], int] | None:
     candidate_body, canonical_signals = _bridge_candidate_body(
         request=request,
         messages=messages,
         system=system,
+        seen_mutation_pairs=seen_mutation_pairs,
     )
     if validate_anthropic_bridge_body(candidate_body):
         return None
@@ -445,6 +468,89 @@ def _messages_contain_tool_material(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _assistant_tool_use_ids(message: dict[str, Any]) -> set[str]:
+    if str(message.get("role", "")).strip() != "assistant":
+        return set()
+    content = message.get("content")
+    if not isinstance(content, list):
+        return set()
+    return {
+        str(block.get("id", "")).strip()
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "tool_use" and str(block.get("id", "")).strip()
+    }
+
+
+def _message_tool_result_ids(message: dict[str, Any]) -> set[str]:
+    if str(message.get("role", "")).strip() == "tool_result":
+        tool_use_id = str(message.get("tool_use_id", "")).strip()
+        return {tool_use_id} if tool_use_id else set()
+    content = message.get("content")
+    if not isinstance(content, list):
+        return set()
+    return {
+        str(block.get("tool_use_id", "")).strip()
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "tool_result" and str(block.get("tool_use_id", "")).strip()
+    }
+
+
+def _bridge_recent_suffix_has_safe_pairing(messages: list[dict[str, Any]]) -> bool:
+    """
+    Validate immediate assistant tool_use -> next-user tool_result pairing.
+
+    This is a lightweight preflight guard to skip known-bad cut candidates
+    before canonicalization/validation.
+    """
+    if not messages:
+        return False
+    first = messages[0]
+    if not isinstance(first, dict) or str(first.get("role", "")).strip() != "user":
+        return False
+    if _message_has_tool_result(first):
+        return False
+
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            return False
+        tool_ids = _assistant_tool_use_ids(message)
+        if not tool_ids:
+            continue
+        if index + 1 >= len(messages):
+            return False
+        next_message = messages[index + 1]
+        if not isinstance(next_message, dict) or str(next_message.get("role", "")).strip() != "user":
+            return False
+        if not _message_has_tool_result(next_message):
+            return False
+        next_content = next_message.get("content")
+        if isinstance(next_content, list):
+            # Enforce immediate pairing-only user payload (no mixed text/tool_result).
+            if any(not (isinstance(block, dict) and block.get("type") == "tool_result") for block in next_content):
+                return False
+        result_ids = _message_tool_result_ids(next_message)
+        if not tool_ids.issubset(result_ids):
+            return False
+    return True
+
+
+def _bridge_preflight_safe_recent_suffix(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    """
+    Advance candidate history cut to the next user-starting safe boundary.
+    """
+    for start_index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role", "")).strip() != "user":
+            continue
+        if _message_has_tool_result(message):
+            continue
+        candidate = messages[start_index:]
+        if _bridge_recent_suffix_has_safe_pairing(candidate):
+            return candidate
+    return None
+
+
 def _resolve_effective_tool_compatible(
     request: RuntimeRequest,
     session: _core.RuntimeSession,
@@ -612,6 +718,14 @@ def prepare_request_impl(
     session._request_has_tools = bool(request.request_has_tools)
     session._answer_phase_expected_this_turn = False
     session._natural_response_acceptable_this_turn = False
+    initial_answer_facts_present = any(
+        entry.value.startswith("answer_")
+        for bucket in (session.bridge_memory.hot, session.bridge_memory.durable)
+        for entry in bucket.get("facts", [])
+    )
+    initial_exact_search_evidence_present = _has_exact_search_evidence(
+        session._first_exact_evidence_seen | session._pending_exact_evidence_keys
+    )
 
     body: dict[str, Any] = {
         "model": request.model,
@@ -625,6 +739,7 @@ def prepare_request_impl(
     compressed = False
 
     _pre_existing_session_signals = dict(session.pending_behavior_signals)
+    seen_mutation_pairs: set[tuple[str, str]] = set()
 
     last_user_msg = ""
     if request.messages:
@@ -672,21 +787,6 @@ def prepare_request_impl(
             session.pending_behavior_signals["jit_offer_context_filtered"] = 1
 
     _speculative_macro_hint: str | None = None
-    if session.bridge_memory.load_global_macros:
-        speculative_hit_threshold = _env_int_or_default(
-            "TOK_SPECULATIVE_HIT_THRESHOLD",
-            _DEFAULT_SPECULATIVE_HIT_THRESHOLD,
-        )
-        _spec_names = [
-            f"@{m.name}"
-            for m in session.bridge_memory.macro_registry.macros.values()
-            if m.hit_count >= speculative_hit_threshold and _jit_context_matches(m, session)
-        ]
-        if _spec_names:
-            _speculative_macro_hint = (
-                "Available macros for current context: " + ", ".join(sorted(_spec_names)) + ". Use @name to invoke."
-            )
-            session.pending_behavior_signals["speculative_macros_injected"] = len(_spec_names)
 
     id_to_context = build_tool_use_id_to_context(translated_messages)
     suppress_reacquisition_once = session._stream_recovery_reacquisition_budget > 0
@@ -744,6 +844,7 @@ def prepare_request_impl(
     request_policy = request.request_policy
     previous_effective_tool_compatible = session._request_policy_last_effective_tool_compatible
     effective_tool_compatible = request.tool_compatible and request_policy == "legacy_tool_compatible"
+    constrained_tool_profile = _is_constrained_patch_tool_profile(request)
     request_policy_reasons: list[str] = ["legacy_default"] if effective_tool_compatible else []
     request_policy_escalated = False
 
@@ -861,40 +962,48 @@ def prepare_request_impl(
         session._natural_response_acceptable_this_turn = bool(
             request_policy == "natural_first" and request.tool_compatible and not effective_tool_compatible
         )
+        if effective_tool_compatible and constrained_tool_profile:
+            behavior_signals["constrained_tool_profile_active"] = 1
 
-        runtime_hints = [_speculative_macro_hint] if _speculative_macro_hint else []
-        answer_phase_expected = (
-            effective_tool_compatible
-            and not session._baseline_only
-            and (
-                session._answer_ready_repair_pending
-                or session._late_answer_followthrough_pending
-                or session._late_answer_assembly_repair_pending
-            )
-        )
+        runtime_hints = []
+        answer_phase_expected = False
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
-            runtime_hints.append(TOK_REPEAT_COMMAND_SUPPRESSION_HINT)
-            behavior_signals["repeat_command_suppression_hint_injected"] = 1
+            behavior_signals["repeat_command_suppression_hint_injected"] = 0
         file_read_count = sum(
             1 for event in normalized_tool_events if getattr(event, "compressibility_class", "") == "file_read"
         )
         if (
             effective_tool_compatible
             and not answer_phase_expected
+            and not constrained_tool_profile
             and (
                 file_read_count >= FILE_READ_DENSITY_THRESHOLD
                 or len(normalized_tool_events) >= TOOL_USE_DENSITY_THRESHOLD
             )
         ):
-            runtime_hints.append(TOK_READ_PLAN_HINT)
-            behavior_signals["read_plan_hint_injected"] = 1
-        if effective_tool_compatible and not answer_phase_expected:
-            runtime_hints.append(TOK_LARGE_FILE_HINT)
+            behavior_signals["read_plan_hint_injected"] = 0
+        if effective_tool_compatible and not answer_phase_expected and not constrained_tool_profile:
+            pass
+        if effective_tool_compatible and constrained_tool_profile:
+            behavior_signals["constrained_tool_profile_generic_hints_suppressed"] = 1
         answer_ready = False
         resend_signals: dict[str, int] = {}
         has_answer_anchor = False
         preserve_exact_search_evidence = False
         read_only_audit_turn = effective_tool_compatible and _is_read_only_audit_turn(translated_messages)
+        tool_required_unresolved = _has_unresolved_tool_required_conditions(translated_messages)
+        if effective_tool_compatible and not session._baseline_only and tool_required_unresolved:
+            session._tool_required_latch_streak += 1
+            behavior_signals["tool_required_condition_unresolved"] = 1
+        else:
+            session._tool_required_latch_streak = 0
+        tool_required_latch_active = (
+            effective_tool_compatible
+            and not session._baseline_only
+            and session._tool_required_latch_streak >= TOK_TOOL_REQUIRED_LATCH_THRESHOLD
+        )
+        if tool_required_latch_active:
+            behavior_signals["tool_required_latch_active"] = 1
         late_answer_followthrough_active = (
             effective_tool_compatible
             and session._late_answer_followthrough_pending
@@ -931,21 +1040,25 @@ def prepare_request_impl(
                 behavior_signals[key] = behavior_signals.get(key, 0) + value
 
         if effective_tool_compatible:
-            has_answer_facts = any(
+            has_answer_facts = initial_answer_facts_present or any(
                 entry.value.startswith("answer_")
                 for bucket in (session.bridge_memory.hot, session.bridge_memory.durable)
                 for entry in bucket.get("facts", [])
             )
-            seen_exact_evidence = bool(session._first_exact_evidence_seen or session._pending_exact_evidence_keys)
-            has_answer_anchor = bool(has_answer_facts or seen_exact_evidence)
+            seen_exact_search_evidence = initial_exact_search_evidence_present or _has_exact_search_evidence(
+                session._first_exact_evidence_seen | session._pending_exact_evidence_keys
+            )
+            has_answer_anchor = bool(has_answer_facts or seen_exact_search_evidence)
             answer_ready_turn = _is_answer_ready_turn(
                 translated_messages,
                 tool_compatible=effective_tool_compatible,
                 has_answer_anchor=has_answer_anchor,
                 baseline_only=session._baseline_only,
             )
+            if tool_required_latch_active:
+                answer_ready_turn = False
             if answer_ready_turn:
-                answer_phase_expected = True
+                pass
             preserve_exact_search_evidence = bool(answer_ready_turn and has_answer_anchor)
         session._answer_phase_expected_this_turn = bool(answer_phase_expected)
 
@@ -977,12 +1090,9 @@ def prepare_request_impl(
             semantic_dedup_hits = type_breakdown.get("semantic_dedup", 0)
             if semantic_dedup_hits > 0:
                 behavior_signals["semantic_dedup_hit"] = behavior_signals.get("semantic_dedup_hit", 0) + 1
-                if effective_tool_compatible:
-                    from tok.compression import _STABLE_RESULT_EXPLANATION
+                from tok.compression import _STABLE_RESULT_EXPLANATION
 
-                    runtime_hints.append(_STABLE_RESULT_EXPLANATION)
-                else:
-                    runtime_hints.append(TOK_STABLE_RESULT_INFO_HINT)
+                runtime_hints.append(_STABLE_RESULT_EXPLANATION)
             if type_breakdown.get("stable_payload_validation_failed", 0) > 0:
                 behavior_signals["stable_payload_validation_failed"] = (
                     behavior_signals.get("stable_payload_validation_failed", 0)
@@ -998,7 +1108,12 @@ def prepare_request_impl(
             keep_turns = 0
             session._tok_memory_snap_triggered = 0
 
-        if stream_recovery_history_floor_active:
+        if preserve_exact_search_evidence:
+            should_skip_history = True
+            skip_reason = "answer_ready_exact_search_evidence"
+            history_skip_reason = skip_reason
+            behavior_signals["answer_ready_exact_search_evidence_history_preserved"] = 1
+        elif stream_recovery_history_floor_active:
             should_skip_history = True
             skip_reason = "stream_recovery_history_floor"
             history_skip_reason = skip_reason
@@ -1068,14 +1183,21 @@ def prepare_request_impl(
                 )
                 bridge_search_success = False
 
+                safe_recent = _bridge_preflight_safe_recent_suffix(recent)
+                if safe_recent is not None:
+                    recent = safe_recent
+                else:
+                    bridge_candidate_had_invalid = True
+
                 bridge_candidate = _bridge_history_cut_candidate(
                     session=session,
                     request=request,
                     messages=recent,
                     system=body.get("system", ""),
                     history_baseline_prompt_tokens=history_baseline_prompt_tokens,
+                    seen_mutation_pairs=seen_mutation_pairs,
                 )
-                if bridge_candidate is not None:
+                if safe_recent is not None and bridge_candidate is not None:
                     candidate_body, canonical_signals, candidate_saved_prompt_tokens = bridge_candidate
                     if candidate_saved_prompt_tokens >= bridge_min_saved_prompt_tokens:
                         recent = candidate_body["messages"]
@@ -1085,6 +1207,8 @@ def prepare_request_impl(
                         for k, v in recent_breakdown.items():
                             type_breakdown[f"recent_{k}"] = type_breakdown.get(f"recent_{k}", 0) + v
                         bridge_search_success = True
+                elif safe_recent is not None:
+                    bridge_candidate_had_invalid = True
                 else:
                     bridge_candidate_had_invalid = True
 
@@ -1104,12 +1228,17 @@ def prepare_request_impl(
                             first_exact_evidence_seen=session._first_exact_evidence_seen,
                             preserve_exact_search_evidence=preserve_exact_search_evidence,
                         )
+                        candidate_recent = _bridge_preflight_safe_recent_suffix(candidate_recent) or []
+                        if not candidate_recent:
+                            bridge_candidate_had_invalid = True
+                            continue
                         bridge_candidate = _bridge_history_cut_candidate(
                             session=session,
                             request=request,
                             messages=candidate_recent,
                             system=body.get("system", ""),
                             history_baseline_prompt_tokens=history_baseline_prompt_tokens,
+                            seen_mutation_pairs=seen_mutation_pairs,
                         )
                         if bridge_candidate is None:
                             bridge_candidate_had_invalid = True
@@ -1130,13 +1259,14 @@ def prepare_request_impl(
                             bridge_search_success = True
                             break
                     if not bridge_search_success:
-                        recent = body["messages"]
-                        tok_state = ""
-                        recent_breakdown = {}
                         if bridge_candidate_had_invalid:
                             logger.warning(
                                 "tok_history_pairing_safety_degraded: rejecting compressed history that breaks immediate tool-result pairing"
                             )
+                        recent = body["messages"]
+                        tok_state = ""
+                        recent_breakdown = {}
+                        if bridge_candidate_had_invalid:
                             behavior_signals["tok_history_pairing_safety_degraded"] = 1
                         # Immediate escalation: if natural_first and pairing safety degraded,
                         # escalate to tool-compatible mode now rather than waiting for next turn
@@ -1238,20 +1368,17 @@ def prepare_request_impl(
                     translated_messages=translated_messages,
                     should_skip_history=should_skip_history,
                     _recent_messages=recent,
+                    has_answer_anchor_param=has_answer_anchor,
                 )
-                answer_phase_now = bool(
-                    answer_ready
-                    or session._answer_ready_repair_active
-                    or session._late_answer_followthrough_active
-                    or session._late_answer_assembly_repair_active
-                )
+                answer_phase_now = False
                 session._answer_phase_expected_this_turn = answer_phase_now
                 if answer_phase_now and runtime_hints:
-                    runtime_hints = [
-                        hint for hint in runtime_hints if hint not in {TOK_READ_PLAN_HINT, TOK_LARGE_FILE_HINT}
-                    ]
-                if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
-                    runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
+                    runtime_hints = []
+                max_runtime_hints = 1 if constrained_tool_profile else RUNTIME_HINTS_MAX_PER_TURN
+                if len(runtime_hints) > max_runtime_hints:
+                    runtime_hints = runtime_hints[:max_runtime_hints]
+                    if constrained_tool_profile:
+                        behavior_signals["constrained_tool_profile_hint_cap_applied"] = 1
                 body = _inject_system(
                     body,
                     injected_state_payload,
@@ -1268,8 +1395,11 @@ def prepare_request_impl(
             # Short session: skip ALL Tok additions to avoid overhead
             behavior_signals["short_session_system_additions_skipped"] = 1
         else:
-            if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
-                runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
+            max_runtime_hints = 1 if constrained_tool_profile else RUNTIME_HINTS_MAX_PER_TURN
+            if len(runtime_hints) > max_runtime_hints:
+                runtime_hints = runtime_hints[:max_runtime_hints]
+                if constrained_tool_profile:
+                    behavior_signals["constrained_tool_profile_hint_cap_applied"] = 1
             system_body = inject_system_additions(
                 body,
                 tok_state=session_memory,
@@ -1349,7 +1479,7 @@ def prepare_request_impl(
         session._pending_exact_evidence_keys.clear()
 
     canonical_body, canonicalized, canonical_signals = (
-        canonicalize_anthropic_bridge_body(body)
+        canonicalize_anthropic_bridge_body(body, seen_mutation_pairs=seen_mutation_pairs)
         if request.adapter_kind in ("claude-bridge", "orchestrator")
         else (body, False, {})
     )

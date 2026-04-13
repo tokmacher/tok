@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+from tok.gateway import BridgeSession
 from tok.gateway._bridge_runtime_pipeline import BridgePreparedPayload
 from tok.gateway._request_policy import default_request_policy
 from tok.testing.live_benchmark import (
@@ -9,6 +10,7 @@ from tok.testing.live_benchmark import (
     BenchmarkResult,
     LiveBenchmarkRunner,
     ProviderUsageSnapshot,
+    _adapt_tool_results_for_openai,
     _chunk_messages,
     _turn_prompts,
     compare_results,
@@ -24,7 +26,7 @@ from tok.testing.live_benchmark import (
 
 
 class _FakeCompletions:
-    def __init__(self, content: str, prompt_tokens: int, completion_tokens: int) -> None:
+    def __init__(self, content: Any, prompt_tokens: int, completion_tokens: int) -> None:
         self._response = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
             usage=SimpleNamespace(
@@ -41,11 +43,35 @@ class _FakeCompletions:
 class _FakeClient:
     def __init__(
         self,
-        content: str,
+        content: Any,
         prompt_tokens: int = 100,
         completion_tokens: int = 20,
     ) -> None:
         self.chat = SimpleNamespace(completions=_FakeCompletions(content, prompt_tokens, completion_tokens))
+
+
+class _FakeOpenAIProtocolRetryCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            raise RuntimeError("Error code: 400 - No tool call found for function call output with call_id call_1")
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="File=src/tok/gateway.py\nVerification=pytest"))],
+            usage=SimpleNamespace(prompt_tokens=120, completion_tokens=25, total_tokens=145),
+        )
+
+
+class _AlwaysFailCompletions:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def create(self, **kwargs):
+        del kwargs
+        self.calls += 1
+        raise RuntimeError("Error code: 500 - internal provider fault")
 
 
 def _result(
@@ -272,6 +298,75 @@ def test_bridge_fixture_normalization_downgrades_orphan_tool_results_to_text() -
     assert normalized[3]["role"] == "user"
     assert isinstance(normalized[3]["content"], str)
     assert normalized[3]["content"].startswith("Tool result (n7):")
+
+
+def test_adapt_tool_results_for_openai_converts_tool_use_and_tool_result_pairing() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Checking file first."},
+                {"type": "tool_use", "id": "call_1", "name": "view_file", "input": {"path": "src/app.py"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "call_1", "content": "def run() -> None:\n    pass"},
+            ],
+        },
+    ]
+
+    adapted = _adapt_tool_results_for_openai(messages)
+
+    assert adapted[0]["role"] == "assistant"
+    assert adapted[0]["content"] == "Checking file first."
+    assert adapted[0]["tool_calls"][0]["id"] == "call_1"
+    assert adapted[0]["tool_calls"][0]["function"]["name"] == "view_file"
+    assert adapted[1] == {"role": "tool", "tool_call_id": "call_1", "content": "def run() -> None:\n    pass"}
+
+
+def test_adapt_tool_results_for_openai_keeps_mixed_user_content_when_tool_result_present() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "call_2", "name": "grep_search", "input": {"pattern": "foo"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "call_2", "content": "src/app.py:12: foo()"},
+                {"type": "text", "text": "Thanks, continue."},
+            ],
+        },
+    ]
+
+    adapted = _adapt_tool_results_for_openai(messages)
+
+    assert adapted[0]["role"] == "assistant"
+    assert adapted[1] == {"role": "tool", "tool_call_id": "call_2", "content": "src/app.py:12: foo()"}
+    assert adapted[2] == {"role": "user", "content": "Thanks, continue."}
+
+
+def test_adapt_tool_results_for_openai_downgrades_orphan_tool_result_to_text() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "call_3", "name": "view_file", "input": {"path": "src/app.py"}},
+            ],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_3", "content": "ok"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_3", "content": "replayed"}]},
+    ]
+
+    adapted = _adapt_tool_results_for_openai(messages)
+
+    assert adapted[1] == {"role": "tool", "tool_call_id": "call_3", "content": "ok"}
+    assert adapted[2]["role"] == "user"
+    assert adapted[2]["content"] == "Tool result (call_3): replayed"
 
 
 def test_compare_results_emits_bootstrap_diagnosis() -> None:
@@ -764,6 +859,105 @@ def test_live_benchmark_tok_universal_plain_structured_answer_avoids_contract_fr
     assert result.task_success is True
     assert result.diagnostics["response_warning_signal_count"] == 0
     assert "response_contract_friction_detected" not in result.notes
+
+
+def test_live_benchmark_tok_universal_handles_list_content_without_strip_failures(tmp_path) -> None:
+    fixture = tmp_path / "fixture.jsonl"
+    fixture.write_text(json.dumps({"messages": [{"role": "user", "content": "Inspect gateway"}]}) + "\n")
+    definition = BenchmarkDefinition(
+        name="coding-loop",
+        fixture_path=fixture,
+        system_prompt="You are analyzing a coding loop.",
+        followup_prompt="File=<the file that was changed>\nVerification=<the result>",
+        success_terms=("gateway.py", "passed"),
+        min_success_terms=2,
+        expected_file_terms=("gateway.py",),
+        expected_verification_terms=("passed", "pytest"),
+    )
+    runner = LiveBenchmarkRunner(
+        model="deepseek/deepseek-v3.2",
+        client=_FakeClient(
+            [
+                {"type": "text", "text": "File=src/tok/gateway.py\nVerification=pytest passed"},
+            ]
+        ),
+    )
+
+    result = runner.run(definition, mode="tok-universal", turns=1)
+
+    assert isinstance(result.raw_response, str)
+    assert "File=src/tok/gateway.py" in result.raw_response
+
+
+def test_live_benchmark_retries_once_on_tool_protocol_pairing_400(tmp_path) -> None:
+    completions = _FakeOpenAIProtocolRetryCompletions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    runner = LiveBenchmarkRunner(model="openai/gpt-4.1", client=client, provider="openrouter")
+    bridge_session = BridgeSession(memory_dir=tmp_path / "bridge_mem")
+    session = bridge_session.runtime_session
+    conversation = [
+        {"role": "user", "content": "Inspect gateway."},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/gateway.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "class Gateway:\n    pass"}],
+        },
+        {
+            "role": "user",
+            "content": "File=<the file that was changed>\nVerification=<the result>",
+        },
+    ]
+    step = runner.run_conversation_step(
+        conversation=conversation,
+        system_prompt="You are analyzing a coding loop.",
+        mode="tok-universal",
+        session=session,
+        bridge_session=bridge_session,
+        allowed_tools=("view_file",),
+    )
+
+    assert len(completions.calls) == 2
+    first_call = completions.calls[0]
+    second_call = completions.calls[1]
+    assert "tools" in first_call
+    assert "tools" not in second_call
+    assert all(isinstance(message.get("content"), str) for message in second_call["messages"])
+    assert step.diagnostics["tool_protocol_retry_count"] == 1
+    assert step.diagnostics["tool_protocol_retry_success"] == 1
+    assert step.diagnostics["tool_protocol_retry_reason"] == "missing_tool_call_for_call_id"
+    assert step.diagnostics["tool_protocol_retry_mode"] == "safe_provider_text_history"
+
+
+def test_live_benchmark_does_not_retry_on_unrelated_errors(tmp_path) -> None:
+    completions = _AlwaysFailCompletions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    runner = LiveBenchmarkRunner(model="openai/gpt-4.1", client=client, provider="openrouter")
+    bridge_session = BridgeSession(memory_dir=tmp_path / "bridge_mem_error")
+    session = bridge_session.runtime_session
+    conversation = [{"role": "user", "content": "Inspect gateway"}]
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="internal provider fault"):
+        runner.run_conversation_step(
+            conversation=conversation,
+            system_prompt="You are analyzing a coding loop.",
+            mode="tok-universal",
+            session=session,
+            bridge_session=bridge_session,
+            allowed_tools=("view_file",),
+        )
+    assert completions.calls == 1
 
 
 def test_live_benchmark_runner_rejects_placeholder_success(tmp_path) -> None:

@@ -1395,33 +1395,92 @@ def _adapt_tool_results_for_openai(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     adapted: list[dict[str, Any]] = []
-    pending_tool_call_ids: dict[str, str] = {}
+    pending_tool_call_ids: set[str] = set()
+
+    def _stringify_tool_result_block(block: dict[str, Any]) -> str:
+        tool_use_id = str(block.get("tool_use_id", "")).strip() or "unknown"
+        content_text = _content_text(block.get("content", "")).strip()
+        return f"Tool result ({tool_use_id}): {content_text}" if content_text else f"Tool result ({tool_use_id})"
+
+    def _assistant_tool_call_message(content_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        for block in content_blocks:
+            block_type = str(block.get("type", "")).strip()
+            if block_type == "tool_use":
+                call_id = str(block.get("id", "")).strip()
+                tool_name = str(block.get("name", "")).strip() or "unknown"
+                tool_input = block.get("input", {})
+                if not isinstance(tool_input, dict):
+                    tool_input = {"value": tool_input}
+                if call_id:
+                    tool_calls.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(tool_input, ensure_ascii=False),
+                            },
+                        }
+                    )
+                else:
+                    text_parts.append(f"Tool use ({tool_name}): {_content_text(tool_input)}")
+                continue
+            if block_type == "text":
+                text = str(block.get("text", "")).strip()
+                if text:
+                    text_parts.append(text)
+                continue
+            text = _content_text(block).strip()
+            if text:
+                text_parts.append(text)
+
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "\n".join(text_parts).strip(),
+        }
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        return message
 
     for msg in messages:
         role = str(msg.get("role", "")).strip()
         content = msg.get("content")
-
         if role == "assistant" and isinstance(content, list):
-            tool_use_ids = {}
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    tc_id = str(block.get("id", ""))
-                    tc_name = str(block.get("name", ""))
-                    if tc_id:
-                        tool_use_ids[tc_id] = tc_name
-            if tool_use_ids:
-                pending_tool_call_ids = tool_use_ids
-            adapted.append(msg)
+            assistant_blocks = [block for block in content if isinstance(block, dict)]
+            assistant_message = _assistant_tool_call_message(assistant_blocks)
+            tool_calls = assistant_message.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                pending_tool_call_ids = {
+                    str(call.get("id", "")).strip() for call in tool_calls if str(call.get("id", "")).strip()
+                }
+            else:
+                pending_tool_call_ids = set()
+            adapted.append(assistant_message)
+            continue
+
+        if role == "assistant":
+            pending_tool_call_ids = set()
+            adapted.append(_flatten_message_content_for_provider(msg))
             continue
 
         if role == "user" and isinstance(content, list):
-            has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
-            if has_tool_result and pending_tool_call_ids:
-                for block in content:
-                    if not isinstance(block, dict) or block.get("type") != "tool_result":
-                        continue
-                    tool_use_id = str(block.get("tool_use_id", ""))
-                    if tool_use_id in pending_tool_call_ids:
+            tool_results: list[dict[str, Any]] = []
+            non_tool_result_blocks: list[dict[str, Any]] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    non_tool_result_blocks.append({"type": "text", "text": str(block)})
+                    continue
+                if block.get("type") == "tool_result":
+                    tool_results.append(block)
+                else:
+                    non_tool_result_blocks.append(block)
+
+            if tool_results:
+                for block in tool_results:
+                    tool_use_id = str(block.get("tool_use_id", "")).strip()
+                    if tool_use_id and tool_use_id in pending_tool_call_ids:
                         adapted.append(
                             {
                                 "role": "tool",
@@ -1429,21 +1488,37 @@ def _adapt_tool_results_for_openai(
                                 "content": _content_text(block.get("content", "")),
                             }
                         )
-                        pending_tool_call_ids.pop(tool_use_id, None)
+                        pending_tool_call_ids.discard(tool_use_id)
                     else:
-                        adapted.append(
-                            {
-                                "role": "user",
-                                "content": _content_text(block.get("content", "")),
-                            }
-                        )
-                if not pending_tool_call_ids:
-                    pending_tool_call_ids = {}
+                        adapted.append({"role": "user", "content": _stringify_tool_result_block(block)})
+                if non_tool_result_blocks:
+                    adapted.append(
+                        _flatten_message_content_for_provider({"role": "user", "content": non_tool_result_blocks})
+                    )
                 continue
 
+        if pending_tool_call_ids:
+            pending_tool_call_ids = set()
         adapted.append(msg)
 
     return adapted
+
+
+def _detect_tool_protocol_retry_reason(error: Exception) -> str | None:
+    message = str(error).lower()
+    if "400" not in message and "invalid_request_error" not in message:
+        return None
+    if "no tool call found for function call output with call_id" in message:
+        return "missing_tool_call_for_call_id"
+    if "unexpected tool_use_id found in tool_result blocks" in message:
+        return "unexpected_tool_use_id"
+    if "must have corresponding tool_use in previous message" in message:
+        return "tool_result_without_previous_tool_use"
+    if "tool_call_id" in message and "preceding message" in message:
+        return "tool_call_id_pairing_error"
+    if "messages with role 'tool'" in message and "tool_calls" in message:
+        return "orphan_tool_role_message"
+    return None
 
 
 def _extract_result_warnings(result: BenchmarkResult) -> set[str]:
@@ -1600,12 +1675,11 @@ class LiveBenchmarkRunner:
                     body=bridge_request_body,
                     headers={},
                     path="v1/messages",
+                    allowed_tools=allowed_tools,
                 )
                 if preflight_response is not None:
-                    msg = (
-                        "tok-universal benchmark bridge preflight rejected payload "
-                        f"(status={preflight_response.status_code})"
-                    )
+                    status_code = getattr(preflight_response, "status_code", "unknown")
+                    msg = f"tok-universal benchmark bridge preflight rejected payload (status={status_code})"
                     raise RuntimeError(msg)
 
                 prepared_body = apply_anthropic_optimizations(copy.deepcopy(bridge_payload.body))
@@ -1685,6 +1759,7 @@ class LiveBenchmarkRunner:
                             "Literal['legacy_tool_compatible', 'natural_first', 'forced_baseline']",
                             request_policy,
                         ),
+                        allowed_tools=allowed_tools,
                     ),
                     session,
                 )
@@ -1803,6 +1878,10 @@ class LiveBenchmarkRunner:
             )
         )
         diagnostics["tool_block_adaptation_warnings"] = list(compatibility_warnings)
+        diagnostics["tool_protocol_retry_count"] = 0
+        diagnostics["tool_protocol_retry_success"] = 0
+        diagnostics["tool_protocol_retry_reason"] = ""
+        diagnostics["tool_protocol_retry_mode"] = ""
         create_kwargs["messages"] = provider_messages
 
         if use_openai_tools:
@@ -1810,10 +1889,44 @@ class LiveBenchmarkRunner:
             if openai_tools:
                 create_kwargs["tools"] = openai_tools
 
-        response = self.client.chat.completions.create(**create_kwargs)
+        response = None
+        try:
+            response = self.client.chat.completions.create(**create_kwargs)
+        except Exception as exc:
+            retry_reason = _detect_tool_protocol_retry_reason(exc) if use_openai_tools else None
+            if retry_reason is None:
+                raise
+            diagnostics["tool_protocol_retry_count"] = 1
+            diagnostics["tool_protocol_retry_reason"] = retry_reason
+            diagnostics["tool_protocol_retry_mode"] = "safe_provider_text_history"
+            safe_provider_messages = _provider_safe_chat_messages(adapted_chat_messages, self.provider)
+            diagnostics["provider_message_normalization_path"] = (
+                "apply_schema_adaptations -> _adapt_tool_results_for_openai -> retry_safe_provider_text_history"
+            )
+            diagnostics["schema_forensics"]["provider_retry_after"] = _message_shape_forensics(safe_provider_messages)
+            retry_kwargs = dict(create_kwargs)
+            retry_kwargs["messages"] = safe_provider_messages
+            retry_kwargs.pop("tools", None)
+            outbound_payload = {
+                "system": outbound_system,
+                "messages": safe_provider_messages,
+            }
+            create_kwargs = retry_kwargs
+            try:
+                response = self.client.chat.completions.create(**retry_kwargs)
+            except Exception:
+                diagnostics["tool_protocol_retry_success"] = 0
+                raise
+            diagnostics["tool_protocol_retry_success"] = 1
+            compatibility_warnings.append("tool_protocol_retry_safe_provider_text_history")
+            diagnostics["tool_block_adaptation_warnings"] = list(compatibility_warnings)
+            diagnostics["schema_forensics"]["compatibility_warnings"] = list(compatibility_warnings)
+        if response is None:
+            msg = "provider response missing after tool protocol retry handling"
+            raise RuntimeError(msg)
         latency_ms = (time.time() - started) * 1000
         message_obj = response.choices[0].message if response.choices else None
-        raw_response = (message_obj.content or "") if message_obj and message_obj.content else ""
+        raw_response = _content_text(message_obj.content) if message_obj and message_obj.content is not None else ""
         visible_response = raw_response
 
         openai_tool_call_blocks: list[dict[str, Any]] = []

@@ -124,8 +124,14 @@ TOK_REPEAT_COMMAND_SUPPRESSION_HINT = (
     "You just ran an identical command and got the same successful result. "
     "Do not rerun it unless files or constraints changed; proceed to synthesis or next distinct step."
 )
+TOK_TOOL_REQUIRED_LATCH_HINT = (
+    "Tool-required progress is still unresolved. In the next turn, make concrete progress with one tool action "
+    "(edit_file or run_tests) before finalizing."
+)
 TOK_NEIGHBORHOOD_TRIGGER_ANCHORS: int = int(os.getenv("TOK_NEIGHBORHOOD_TRIGGER_ANCHORS", "3"))
 TOK_NEIGHBORHOOD_WINDOW_TURNS: int = int(os.getenv("TOK_NEIGHBORHOOD_WINDOW_TURNS", "6"))
+TOK_TOOL_REQUIRED_LATCH_THRESHOLD: int = int(os.getenv("TOK_TOOL_REQUIRED_LATCH_THRESHOLD", "2"))
+TOK_RUNTIME_HINT_COOLDOWN_TURNS: int = int(os.getenv("TOK_RUNTIME_HINT_COOLDOWN_TURNS", "2"))
 
 _TOOL_REQUIRED_PROMPT_PATTERNS = (
     "fresh evidence",
@@ -133,6 +139,11 @@ _TOOL_REQUIRED_PROMPT_PATTERNS = (
     "gather it before answering",
     "do one narrow search",
     "do one direct file read",
+    "required before finalizing",
+    "continue using the allowed tools",
+    "read/edit/test steps",
+    "run the necessary read/edit/test steps",
+    "before finalizing",
 )
 
 # Truncation limits for compact state fields and digests
@@ -160,6 +171,14 @@ DRIFT_BULLET_LINE_THRESHOLD: int = 2
 DIFF_RATIO_THRESHOLD: float = 0.7
 
 TOK_FILE_DELIVERY_STALE_TURNS: int = int(os.getenv("TOK_FILE_DELIVERY_STALE_TURNS", "4"))
+
+# Compression feature flags (off by default for conservative rollout).
+TOK_ENABLE_PYTEST_FAIL_COMPRESSION: bool = os.getenv("TOK_ENABLE_PYTEST_FAIL_COMPRESSION", "0") == "1"
+TOK_ENABLE_JSON_NONEXPANSION_GUARD: bool = os.getenv("TOK_ENABLE_JSON_NONEXPANSION_GUARD", "0") == "1"
+TOK_ENABLE_FILE_OVERLAP_DELTA: bool = os.getenv("TOK_ENABLE_FILE_OVERLAP_DELTA", "0") == "1"
+TOK_ENABLE_FILE_REREAD_DIFF: bool = os.getenv("TOK_ENABLE_FILE_REREAD_DIFF", "0") == "1"
+TOK_ENABLE_SEARCH_OVERLAP_DELTA: bool = os.getenv("TOK_ENABLE_SEARCH_OVERLAP_DELTA", "0") == "1"
+TOK_ENABLE_STACK_REPEAT_DELTA: bool = os.getenv("TOK_ENABLE_STACK_REPEAT_DELTA", "0") == "1"
 
 __all__ = [
     "ANSWER_READY_REPAIR_HINT",
@@ -201,9 +220,18 @@ __all__ = [
     "TOK_REACQUIRE_WINDOW_TURNS",
     "TOK_READ_PLAN_HINT",
     "TOK_REPEAT_COMMAND_SUPPRESSION_HINT",
+    "TOK_RUNTIME_HINT_COOLDOWN_TURNS",
+    "TOK_TOOL_REQUIRED_LATCH_HINT",
+    "TOK_TOOL_REQUIRED_LATCH_THRESHOLD",
     "TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS",
     "TOK_REQUEST_POLICY_STICKY_TURNS",
     "TOK_REQUEST_POLICY_TOOL_DENSE_ASSISTANT_TURNS",
+    "TOK_ENABLE_FILE_OVERLAP_DELTA",
+    "TOK_ENABLE_FILE_REREAD_DIFF",
+    "TOK_ENABLE_JSON_NONEXPANSION_GUARD",
+    "TOK_ENABLE_PYTEST_FAIL_COMPRESSION",
+    "TOK_ENABLE_SEARCH_OVERLAP_DELTA",
+    "TOK_ENABLE_STACK_REPEAT_DELTA",
     "TOK_STABLE_RESULT_INFO_HINT",
     "TOOL_COMPAT_DELTA_KEYS",
     "TOOL_COMPAT_MAX_FILES",

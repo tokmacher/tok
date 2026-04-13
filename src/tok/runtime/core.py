@@ -239,6 +239,8 @@ class RuntimeSession:
     _last_user_prompt_text: str = field(default="", init=False, repr=False)
     _last_user_prompt_labels: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
     _request_has_tools: bool = field(default=False, init=False, repr=False)
+    _runtime_hint_last_turn: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _tool_required_latch_streak: int = field(default=0, init=False, repr=False)
     _answer_phase_expected_this_turn: bool = field(default=False, init=False, repr=False)
     _natural_response_acceptable_this_turn: bool = field(default=False, init=False, repr=False)
 
@@ -556,9 +558,9 @@ class RuntimeSession:
         """Apply predictive cache warming for a logical target."""
         return apply_predictive_cache_warming_impl(self, logical_target)
 
-    def hot_recent_runtime_hints(self) -> tuple[list[str], dict[str, int]]:
+    def hot_recent_runtime_hints(self, *, max_hints: int | None = None) -> tuple[list[str], dict[str, int]]:
         """Generate hot recent hints for eligible repeat targets."""
-        return hot_recent_runtime_hints_impl(self)
+        return hot_recent_runtime_hints_impl(self, max_hints=max_hints)
 
     def evidence_intent_advisories(self) -> list[str]:
         """Generate advisories based on evidence intent patterns."""

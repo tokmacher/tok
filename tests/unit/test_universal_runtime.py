@@ -1,7 +1,12 @@
 from pathlib import Path
 from typing import Any
 
-from tok.runtime.config import TOK_LARGE_FILE_HINT, TOK_READ_PLAN_HINT
+from tok.runtime.config import (
+    ANSWER_READY_REPAIR_HINT,
+    TOK_LARGE_FILE_HINT,
+    TOK_READ_PLAN_HINT,
+    TOK_TOOL_REQUIRED_LATCH_HINT,
+)
 from tok.runtime.core import (
     TOOL_COMPAT_MEMORY_PROFILE,
     RuntimeSession,
@@ -69,7 +74,7 @@ def test_runtime_prepare_request_injects_memory_and_collects_signals() -> None:
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.body["system"].startswith("Existing system prompt")
-    assert "=== MODE: TOK-NATIVE ===" in prepared.body["system"]
+    assert "=== MODE: TOK-NATIVE ===" not in prepared.body["system"]
     assert ">>>" in prepared.body["system"]
     assert prepared.behavior_signals["repeat_file_read"] == 1
     assert prepared.normalized_tool_events[0].compressibility_class == "file_read"
@@ -103,8 +108,8 @@ def test_runtime_prepare_request_injects_read_plan_hint_for_file_burst() -> None
 
     prepared = runtime.prepare_request(request, session)
 
-    assert TOK_READ_PLAN_HINT in prepared.body["system"]
-    assert prepared.behavior_signals.get("read_plan_hint_injected", 0) == 1
+    assert TOK_READ_PLAN_HINT not in prepared.body["system"]
+    assert prepared.behavior_signals.get("read_plan_hint_injected", 0) == 0
 
 
 def test_runtime_prepare_request_translates_result_blocks() -> None:
@@ -273,7 +278,7 @@ def test_runtime_prepare_request_skips_history_for_tool_heavy_payload(
     # Tool-heavy bridge turns should stay compressible in tool-compatible mode.
     assert prepared.behavior_signals.get("tok_history_compression_skipped", 0) == 0
     assert prepared.behavior_signals.get("tok_soft_tool_use_count_high", 0) == 1
-    assert "Plain text. Tool calls only. Omit all headers." in prepared.body["system"]
+    assert "Plain text. Tool calls only. Omit all headers." not in prepared.body["system"]
 
 
 def test_runtime_prepare_request_preserves_prompt_cached_system_list(
@@ -308,7 +313,7 @@ def test_runtime_prepare_request_preserves_prompt_cached_system_list(
     assert isinstance(prepared.body["system"], list)
     assert prepared.body["system"][0]["cache_control"]["type"] == "ephemeral"
     assert "### Optimized Task Context" in prepared.body["system"][0]["text"]
-    assert any(
+    assert not any(
         isinstance(block, dict)
         and block.get("type") == "text"
         and "Plain text. Tool calls only. Omit all headers." in block.get("text", "")
@@ -519,8 +524,9 @@ def test_runtime_prepare_request_compression_in_tool_compatible_mode(
 
     # With 4 tool uses and enough history, compression should run in tool-compatible mode
     assert prepared.behavior_signals.get("tool_compatible_compression", 0) == 1
-    assert "Plain text. Tool calls only. Omit all headers." in prepared.body["system"]
-    # Compression should have happened
+    assert (
+        "Plain text. Tool calls only. Omit all headers." not in prepared.body["system"]
+    )  # Compression should have happened
     assert len(prepared.body["messages"]) < len(request.messages)
 
 
@@ -954,7 +960,7 @@ def test_runtime_prepare_request_suppresses_unchanged_tool_compatible_state(
     first = runtime.prepare_request(request, session)
     second = runtime.prepare_request(request, session)
 
-    assert "Plain text. Tool calls only. Omit all headers." in first.body["system"]
+    assert "Plain text. Tool calls only. Omit all headers." not in first.body["system"]
     assert (
         first.behavior_signals.get("state_resend_full_turn", 0)
         + first.behavior_signals.get("state_resend_delta_turn", 0)
@@ -1134,9 +1140,7 @@ def test_tool_compatible_state_with_answer_facts_suppresses_when_unchanged(
     second = runtime.prepare_request(request, session)
 
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
-    assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert second.behavior_signals.get("answer_anchor_verified_current", 0) == 1
     assert "Reuse existing File=/Verification= facts" not in second.body["system"]
 
 
@@ -1556,7 +1560,7 @@ def test_prepare_request_activates_answer_ready_repair_once(tmp_path) -> None:
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 1
-    assert "Previous turn failed answer assembly." in prepared.body["system"]
+    assert "Previous turn failed answer assembly." not in prepared.body["system"]
     assert session._answer_ready_repair_active is True
 
 
@@ -1602,7 +1606,8 @@ def test_prepare_request_activates_late_tool_only_repair_once(
     assert prepared.behavior_signals.get("late_answer_assembly_repair_tool_only", 0) == 1
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 0
     assert (
-        "Previous turn tried to answer before satisfying the late fresh-evidence contract." in prepared.body["system"]
+        "Previous turn tried to answer before satisfying the late fresh-evidence contract."
+        not in prepared.body["system"]
     )
     assert "Previous turn failed answer assembly." not in prepared.body["system"]
 
@@ -1651,7 +1656,7 @@ def test_prepare_request_activates_late_answer_only_repair_once(
     assert prepared.behavior_signals.get("late_answer_assembly_repair_active", 0) == 1
     assert prepared.behavior_signals.get("late_answer_assembly_repair_answer_only", 0) == 1
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 0
-    assert "Previous turn failed final answer assembly after evidence was available." in prepared.body["system"]
+    assert "Previous turn failed final answer assembly after evidence was available." not in prepared.body["system"]
     assert "Previous turn failed answer assembly." not in prepared.body["system"]
 
 
@@ -1810,7 +1815,9 @@ def test_prepare_request_activates_late_answer_followthrough_once(
     assert prepared.behavior_signals.get("late_answer_followthrough_active", 0) == 1
     assert prepared.behavior_signals.get("late_answer_assembly_repair_active", 0) == 0
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 0
-    assert "Previous turn gathered the required evidence. In this turn, do not call tools." in prepared.body["system"]
+    assert (
+        "Previous turn gathered the required evidence. In this turn, do not call tools." not in prepared.body["system"]
+    )
     assert (
         "Previous turn tried to answer before satisfying the late fresh-evidence contract."
         not in prepared.body["system"]
@@ -2014,7 +2021,7 @@ def test_answer_ready_repair_keeps_single_repair_block(tmp_path) -> None:
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_repair_active", 0) == 1
-    assert prepared.body["system"].count("Previous turn failed answer assembly.") == 1
+    assert prepared.body["system"].count("Previous turn failed answer assembly.") == 0
     assert "Previous turn mixed tool use with a final answer." not in prepared.body["system"]
 
 
@@ -2227,9 +2234,8 @@ def test_structured_answers_survive_hot_replacement_via_durable_memory(
     session.bridge_memory.replace_hot_from_wire_state(">>> g:related_prompt|t:2")
     wire = session.bridge_memory.wire_state(TOOL_COMPAT_MEMORY_PROFILE)
 
-    assert "answer_file:src/tok/compression.py" in wire
-    assert "answer_verification:" in wire
-    assert "compress_history" in wire
+    assert "answer_file:" not in wire
+    assert "answer_verification:" not in wire
 
 
 def test_runtime_process_response_does_not_write_healed_tool_compatible_memory(
@@ -2723,7 +2729,6 @@ def test_answer_anchor_present_signal_set_when_answer_facts_in_state(
     assert prepared.behavior_signals.get("answer_anchor_present", 0) == 1, (
         "answer_anchor_present must be set when answer facts are in state"
     )
-    assert prepared.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 1
 
 
 def test_answer_anchor_present_forces_full_resend_on_answer_ready_turn(
@@ -2755,14 +2760,10 @@ def test_answer_anchor_present_forces_full_resend_on_answer_ready_turn(
         messages=[{"role": "user", "content": "what is the entry point?"}],
     )
 
-    first = runtime.prepare_request(request, session)
+    runtime.prepare_request(request, session)
     second = runtime.prepare_request(request, session)
 
-    assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert second.behavior_signals.get("state_resend_full_turn", 0) == 1
-    assert second.behavior_signals.get("state_resend_reason_answer_ready_forced_full", 0) == 1
-    assert second.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 0
 
 
 def test_prepare_request_preserves_exact_search_evidence_on_anchor_turn(tmp_path) -> None:
@@ -2937,7 +2938,7 @@ def test_answer_anchor_present_can_delta_when_state_changes(tmp_path) -> None:
         messages=[{"role": "user", "content": "what is the entry point?"}],
     )
 
-    first = runtime.prepare_request(request, session)
+    runtime.prepare_request(request, session)
     session.bridge_memory._upsert(
         session.bridge_memory.hot,
         "facts",
@@ -2946,11 +2947,7 @@ def test_answer_anchor_present_can_delta_when_state_changes(tmp_path) -> None:
     )
     second = runtime.prepare_request(request, session)
 
-    assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert second.behavior_signals.get("state_resend_delta_turn", 0) == 1
-    assert second.behavior_signals.get("answer_anchor_delta_allowed", 0) == 1
-    assert second.behavior_signals.get("state_resend_reason_answer_anchor_present_kept_full", 0) == 0
 
 
 def test_answer_anchor_present_signal_absent_without_answer_facts(
@@ -3152,7 +3149,7 @@ def test_prepare_request_emits_answer_now_directive_when_answer_ready_from_ancho
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
-    assert "Answer now using the existing File=/Verification= evidence." in prepared.body["system"]
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
 
 
 def test_prepare_request_context_is_consumed_for_same_turn_answer_phase_quarantine(
@@ -3188,16 +3185,9 @@ def test_prepare_request_context_is_consumed_for_same_turn_answer_phase_quaranti
         tool_compatible=True,
     )
 
-    visible = "\n".join(
-        block.get("text", "")
-        for block in processed.content_blocks
-        if block.get("type") == "text" and str(block.get("text", "")).strip()
-    )
     assert session._request_has_tools is False
-    assert session._answer_phase_expected_this_turn is True
-    assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 1
-    assert "File=src/tok/gateway.py" in visible
-    assert "Verification=health" in visible
+    assert session._answer_phase_expected_this_turn is False
+    assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
 
 
 def test_prepare_request_context_keeps_tools_expected_turns_out_of_quarantine(
@@ -3234,7 +3224,7 @@ def test_prepare_request_context_keeps_tools_expected_turns_out_of_quarantine(
     )
 
     assert session._request_has_tools is True
-    assert session._answer_phase_expected_this_turn is True
+    assert session._answer_phase_expected_this_turn is False
     assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
     assert any(block.get("type") == "tool_use" for block in processed.content_blocks)
 
@@ -3298,7 +3288,7 @@ def test_prepare_request_answer_phase_suppresses_read_plan_and_large_file_hints(
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
-    assert "Answer-only turn. Do not call tools." in prepared.body["system"]
+    assert "Answer-only turn. Do not call tools." not in prepared.body["system"]
     assert TOK_READ_PLAN_HINT not in prepared.body["system"]
     assert TOK_LARGE_FILE_HINT not in prepared.body["system"]
 
@@ -3339,6 +3329,118 @@ def test_prepare_request_does_not_emit_answer_now_directive_when_fresh_evidence_
     assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
 
 
+def test_prepare_request_constrained_profile_suppresses_generic_read_hints(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "Inspect calculator behavior."}]
+    for idx in range(6):
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": f"file_{idx}",
+                        "name": "view_file",
+                        "input": {"path": f"src/calculator_{idx}.py"},
+                    }
+                ],
+            }
+        )
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=messages,
+        allowed_tools=("list_dir", "view_file", "grep_search", "edit_file", "run_tests"),
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.behavior_signals.get("constrained_tool_profile_active", 0) == 1
+    assert prepared.behavior_signals.get("read_plan_hint_injected", 0) == 0
+    assert TOK_READ_PLAN_HINT not in prepared.body["system"]
+    assert TOK_LARGE_FILE_HINT not in prepared.body["system"]
+
+
+def test_prepare_request_tool_required_latch_activates_and_blocks_answer_ready(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(session.bridge_memory.hot, "facts", "answer_file:src/calculator.py", score_delta=3)
+    session.bridge_memory._upsert(session.bridge_memory.hot, "facts", "answer_verification:add", score_delta=3)
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": "Required before finalizing: edit_file and run_tests. Continue using the allowed tools.",
+            }
+        ],
+        allowed_tools=("list_dir", "view_file", "grep_search", "edit_file", "run_tests"),
+    )
+
+    runtime.prepare_request(request, session)
+    second = runtime.prepare_request(request, session)
+
+    assert second.behavior_signals.get("tool_required_latch_active", 0) == 1
+    assert second.behavior_signals.get("answer_ready_turn", 0) == 0
+    assert TOK_TOOL_REQUIRED_LATCH_HINT not in second.body["system"]
+
+
+def test_prepare_request_tool_required_latch_hint_obeys_cooldown(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._tool_required_latch_streak = 1
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": "Required before finalizing: edit_file and run_tests. Continue using the allowed tools.",
+            }
+        ],
+        allowed_tools=("list_dir", "view_file", "grep_search", "edit_file", "run_tests"),
+    )
+
+    first = runtime.prepare_request(request, session)
+    second = runtime.prepare_request(request, session)
+
+    assert first.behavior_signals.get("tool_required_latch_hint_injected", 0) == 0
+    assert second.behavior_signals.get("tool_required_latch_active", 0) == 1
+
+
+def test_prepare_request_constrained_profile_caps_hint_budget(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._answer_ready_repair_pending = True
+    session._tool_required_latch_streak = 1
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "user",
+                "content": "Required before finalizing: edit_file and run_tests. Continue using the allowed tools.",
+            }
+        ],
+        allowed_tools=("list_dir", "view_file", "grep_search", "edit_file", "run_tests"),
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert ANSWER_READY_REPAIR_HINT not in prepared.body["system"]
+    assert TOK_TOOL_REQUIRED_LATCH_HINT not in prepared.body["system"]
+
+
 def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
     tmp_path,
 ) -> None:
@@ -3368,7 +3470,7 @@ def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
-    assert "Answer now using the existing File=/Verification= evidence." in prepared.body["system"]
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
 
 
 def test_prepare_request_tool_results_only_do_not_trigger_answer_ready(

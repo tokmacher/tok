@@ -1193,6 +1193,8 @@ def _apply_canonicalization_pipeline(
 
 def canonicalize_anthropic_bridge_messages(
     messages: list[dict[str, Any]],
+    *,
+    seen_mutation_pairs: set[tuple[str, str]] | None = None,
 ) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
     """
     Canonicalize bridge messages to the Anthropic wire shape.
@@ -1256,7 +1258,8 @@ def canonicalize_anthropic_bridge_messages(
         total_drop_count = sum(total_drops.values())
         signals["tok_bridge_unsupported_block_dropped"] = total_drop_count
 
-    seen_mutation_pairs: set[tuple[str, str]] = set()
+    if seen_mutation_pairs is None:
+        seen_mutation_pairs = set()
 
     if before_hash is not None and protected_msg_index is not None:
         _check_thinking_block_mutation(
@@ -1278,6 +1281,8 @@ def canonicalize_anthropic_bridge_messages(
 
 def canonicalize_anthropic_bridge_body(
     body: dict[str, Any],
+    *,
+    seen_mutation_pairs: set[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], bool, dict[str, int]]:
     """Canonicalize a bridge request body for Anthropic before send."""
     if not isinstance(body, dict):
@@ -1290,7 +1295,7 @@ def canonicalize_anthropic_bridge_body(
         canonical_messages,
         changed,
         signals,
-    ) = canonicalize_anthropic_bridge_messages(messages)
+    ) = canonicalize_anthropic_bridge_messages(messages, seen_mutation_pairs=seen_mutation_pairs)
     if not changed:
         return body, False, {}
 

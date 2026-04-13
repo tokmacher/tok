@@ -116,6 +116,9 @@ def _run_legacy_compare_benchmark(
         )
         console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_summary.json'}")
         console.print(f"[cyan]Artifacts:[/cyan] {output / f'{benchmark}_summary.md'}")
+        attribution_report = output / "attribution_report.json"
+        if attribution_report.exists():
+            console.print(f"[cyan]Artifacts:[/cyan] {attribution_report}")
         return
 
     from tok.testing.live_benchmark import (

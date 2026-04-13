@@ -40,6 +40,26 @@ def _empty_prompt_metrics() -> dict[str, int]:
     }
 
 
+def _extract_allowed_tools_from_body(body: dict[str, Any]) -> tuple[str, ...]:
+    tools = body.get("tools")
+    if not isinstance(tools, list):
+        return ()
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in tools:
+        if not isinstance(item, dict):
+            continue
+        raw_name = item.get("name")
+        if raw_name is None and isinstance(item.get("function"), dict):
+            raw_name = item["function"].get("name")
+        name = str(raw_name or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return tuple(names)
+
+
 def prepare_bridge_payload(
     *,
     session: BridgeSession,
@@ -47,6 +67,7 @@ def prepare_bridge_payload(
     headers: dict[str, str],
     path: str,
     tok_tool_header: str = "",
+    allowed_tools: tuple[str, ...] | None = None,
     request_state: dict[str, bool] | None = None,
 ) -> tuple[BridgePreparedPayload, Response | None]:
     active_request_state = request_state if request_state is not None else {"fallback_recorded": False}
@@ -141,6 +162,9 @@ def prepare_bridge_payload(
                 request_policy,
             ),
             request_has_tools=bool(provider_safe_original_body.get("tools")),
+            allowed_tools=allowed_tools
+            if allowed_tools
+            else _extract_allowed_tools_from_body(provider_safe_original_body),
         ),
         session.runtime_session,
         result_cache=session.result_cache,

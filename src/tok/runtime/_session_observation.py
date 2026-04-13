@@ -108,12 +108,7 @@ def _build_hot_hint(record: HotSummaryRecord, current_turn: int) -> tuple[str, d
         reminder = f"@hot_recent_search:{label} |> {record.summary}"
     else:
         reminder = f"@hot_recent_command:{label} |> {record.summary}"
-    guidance = (
-        "This target is stuck and unchanged. Reuse the cached result and move forward without rereading it."
-        if record.tool_family == "file_read" and record.stuck_promotion_turn
-        else "Reuse this cached result unless you have a concrete reason to reacquire it."
-    )
-    block = reminder + "\n" + guidance
+    block = reminder
 
     metrics: dict[str, int] = {
         "hot_recent_hint_injected": 1,
@@ -128,6 +123,8 @@ def _build_hot_hint(record: HotSummaryRecord, current_turn: int) -> tuple[str, d
 
 def hot_recent_runtime_hints(
     session: RuntimeSession,
+    *,
+    max_hints: int | None = None,
 ) -> tuple[list[str], dict[str, int]]:
     """Generate hot recent hints for eligible repeat targets."""
     current_turn = max(1, session.bridge_memory.turn)
@@ -145,7 +142,8 @@ def hot_recent_runtime_hints(
         ),
         reverse=True,
     )
-    selected = candidates[:TOK_HOT_RECENT_MAX_HINTS]
+    hint_limit = TOK_HOT_RECENT_MAX_HINTS if max_hints is None else max(0, int(max_hints))
+    selected = candidates[:hint_limit]
     hints: list[str] = []
     metrics = {
         "repeat_tool_collapse_applied": 0,

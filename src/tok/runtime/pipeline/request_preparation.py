@@ -318,15 +318,12 @@ def _runtime_hints_for_turn(
     late_answer_followthrough_active: bool,
     late_answer_assembly_repair_mode: str,
 ) -> list[str]:
-    """Return a consolidated list of runtime strategy hints for the current turn."""
-    if late_answer_followthrough_active:
-        return _late_answer_followthrough_hints(active=True)
-    if late_answer_assembly_repair_mode:
-        return _late_answer_assembly_repair_hints(repair_mode=late_answer_assembly_repair_mode)
-    if answer_ready_repair_active:
-        return _answer_ready_repair_hints(repair_active=True)
-    if answer_ready:
-        return _answer_ready_runtime_hints(answer_ready=True)
+    """Return a consolidated list of runtime strategy hints for the current turn.
+
+    Steering hints (answer-ready pressure, latch escalation, repair urgency) are
+    deliberately not injected here. Tok is an invisible bridge: the model decides
+    when it is done and what tools to use. See docs/philosophy.md.
+    """
     return []
 
 

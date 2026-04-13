@@ -595,3 +595,29 @@ def test_durable_facts_scale_to_new_limit() -> None:
     # Total limit is 32. So we expect 30 generic + 2 answer.
     assert generic_count == 30
     assert generic_count + answer_count <= 32
+
+
+def test_promote_hot_to_durable_skips_equivalent_fact_content() -> None:
+    state = BridgeMemoryState()
+    fact_value = "file[src/tok/runtime/_request_preparation.py]:100|def bridge_cut|~400t"
+    state._upsert(state.durable, "facts", fact_value, score_delta=1)
+    state._upsert(state.hot, "facts", fact_value, score_delta=PROMOTION_THRESHOLDS["facts"])
+
+    metrics = state._promote_hot_to_durable()
+
+    assert metrics == {}
+    assert len(state.durable.get("facts", [])) == 1
+
+
+def test_promote_hot_to_durable_allows_changed_fact_content_for_same_key() -> None:
+    state = BridgeMemoryState()
+    old_fact = "file[src/tok/runtime/_request_preparation.py]:100|def bridge_cut|~400t"
+    new_fact = "file[src/tok/runtime/_request_preparation.py]:120|def bridge_cut updated|~480t"
+    state._upsert(state.durable, "facts", old_fact, score_delta=1)
+    state._upsert(state.hot, "facts", new_fact, score_delta=PROMOTION_THRESHOLDS["facts"])
+
+    metrics = state._promote_hot_to_durable()
+
+    assert metrics.get("durable_promotions", 0) == 1
+    durable_facts = [entry.value for entry in state.durable.get("facts", [])]
+    assert new_fact in durable_facts

@@ -128,6 +128,7 @@ class RuntimeRequest(BaseModel, frozen=True):
     tool_compatible: bool = False
     request_policy: Literal["legacy_tool_compatible", "natural_first", "forced_baseline"] = "legacy_tool_compatible"
     request_has_tools: bool = False
+    allowed_tools: tuple[str, ...] | None = None
     grammar: str | None = None
     todo: str | None = None
     deltas: str | None = None

@@ -923,7 +923,149 @@ def test_prepare_request_bridge_cut_search_extends_to_valid_suffix(tmp_path, mon
     assert prepared.body["messages"] == valid_recent
 
 
-def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, monkeypatch) -> None:
+def test_prepare_request_bridge_cut_preflight_advances_to_safe_suffix(tmp_path, monkeypatch) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    original_messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Inspect the bridge."},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/gateway.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "content": "file contents " * 80,
+                }
+            ],
+        },
+        {"role": "user", "content": "Now continue"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_2",
+                    "name": "grep_search",
+                    "input": {"pattern": "pairing"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_2",
+                    "content": "grep results " * 80,
+                }
+            ],
+        },
+        {"role": "assistant", "content": "Done."},
+    ]
+
+    invalid_then_safe_recent = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/gateway.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "content": "file contents " * 80,
+                }
+            ],
+        },
+        {"role": "user", "content": "Now continue"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_2",
+                    "name": "grep_search",
+                    "input": {"pattern": "pairing"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_2",
+                    "content": "grep results " * 80,
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Done."}],
+        },
+    ]
+
+    def _fake_compress_history(messages, keep_turns=2, profile=None, prune_tool_results=False):
+        del messages, keep_turns, profile, prune_tool_results
+        return invalid_then_safe_recent, "compressed tail"
+
+    def _fake_compress_recent_window(
+        messages,
+        tool_use_id_to_context=None,
+        threshold=0,
+        tool_compatible=False,
+        first_exact_evidence_seen=None,
+        preserve_exact_search_evidence=False,
+    ):
+        del (
+            tool_use_id_to_context,
+            threshold,
+            tool_compatible,
+            first_exact_evidence_seen,
+            preserve_exact_search_evidence,
+        )
+        return messages, {}
+
+    monkeypatch.setattr(request_preparation_module, "compress_history", _fake_compress_history)
+    monkeypatch.setattr(request_preparation_module, "compress_recent_window", _fake_compress_recent_window)
+
+    prepared = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4-6",
+            adapter_kind="claude-bridge",
+            tool_compatible=True,
+            messages=original_messages,
+        ),
+        session,
+    )
+
+    assert prepared.behavior_signals.get("tok_history_pairing_safety_degraded", 0) == 0
+    assert prepared.body["messages"][0]["role"] == "user"
+    assert prepared.body["messages"][0]["content"][0]["text"] == "Now continue"
+    canonical, _changed, _signals = canonicalize_anthropic_bridge_body(prepared.body)
+    assert validate_anthropic_bridge_body(canonical) == []
+
+
+def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, monkeypatch, caplog) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     original_messages = [
@@ -1032,6 +1174,12 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, 
 
     assert prepared.behavior_signals["tok_history_pairing_safety_degraded"] == 1
     assert prepared.body["messages"] != invalid_recent
+    warnings = [
+        rec.message
+        for rec in caplog.records
+        if "tok_history_pairing_safety_degraded: rejecting compressed history" in rec.message
+    ]
+    assert len(warnings) == 1
 
 
 def test_prepare_request_applies_stream_recovery_history_floor(tmp_path, monkeypatch) -> None:

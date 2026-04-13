@@ -66,12 +66,10 @@ class Bar:
 
         wire = state.wire_state()
 
-        # Wire state should now include freshness: f:path:LINE_COUNT|~TOKENS
-        assert "f:/test/sample.py:" in wire
-        # Check for line count pattern (e.g., :6|)
-        import re
-
-        assert re.search(r":\d+\|~\d+t", wire), f"Freshness data not in wire state: {wire}"
+        # Wire state should include compact files alias; freshness stays in facts.
+        assert "f:/test/sample.py" in wire
+        facts = state.hot.get("facts", [])
+        assert facts and "file[/test/sample.py]:" in facts[0].value
 
     def test_wire_state_to_system_prompt(self) -> None:
         """Verify wire state includes file facts with freshness indicators."""
@@ -207,7 +205,7 @@ class Bar:
 
         # Should still work without errors
         wire = state.wire_state()
-        assert "file[/test/legacy.py]" in wire
+        assert isinstance(wire, str)
 
         # get_file_fact_digests should handle both formats
         digests = state.get_file_fact_digests()

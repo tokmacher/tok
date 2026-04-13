@@ -197,6 +197,36 @@ def _match_facts_to_questions(
     return promotions, answered
 
 
+def _fact_key_and_payload(value: str) -> tuple[str, str]:
+    if ":" not in value:
+        stripped = value.strip()
+        return stripped, stripped
+    key, payload = value.split(":", 1)
+    return key.strip(), payload.strip()
+
+
+def _normalized_payload_fingerprint(payload: str) -> str:
+    normalized = " ".join(payload.split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _durable_entry_identity(field: str, value: str) -> tuple[str, str]:
+    if field == "facts":
+        key, payload = _fact_key_and_payload(value)
+        return key, _normalized_payload_fingerprint(payload)
+    stripped = value.strip()
+    return stripped, _normalized_payload_fingerprint(stripped)
+
+
+def _build_identity_index(field: str, entries: list[MemoryEntry]) -> dict[str, set[str]]:
+    index: dict[str, set[str]] = defaultdict(set)
+    for entry in entries:
+        key, fingerprint = _durable_entry_identity(field, entry.value)
+        if key and fingerprint:
+            index[key].add(fingerprint)
+    return index
+
+
 @dataclass
 class MemoryEntry:
     value: str
@@ -538,6 +568,9 @@ class BridgeMemoryState:
         for fact in remaining_facts:
             if len(prioritized) >= target_limit:
                 break
+            # Skip file snapshots that are already older/redundant
+            if fact.value.startswith("file[") and ":" in fact.value:
+                continue
             if fact.value in prioritized_values:
                 continue
             prioritized.append(fact)
@@ -555,42 +588,15 @@ class BridgeMemoryState:
         state_parts: list[str],
         omit_unchanged: bool,
     ) -> None:
-        """Emit the files field into state_parts with freshness indicators."""
+        """Emit the files field into state_parts."""
         if not files:
             return
-
-        # Build a lookup from file path to freshness data
-        freshness_lookup: dict[str, str] = {}
-        for fact in file_facts:
-            if fact.value.startswith("file[") and ":" in fact.value:
-                # Parse: file[path]:LINE_COUNT|digest|~TOKENS
-                bracket_end = fact.value.find("]", 5)
-                if bracket_end < 0:
-                    continue
-                path = fact.value[5:bracket_end]
-                colon_idx = fact.value.find(":", bracket_end)
-                if colon_idx < 0:
-                    continue
-                rest = fact.value[colon_idx + 1 :]
-                # Extract LINE_COUNT|~TOKENS (skip digest which may contain |)
-                # Format: LINE_COUNT|digest|~TOKENS where digest may contain |
-                if "|" in rest:
-                    parts = rest.split("|")
-                    if len(parts) >= 3:
-                        line_count = parts[0]
-                        # tokens is the last part (starts with ~)
-                        tokens = parts[-1] if parts[-1].startswith("~") else parts[2]
-                        freshness_lookup[path] = f"{line_count}|{tokens}"
 
         file_values = []
         for e in files:
             val = e.value
             if len(val) > 20:
                 val = self.pointers.get_pointer(val)
-            # Append freshness data if available
-            freshness = freshness_lookup.get(e.value)
-            if freshness:
-                val = f"{val}:{freshness}"
             file_values.append(val)
 
         f_key = TOK_FIELD_ALIAS.get("files", "files")
@@ -713,18 +719,11 @@ class BridgeMemoryState:
         self,
         markers: frozenset[str] | None,
     ) -> list[str]:
-        """Build pointer and macro blocks for wire_state."""
+        """Build pointer blocks for wire_state."""
         extra_blocks: list[str] = []
         ptr_tok = self.pointers.to_tok().strip()
         if ptr_tok:
             extra_blocks.append(ptr_tok)
-        if self.macro_registry.macros and self.load_global_macros:
-            relevant = self._collect_relevant_macros(markers)
-            if relevant:
-                macro_lines = ["@macros"]
-                for macro in relevant:
-                    macro_lines.append(self._serialize_macro_line(macro))
-                extra_blocks.append("\n".join(macro_lines))
         return extra_blocks
 
     def wire_state(
@@ -1030,14 +1029,25 @@ class BridgeMemoryState:
             threshold = PROMOTION_THRESHOLDS.get(f)
             if threshold is None:
                 continue
+            durable_entries = self.durable.get(f, [])
+            durable_index = _build_identity_index(f, durable_entries)
             for entry in entries:
-                if entry.score >= threshold:
-                    before = len(self.durable.get(f, []))
-                    self._upsert(self.durable, f, entry.value, score_delta=1)
-                    after = len(self.durable.get(f, []))
-                    if after > before:
-                        promoted += 1
-                        log_memory_promotion(f, entry.value, bucket="durable")
+                if entry.score < threshold:
+                    continue
+                key, fingerprint = _durable_entry_identity(f, entry.value)
+                if fingerprint in durable_index.get(key, set()):
+                    continue
+                self._upsert(self.durable, f, entry.value, score_delta=1)
+                promoted += 1
+                log_memory_promotion(f, entry.value, bucket="durable")
+                refreshed_entries = self.durable.get(f, [])
+                refreshed_fingerprints = {
+                    fp
+                    for identity_key, fp in (_durable_entry_identity(f, e.value) for e in refreshed_entries)
+                    if identity_key == key
+                }
+                if refreshed_fingerprints:
+                    durable_index[key] = refreshed_fingerprints
         return {"durable_promotions": promoted} if promoted else {}
 
     def _promote_facts_for_questions(self) -> dict[str, int]:
@@ -1058,9 +1068,16 @@ class BridgeMemoryState:
         if not all_facts:
             return {}
 
-        promotions, answered = _match_facts_to_questions(questions, all_facts)
+        _promotions, answered = _match_facts_to_questions(questions, all_facts)
+        durable_fact_index = _build_identity_index("facts", self.durable.get("facts", []))
+        new_promotions = 0
         for fact_value in answered.values():
+            key, fingerprint = _durable_entry_identity("facts", fact_value)
+            if fingerprint in durable_fact_index.get(key, set()):
+                continue
             self._upsert(self.durable, "facts", fact_value, score_delta=2)
+            new_promotions += 1
+            durable_fact_index.setdefault(key, set()).add(fingerprint)
 
         if answered:
             answered_values = set(answered.keys())
@@ -1068,7 +1085,7 @@ class BridgeMemoryState:
             if not self.hot["questions"]:
                 del self.hot["questions"]
 
-        return {"hypothesis_promotions": promotions} if promotions else {}
+        return {"hypothesis_promotions": new_promotions} if new_promotions else {}
 
     def _trim_bucket_to_cap(
         self, bucket: dict[str, list[MemoryEntry]], cap: int

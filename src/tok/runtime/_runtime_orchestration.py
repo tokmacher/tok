@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import TYPE_CHECKING, Any, cast
 
-from .config import RUNTIME_HINTS_MAX_PER_TURN
+from .config import (
+    ANSWER_READY_REPAIR_HINT,
+    ANSWER_READY_RUNTIME_HINT,
+    LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
+    LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT,
+    LATE_ANSWER_FOLLOWTHROUGH_HINT,
+    RUNTIME_HINTS_MAX_PER_TURN,
+    TOK_RUNTIME_HINT_COOLDOWN_TURNS,
+)
 from .memory.answer_memory import (
     _process_answer_memory,
     _should_persist_to_durable,
@@ -35,7 +44,7 @@ from .pipeline.response_processing import (
 )
 from .pipeline.tool_processing import count_tokens
 from .policy.answer_repair import _mark_late_answer_assembly_mode_signal
-from .policy.macro_handling import _attribute_macro_savings, execute_jit_macro
+from .policy.macro_handling import _attribute_macro_savings
 from .policy.semantic_validation import (
     semantic_pressure_score as _semantic_pressure_score,
 )
@@ -45,6 +54,47 @@ if TYPE_CHECKING:
 
     from .core import RuntimeSession, UniversalTokRuntime
     from .types import ProcessedRuntimeResponse, RuntimeRequest
+
+
+_HINT_COOLDOWN_EXEMPT = frozenset(
+    {
+        ANSWER_READY_RUNTIME_HINT,
+        ANSWER_READY_REPAIR_HINT,
+        LATE_ANSWER_FOLLOWTHROUGH_HINT,
+        LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT,
+        LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
+    }
+)
+
+
+def _apply_runtime_hint_cooldown(
+    session: RuntimeSession,
+    runtime_hints: list[str],
+    *,
+    cooldown_turns: int,
+) -> tuple[list[str], int]:
+    if cooldown_turns <= 0 or not runtime_hints:
+        return runtime_hints, 0
+    current_turn = max(1, int(session.bridge_memory.turn))
+    filtered: list[str] = []
+    suppressed = 0
+    for hint in runtime_hints:
+        if hint in _HINT_COOLDOWN_EXEMPT:
+            filtered.append(hint)
+            continue
+        hint_key = hashlib.sha256(hint.encode("utf-8")).hexdigest()[:16]
+        last_turn = int(session._runtime_hint_last_turn.get(hint_key, 0))
+        if last_turn and (current_turn - last_turn) <= cooldown_turns:
+            suppressed += 1
+            continue
+        session._runtime_hint_last_turn[hint_key] = current_turn
+        filtered.append(hint)
+    if len(session._runtime_hint_last_turn) > 512:
+        cutoff = current_turn - max(cooldown_turns + 8, 12)
+        session._runtime_hint_last_turn = {
+            key: turn for key, turn in session._runtime_hint_last_turn.items() if int(turn) >= cutoff
+        }
+    return filtered, suppressed
 
 
 def build_tool_compatible_resend(
@@ -72,6 +122,7 @@ def build_tool_compatible_resend(
     """Build a tool-compatible resend payload with state compression and hints."""
     del runtime
     if request.tool_compatible:
+        constrained_profile_active = bool(behavior_signals.get("constrained_tool_profile_active", 0))
         pre_resend_memory = memory
         previous_comparable = dict(session._last_tool_compatible_state_fields)
         (
@@ -132,16 +183,30 @@ def build_tool_compatible_resend(
             )
         )
         if not runtime_hints:
-            evidence_hints = session.evidence_intent_advisories()
-            if evidence_hints:
-                runtime_hints.extend(evidence_hints)
-        hot_recent_hints, hot_metrics = session.hot_recent_runtime_hints()
+            pass
+        hot_recent_hints, hot_metrics = session.hot_recent_runtime_hints(
+            max_hints=(1 if constrained_profile_active else None)
+        )
         if hot_recent_hints:
             runtime_hints.extend(hot_recent_hints)
             for key, value in hot_metrics.items():
                 hot_hint_metrics[key] = hot_hint_metrics.get(key, 0) + value
+            if constrained_profile_active and len(hot_recent_hints) >= 1:
+                behavior_signals["constrained_tool_profile_hot_hint_downshift"] = 1
+        runtime_hints, suppressed_hint_count = _apply_runtime_hint_cooldown(
+            session,
+            runtime_hints,
+            cooldown_turns=TOK_RUNTIME_HINT_COOLDOWN_TURNS,
+        )
+        if suppressed_hint_count > 0:
+            behavior_signals["runtime_hint_cooldown_suppressed"] = suppressed_hint_count
         if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
             runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
+        if constrained_profile_active and len(runtime_hints) > 1:
+            runtime_hints = runtime_hints[:1]
+            behavior_signals["constrained_tool_profile_hint_cap_applied"] = (
+                behavior_signals.get("constrained_tool_profile_hint_cap_applied", 0) + 1
+            )
         _annotate_reacquisition_diagnostics(
             behavior_signals,
             answer_ready=answer_ready,
@@ -202,6 +267,7 @@ def process_response_impl(
     jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,
 ) -> ProcessedRuntimeResponse:
     """Process a raw LLM response into structured content with drift handling."""
+    del jit_executor
     from .types import ProcessedRuntimeResponse
 
     contract = response_contract_for_mode(text, tool_compatible=tool_compatible, session=session)
@@ -342,22 +408,7 @@ def process_response_impl(
             session._tool_names_seen.add(cast("str", block["name"]))
 
     if os.getenv("TOK_NEURO_REACTOR", "0") == "1" and "EXECUTE_JIT(@" in text:
-        import re
-
-        jit_match = re.search(r"EXECUTE_JIT\(@(\w+)\((.*?)\)\)", text)
-        if jit_match:
-            m_name = jit_match.group(1)
-            m_args_raw = jit_match.group(2)
-            executor = jit_executor or execute_jit_macro
-            jit_result = executor(session, m_name, m_args_raw)
-            contract.content_blocks.append(
-                {
-                    "type": "text",
-                    "text": f"\n\n[JIT Execution Result for @{m_name}]:\n{jit_result}",
-                }
-            )
-            merged_signals["jit_executed"] = 1
-            merged_signals[f"jit_macro_executed_{m_name}"] = 1
+        merged_signals["jit_detected_not_executed"] = 1
 
     session._drift_detected_previous_turn = bool(
         merged_signals.get("semantic_drift_detected") or merged_signals.get("non_tok_response")

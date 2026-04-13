@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import difflib
 import re
 from typing import Any
 
-from tok.runtime.config import RESULT_CACHE_TTL_SECONDS
+from tok.runtime.config import (
+    RESULT_CACHE_TTL_SECONDS,
+    TOK_ENABLE_FILE_OVERLAP_DELTA,
+    TOK_ENABLE_FILE_REREAD_DIFF,
+    TOK_ENABLE_PYTEST_FAIL_COMPRESSION,
+    TOK_ENABLE_SEARCH_OVERLAP_DELTA,
+    TOK_ENABLE_STACK_REPEAT_DELTA,
+)
 from tok.runtime.repeat_targets import (
     SEARCH_LIKE_TOOLS,
     build_file_skeleton,
@@ -27,12 +35,6 @@ from . import (
     RECENT_WINDOW_EVIDENCE_THRESHOLD,
     RECENT_WINDOW_THRESHOLD,
     STOP_WORDS,
-    TOK_FRESHNESS_SIGNALS_EXPLANATION,
-    TOK_OUTPUT_DIRECTIVE_MINIMAL,
-    TOK_OUTPUT_DIRECTIVE_REINFORCED,
-    TOK_PROTOCOL_LAW,
-    TOK_TOOL_COMPAT_ANSWER_ONLY_DIRECTIVE,
-    TOK_TOOL_COMPAT_DIRECTIVE,
     _apply_result_cache,
     _compute_semantic_hash,
     _make_semantic_cache_key,
@@ -59,6 +61,7 @@ from ._tool_result_codecs import (
     _compress_search_results,
     _compress_stack_traces,
     _detect_tool_content_type,
+    _is_tok_cli_command,
     _tighten_compressed_output,
     truncate_large_result,
 )
@@ -583,6 +586,8 @@ def tok_tool_result_impl(
     """Compress a tool result using registry-based compressors."""
     if len(content) <= TOOL_COMPRESS_THRESHOLD:
         return content
+    if _is_tok_cli_command(_tool_command_hint(tool_context)):
+        return content
 
     kind = _detect_tool_content_type_impl(content)
     original_chars = len(content)
@@ -593,7 +598,7 @@ def tok_tool_result_impl(
         compress_ls=_compress_ls,
         compress_install=_compress_install,
         compress_git_log=_compress_git_log_impl,
-        compress_repetitive=_compress_repetitive,
+        compress_repetitive=lambda text: _compress_repetitive(text, command=_tool_command_hint(tool_context)),
         compress_file_read=_compress_file_read,
         compress_search_results=_compress_search_results,
         compress_stack_traces=_compress_stack_traces,
@@ -699,6 +704,29 @@ def compress_tool_results_impl(
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
     last_file_read_ids = _build_last_file_read_ids(messages, tool_use_id_to_context)
+    precision_ranges_by_path: dict[str, list[tuple[int, int]]] = {}
+    last_full_file_by_path: dict[str, str] = {}
+    search_seen_matches: dict[str, set[str]] = {}
+    stack_prev_by_signature: dict[str, str] = {}
+    feature_telemetry: dict[str, dict[str, int]] = {}
+
+    def _record_feature_telemetry(
+        feature: str,
+        outcome: str,
+        chars_saved: int = 0,
+    ) -> None:
+        metrics = feature_telemetry.setdefault(
+            feature,
+            {"attempted": 0, "applied": 0, "skipped": 0, "fallback": 0, "chars_saved": 0},
+        )
+        if outcome == "attempted":
+            metrics["attempted"] += 1
+        else:
+            if outcome not in metrics:
+                metrics[outcome] = 0
+            metrics[outcome] += 1
+        if chars_saved > 0:
+            metrics["chars_saved"] += chars_saved
 
     def _extract_normalized_path(context: dict[str, Any]) -> str:
         raw_args = context.get("args")
@@ -709,6 +737,141 @@ def compress_tool_results_impl(
             args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
         )
         return path.lower().strip()
+
+    def _extract_precision_range(
+        context: dict[str, Any] | None,
+        raw: str,
+    ) -> tuple[str, int, int, list[str]] | None:
+        if not _is_precision_read_context(context):
+            return None
+        if not isinstance(context, dict):
+            return None
+        args = context.get("args")
+        if not isinstance(args, dict):
+            return None
+        norm_path = _extract_normalized_path(context)
+        if not norm_path:
+            return None
+        lines = raw.splitlines()
+        if not lines:
+            return None
+        start_raw = args.get("offset", args.get("start"))
+        if start_raw is None:
+            return None
+        try:
+            start = int(start_raw)
+        except (TypeError, ValueError):
+            return None
+        if start < 0:
+            return None
+        end: int | None = None
+        if args.get("end") is not None:
+            try:
+                end = int(args["end"])
+            except (TypeError, ValueError):
+                end = None
+        if end is None and args.get("limit") is not None:
+            try:
+                end = start + int(args["limit"])
+            except (TypeError, ValueError):
+                end = None
+        if end is None:
+            end = start + len(lines)
+        if end < start:
+            return None
+        expected_len = end - start
+        if expected_len <= 0:
+            expected_len = len(lines)
+            end = start + expected_len
+        # Keep alignment stable with the actual payload length.
+        if len(lines) != expected_len:
+            end = start + len(lines)
+        return norm_path, start, end, lines
+
+    def _mark_precision_range(path: str, start: int, end: int) -> None:
+        if start >= end:
+            return
+        ranges = precision_ranges_by_path.setdefault(path, [])
+        merged_start = start
+        merged_end = end
+        remaining: list[tuple[int, int]] = []
+        for existing_start, existing_end in ranges:
+            if existing_end < merged_start or existing_start > merged_end:
+                remaining.append((existing_start, existing_end))
+                continue
+            merged_start = min(merged_start, existing_start)
+            merged_end = max(merged_end, existing_end)
+        remaining.append((merged_start, merged_end))
+        remaining.sort(key=lambda pair: pair[0])
+        precision_ranges_by_path[path] = remaining
+
+    def _is_index_covered(path: str, index: int) -> bool:
+        for range_start, range_end in precision_ranges_by_path.get(path, []):
+            if range_start <= index < range_end:
+                return True
+        return False
+
+    def _build_precision_overlap_delta(
+        path: str,
+        start: int,
+        end: int,
+        lines: list[str],
+    ) -> str | None:
+        unseen: list[str] = []
+        overlap_count = 0
+        for idx, line in enumerate(lines):
+            abs_index = start + idx
+            if _is_index_covered(path, abs_index):
+                overlap_count += 1
+                continue
+            unseen.append(f"{abs_index + 1}: {line}")
+        if overlap_count == 0:
+            return None
+        header = (
+            f">>> tool:file_read_overlap_delta|path:{path}|range:{start + 1}-{end}"
+            f"|new_lines:{len(unseen)}|overlap_lines:{overlap_count}"
+        )
+        body = "\n".join(unseen) if unseen else "no new lines (all overlap with prior precision reads)"
+        return header + "\n" + body
+
+    def _count_changed_diff_lines(diff_lines: list[str]) -> int:
+        return sum(1 for line in diff_lines if line.startswith("+") or line.startswith("-")) - sum(
+            1 for line in diff_lines if line.startswith("+++") or line.startswith("---")
+        )
+
+    def _build_file_reread_diff(path: str, previous: str, current: str) -> str | None:
+        if previous == current:
+            return None
+        diff_lines = list(
+            difflib.unified_diff(
+                previous.splitlines(keepends=True),
+                current.splitlines(keepends=True),
+                fromfile=f"a/{path}",
+                tofile=f"b/{path}",
+                n=3,
+                lineterm="",
+            )
+        )
+        if not diff_lines:
+            return None
+        changed_lines = max(1, _count_changed_diff_lines(diff_lines))
+        diff_text = "".join(diff_lines)
+        return f">>> tool:file_reread_diff|path:{path}|changed_lines:{changed_lines}\n{diff_text}"
+
+    def _extract_stack_frames(trace_text: str) -> tuple[list[str], str]:
+        lines = trace_text.splitlines()
+        frames: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('File "') or stripped.startswith("at "):
+                frames.append(stripped)
+        exception_line = ""
+        for line in reversed(lines):
+            stripped = line.strip()
+            if stripped:
+                exception_line = stripped
+                break
+        return frames, exception_line
 
     def _is_file_fully_delivered(norm_path: str) -> bool:
         if files_fully_delivered is None:
@@ -886,10 +1049,44 @@ def compress_tool_results_impl(
                 if _preserve_first_exact_observation(ctx, raw, norm_path):
                     block["content"] = raw
                     continue
+            else:
+                norm_path = ""
 
             # Search-specific repeat compression path
             # Search tools use query+scope identity, not norm_path
             tool_name = str(ctx.get("name", "")).lower() if ctx else ""
+            if (
+                TOK_ENABLE_SEARCH_OVERLAP_DELTA
+                and ctx
+                and tool_name in SEARCH_LIKE_TOOLS
+                and not preserve_exact_search_evidence
+                and search_result_evidence_level(raw) != "navigation"
+            ):
+                search_scope = str(ctx.get("path") or "").strip().lower()
+                search_key = f"{tool_name}|{search_scope or 'global'}"
+                current_lines = [line for line in raw.splitlines() if line.strip()]
+                if current_lines:
+                    previous_lines = search_seen_matches.get(search_key)
+                    if previous_lines is None:
+                        search_seen_matches[search_key] = set(current_lines)
+                    else:
+                        _record_feature_telemetry("search_overlap_delta", "attempted")
+                        new_lines = [line for line in current_lines if line not in previous_lines]
+                        omitted_count = len(current_lines) - len(new_lines)
+                        candidate = (
+                            f">>> tool:search_overlap_delta|scope:{search_scope or 'global'}"
+                            f"|new_matches:{len(new_lines)}|omitted_seen:{max(0, omitted_count)}\n"
+                        )
+                        candidate += "\n".join(new_lines) if new_lines else "no new matches"
+                        saved = len(raw) - len(candidate)
+                        if saved > 0:
+                            breakdown["search_overlap_delta"] = breakdown.get("search_overlap_delta", 0) + saved
+                            block["content"] = candidate
+                            _record_feature_telemetry("search_overlap_delta", "applied", chars_saved=saved)
+                            previous_lines.update(current_lines)
+                            continue
+                        _record_feature_telemetry("search_overlap_delta", "skipped")
+                        previous_lines.update(current_lines)
             if ctx and tool_name in SEARCH_LIKE_TOOLS and first_exact_evidence_seen is not None:
                 search_key = evidence_identity_key(
                     tool_name,
@@ -961,6 +1158,25 @@ def compress_tool_results_impl(
                                 semantic_hash_cache[cache_key] = content_hash
 
             if _is_precision_read_context(ctx):
+                if TOK_ENABLE_FILE_OVERLAP_DELTA:
+                    precision_window = _extract_precision_range(ctx, raw)
+                    if precision_window is not None:
+                        path, start, end, raw_lines = precision_window
+                        _record_feature_telemetry("file_overlap_delta", "attempted")
+                        overlap_candidate = _build_precision_overlap_delta(path, start, end, raw_lines)
+                        if overlap_candidate:
+                            overlap_saved = len(raw) - len(overlap_candidate)
+                            if overlap_saved > 0:
+                                block["content"] = overlap_candidate
+                                breakdown["file_overlap_delta"] = breakdown.get("file_overlap_delta", 0) + overlap_saved
+                                _mark_precision_range(path, start, end)
+                                _mark_file_fully_delivered(path)
+                                _record_feature_telemetry("file_overlap_delta", "applied", chars_saved=overlap_saved)
+                                continue
+                            _record_feature_telemetry("file_overlap_delta", "fallback")
+                        else:
+                            _record_feature_telemetry("file_overlap_delta", "skipped")
+                        _mark_precision_range(path, start, end)
                 norm_path = _extract_normalized_path(ctx) if ctx else ""
                 if session_files_read is not None and norm_path and norm_path not in session_files_read:
                     session_files_read.add(norm_path)
@@ -987,6 +1203,31 @@ def compress_tool_results_impl(
                     block["content"] = raw
                 _mark_file_fully_delivered(norm_path)
                 continue
+
+            if (
+                TOK_ENABLE_FILE_REREAD_DIFF
+                and ctx
+                and tool_name in FILE_LIKE_TOOLS
+                and norm_path
+                and not _is_precision_read_context(ctx)
+            ):
+                previous_full = last_full_file_by_path.get(norm_path)
+                if previous_full:
+                    _record_feature_telemetry("file_reread_diff", "attempted")
+                    reread_candidate = _build_file_reread_diff(norm_path, previous_full, raw)
+                    if reread_candidate is not None:
+                        reread_saved = len(raw) - len(reread_candidate)
+                        if reread_saved > 0:
+                            breakdown["file_reread_diff"] = breakdown.get("file_reread_diff", 0) + reread_saved
+                            block["content"] = reread_candidate
+                            last_full_file_by_path[norm_path] = raw
+                            _mark_file_fully_delivered(norm_path)
+                            _record_feature_telemetry("file_reread_diff", "applied", chars_saved=reread_saved)
+                            continue
+                        _record_feature_telemetry("file_reread_diff", "fallback")
+                    else:
+                        _record_feature_telemetry("file_reread_diff", "skipped")
+                last_full_file_by_path[norm_path] = raw
 
             if tool_id in last_file_read_ids:
                 norm_path = _extract_normalized_path(ctx) if ctx else ""
@@ -1098,11 +1339,43 @@ def compress_tool_results_impl(
                 compression_level=compression_level,
                 tool_context=ctx,
             )
+            if TOK_ENABLE_STACK_REPEAT_DELTA:
+                kind = _detect_tool_content_type_impl(raw)
+                if kind == "stack_trace":
+                    frames, exception_line = _extract_stack_frames(raw)
+                    signature = exception_line or "unknown_exception"
+                    previous_trace = stack_prev_by_signature.get(signature)
+                    if previous_trace:
+                        _record_feature_telemetry("stack_repeat_delta", "attempted")
+                        previous_frames, _prev_exception = _extract_stack_frames(previous_trace)
+                        if (
+                            len(frames) >= 2
+                            and len(previous_frames) >= 2
+                            and frames[1:] == previous_frames[1:]
+                            and frames[0] != previous_frames[0]
+                        ):
+                            candidate = (
+                                ">>> tool:stack_trace_delta|baseline:previous|changed_top_frames:1\n"
+                                f"{frames[0]}\n{exception_line}"
+                            )
+                            saved = len(raw) - len(candidate)
+                            if saved > 0:
+                                breakdown["stack_repeat_delta"] = breakdown.get("stack_repeat_delta", 0) + saved
+                                block["content"] = candidate
+                                stack_prev_by_signature[signature] = raw
+                                _record_feature_telemetry("stack_repeat_delta", "applied", chars_saved=saved)
+                                continue
+                            _record_feature_telemetry("stack_repeat_delta", "fallback")
+                        else:
+                            _record_feature_telemetry("stack_repeat_delta", "skipped")
+                    stack_prev_by_signature[signature] = raw
             saved = len(raw) - len(compressed)
             if saved > 0:
                 kind = _detect_tool_content_type_impl(raw)
                 breakdown[kind] = breakdown.get(kind, 0) + saved
                 block["content"] = compressed
+    if feature_telemetry:
+        logger.debug("compression_feature_telemetry=%s", feature_telemetry)
     return messages, breakdown
 
 
@@ -1117,67 +1390,10 @@ def inject_system_additions_impl(
     runtime_hints: list[str] | None = None,
     behavior_signals: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Inject Tok directives and dynamic state into system prompt."""
-    sys_prompt = body.get("system", "")
-    if not tool_compatible and sys_prompt:
-        if isinstance(sys_prompt, str):
-            if "[Tok File Freshness System]" not in sys_prompt:
-                sys_prompt = sys_prompt + "\n\n" + TOK_FRESHNESS_SIGNALS_EXPLANATION
-                body["system"] = sys_prompt
-        elif isinstance(sys_prompt, list):
-            has_freshness = any(
-                isinstance(block, dict)
-                and block.get("type") == "text"
-                and "[Tok File Freshness System]" in block.get("text", "")
-                for block in sys_prompt
-            )
-            if not has_freshness:
-                sys_prompt = [
-                    *sys_prompt,
-                    {
-                        "type": "text",
-                        "text": TOK_FRESHNESS_SIGNALS_EXPLANATION,
-                    },
-                ]
-                body["system"] = sys_prompt
-
-    directive_parts = []
-    if not tool_compatible:
-        directive_parts.append("=== MODE: TOK-NATIVE ===")
-
-    answer_only_tool_compatible = bool(
-        tool_compatible
-        and behavior_signals
-        and any(
-            behavior_signals.get(key, 0) > 0
-            for key in (
-                "answer_ready_turn",
-                "answer_ready_repair_active",
-                "late_answer_followthrough_active",
-                "late_answer_assembly_repair_active",
-                "late_answer_assembly_repair_answer_only",
-            )
-        )
-    )
-
-    use_protocol_law = (
-        not tool_compatible
-        and 1 < pressure <= 50
-        and not (behavior_signals and behavior_signals.get("semantic_drift_detected"))
-    )
-    if use_protocol_law:
-        directive_parts.append(TOK_PROTOCOL_LAW)
-    elif answer_only_tool_compatible:
-        directive_parts.append(TOK_TOOL_COMPAT_ANSWER_ONLY_DIRECTIVE)
-    elif tool_compatible:
-        directive_parts.append(TOK_TOOL_COMPAT_DIRECTIVE)
-    elif pressure > 50 or (behavior_signals and behavior_signals.get("semantic_drift_detected")):
-        directive_parts.append(TOK_OUTPUT_DIRECTIVE_REINFORCED)
-    else:
-        directive_parts.append(TOK_OUTPUT_DIRECTIVE_MINIMAL)
+    """Inject dynamic state into system prompt."""
+    output_directive = ""
     if runtime_hints:
-        directive_parts.append("\n".join(str(hint).strip() for hint in runtime_hints if str(hint).strip()))
-    output_directive = "\n\n".join(directive_parts)
+        output_directive = "\n".join(str(hint).strip() for hint in runtime_hints if str(hint).strip())
 
     include_tok_state = _should_include_tok_state(tok_state, tool_compatible=tool_compatible)
 
@@ -1216,12 +1432,12 @@ def inject_system_additions_impl(
         addition = "\n\n".join(additions)
         body["system"] = current_sys_prompt + "\n\n" + addition if current_sys_prompt else addition
     elif isinstance(current_sys_prompt, list):
-        body["system"] = [
-            *current_sys_prompt,
-            {"type": "text", "text": output_directive},
-        ]
+        new_blocks = [*current_sys_prompt]
+        if output_directive.strip():
+            new_blocks.append({"type": "text", "text": output_directive})
         if dynamic_state:
-            body["system"].append({"type": "text", "text": dynamic_state})
+            new_blocks.append({"type": "text", "text": dynamic_state})
+        body["system"] = new_blocks
     else:
         additions = [output_directive]
         if dynamic_state:
@@ -1343,6 +1559,8 @@ def compress_recent_window_impl(
                 kind = "file"
             elif kind == "raw":
                 continue
+            if kind == "pytest" and " FAILED" in content and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
+                continue
             effective_threshold = (
                 RECENT_WINDOW_EVIDENCE_THRESHOLD
                 if tool_compatible and kind in {"file", "grep", "grep_context", "search_results"}
@@ -1401,6 +1619,8 @@ def compress_recent_window_impl(
             kind = _detect_tool_content_type_impl(raw)
             if kind == "raw" and tool_name in SEARCH_LIKE_TOOLS:
                 kind = "search_results"
+            if kind == "pytest" and " FAILED" in raw and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
+                continue
             if kind in {"raw", "file"}:
                 context = tool_ctx or {}
                 if _is_precision_read_context(context):

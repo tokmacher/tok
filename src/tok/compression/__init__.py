@@ -117,11 +117,8 @@ def classify_cut_eligibility(msg: dict[str, Any]) -> CutEligibility:
         return CutEligibility(True, "eligible")
     if isinstance(content, list):
         has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
-        has_non_tool_result = any(not (isinstance(b, dict) and b.get("type") == "tool_result") for b in content)
-        if has_tool_result and has_non_tool_result:
-            return CutEligibility(False, "user_contains_tool_result_block")
         if has_tool_result:
-            return CutEligibility(True, "eligible")
+            return CutEligibility(False, "user_contains_tool_result_block")
         return CutEligibility(True, "eligible")
     return CutEligibility(True, "eligible")
 
@@ -384,17 +381,8 @@ Reply normally using plain text. No special formatting markers.
 
 # Appended to the system prompt when @stable_result tokens appear in history.
 _STABLE_RESULT_EXPLANATION = (
-    "@stable_result(hash:...) means the tool output is identical to a previous turn —"
-    " the file or query result is unchanged."
-    " The cached payload may be provided as a compact stable block:"
-    " @stable_result(hash:...), optionally @stable_status |> verified_unchanged,"
-    " then @stable_summary |> ... and @stable_skeleton |> ...."
-    " DO NOT attempt re-reads with different offsets or patterns; they will also be stable."
-    " Instead: (1) If the content is still in your context window, use it directly."
-    " (2) If @hot_recent_file or file facts show a structural summary, reason from that."
-    " (3) If the content has scrolled out of context, say so and ask the user to resend the key sections."
-    " (4) If you truly need verbatim bytes, emit @tok_bypass_next_read immediately before ONE supported read tool call."
-    " (5) Never spiral on stable results."
+    "@stable_result(hash:...) = unchanged file/query. Reason from @stable_summary/@stable_skeleton."
+    " For verbatim bytes: @tok_bypass_next_read before one read."
 )
 
 # Explanation of Tok file freshness signals to help Claude understand they are system metadata
