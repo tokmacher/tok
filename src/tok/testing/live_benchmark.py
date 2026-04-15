@@ -2037,6 +2037,7 @@ class LiveBenchmarkRunner:
         with tempfile.TemporaryDirectory(prefix="tok_live_benchmark_") as tmpdir:
             bridge_session = BridgeSession(memory_dir=Path(tmpdir))
             session = bridge_session.runtime_session
+            session.model = self.model
             conversation: list[dict[str, Any]] = []
             turn_results: list[dict[str, Any]] = []
             total_prompt_tokens = 0

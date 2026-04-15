@@ -122,7 +122,6 @@ def build_tool_compatible_resend(
     """Build a tool-compatible resend payload with state compression and hints."""
     del runtime
     if request.tool_compatible:
-        constrained_profile_active = bool(behavior_signals.get("constrained_tool_profile_active", 0))
         pre_resend_memory = memory
         previous_comparable = dict(session._last_tool_compatible_state_fields)
         (
@@ -184,15 +183,11 @@ def build_tool_compatible_resend(
         )
         if not runtime_hints:
             pass
-        hot_recent_hints, hot_metrics = session.hot_recent_runtime_hints(
-            max_hints=(1 if constrained_profile_active else None)
-        )
+        hot_recent_hints, hot_metrics = session.hot_recent_runtime_hints(max_hints=None)
         if hot_recent_hints:
             runtime_hints.extend(hot_recent_hints)
             for key, value in hot_metrics.items():
                 hot_hint_metrics[key] = hot_hint_metrics.get(key, 0) + value
-            if constrained_profile_active and len(hot_recent_hints) >= 1:
-                behavior_signals["constrained_tool_profile_hot_hint_downshift"] = 1
         runtime_hints, suppressed_hint_count = _apply_runtime_hint_cooldown(
             session,
             runtime_hints,
@@ -202,11 +197,6 @@ def build_tool_compatible_resend(
             behavior_signals["runtime_hint_cooldown_suppressed"] = suppressed_hint_count
         if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
             runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
-        if constrained_profile_active and len(runtime_hints) > 1:
-            runtime_hints = runtime_hints[:1]
-            behavior_signals["constrained_tool_profile_hint_cap_applied"] = (
-                behavior_signals.get("constrained_tool_profile_hint_cap_applied", 0) + 1
-            )
         _annotate_reacquisition_diagnostics(
             behavior_signals,
             answer_ready=answer_ready,
@@ -406,6 +396,26 @@ def process_response_impl(
     for block in contract.content_blocks:
         if block.get("type") == "tool_use" and block.get("name"):
             session._tool_names_seen.add(cast("str", block["name"]))
+            tool_input = block.get("input", {})
+            if isinstance(tool_input, dict):
+                input_key = next(iter(tool_input.values()), "") if tool_input else ""
+            else:
+                input_key = ""
+            loop_detected = session.observe_tool_action(cast("str", block["name"]), str(input_key)[:120])
+            if loop_detected:
+                merged_signals["loop_detected"] = 1
+            tool_name_lower = cast("str", block["name"]).lower()
+            if tool_name_lower in ("edit_file", "edit", "write_file", "write", "replace", "create_file"):
+                edited_path = (
+                    cast("dict", tool_input).get("path")
+                    or cast("dict", tool_input).get("file_path")
+                    or cast("dict", tool_input).get("filename")
+                    or ""
+                )
+                if edited_path:
+                    from tok.runtime.repeat_targets import normalize_path_target
+
+                    session.mark_file_edited(normalize_path_target(edited_path))
 
     if os.getenv("TOK_NEURO_REACTOR", "0") == "1" and "EXECUTE_JIT(@" in text:
         merged_signals["jit_detected_not_executed"] = 1

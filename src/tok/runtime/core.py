@@ -78,6 +78,8 @@ from ._session_persistence import (
 from ._session_persistence import record_episode as record_episode_impl
 from .config import (
     _FALLBACK_THRESHOLD,
+    TOK_LOOP_DETECTION_ENABLED,
+    TOK_LOOP_DETECTION_THRESHOLD,
     TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS,
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOOL_COMPAT_MEMORY_PROFILE,
@@ -162,6 +164,7 @@ class RuntimeSession:
 
     keep_turns: int = 2
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    model: str = ""
     result_cache: dict[str, Any] = field(default_factory=dict)
     # Maps (tool_name, args_hash) -> content_hash for dedup; see compress_tool_results.
     semantic_hash_cache: dict[str, str] = field(default_factory=dict)
@@ -208,6 +211,9 @@ class RuntimeSession:
     _request_policy_tool_mode_sticky_turns: int = field(default=0, init=False, repr=False)
     _request_policy_stream_recovery_watch_turns: int = field(default=0, init=False, repr=False)
     _request_policy_tool_recovery_watch_turns: int = field(default=0, init=False, repr=False)
+    _loop_detection_window: list[tuple[str, str]] = field(default_factory=list, init=False, repr=False)
+    _loop_detected: bool = field(default=False, init=False, repr=False)
+    _recently_edited_files: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     # Smoothness tracking fields
     _latest_turn_smoothness_score: int = field(default=100, init=False, repr=False)
     _latest_turn_labour_index: int = field(default=0, init=False, repr=False)
@@ -296,6 +302,45 @@ class RuntimeSession:
         """Clear the repeated invalid-tool-history counter after a clean request."""
         self._invalid_tool_history_recovery_count = 0
 
+    def observe_tool_action(self, tool_name: str, tool_input_key: str) -> bool:
+        """Track a tool call and detect loops. Returns True if a loop is detected."""
+        if not TOK_LOOP_DETECTION_ENABLED:
+            return False
+        action_key = f"{tool_name}:{tool_input_key}"
+        self._loop_detection_window.append((tool_name, action_key))
+        window_size = TOK_LOOP_DETECTION_THRESHOLD * 3
+        if len(self._loop_detection_window) > window_size:
+            self._loop_detection_window = self._loop_detection_window[-window_size:]
+        if len(self._loop_detection_window) < TOK_LOOP_DETECTION_THRESHOLD:
+            return False
+        recent = self._loop_detection_window[-TOK_LOOP_DETECTION_THRESHOLD:]
+        if all(action_key == recent[0][1] for _, action_key in recent):
+            self._loop_detected = True
+            logger.warning(
+                "tok_loop_detected: %d consecutive identical actions: %s",
+                TOK_LOOP_DETECTION_THRESHOLD,
+                recent[0][1],
+            )
+            return True
+        return False
+
+    def consume_loop_detected(self) -> bool:
+        """Consume and return the loop detection flag."""
+        was_detected = self._loop_detected
+        self._loop_detected = False
+        return was_detected
+
+    def mark_file_edited(self, norm_path: str) -> None:
+        """Record that a file was edited on this turn. It will bypass compression for 2 turns."""
+        self._recently_edited_files[norm_path] = self._step_count
+
+    def is_recently_edited(self, norm_path: str) -> bool:
+        """Check if a file was edited within the last 2 turns."""
+        edit_step = self._recently_edited_files.get(norm_path)
+        if edit_step is None:
+            return False
+        return (self._step_count - edit_step) < 2
+
     def note_request_policy_stream_recovery(self, turns: int = TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS) -> None:
         """Keep natural-first in tool-compatible mode briefly after stream recovery."""
         self._request_policy_stream_recovery_watch_turns = max(self._request_policy_stream_recovery_watch_turns, turns)
@@ -309,6 +354,13 @@ class RuntimeSession:
     def adaptive_keep_turns(self) -> int:
         """Dynamically reduce history depth as the session grows."""
         return get_adaptive_keep_turns(self)
+
+    @property
+    def model_profile(self):
+        """Resolve the ModelProfile for the session's model string."""
+        from tok.protocol.model_profiles import get_model_profile
+
+        return get_model_profile(self.model)
 
     def __post_init__(self) -> None:
         """Initialize memory directory and load persisted bridge memory."""

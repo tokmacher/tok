@@ -23,7 +23,6 @@ from tok.neuro.ir import Instruction
 
 from .config import (
     _SHORT_SESSION_THRESHOLD,
-    FILE_READ_DENSITY_THRESHOLD,
     RUNTIME_HINTS_MAX_PER_TURN,
     TOK_FILE_DELIVERY_STALE_TURNS,
     TOK_HOT_COMMAND_MAX_CHARS,
@@ -40,7 +39,6 @@ from .config import (
     TOK_REACQUIRE_WINDOW_TURNS,
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOK_TOOL_REQUIRED_LATCH_THRESHOLD,
-    TOOL_USE_DENSITY_THRESHOLD,
 )
 from .core import UniversalTokRuntime, logger
 from .memory.bridge_memory import clean_system_context
@@ -90,7 +88,6 @@ _DEFAULT_SPECULATIVE_HIT_THRESHOLD = 2
 _BRIDGE_CUT_SEARCH_MAX_EXTRA_TURNS = 4
 _BRIDGE_CUT_SEARCH_MIN_SAVED_TOKENS = 16
 _STRUCTURED_ANSWER_LABEL_RE = re.compile(r"(?<![\w-])(file|verification|related)(?![\w-])\s*[:=]", re.IGNORECASE)
-_PATCH_TOOL_PROFILE_TOOLS = frozenset({"list_dir", "view_file", "grep_search", "edit_file", "run_tests"})
 
 
 def _env_int_or_default(name: str, default: int) -> int:
@@ -105,18 +102,6 @@ def _has_exact_search_evidence(evidence_keys: set[str]) -> bool:
         if str(key).startswith("search|"):
             return True
     return False
-
-
-def _is_constrained_patch_tool_profile(request: RuntimeRequest) -> bool:
-    allowed_tools = request.allowed_tools or ()
-    if not allowed_tools:
-        return False
-    normalized = {str(tool).strip().lower() for tool in allowed_tools if str(tool).strip()}
-    if not normalized:
-        return False
-    if not {"edit_file", "run_tests"}.issubset(normalized):
-        return False
-    return normalized.issubset(_PATCH_TOOL_PROFILE_TOOLS)
 
 
 def _extract_requested_answer_labels(text: str) -> tuple[str, ...]:
@@ -844,7 +829,6 @@ def prepare_request_impl(
     request_policy = request.request_policy
     previous_effective_tool_compatible = session._request_policy_last_effective_tool_compatible
     effective_tool_compatible = request.tool_compatible and request_policy == "legacy_tool_compatible"
-    constrained_tool_profile = _is_constrained_patch_tool_profile(request)
     request_policy_reasons: list[str] = ["legacy_default"] if effective_tool_compatible else []
     request_policy_escalated = False
 
@@ -962,30 +946,17 @@ def prepare_request_impl(
         session._natural_response_acceptable_this_turn = bool(
             request_policy == "natural_first" and request.tool_compatible and not effective_tool_compatible
         )
-        if effective_tool_compatible and constrained_tool_profile:
-            behavior_signals["constrained_tool_profile_active"] = 1
 
         runtime_hints = []
         answer_phase_expected = False
+        if session.consume_loop_detected():
+            runtime_hints.append(
+                "@tok_terminate_loop You appear to be in a loop of repeated actions. "
+                "Choose the most likely answer and provide a final response now."
+            )
+            behavior_signals["loop_terminated"] = 1
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
             behavior_signals["repeat_command_suppression_hint_injected"] = 0
-        file_read_count = sum(
-            1 for event in normalized_tool_events if getattr(event, "compressibility_class", "") == "file_read"
-        )
-        if (
-            effective_tool_compatible
-            and not answer_phase_expected
-            and not constrained_tool_profile
-            and (
-                file_read_count >= FILE_READ_DENSITY_THRESHOLD
-                or len(normalized_tool_events) >= TOOL_USE_DENSITY_THRESHOLD
-            )
-        ):
-            behavior_signals["read_plan_hint_injected"] = 0
-        if effective_tool_compatible and not answer_phase_expected and not constrained_tool_profile:
-            pass
-        if effective_tool_compatible and constrained_tool_profile:
-            behavior_signals["constrained_tool_profile_generic_hints_suppressed"] = 1
         answer_ready = False
         resend_signals: dict[str, int] = {}
         has_answer_anchor = False
@@ -1066,11 +1037,16 @@ def prepare_request_impl(
         if stream_recovery_history_floor_active:
             body["messages"] = translated_messages
         else:
+            effective_compression_level = policy.tool_levels[mode]
+            if session.model_profile.compression_aggressiveness < 0.8:
+                aggressive_levels = {"aggressive", "full", "maximum"}
+                if effective_compression_level in aggressive_levels:
+                    effective_compression_level = "balanced"
             body["messages"], type_breakdown = compress_tool_results(
                 translated_messages,
                 result_cache=(result_cache if result_cache is not None else session.result_cache),
                 tool_use_id_to_context=id_to_context,
-                compression_level=policy.tool_levels[mode],
+                compression_level=effective_compression_level,
                 semantic_hash_cache=session.semantic_hash_cache,
                 hot_summary_records=session._hot_summary_records,
                 session_files_read=session._files_read_this_session,
@@ -1079,6 +1055,7 @@ def prepare_request_impl(
                 current_turn=session.bridge_memory.turn,
                 keep_turns_window=TOK_FILE_DELIVERY_STALE_TURNS,
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
+                recently_edited_files=dict(session._recently_edited_files),
             )
             tool_saved = sum(type_breakdown.values()) // 4
             if tool_saved > 0:
@@ -1374,11 +1351,9 @@ def prepare_request_impl(
                 session._answer_phase_expected_this_turn = answer_phase_now
                 if answer_phase_now and runtime_hints:
                     runtime_hints = []
-                max_runtime_hints = 1 if constrained_tool_profile else RUNTIME_HINTS_MAX_PER_TURN
+                max_runtime_hints = RUNTIME_HINTS_MAX_PER_TURN
                 if len(runtime_hints) > max_runtime_hints:
                     runtime_hints = runtime_hints[:max_runtime_hints]
-                    if constrained_tool_profile:
-                        behavior_signals["constrained_tool_profile_hint_cap_applied"] = 1
                 body = _inject_system(
                     body,
                     injected_state_payload,
@@ -1395,11 +1370,9 @@ def prepare_request_impl(
             # Short session: skip ALL Tok additions to avoid overhead
             behavior_signals["short_session_system_additions_skipped"] = 1
         else:
-            max_runtime_hints = 1 if constrained_tool_profile else RUNTIME_HINTS_MAX_PER_TURN
+            max_runtime_hints = RUNTIME_HINTS_MAX_PER_TURN
             if len(runtime_hints) > max_runtime_hints:
                 runtime_hints = runtime_hints[:max_runtime_hints]
-                if constrained_tool_profile:
-                    behavior_signals["constrained_tool_profile_hint_cap_applied"] = 1
             system_body = inject_system_additions(
                 body,
                 tok_state=session_memory,

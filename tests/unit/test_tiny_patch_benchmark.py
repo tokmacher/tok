@@ -261,7 +261,7 @@ def test_summarize_tiny_patch_run_emits_controlled_comparator_and_attribution(tm
                         "tok_history_compression_skipped": 1,
                     },
                 },
-                "response_metrics": {"response_behavior_signals": {"constrained_tool_profile_active": 1}},
+                "response_metrics": {"response_behavior_signals": {}},
                 "diagnostics": {
                     "tool_protocol_retry_count": 1,
                     "tool_protocol_retry_success": 1,
@@ -302,7 +302,6 @@ def test_summarize_tiny_patch_run_emits_controlled_comparator_and_attribution(tm
     assert comparators["tok-universal"]["token_delta_total_sum"] == 50
     assert comparators["tok-universal"]["compression_recovery_estimate_total"] == 20
     assert comparators["tok-universal"]["behavior_inflation_estimate_total"] == 70
-    assert comparators["tok-universal"]["behavior_counters"]["constrained_tool_profile_active"] == 1
     assert comparators["tok-universal"]["behavior_counters"]["tool_protocol_retry_count"] == 1
     assert comparators["tok-universal"]["behavior_counters"]["tool_protocol_retry_success"] == 1
     assert comparators["tok-universal"]["tool_protocol_retry_reason_counts"]["missing_tool_call_for_call_id"] == 1

@@ -100,6 +100,7 @@ def compress_tool_results_impl(
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
     preserve_exact_search_evidence: bool = False,
+    recently_edited_files: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Compress tool results in messages using the history pipeline."""
     _sync_threshold()
@@ -117,6 +118,7 @@ def compress_tool_results_impl(
         current_turn=current_turn,
         keep_turns_window=keep_turns_window,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
+        recently_edited_files=recently_edited_files,
     )
 
 

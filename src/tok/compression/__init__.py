@@ -1139,12 +1139,18 @@ def _serve_cached_content_hash_match(
             pass
 
     if normalized_tool_name in FILE_LIKE_TOOLS:
+        from ._tool_result_codecs import _compress_file_read
+
+        content_for_skeleton = cached_raw if host_stub_replayed else raw_text
+        compressed = _compress_file_read(content_for_skeleton)
+        if len(compressed) < len(content_for_skeleton):
+            return compressed, len(content_for_skeleton) - len(compressed)
         payload = _build_stable_result_payload(
-            raw_text,
+            content_for_skeleton,
             tool_name,
             host_stub_replayed,
         )
-        return payload, len(raw_text) - len(payload)
+        return payload, len(content_for_skeleton) - len(payload)
 
     stub = f">>> tool:{tool_name}|unchanged|cached"
     raw_args = context.get("args")
@@ -1284,6 +1290,7 @@ def compress_tool_results(
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
     preserve_exact_search_evidence: bool = False,
+    recently_edited_files: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
@@ -1302,6 +1309,7 @@ def compress_tool_results(
         current_turn=current_turn,
         keep_turns_window=keep_turns_window,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
+        recently_edited_files=recently_edited_files,
     )
 
 

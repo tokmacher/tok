@@ -701,6 +701,7 @@ def compress_tool_results_impl(
     current_turn: int | None = None,
     keep_turns_window: int | None = None,
     preserve_exact_search_evidence: bool = False,
+    recently_edited_files: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
     last_file_read_ids = _build_last_file_read_ids(messages, tool_use_id_to_context)
@@ -874,6 +875,10 @@ def compress_tool_results_impl(
         return frames, exception_line
 
     def _is_file_fully_delivered(norm_path: str) -> bool:
+        if recently_edited_files and norm_path in recently_edited_files:
+            edit_step = recently_edited_files[norm_path]
+            if current_turn is not None and (current_turn - edit_step) < 2:
+                return False
         if files_fully_delivered is None:
             return True
         delivery_turn = files_fully_delivered.get(norm_path)
@@ -1256,6 +1261,13 @@ def compress_tool_results_impl(
                     content_hash = _compute_semantic_hash(raw)
                     prev_hash = semantic_hash_cache.get(cache_key)
                     if prev_hash == content_hash:
+                        compressed = _compress_file_read(raw)
+                        if len(compressed) < len(raw):
+                            saved = len(raw) - len(compressed)
+                            breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)
+                            log_semantic_dedup(cache_key, saved)
+                            block["content"] = compressed
+                            continue
                         summary = ""
                         if hot_summary_records is not None and ctx is not None:
                             path = ctx.get("path")
@@ -1276,7 +1288,6 @@ def compress_tool_results_impl(
                                     )
                         if not summary:
                             summary = _truncate_stable_snippet(raw, 280)
-
                         skeleton = ""
                         if ctx is not None:
                             path = ctx.get("path")
@@ -1287,7 +1298,6 @@ def compress_tool_results_impl(
                                         max_chars=280,
                                         max_lines=14,
                                     )
-
                         lines = [f"@stable_result(hash:{content_hash})"]
                         if summary:
                             lines.append(f"@stable_summary |> {_truncate_stable_snippet(summary, 280)}")

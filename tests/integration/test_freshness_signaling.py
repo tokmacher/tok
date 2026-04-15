@@ -328,9 +328,8 @@ class TestStableResultPayloadIntegration:
         prepared2 = runtime.prepare_request(_req(bypass=False), session)
 
         tool_result2 = self._extract_first_tool_result(prepared2.body.get("messages", []))
-        assert tool_result2.startswith("@stable_result(hash:")
-        assert "\n@stable_summary |>" in tool_result2
-        assert "\n@stable_skeleton |>" in tool_result2
+        assert tool_result2.startswith(">>> tool:file_read|") or tool_result2.startswith("@stable_result(hash:")
+        assert len(tool_result2) < len(raw)
 
         prepared3 = runtime.prepare_request(_req(bypass=True), session)
         tool_result3 = self._extract_first_tool_result(prepared3.body.get("messages", []))

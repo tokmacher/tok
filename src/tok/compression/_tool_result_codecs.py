@@ -7,7 +7,7 @@ import os
 import re
 from typing import Any
 
-from tok.runtime.config import TOK_ENABLE_JSON_NONEXPANSION_GUARD
+from tok.runtime.config import TOK_ENABLE_JSON_NONEXPANSION_GUARD, TOK_FORCE_FILE_CODEC
 from tok.utils.token_utils import count_tokens
 
 __all__ = [
@@ -205,6 +205,10 @@ def _detect_tool_content_type(text: str) -> str:
     if len(text) > 1000 and _CODE_PATTERNS.search(text):
         return "file"
 
+    if TOK_FORCE_FILE_CODEC and len(text) > 200:
+        if _CODE_PATTERNS.search(text) or text.count("\n") > 5:
+            return "file"
+
     if len(lines) >= 5:
         for i in range(len(lines) - 4):
             prefix = re.split(r"[/: ]", lines[i].rstrip())[0]
@@ -387,52 +391,67 @@ def _compress_repetitive(text: str, command: str = "") -> str:
 def _compress_file_read(text: str) -> str:
     lines = text.splitlines()
     result: list[str] = []
-    i = 0
     in_body = False
-    body_line_count = 0
+    body_buf: list[str] = []
 
     signature_re = re.compile(
         r"^(import |from |class |def |async def |[A-Z_][A-Z0-9_]+ =|\s*def |\s*async def |\s*class )"
     )
+    key_line_re = re.compile(r"^\s*(return\s+\S[\S\s]*[+\-*/%=<>!&|]|return\s+\w+\.\w+|yield\s+\S|raise\s+\w+Error\()")
 
-    while i < len(lines):
-        line = lines[i]
+    def _flush_body() -> None:
+        nonlocal in_body, body_buf
+        if not body_buf:
+            return
+        key_lines: list[tuple[int, str]] = []
+        for j, bl in enumerate(body_buf):
+            if key_line_re.match(bl):
+                key_lines.append((j, bl))
+        if not key_lines:
+            result.append(f"  |> [{len(body_buf)} lines]")
+        else:
+            prev = 0
+            for kj, kl in key_lines:
+                skipped = kj - prev
+                if skipped > 0:
+                    result.append(f"  |> [{skipped} lines]")
+                result.append(kl)
+                prev = kj + 1
+            remaining = len(body_buf) - prev
+            if remaining > 0:
+                result.append(f"  |> [{remaining} lines]")
+        body_buf = []
+
+    for line in lines:
         stripped = line.strip()
 
         if not stripped:
-            result.append("")
-            i += 1
+            if in_body:
+                body_buf.append(line)
+            else:
+                result.append(line)
             continue
 
-        if signature_re.match(line):
-            if in_body and body_line_count > 0:
-                result.append(f"  |> [{body_line_count} lines]")
+        if signature_re.match(line) or re.match(r"^\s+(def |async def |class )", line):
+            if in_body:
+                _flush_body()
             in_body = False
-            body_line_count = 0
             result.append(line)
-            i += 1
             continue
 
-        if re.match(r"^\s+(def |async def |class )", line):
-            if in_body and body_line_count > 0:
-                result.append(f"  |> [{body_line_count} lines]")
-            in_body = False
-            body_line_count = 0
-            result.append(line)
-            i += 1
-            continue
-
-        if in_body:
-            body_line_count += 1
-        else:
+        if not in_body:
             in_body = True
-            body_line_count = 1
-        i += 1
 
-    if in_body and body_line_count > 0:
-        result.append(f"  |> [{body_line_count} lines]")
+        body_buf.append(line)
+
+    if in_body:
+        _flush_body()
 
     if len(result) >= len(lines):
+        return text
+
+    trimmed_result = result
+    if len(result) > 32:
         return text
 
     trimmed_result = result

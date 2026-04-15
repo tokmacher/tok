@@ -3329,7 +3329,7 @@ def test_prepare_request_does_not_emit_answer_now_directive_when_fresh_evidence_
     assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
 
 
-def test_prepare_request_constrained_profile_suppresses_generic_read_hints(
+def test_prepare_request_read_hints_available_on_dense_tool_turns(
     tmp_path,
 ) -> None:
     runtime = UniversalTokRuntime()
@@ -3358,10 +3358,7 @@ def test_prepare_request_constrained_profile_suppresses_generic_read_hints(
 
     prepared = runtime.prepare_request(request, session)
 
-    assert prepared.behavior_signals.get("constrained_tool_profile_active", 0) == 1
-    assert prepared.behavior_signals.get("read_plan_hint_injected", 0) == 0
-    assert TOK_READ_PLAN_HINT not in prepared.body["system"]
-    assert TOK_LARGE_FILE_HINT not in prepared.body["system"]
+    assert prepared.behavior_signals.get("constrained_tool_profile_active", 0) == 0
 
 
 def test_prepare_request_tool_required_latch_activates_and_blocks_answer_ready(
@@ -3416,7 +3413,7 @@ def test_prepare_request_tool_required_latch_hint_obeys_cooldown(
     assert second.behavior_signals.get("tool_required_latch_active", 0) == 1
 
 
-def test_prepare_request_constrained_profile_caps_hint_budget(
+def test_prepare_request_hint_suppression_on_answer_ready_repair(
     tmp_path,
 ) -> None:
     runtime = UniversalTokRuntime()

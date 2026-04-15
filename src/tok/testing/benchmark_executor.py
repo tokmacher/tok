@@ -1012,6 +1012,7 @@ class ToolLoopExecutor:
                 bridge_kwargs["request_policy_default"] = "forced_baseline"
             bridge_session = BridgeSession(**bridge_kwargs)
         session = bridge_session.runtime_session if bridge_session is not None else RuntimeSession()
+        session.model = self.runner.model
         runtime_mode = "tok-universal" if condition in _TOK_RUNTIME_CONDITIONS else condition
         conversation: list[dict[str, Any]] = [{"role": "user", "content": task.prompt}]
         turns: list[dict[str, Any]] = []
@@ -1627,12 +1628,6 @@ class FamilyEvaluator:
         candidate_tool_required_latch_active_count = self._count_turn_response_signal(
             candidate, "tool_required_latch_active"
         )
-        baseline_constrained_tool_profile_active_count = self._count_turn_response_signal(
-            baseline, "constrained_tool_profile_active"
-        )
-        candidate_constrained_tool_profile_active_count = self._count_turn_response_signal(
-            candidate, "constrained_tool_profile_active"
-        )
         integrity_artifact_flags: list[str] = []
         integrity_asymmetry_flags: list[str] = []
 
@@ -1703,8 +1698,6 @@ class FamilyEvaluator:
             "tok_premature_final_count": candidate_premature_final_count,
             "baseline_tool_required_latch_active_count": baseline_tool_required_latch_active_count,
             "tok_tool_required_latch_active_count": candidate_tool_required_latch_active_count,
-            "baseline_constrained_tool_profile_active_count": baseline_constrained_tool_profile_active_count,
-            "tok_constrained_tool_profile_active_count": candidate_constrained_tool_profile_active_count,
             "baseline_adapter_payload_contract_failure": baseline_adapter_contract_failure,
             "tok_adapter_payload_contract_failure": candidate_adapter_contract_failure,
             "integrity_artifact_flags": integrity_artifact_flags,

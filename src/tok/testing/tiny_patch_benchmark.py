@@ -61,7 +61,7 @@ def _task(
         "ref": "HEAD",
         "setup_script": "no_setup_required",
         "prompt": prompt,
-        "allowed_tools": ["list_dir", "view_file", "grep_search", "edit_file", "run_tests"],
+        "allowed_tools": ["list_dir", "view_file", "grep_search", "edit_file", "run_tests", "bash"],
         "time_budget_minutes": time_budget_minutes,
         "step_budget": step_budget,
         "success_evaluator": {
@@ -568,7 +568,6 @@ def _build_forensics_report(task_runs_root: Path) -> dict[str, Any]:
                     "request_policy_tool_compatible",
                     "tok_history_pairing_safety_degraded",
                     "tok_history_compression_skipped",
-                    "constrained_tool_profile_active",
                 ):
                     behavior_counters[signal_name] += int(input_signals.get(signal_name, 0) or 0)
                     behavior_counters[signal_name] += int(response_signals.get(signal_name, 0) or 0)
@@ -706,7 +705,6 @@ def summarize_patch_suite_run(
                 "loop_recovery_trigger_counts": {"baseline": 0, "tok-universal": 0},
                 "premature_final_counts": {"baseline": 0, "tok-universal": 0},
                 "tool_required_latch_active_counts": {"baseline": 0, "tok-universal": 0},
-                "constrained_tool_profile_active_counts": {"baseline": 0, "tok-universal": 0},
                 "integrity_clean_matched_pair_count": 0,
                 "integrity_blocked_matched_pair_count": 0,
                 "matched_pair_blocker_counts": {},
@@ -791,7 +789,6 @@ def summarize_patch_suite_run(
     loop_recovery_trigger_counts: Counter[str] = Counter()
     premature_final_counts: Counter[str] = Counter()
     tool_required_latch_active_counts: Counter[str] = Counter()
-    constrained_tool_profile_active_counts: Counter[str] = Counter()
     matched_pair_blocker_counts: Counter[str] = Counter()
     matched_pair_blocked_by_asymmetry_count = 0
     matched_pair_blocked_by_artifact_count = 0
@@ -806,12 +803,6 @@ def summarize_patch_suite_run(
         )
         tool_required_latch_active_counts["tok-universal"] += int(
             stats.get("tok_tool_required_latch_active_count", 0) or 0
-        )
-        constrained_tool_profile_active_counts["baseline"] += int(
-            stats.get("baseline_constrained_tool_profile_active_count", 0) or 0
-        )
-        constrained_tool_profile_active_counts["tok-universal"] += int(
-            stats.get("tok_constrained_tool_profile_active_count", 0) or 0
         )
 
     for run in runs:
@@ -897,10 +888,6 @@ def summarize_patch_suite_run(
             "tool_required_latch_active_counts": {
                 "baseline": int(tool_required_latch_active_counts["baseline"]),
                 "tok-universal": int(tool_required_latch_active_counts["tok-universal"]),
-            },
-            "constrained_tool_profile_active_counts": {
-                "baseline": int(constrained_tool_profile_active_counts["baseline"]),
-                "tok-universal": int(constrained_tool_profile_active_counts["tok-universal"]),
             },
             "integrity_clean_matched_pair_count": integrity_clean_matched_pair_count,
             "integrity_blocked_matched_pair_count": integrity_blocked_matched_pair_count,
@@ -1014,12 +1001,6 @@ def render_patch_suite_markdown(summary: dict[str, Any], *, benchmark_name: str)
         for condition in ("baseline", "tok-universal"):
             if condition in latch_counts:
                 lines.append(f"- `{condition}` tool-required latch active count: `{latch_counts.get(condition, 0)}`")
-        constrained_counts = fairness_stats.get("constrained_tool_profile_active_counts", {})
-        for condition in ("baseline", "tok-universal"):
-            if condition in constrained_counts:
-                lines.append(
-                    f"- `{condition}` constrained-tool profile active count: `{constrained_counts.get(condition, 0)}`"
-                )
         lines.append(
             f"- integrity-clean matched pairs: `{fairness_stats.get('integrity_clean_matched_pair_count', 0)}`"
         )

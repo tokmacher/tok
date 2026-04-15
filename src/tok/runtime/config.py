@@ -170,7 +170,15 @@ DRIFT_BULLET_LINE_THRESHOLD: int = 2
 # Diff ratio threshold for result cache
 DIFF_RATIO_THRESHOLD: float = 0.7
 
-TOK_FILE_DELIVERY_STALE_TURNS: int = int(os.getenv("TOK_FILE_DELIVERY_STALE_TURNS", "4"))
+TOK_FILE_DELIVERY_STALE_TURNS: int = int(os.getenv("TOK_FILE_DELIVERY_STALE_TURNS", "2"))
+
+# Force file codec: when enabled (1), treat all file-read tool results as cacheable
+# by the file codec, producing @stable_result/@stable_summary stubs aggressively.
+TOK_FORCE_FILE_CODEC: bool = os.getenv("TOK_FORCE_FILE_CODEC", "0") == "1"
+
+# Repair loop detection: when enabled (1, default), detect and break loop patterns.
+TOK_LOOP_DETECTION_ENABLED: bool = os.getenv("TOK_LOOP_DETECTION_ENABLED", "1") == "1"
+TOK_LOOP_DETECTION_THRESHOLD: int = int(os.getenv("TOK_LOOP_DETECTION_THRESHOLD", "3"))
 
 # Compression feature flags (off by default for conservative rollout).
 TOK_ENABLE_PYTEST_FAIL_COMPRESSION: bool = os.getenv("TOK_ENABLE_PYTEST_FAIL_COMPRESSION", "0") == "1"
@@ -201,11 +209,14 @@ __all__ = [
     "RUNTIME_HINTS_MAX_PER_TURN",
     "SNIPPET_TRUNCATION_LIMIT",
     "TOK_FILE_DELIVERY_STALE_TURNS",
+    "TOK_FORCE_FILE_CODEC",
     "TOK_HOT_COMMAND_MAX_CHARS",
     "TOK_HOT_COMMAND_MAX_LINES",
     "TOK_HOT_FILE_MAX_CHARS",
     "TOK_HOT_FILE_MAX_LINES",
     "TOK_HOT_RECENT_MAX_HINTS",
+    "TOK_LOOP_DETECTION_ENABLED",
+    "TOK_LOOP_DETECTION_THRESHOLD",
     "TOK_HOT_SEARCH_MAX_CHARS",
     "TOK_HOT_SEARCH_MAX_LINES",
     "TOK_LARGE_FILE_HINT",
