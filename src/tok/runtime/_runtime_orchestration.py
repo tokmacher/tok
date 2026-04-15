@@ -223,6 +223,7 @@ def build_tool_compatible_resend(
             deltas=bool(request.deltas),
             pressure=current_pressure,
             behavior_signals=behavior_signals,
+            current_turn=session.bridge_memory.turn,
         )
 
         return (

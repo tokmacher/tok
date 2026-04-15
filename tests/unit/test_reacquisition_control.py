@@ -56,6 +56,7 @@ def test_shell_cat_then_view_file_promotes_hot_file_hint_with_alias_paths(
     tmp_path,
 ) -> None:
     runtime, session = _runtime(tmp_path)
+    session.bridge_memory.turn = 9
     content = "\n".join(f"line {idx}" for idx in range(1, 20))
 
     first = runtime.prepare_request(
@@ -107,6 +108,7 @@ def test_shell_cat_then_view_file_promotes_hot_file_hint_with_alias_paths(
 
 def test_shell_head_and_sed_count_as_same_file_target(tmp_path) -> None:
     runtime, session = _runtime(tmp_path)
+    session.bridge_memory.turn = 9
     content = "\n".join(f"line {idx}" for idx in range(1, 40))
 
     runtime.prepare_request(
@@ -151,6 +153,7 @@ def test_shell_head_and_sed_count_as_same_file_target(tmp_path) -> None:
 
 def test_repeated_search_promotes_hot_search_hint(tmp_path) -> None:
     runtime, session = _runtime(tmp_path)
+    session.bridge_memory.turn = 9
     search_result = "\n".join(f"src/foo.py:{line}:needle match" for line in range(1, 10))
 
     first = runtime.prepare_request(
@@ -215,7 +218,7 @@ def test_hot_recent_search_hints_require_session_exact_observation(
         exact_evidence_key=exact_key or "",
         hot_promotion_turn=4,
     )
-    session.bridge_memory.turn = 5
+    session.bridge_memory.turn = 11
 
     hints, metrics = session.hot_recent_runtime_hints()
     assert hints == []
@@ -232,6 +235,7 @@ def test_hot_recent_search_hints_require_session_exact_observation(
 
 def test_repeated_command_family_promotes_hot_command_hint(tmp_path) -> None:
     runtime, session = _runtime(tmp_path)
+    session.bridge_memory.turn = 9
     pytest_output = "collected 3 items\n3 passed in 0.22s\n"
 
     runtime.prepare_request(
@@ -296,7 +300,7 @@ def test_hot_recent_hints_are_bounded_and_char_limited(tmp_path) -> None:
     _, session = _runtime(tmp_path)
     long_text = "\n".join(f"important line {idx}" for idx in range(1, 50))
 
-    for turn, path in enumerate(("src/a.py", "src/b.py", "src/c.py"), start=1):
+    for turn, path in enumerate(("src/a.py", "src/b.py", "src/c.py"), start=10):
         session.bridge_memory.turn = turn
         session.observe_repeat_target_result(
             tool_id=f"{path}-1",
@@ -316,6 +320,8 @@ def test_hot_recent_hints_are_bounded_and_char_limited(tmp_path) -> None:
             raw_content=long_text,
         )
 
+    session.bridge_memory.turn = 14
+
     hints, metrics = session.hot_recent_runtime_hints()
     assert len(hints) == 2
     assert metrics["hot_recent_hint_injected"] == 2
@@ -326,7 +332,7 @@ def test_hot_recent_hints_are_bounded_and_char_limited(tmp_path) -> None:
 
 def test_hot_recent_hints_require_a_captured_snapshot(tmp_path) -> None:
     _, session = _runtime(tmp_path)
-    session.bridge_memory.turn = 2
+    session.bridge_memory.turn = 11
     hints, metrics = session.hot_recent_runtime_hints()
     assert hints == []
     assert metrics["hot_recent_hint_injected"] == 0
@@ -383,7 +389,7 @@ def test_stuck_shell_file_targets_use_stronger_reuse_guidance(
         "sed -n '1,20p' src/foo.py",
     )
 
-    for turn, command in enumerate(commands, start=1):
+    for turn, command in enumerate(commands, start=10):
         session.bridge_memory.turn = turn
         session.observe_repeat_target_result(
             tool_id=f"t{turn}",
@@ -405,7 +411,7 @@ def test_answer_ready_repair_hint_priority_stays_ahead_of_hot_shell_file_hints(
     runtime, session = _runtime(tmp_path)
     content = "\n".join(f"line {idx}" for idx in range(1, 16))
 
-    session.bridge_memory.turn = 1
+    session.bridge_memory.turn = 10
     session.observe_repeat_target_result(
         tool_id="t1",
         tool_name="bash",
@@ -414,7 +420,7 @@ def test_answer_ready_repair_hint_priority_stays_ahead_of_hot_shell_file_hints(
         command="cat src/foo.py",
         raw_content=content,
     )
-    session.bridge_memory.turn = 2
+    session.bridge_memory.turn = 11
     session.observe_repeat_target_result(
         tool_id="t2",
         tool_name="view_file",
@@ -443,6 +449,7 @@ def test_shell_read_loop_fixture_keeps_prompt_compact_and_state_suppressed(
     tmp_path,
 ) -> None:
     runtime, session = _runtime(tmp_path)
+    session.bridge_memory.turn = 9
     content = "\n".join(f"line {idx}" for idx in range(1, 30))
 
     first = runtime.prepare_request(

@@ -14,6 +14,10 @@ _FALLBACK_THRESHOLD: int = int(os.getenv("TOK_FALLBACK_THRESHOLD", "3"))
 # Short session threshold: sessions with fewer turns use baseline mode to avoid overhead.
 _SHORT_SESSION_THRESHOLD: int = int(os.getenv("TOK_SHORT_SESSION_THRESHOLD", "8"))
 
+_HOT_HINT_MIN_TURN: int = int(os.getenv("TOK_HOT_HINT_MIN_TURN", "10"))
+
+_SHORT_MEMORY_TURN_CEILING: int = int(os.getenv("TOK_SHORT_MEMORY_TURN_CEILING", "14"))
+
 # Known project-type marker filenames used for Local Mesh Discovery.
 _PROJECT_MARKER_FILES: frozenset[str] = frozenset(
     {
@@ -50,6 +54,15 @@ TOOL_COMPAT_MEMORY_PROFILE = MemoryProjectionProfile(
     },
     question_limit=0,
     fact_limit=2,
+)
+
+TOOL_COMPAT_MEMORY_PROFILE_SHORT = MemoryProjectionProfile(
+    field_limits={
+        "turns": 1,
+        "goal": 1,
+    },
+    question_limit=0,
+    fact_limit=0,
 )
 TOOL_COMPAT_DELTA_KEYS = ("turns", "goal", "files", "tests", "errs", "facts")
 TOOL_COMPAT_STICKY_KEYS = ("files", "tests")
@@ -247,6 +260,7 @@ __all__ = [
     "TOOL_COMPAT_DELTA_KEYS",
     "TOOL_COMPAT_MAX_FILES",
     "TOOL_COMPAT_MEMORY_PROFILE",
+    "TOOL_COMPAT_MEMORY_PROFILE_SHORT",
     "TOOL_COMPAT_STICKY_KEYS",
     "TOOL_DENSITY_THRESHOLD",
     "TOOL_RESULT_DENSITY_THRESHOLD",
@@ -255,6 +269,8 @@ __all__ = [
     "TTL_SECONDS",
     "_FALLBACK_THRESHOLD",
     "_PROJECT_MARKER_FILES",
+    "_HOT_HINT_MIN_TURN",
+    "_SHORT_MEMORY_TURN_CEILING",
     "_SHORT_SESSION_THRESHOLD",
     "_TOOL_REQUIRED_PROMPT_PATTERNS",
 ]

@@ -154,7 +154,7 @@ class TestHotSearchFirstExactProtection:
             exact_evidence_key=exact_key or "",
             hot_promotion_turn=4,
         )
-        session.bridge_memory.turn = 5
+        session.bridge_memory.turn = 11
 
         hints, metrics = session.hot_recent_runtime_hints()
         assert hints == []

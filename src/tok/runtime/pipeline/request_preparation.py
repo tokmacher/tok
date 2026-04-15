@@ -694,18 +694,32 @@ def _inject_system(
     deltas: bool,
     pressure: int,
     behavior_signals: dict[str, int],
+    current_turn: int | None = None,
 ) -> dict[str, Any]:
     """Inject Tok state and hints into the system prompt."""
-    # Memory Serialization: Handle BridgeMemoryState objects
+    from tok.runtime.config import (
+        _SHORT_MEMORY_TURN_CEILING,
+        _SHORT_SESSION_THRESHOLD,
+        TOOL_COMPAT_MEMORY_PROFILE,
+        TOOL_COMPAT_MEMORY_PROFILE_SHORT,
+    )
+
     tok_state: str | Any = current_memory
     if hasattr(current_memory, "wire_state"):
         from typing import cast
 
-        from tok.runtime.config import TOOL_COMPAT_MEMORY_PROFILE
+        if tool_compatible:
+            effective_turn = current_turn if current_turn is not None else 999
+            if _SHORT_SESSION_THRESHOLD <= effective_turn <= _SHORT_MEMORY_TURN_CEILING:
+                profile = TOOL_COMPAT_MEMORY_PROFILE_SHORT
+            else:
+                profile = TOOL_COMPAT_MEMORY_PROFILE
+        else:
+            profile = None
 
         tok_state = cast("Any", current_memory).wire_state(
-            profile=TOOL_COMPAT_MEMORY_PROFILE if tool_compatible else None,
-            markers=behavior_signals.get("_project_markers_proxy"),  # Type-safe access
+            profile=profile,
+            markers=behavior_signals.get("_project_markers_proxy"),
         )
 
     kwargs: dict[str, Any] = {

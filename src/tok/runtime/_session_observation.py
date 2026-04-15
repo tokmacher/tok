@@ -8,6 +8,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from .config import (
+    _HOT_HINT_MIN_TURN,
     TOK_HOT_RECENT_MAX_HINTS,
     TOK_NEIGHBORHOOD_THRASH_HINT,
     TOK_NEIGHBORHOOD_TRIGGER_ANCHORS,
@@ -79,8 +80,12 @@ def _is_eligible_hot_record(
     record: HotSummaryRecord,
     current_turn: int,
     seen_exact_keys: set[str],
+    *,
+    baseline_only: bool = False,
 ) -> bool:
     """Check if a hot summary record is eligible for hint injection."""
+    if current_turn < _HOT_HINT_MIN_TURN or baseline_only:
+        return False
     if record.tool_family == "search":
         exact_key = record.exact_evidence_key
         if not exact_key or exact_key not in seen_exact_keys:
@@ -132,7 +137,7 @@ def hot_recent_runtime_hints(
     candidates = [
         record
         for record in session._hot_summary_records.values()
-        if _is_eligible_hot_record(record, current_turn, seen_exact_keys)
+        if _is_eligible_hot_record(record, current_turn, seen_exact_keys, baseline_only=session._baseline_only)
     ]
     candidates.sort(
         key=lambda record: (

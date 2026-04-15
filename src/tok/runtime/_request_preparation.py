@@ -299,6 +299,8 @@ def observe_repeat_target_result_impl(
     if session_self.is_predictive_cache_hit(family, logical_target):
         signals["predictive_cache_hits"] = 1
     hot_now = repeat_count >= TOK_REACQUIRE_TRIGGER_COUNT
+    if hot_now and family == "file_read" and updated.unchanged_result_count < 1:
+        hot_now = False
     stuck_now = stuck_count >= TOK_REACQUIRE_STUCK_COUNT or (hot_now and blocker_rediscovery)
     if (hot_now and not updated.hot_promotion_turn) or (
         hot_now and record and record.hot_promotion_turn < current_turn and repeat_count > record.repeat_count
@@ -1364,6 +1366,7 @@ def prepare_request_impl(
                     deltas=bool(request.deltas),
                     pressure=current_pressure,
                     behavior_signals=behavior_signals,
+                    current_turn=session.bridge_memory.turn,
                 )
             has_answer_anchor = bool(behavior_signals.get("answer_anchor_present", 0))
         elif skip_reason == "short_session":
