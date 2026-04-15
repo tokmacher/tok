@@ -13,6 +13,7 @@ from typing import Any, cast
 import tok.runtime.core as _core
 from tok.compression import (
     EDIT_LIKE_TOOLS,
+    FILE_LIKE_TOOLS,
     compress_history,
     compress_recent_window,
     compress_tool_results,
@@ -88,6 +89,43 @@ _DEFAULT_SPECULATIVE_HIT_THRESHOLD = 2
 _BRIDGE_CUT_SEARCH_MAX_EXTRA_TURNS = 4
 _BRIDGE_CUT_SEARCH_MIN_SAVED_TOKENS = 16
 _STRUCTURED_ANSWER_LABEL_RE = re.compile(r"(?<![\w-])(file|verification|related)(?![\w-])\s*[:=]", re.IGNORECASE)
+
+
+def _compute_fidelity_overrides(
+    id_to_context: dict[str, dict],
+    file_reads_by_turn: dict[str, int],
+    last_elevated_path: str,
+    current_turn: int,
+) -> tuple[set[str], str]:
+    """Return paths that should bypass compression due to recent re-read.
+
+    Returns (overrides_set, elevated_path). elevated_path is the currently
+    elevated path (for continued elevation) or empty string if not elevated.
+    """
+    repeat_paths: set[str] = set()
+    elevated_path = ""
+
+    paths_in_request = {ctx.get("path") for ctx in id_to_context.values() if ctx.get("path")}
+
+    if last_elevated_path and last_elevated_path in paths_in_request:
+        has_different_file = any(p != last_elevated_path for p in paths_in_request)
+        if has_different_file:
+            return repeat_paths, ""
+        for ctx in id_to_context.values():
+            path = ctx.get("path")
+            if path == last_elevated_path:
+                repeat_paths.add(path)
+                elevated_path = path
+        return repeat_paths, elevated_path
+
+    for path in paths_in_request:
+        last_turn = file_reads_by_turn.get(path)
+        if last_turn and (current_turn - last_turn) <= 3:
+            repeat_paths.add(path)
+            if not elevated_path:
+                elevated_path = path
+
+    return repeat_paths, elevated_path
 
 
 def _env_int_or_default(name: str, default: int) -> int:
@@ -776,6 +814,10 @@ def prepare_request_impl(
     _speculative_macro_hint: str | None = None
 
     id_to_context = build_tool_use_id_to_context(translated_messages)
+    for ctx in id_to_context.values():
+        path = ctx.get("path")
+        if path:
+            session._file_reads_by_turn[path] = session.bridge_memory.turn
     suppress_reacquisition_once = session._stream_recovery_reacquisition_budget > 0
     stream_recovery_history_floor_active = session._stream_recovery_history_floor_budget > 0
     if stream_recovery_history_floor_active:
@@ -1036,6 +1078,25 @@ def prepare_request_impl(
         session._answer_phase_expected_this_turn = bool(answer_phase_expected)
 
         session._save_bridge_memory()
+        fidelity_overrides, current_path = _compute_fidelity_overrides(
+            id_to_context,
+            session._file_reads_by_turn,
+            session._last_elevated_path,
+            session.bridge_memory.turn,
+        )
+        if not fidelity_overrides and session._last_elevated_path:
+            session._last_elevated_path = ""
+        elif fidelity_overrides and current_path:
+            session._last_elevated_path = current_path
+        if fidelity_overrides:
+            for ctx in id_to_context.values():
+                path = ctx.get("path")
+                if path in fidelity_overrides:
+                    tool_name = str(ctx.get("name", "")).lower()
+                    # Don't set tok_bypass_cache for file-like tools - they should still get stable result compression
+                    if tool_name not in FILE_LIKE_TOOLS:
+                        ctx["args"] = dict(ctx.get("args", {}))
+                        ctx["args"]["tok_bypass_cache"] = True
         if stream_recovery_history_floor_active:
             body["messages"] = translated_messages
         else:

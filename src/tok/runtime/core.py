@@ -246,6 +246,13 @@ class RuntimeSession:
     _last_user_prompt_labels: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
     _request_has_tools: bool = field(default=False, init=False, repr=False)
     _runtime_hint_last_turn: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    # Fidelity overrides: paths that should bypass skeleton/truncation due to repeated reads
+    # Maps path -> turns remaining (decremented each turn, removed when <= 0)
+    _fidelity_overrides: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    # Track file reads by turn number for rapid re-read detection
+    _file_reads_by_turn: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    # Currently elevated path (bypassing compression due to repeated reads)
+    _last_elevated_path: str = field(default="", init=False, repr=False)
     _tool_required_latch_streak: int = field(default=0, init=False, repr=False)
     _answer_phase_expected_this_turn: bool = field(default=False, init=False, repr=False)
     _natural_response_acceptable_this_turn: bool = field(default=False, init=False, repr=False)

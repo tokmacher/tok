@@ -679,3 +679,87 @@ def test_stream_recovery_budget_suppresses_next_reacquisition_burst(
     assert prepared.behavior_signals.get("repeat_file_read", 0) == 0
     assert prepared.behavior_signals["stream_recovery_reacquisition_suppressed"] == 1
     assert session._stream_recovery_reacquisition_budget == 0
+
+
+def test_rapid_re_read_bypasses_compression(tmp_path) -> None:
+    """Test that reading same file within 3 turns triggers bypass."""
+    runtime, session = _runtime(tmp_path)
+    content = "def foo():\n    pass\n"
+
+    session.bridge_memory.turn = 8
+    _first = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Check foo.py"},
+                _make_tool_use_msg("t1", "view_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", content),
+                {"role": "user", "content": "OK"},
+            ],
+        ),
+        session,
+    )
+
+    session.bridge_memory.turn = 10
+    _second = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Check foo.py"},
+                _make_tool_use_msg("t1", "view_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", content),
+                {"role": "user", "content": "OK"},
+                _make_tool_use_msg("t2", "view_file", path="src/foo.py"),
+                _make_tool_result_msg("t2", content),
+                {"role": "user", "content": "Again?"},
+            ],
+        ),
+        session,
+    )
+    assert session._last_elevated_path == "src/foo.py"
+
+
+def test_different_file_read_clears_elevation(tmp_path) -> None:
+    """Test that reading a different file clears the elevation state."""
+    runtime, session = _runtime(tmp_path)
+    foo_content = "def foo():\n    pass\n"
+    bar_content = "def bar():\n    return 42\n"
+
+    session.bridge_memory.turn = 8
+    runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Check foo.py"},
+                _make_tool_use_msg("t1", "view_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", foo_content),
+                {"role": "user", "content": "OK"},
+            ],
+        ),
+        session,
+    )
+
+    session.bridge_memory.turn = 10
+    _second = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Check foo.py"},
+                _make_tool_use_msg("t1", "view_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", foo_content),
+                {"role": "user", "content": "OK"},
+                _make_tool_use_msg("t2", "view_file", path="src/foo.py"),
+                _make_tool_result_msg("t2", foo_content),
+                {"role": "user", "content": "Now check bar.py"},
+                _make_tool_use_msg("t3", "view_file", path="src/bar.py"),
+                _make_tool_result_msg("t3", bar_content),
+                {"role": "user", "content": "OK"},
+            ],
+        ),
+        session,
+    )
+    assert session._last_elevated_path == ""

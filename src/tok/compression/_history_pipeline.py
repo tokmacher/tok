@@ -134,14 +134,16 @@ def compress_history_impl(
         cut_index = None
         rejection_counts: dict[str, int] = {}
         eligible_indices: list[int] = []
+        bridge_cut_search = bool(profile and profile.get("_bridge_cut_search"))
         for i in range(len(messages)):
             cls = classify_cut_eligibility(messages[i])
             if cls.eligible:
                 eligible_indices.append(i)
             elif cls.reason in _CUT_REJECTION_REASONS:
-                rejection_counts[cls.reason] = rejection_counts.get(cls.reason, 0) + 1
-
-        bridge_cut_search = bool(profile and profile.get("_bridge_cut_search"))
+                if bridge_cut_search and cls.reason in ("user_contains_tool_result_block", "non_user"):
+                    eligible_indices.append(i)
+                else:
+                    rejection_counts[cls.reason] = rejection_counts.get(cls.reason, 0) + 1
         for i in reversed(eligible_indices):
             adjusted_cut_index = i if bridge_cut_search else _advance_cut_index_past_tool_result_only_users(messages, i)
             if adjusted_cut_index is None:

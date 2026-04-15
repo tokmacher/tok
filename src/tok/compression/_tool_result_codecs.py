@@ -388,10 +388,44 @@ def _compress_repetitive(text: str, command: str = "") -> str:
     return header + "\n" + "\n".join(result)
 
 
+def get_and_consume_fidelity_override(path: str) -> bool:
+    """Deprecated: use fidelity_overrides parameter instead."""
+    return False
+
+
+def set_fidelity_overrides(overrides: dict[str, int]) -> None:
+    """Deprecated: use fidelity_overrides parameter instead."""
+    pass
+
+
+_SIGNATURE_CONTINUATION_RE = re.compile(r"^[)\],]\s*$|^[)\],]\s*[#]|,\s*$|\S\s*\\$")
+
+_SIGNATURE_OPEN_PAREN_RE = re.compile(r"\(")
+_SIGNATURE_CLOSE_PAREN_RE = re.compile(r"\)")
+
+
+def _is_signature_continuation(prior_unclosed_parens: int, line: str) -> bool:
+    if prior_unclosed_parens > 0:
+        return True
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith((")", "]", "}")):
+        return True
+    if stripped.endswith((",", "\\")):
+        return True
+    if _SIGNATURE_CONTINUATION_RE.match(stripped):
+        return True
+    return False
+
+
 def _compress_file_read(text: str) -> str:
     lines = text.splitlines()
     result: list[str] = []
     in_body = False
+    in_signature_continuation = False
+    unclosed_parens = 0
+    last_signature_closed = True
     body_buf: list[str] = []
 
     signature_re = re.compile(
@@ -399,7 +433,7 @@ def _compress_file_read(text: str) -> str:
     )
     key_line_re = re.compile(r"^\s*(return\s+\S[\S\s]*[+\-*/%=<>!&|]|return\s+\w+\.\w+|yield\s+\S|raise\s+\w+Error\()")
 
-    def _flush_body() -> None:
+    def _flush_body(last_sig_unclosed: bool) -> None:
         nonlocal in_body, body_buf
         if not body_buf:
             return
@@ -408,13 +442,19 @@ def _compress_file_read(text: str) -> str:
             if key_line_re.match(bl):
                 key_lines.append((j, bl))
         if not key_lines:
-            result.append(f"  |> [{len(body_buf)} lines]")
+            if last_sig_unclosed:
+                result.append(f"  |> [{len(body_buf)} lines — signature may be incomplete]")
+            else:
+                result.append(f"  |> [{len(body_buf)} lines]")
         else:
             prev = 0
             for kj, kl in key_lines:
                 skipped = kj - prev
                 if skipped > 0:
-                    result.append(f"  |> [{skipped} lines]")
+                    if prev == 0 and last_sig_unclosed:
+                        result.append(f"  |> [{skipped} lines — signature may be incomplete]")
+                    else:
+                        result.append(f"  |> [{skipped} lines]")
                 result.append(kl)
                 prev = kj + 1
             remaining = len(body_buf) - prev
@@ -426,6 +466,9 @@ def _compress_file_read(text: str) -> str:
         stripped = line.strip()
 
         if not stripped:
+            if in_signature_continuation:
+                result.append(line)
+                continue
             if in_body:
                 body_buf.append(line)
             else:
@@ -434,10 +477,32 @@ def _compress_file_read(text: str) -> str:
 
         if signature_re.match(line) or re.match(r"^\s+(def |async def |class )", line):
             if in_body:
-                _flush_body()
+                _flush_body(not last_signature_closed)
             in_body = False
+            in_signature_continuation = True
+            opens = len(_SIGNATURE_OPEN_PAREN_RE.findall(line))
+            closes = len(_SIGNATURE_CLOSE_PAREN_RE.findall(line))
+            unclosed_parens = max(0, opens - closes)
+            last_signature_closed = unclosed_parens == 0
             result.append(line)
             continue
+
+        if _is_signature_continuation(unclosed_parens, line):
+            opens = len(_SIGNATURE_OPEN_PAREN_RE.findall(line))
+            closes = len(_SIGNATURE_CLOSE_PAREN_RE.findall(line))
+            unclosed_parens = max(0, unclosed_parens + opens - closes)
+            if opens > 0 or closes > 0:
+                in_signature_continuation = True
+            if unclosed_parens == 0 and closes > 0:
+                in_signature_continuation = False
+                last_signature_closed = True
+            result.append(line)
+            continue
+
+        if in_signature_continuation:
+            in_signature_continuation = False
+            unclosed_parens = 0
+            last_signature_closed = True
 
         if not in_body:
             in_body = True
@@ -445,7 +510,7 @@ def _compress_file_read(text: str) -> str:
         body_buf.append(line)
 
     if in_body:
-        _flush_body()
+        _flush_body(not last_signature_closed)
 
     if len(result) >= len(lines):
         return text
@@ -1034,11 +1099,82 @@ def _tighten_compressed_output(kind: str, compressed: str, compression_level: st
     return candidate if len(candidate) < len(compressed) else compressed
 
 
+_PYTEST_SECTION_RE = re.compile(r"^[=_\-]{3,}\s*([A-Z]+[ _][A-Z]+|[A-Z]+)\s*[=_\-]{3,}\s*$")
+_PYTEST_SUMMARY_RE = re.compile(
+    r"^[=_\-]{3,}\s*\d+.*(?:passed|failed|error|warning|skipped).*\s*[=_\-]{3,}\s*$", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _pytest_aware_truncation(text: str, lines: list[str], limit: int) -> str | None:
+    if not _PYTEST_SUMMARY_RE.search(text):
+        return None
+
+    section_starts: list[int] = []
+    summary_idx: int | None = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if _PYTEST_SUMMARY_RE.match(stripped):
+            summary_idx = i
+        elif _PYTEST_SECTION_RE.match(stripped):
+            section_starts.append(i)
+
+    failures_start: int | None = None
+    for idx in section_starts:
+        if "FAIL" in lines[idx].upper():
+            failures_start = idx
+            break
+
+    if failures_start is None and summary_idx is None:
+        return None
+
+    head_end = min(3, len(lines))
+    if failures_start is not None:
+        head_end = max(head_end, failures_start)
+
+    kept_indices: set[int] = set(range(head_end))
+    if summary_idx is not None:
+        for j in range(summary_idx, len(lines)):
+            kept_indices.add(j)
+    if failures_start is not None:
+        failures_end = min(failures_start + 80, len(lines))
+        for j in range(failures_start, failures_end):
+            kept_indices.add(j)
+
+    ordered = sorted(kept_indices)
+    out_parts: list[str] = []
+    prev = -1
+    omitted_lines = 0
+    for idx in ordered:
+        if idx > prev + 1:
+            omitted_lines += idx - prev - 1
+            out_parts.append(f"[{idx - prev - 1} lines omitted]\n")
+        out_parts.append(lines[idx])
+        prev = idx
+
+    original_chars = len(text)
+    result = "".join(out_parts)
+    omitted_chars = original_chars - len(result)
+    if len(result) >= original_chars:
+        return None
+
+    marker = (
+        f"\n... [TRUNCATED {omitted_chars} CHARS; {omitted_lines} lines omitted; FAILURES + summary preserved] ...\n"
+    )
+    insert_pos = min(head_end, len(out_parts))
+    parts = ["".join(out_parts[:insert_pos]), "".join(out_parts[insert_pos:])]
+    return parts[0] + marker + parts[1]
+
+
 def truncate_large_result(text: str, limit: int = 1200) -> str:
     if len(text) <= int(limit * 1.5):
         return text
 
     lines = text.splitlines(keepends=True)
+
+    pytest_result = _pytest_aware_truncation(text, lines, limit)
+    if pytest_result is not None:
+        return pytest_result
+
     if len(lines) <= 1:
         signals = re.compile(
             r"\b(error|fail|exception|traceback|parse_error|collision|conflict|issue|bug|diff|warning)\b",

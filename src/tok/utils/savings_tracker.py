@@ -296,6 +296,8 @@ class SavingsTracker:
         cost_saved = baseline_cost - actual_cost
         calls = sum(m.get("calls", 0) for m in models.values())
         signals = self.behavior_signals()
+        reacquisition_cost = int(signals.get("reacquisition_cost_tokens", 0))
+        net_saved_tokens = saved_tokens - reacquisition_cost
         fallback_count = int(signals.get(FALLBACK_SIGNAL, 0))
         baseline_only = bool(signals.get(BASELINE_ONLY_SIGNAL, 0))
         savings_pct = cost_saved / baseline_cost * 100 if baseline_cost > 0 else 0.0
@@ -367,6 +369,8 @@ class SavingsTracker:
             "actual_tokens": actual_tokens,
             "baseline_tokens": baseline_tokens,
             "tokens_saved": saved_tokens,
+            "net_tokens_saved": net_saved_tokens,
+            "reacquisition_cost_tokens": reacquisition_cost,
             "baseline_prompt_tokens": baseline_prompt_tokens,
             "prepared_prompt_tokens": prepared_prompt_tokens,
             "saved_prompt_tokens": saved_prompt_tokens,
@@ -427,6 +431,7 @@ class SavingsTracker:
             "saved_prompt_tokens",
             "hot_hint_tokens_added",
             "reacquisition_tokens_avoided_estimate",
+            "reacquisition_cost_tokens",
         ]
         float_fields = ["actual_cost_usd", "baseline_cost_usd"]
         for field in int_fields:
@@ -438,6 +443,7 @@ class SavingsTracker:
         )
         result["total_tokens"] = result["prompt_tokens"] + result["actual_output_tokens"]
         result["saved_tokens"] = result["input_saved_tokens"] + result["output_saved_tokens"]
+        result["net_tokens_saved"] = result["saved_tokens"] - result.get("reacquisition_cost_tokens", 0)
         result["saved_usd"] = result["baseline_cost_usd"] - result["actual_cost_usd"]
         return result
 
@@ -458,6 +464,7 @@ class SavingsTracker:
             "saved_prompt_tokens": 0,
             "hot_hint_tokens_added": 0,
             "reacquisition_tokens_avoided_estimate": 0,
+            "reacquisition_cost_tokens": 0,
             "repeat_file_read": 0,
             "repeat_search": 0,
             "repeat_target_hot": 0,
