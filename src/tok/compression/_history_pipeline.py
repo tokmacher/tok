@@ -78,6 +78,19 @@ __all__ = [
     "tok_tool_result_impl",
 ]
 
+
+def _extract_normalized_path(context: dict[str, Any] | None) -> str:
+    """Extract normalized file path from tool context."""
+    if not context:
+        return ""
+    raw_args = context.get("args")
+    args = raw_args if isinstance(raw_args, dict) else None
+    if not args:
+        return ""
+    path = str(args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or "")
+    return path.lower().strip()
+
+
 TOOL_COMPRESS_THRESHOLD = 0
 
 
@@ -731,16 +744,6 @@ def compress_tool_results_impl(
         if chars_saved > 0:
             metrics["chars_saved"] += chars_saved
 
-    def _extract_normalized_path(context: dict[str, Any]) -> str:
-        raw_args = context.get("args")
-        args = raw_args if isinstance(raw_args, dict) else None
-        if not args:
-            return ""
-        path = str(
-            args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
-        )
-        return path.lower().strip()
-
     def _extract_precision_range(
         context: dict[str, Any] | None,
         raw: str,
@@ -894,6 +897,15 @@ def compress_tool_results_impl(
         if files_fully_delivered is not None and norm_path:
             files_fully_delivered[norm_path] = current_turn or 0
 
+    def _should_bypass_cache(context: dict[str, Any] | None) -> bool:
+        """Check if tok_bypass_cache flag is set in tool context args."""
+        if not context:
+            return False
+        args = context.get("args")
+        if isinstance(args, dict):
+            return bool(args.get("tok_bypass_cache"))
+        return False
+
     def _cache_semantic_hash(
         context: dict[str, Any] | None,
         raw: str,
@@ -919,7 +931,13 @@ def compress_tool_results_impl(
         return any(k in args for k in ("offset", "limit", "start", "end"))
 
     def _first_exact_guard(context: dict[str, Any] | None, raw: str) -> bool:
-        if first_exact_evidence_seen is None or not context:
+        """Guard first exact observation from compression.
+
+        Preserves content if:
+        1. Never seen before in conversation (not in first_exact_evidence_seen), OR
+        2. First read in current session (not in session_files_read)
+        """
+        if not context:
             return False
         tool_name = str(context.get("name", "")).lower()
         if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
@@ -934,10 +952,23 @@ def compress_tool_results_impl(
             or None,
             args=context.get("args") if isinstance(context.get("args"), dict) else None,
         )
-        if not key or key in first_exact_evidence_seen:
+        if not key:
             return False
-        first_exact_evidence_seen.add(key)
-        return True
+
+        # Check if first time ever in conversation
+        is_first_ever = first_exact_evidence_seen is not None and key not in first_exact_evidence_seen
+
+        # Check if first time in current session
+        norm_path = _extract_normalized_path(context)
+        is_first_session = session_files_read is not None and norm_path and norm_path not in session_files_read
+
+        # Preserve if either first ever OR first in this session
+        if is_first_ever or is_first_session:
+            if is_first_ever and first_exact_evidence_seen is not None:
+                first_exact_evidence_seen.add(key)
+            return True
+
+        return False
 
     def _truncate_stable_snippet(text: str, limit: int) -> str:
         cleaned = " ".join(str(text or "").split())
@@ -975,7 +1006,24 @@ def compress_tool_results_impl(
         if not preserve_exact_search_evidence or not context:
             return False
         tool_name = str(context.get("name", "")).lower()
-        return tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "exact_content"
+        evidence_level = search_result_evidence_level(raw)
+        if tool_name not in SEARCH_LIKE_TOOLS or evidence_level != "exact_content":
+            return False
+        # Only preserve if this is the FIRST observation (key not yet seen)
+        # Repeats should be compressed, not preserved
+        key = evidence_identity_key(
+            tool_name,
+            path=_extract_normalized_path(context),
+            query=str(context.get("query") or "").strip() or None,
+            args=context.get("args") if isinstance(context.get("args"), dict) else None,
+        )
+        if key and first_exact_evidence_seen is not None and key in first_exact_evidence_seen:
+            # This is a repeat - don't preserve, let compression happen
+            return False
+        # First observation - preserve and track
+        if key and first_exact_evidence_seen is not None:
+            first_exact_evidence_seen.add(key)
+        return True
 
     for msg in messages:
         content = msg.get("content")
@@ -988,22 +1036,28 @@ def compress_tool_results_impl(
             ):
                 tool_id = msg.get("tool_use_id", "")
                 context = tool_use_id_to_context.get(tool_id)
-                if context and isinstance(context.get("args"), dict) and context["args"].get("tok_bypass_cache"):
-                    breakdown["tok_bypass_cache_applied"] = breakdown.get("tok_bypass_cache_applied", 0) + 1
-                    continue
+                if context:
+                    norm_path = _extract_normalized_path(context)
+                    # First: check if this is a first exact observation (must be before last_file_read_ids check)
+                    if _preserve_first_exact_observation(context, content, norm_path):
+                        msg["content"] = content
+                        continue
+                    if _should_preserve_exact_search_observation(context, content):
+                        msg["content"] = content
+                        continue
+                    # Check for explicit bypass flag
+                    if _should_bypass_cache(context):
+                        breakdown["bypass_reacquire"] = breakdown.get("bypass_reacquire", 0) + 1
+                        msg["content"] = content
+                        continue
                 if tool_id in last_file_read_ids:
                     if context:
                         norm_path = _extract_normalized_path(context)
                         _mark_file_fully_delivered(norm_path)
                     continue
+                # Remaining processing for files not in last_file_read_ids and not first-exact
                 if context:
                     norm_path = _extract_normalized_path(context)
-                    if _should_preserve_exact_search_observation(context, content):
-                        msg["content"] = content
-                        continue
-                    if _preserve_first_exact_observation(context, content, norm_path):
-                        msg["content"] = content
-                        continue
                     if session_files_read is not None and norm_path and norm_path not in session_files_read:
                         session_files_read.add(norm_path)
                         if semantic_hash_cache is not None and len(content) >= _SEMANTIC_HASH_MIN_CHARS:
@@ -1044,9 +1098,6 @@ def compress_tool_results_impl(
             ctx: dict[str, Any] | None = None
             if tool_use_id_to_context is not None:
                 ctx = tool_use_id_to_context.get(tool_id)
-                if ctx and isinstance(ctx.get("args"), dict) and ctx["args"].get("tok_bypass_cache"):
-                    breakdown["tok_bypass_cache_applied"] = breakdown.get("tok_bypass_cache_applied", 0) + 1
-                    continue
 
             if ctx:
                 norm_path = _extract_normalized_path(ctx)
@@ -1054,6 +1105,11 @@ def compress_tool_results_impl(
                     block["content"] = raw
                     continue
                 if _preserve_first_exact_observation(ctx, raw, norm_path):
+                    block["content"] = raw
+                    continue
+                # Check for explicit bypass flag
+                if _should_bypass_cache(ctx):
+                    breakdown["bypass_reacquire"] = breakdown.get("bypass_reacquire", 0) + 1
                     block["content"] = raw
                     continue
             else:
@@ -1107,9 +1163,6 @@ def compress_tool_results_impl(
                     if search_result_evidence_level(raw) == "navigation":
                         block["content"] = raw
                         continue
-                    if preserve_exact_search_evidence:
-                        block["content"] = raw
-                        continue
                     # Apply result cache compression for repeat search
                     if result_cache is not None and not bypass_result_cache:
                         compressed, saved = _apply_result_cache(
@@ -1126,9 +1179,6 @@ def compress_tool_results_impl(
                         block["content"] = compressed
                         continue
                     # Apply semantic hash compression for repeat search
-                    if preserve_exact_search_evidence:
-                        block["content"] = raw
-                        continue
                     if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                         cache_key = _make_semantic_cache_key(ctx, raw)
                         if cache_key is not None:
@@ -1249,8 +1299,11 @@ def compress_tool_results_impl(
                 _mark_file_fully_delivered(norm_path)
                 continue
 
+            # Only apply semantic dedup if this is a repeat read in the current session
+            # First reads must be preserved verbatim (not compressed)
             if (
                 _is_file_fully_delivered(norm_path)
+                and (session_files_read is None or norm_path in session_files_read)
                 and semantic_hash_cache is not None
                 and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
                 and tool_use_id_to_context is not None
@@ -1471,6 +1524,7 @@ def compress_recent_window_impl(
     tool_compatible: bool = False,
     first_exact_evidence_seen: set[str] | None = None,
     preserve_exact_search_evidence: bool = False,
+    session_files_read: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to recent window messages."""
 
@@ -1510,8 +1564,13 @@ def compress_recent_window_impl(
         context: dict[str, Any] | None,
         _raw: str,
     ) -> bool:
-        """Guard first exact observation from compression."""
-        if first_exact_evidence_seen is None or not context:
+        """Guard first exact observation from compression.
+
+        Preserves content if:
+        1. Never seen before in conversation (not in first_exact_evidence_seen), OR
+        2. First read in current session (not in session_files_read)
+        """
+        if not context:
             return False
         key = evidence_identity_key(
             str(context.get("name", "")),
@@ -1523,10 +1582,23 @@ def compress_recent_window_impl(
             or None,
             args=context.get("args") if isinstance(context.get("args"), dict) else None,
         )
-        if not key or key in first_exact_evidence_seen:
+        if not key:
             return False
-        first_exact_evidence_seen.add(key)
-        return True
+
+        # Check if first time ever in conversation
+        is_first_ever = first_exact_evidence_seen is not None and key not in first_exact_evidence_seen
+
+        # Check if first time in current session
+        norm_path = _extract_normalized_path(context)
+        is_first_session = session_files_read is not None and norm_path and norm_path not in session_files_read
+
+        # Preserve if either first ever OR first in this session
+        if is_first_ever or is_first_session:
+            if is_first_ever and first_exact_evidence_seen is not None:
+                first_exact_evidence_seen.add(key)
+            return True
+
+        return False
 
     def _should_preserve_exact_search_observation(
         context: dict[str, Any] | None,
@@ -1535,7 +1607,22 @@ def compress_recent_window_impl(
         if not preserve_exact_search_evidence or not context:
             return False
         tool_name = str(context.get("name", "")).lower()
-        return tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "exact_content"
+        if tool_name not in SEARCH_LIKE_TOOLS or search_result_evidence_level(raw) != "exact_content":
+            return False
+        # Only preserve if this is the FIRST observation (key not yet seen)
+        key = evidence_identity_key(
+            tool_name,
+            path=_extract_normalized_path(context),
+            query=str(context.get("query") or "").strip() or None,
+            args=context.get("args") if isinstance(context.get("args"), dict) else None,
+        )
+        if key and first_exact_evidence_seen is not None and key in first_exact_evidence_seen:
+            # This is a repeat - don't preserve, let compression happen
+            return False
+        # First observation - preserve and track
+        if key and first_exact_evidence_seen is not None:
+            first_exact_evidence_seen.add(key)
+        return True
 
     breakdown: dict[str, int] = {}
     compressors: dict[str, Compressor] = {
@@ -1603,16 +1690,14 @@ def compress_recent_window_impl(
             tool_ctx: dict[str, Any] | None = None
             if tool_use_id_to_context is not None:
                 tool_ctx = tool_use_id_to_context.get(tool_id)
-                if tool_ctx and isinstance(tool_ctx.get("args"), dict) and tool_ctx["args"].get("tok_bypass_cache"):
-                    breakdown["tok_bypass_cache_applied"] = breakdown.get("tok_bypass_cache_applied", 0) + 1
-                    continue
 
             if _should_preserve_exact_search_observation(tool_ctx, raw):
                 continue
             tool_name = str(tool_ctx.get("name", "")).lower() if tool_ctx else ""
             if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
                 continue
-            if first_exact_evidence_seen is not None and tool_ctx:
+            # First-read preservation: check both first-ever and first-in-session
+            if tool_ctx:
                 key = evidence_identity_key(
                     str(tool_ctx.get("name", "")),
                     path=str(tool_ctx.get("path") or "").strip() or None,
@@ -1623,8 +1708,13 @@ def compress_recent_window_impl(
                     or None,
                     args=tool_ctx.get("args") if isinstance(tool_ctx.get("args"), dict) else None,
                 )
-                if key and key not in first_exact_evidence_seen:
-                    first_exact_evidence_seen.add(key)
+                norm_path = _extract_normalized_path(tool_ctx)
+                is_first_ever = first_exact_evidence_seen is not None and key and key not in first_exact_evidence_seen
+                is_first_session = session_files_read is not None and norm_path and norm_path not in session_files_read
+
+                if is_first_ever or is_first_session:
+                    if is_first_ever and first_exact_evidence_seen is not None:
+                        first_exact_evidence_seen.add(key)
                     block["content"] = raw
                     continue
 

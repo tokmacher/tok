@@ -146,6 +146,9 @@ _SIFT_MIN_CHARS = 80
 def _sift_stdout(text: str) -> str:
     if not text or len(text) < _SIFT_MIN_CHARS:
         return text
+    # Skip already-compressed Tok content (repeat search, stable_result, etc.)
+    if text.startswith(">>> "):
+        return text
     content_type = _detect_tool_content_type(text)
     if content_type == "ls":
         return _compress_ls(text)

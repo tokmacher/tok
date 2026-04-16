@@ -331,11 +331,25 @@ def _compress_grep(text: str) -> str:
 
     file_count = len([k for k in order if k != "__other__"])
     result = [f">>> tool:grep|matches:{total}|files:{file_count}"]
+
+    # Show up to 3 snippets per file for better discovery grounding
+    # For __other__, show first 3 explicitly before collapsing
     for key in order:
         snippets = by_file[key]
-        first = snippets[0][:80]
-        suffix = f" ({len(snippets)} matches)" if len(snippets) > 1 else ""
-        result.append(f"{key}: {len(snippets)} match{'es' if len(snippets) > 1 else ''} \u2014 {first}{suffix}")
+        if key == "__other__":
+            # Show first 3 __other__ snippets explicitly
+            shown = snippets[:3]
+            for _i, s in enumerate(shown):
+                result.append(f"__other__: {s[:80]}")
+            if len(snippets) > 3:
+                result.append(f"__other__: ... ({len(snippets) - 3} more)")
+        else:
+            # Show up to 3 snippets per file with line context
+            shown = snippets[:3]
+            for _i, s in enumerate(shown):
+                result.append(f"{key}: {s[:80]}")
+            if len(snippets) > 3:
+                result.append(f"{key}: ... ({len(snippets) - 3} more matches)")
 
     # Add advisory footer for expensive searches
     # Detect if search was scoped (single directory or specific path pattern)
@@ -1167,6 +1181,13 @@ def _pytest_aware_truncation(text: str, lines: list[str], limit: int) -> str | N
 
 def truncate_large_result(text: str, limit: int = 1200) -> str:
     if len(text) <= int(limit * 1.5):
+        return text
+
+    # Don't truncate small multi-line files at default limits - they're high-value discovery targets
+    # But still truncate if caller explicitly requests a smaller limit
+    line_count = text.count("\n") + 1
+    avg_line_len = len(text) / max(1, line_count)
+    if limit >= 1000 and line_count >= 2 and line_count < 100 and avg_line_len < 100:
         return text
 
     lines = text.splitlines(keepends=True)

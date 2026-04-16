@@ -129,6 +129,7 @@ def compress_recent_window_impl(
     tool_compatible: bool = False,
     first_exact_evidence_seen: set[str] | None = None,
     preserve_exact_search_evidence: bool = False,
+    session_files_read: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     _sync_threshold()
@@ -139,4 +140,5 @@ def compress_recent_window_impl(
         tool_compatible=tool_compatible,
         first_exact_evidence_seen=first_exact_evidence_seen,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
+        session_files_read=session_files_read,
     )

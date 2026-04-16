@@ -1,4 +1,5 @@
 from tok.compression import tok_tool_result, truncate_large_result
+from tok.compression._tool_result_codecs import _compress_grep
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
 
@@ -78,3 +79,78 @@ def test_tok_tool_result_applies_truncation() -> None:
     # It should be truncated because it's not a known type and it's long
     assert len(compressed) < 2000
     assert "... [TRUNCATED" in compressed
+
+
+def test_truncate_large_result_preserves_small_files() -> None:
+    """Files with < 100 lines should return full content regardless of char count."""
+    # 77 lines, ~2000 chars - should NOT be truncated
+    lines = [f"def method_{i}(self):" for i in range(77)]
+    small_file = "\n".join(lines)
+    assert len(small_file) > 1200  # Exceeds char threshold
+    assert small_file.count("\n") + 1 < 100  # Below line threshold
+
+    truncated = truncate_large_result(small_file, limit=1200)
+
+    # Should return full content, not truncated
+    assert "... [TRUNCATED" not in truncated
+    assert truncated == small_file
+
+
+def test_truncate_large_result_truncates_large_files() -> None:
+    """Files with >= 100 lines should still be truncated."""
+    # 150 lines - should be truncated
+    lines = [f"line {i}: content {i}" for i in range(150)]
+    large_file = "\n".join(lines)
+    assert len(large_file) > 1200
+    assert large_file.count("\n") + 1 >= 100
+
+    truncated = truncate_large_result(large_file, limit=1200)
+
+    # Should be truncated
+    assert "... [TRUNCATED" in truncated
+
+
+def test_grep_shows_multiple_snippets_per_file() -> None:
+    """Multi-file grep should show up to 3 snippets per file, not just one."""
+    grep_output = "\n".join(
+        [
+            "src/main.py:10:def foo():",
+            "src/main.py:20:def bar():",
+            "src/main.py:30:def baz():",
+            "src/main.py:40:def qux():",
+            "src/other.py:5:def hello():",
+            "src/other.py:15:def world():",
+        ]
+    )
+
+    compressed = _compress_grep(grep_output)
+
+    # Should show 3 snippets for main.py (not just 1)
+    assert "src/main.py:10:" in compressed or "def foo():" in compressed
+    assert "src/main.py:20:" in compressed or "def bar():" in compressed
+    assert "src/main.py:30:" in compressed or "def baz():" in compressed
+    # 4th match should be collapsed
+    assert "more matches" in compressed
+
+
+def test_grep_shows_other_snippets_explicitly() -> None:
+    """Lines that don't match grep format should show first 3 explicitly."""
+    grep_output = "\n".join(
+        [
+            "src/main.py:10:def foo():",
+            "unusual line without colon format",
+            "another unusual line",
+            "third unusual line",
+            "fourth unusual line",
+            "fifth unusual line",
+        ]
+    )
+
+    compressed = _compress_grep(grep_output)
+
+    # Should show first 3 __other__ snippets explicitly
+    assert "__other__:" in compressed
+    # Should NOT collapse all __other__ content
+    assert "unusual line" in compressed or "another unusual" in compressed
+    # 4th and 5th should be collapsed
+    assert "more)" in compressed

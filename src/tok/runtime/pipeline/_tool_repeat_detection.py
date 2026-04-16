@@ -140,6 +140,7 @@ def _track_file_read_repeats(
     repeat_file_read_ids: list[str],
     result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None,
     bump: SignalBump,
+    has_bypass: bool = False,
 ) -> None:
     if family != "file_read" or logical_target == "path-missing":
         return
@@ -148,7 +149,10 @@ def _track_file_read_repeats(
     if is_shell_file_read:
         bump("shell_file_read_normalized", 1)
     if file_reads_seen_logical[logical_target] > 1:
-        if tool_id and result_cache is not None:
+        if has_bypass:
+            # Bypass flag prevents repeat penalty
+            bump("bypass_reacquire", 1)
+        elif tool_id and result_cache is not None:
             repeat_file_read_ids.append(tool_id)
         else:
             bump("repeat_file_read", 1)
@@ -280,10 +284,7 @@ def _process_repeat_file_results(
     if not effective_path or file_reads_seen_logical.get(logical_target, 0) <= 1:
         return
     if is_repeat_file:
-        args = context.get("args") if isinstance(context, dict) else None
-        if isinstance(args, dict) and args.get("tok_bypass_cache"):
-            bump("bypass_reacquire", 1)
-        elif result_cache is not None and _is_cached_hit(tool_name, context, result_text, result_cache):
+        if result_cache is not None and _is_cached_hit(tool_name, context, result_text, result_cache):
             bump("cached_file_read", 1)
         else:
             bump("repeat_file_read", 1)

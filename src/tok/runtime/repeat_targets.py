@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from tok.compression import FILE_LIKE_TOOLS
 
-SEARCH_LIKE_TOOLS = frozenset({"grep", "grep_search", "search", "rg"})
+SEARCH_LIKE_TOOLS = frozenset({"grep", "grep_search", "search", "rg", "find_by_name", "glob", "find", "code_search"})
 COMMAND_LIKE_TOOLS = frozenset({"bash", "sh", "run_terminal", "computer"})
 LISTING_LIKE_TOOLS = frozenset({"list_dir", "ls"})
 
@@ -530,13 +530,16 @@ def evidence_identity_key(
             "file_path",
             "AbsolutePath",
             "TargetFile",
+            "SearchDirectory",  # find_by_name
+            "search_folder_absolute_uri",  # code_search
             "query",
             "pattern",
+            "Pattern",  # find_by_name
             "search",
+            "search_term",  # code_search
             "text",
             "command",
             "cmd",
-            "tok_bypass_cache",
             "offset",
             "limit",
             "start",

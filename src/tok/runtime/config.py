@@ -95,8 +95,6 @@ ANSWER_READY_REPAIR_HINT = (
     " their content is in your context or was replaced by @stable_result (meaning unchanged)."
     " Reply now with only File=... and Verification=..."
     " If you cannot locate the file content in context, state which files you need re-sent."
-    " If verbatim bytes are truly required in a later turn, emit @tok_bypass_next_read"
-    " immediately before the next supported read tool call."
     " Do not call tools in this turn."
 )
 LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT = (
@@ -108,8 +106,6 @@ LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT = (
     " The evidence was already read — check your context or @stable_result hashes (meaning unchanged)."
     " In this turn, do not call tools. Reply only with File=... and Verification=..."
     " If content is missing from context, say so explicitly."
-    " If verbatim bytes are truly required in a later turn, emit @tok_bypass_next_read"
-    " immediately before the next supported read tool call."
 )
 LATE_ANSWER_FOLLOWTHROUGH_HINT = (
     "Previous turn gathered the required evidence. In this turn, do not call "

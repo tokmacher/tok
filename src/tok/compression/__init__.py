@@ -382,7 +382,6 @@ Reply normally using plain text. No special formatting markers.
 # Appended to the system prompt when @stable_result tokens appear in history.
 _STABLE_RESULT_EXPLANATION = (
     "@stable_result(hash:...) = unchanged file/query. Reason from @stable_summary/@stable_skeleton."
-    " For verbatim bytes: @tok_bypass_next_read before one read."
 )
 
 # Explanation of Tok file freshness signals to help Claude understand they are system metadata
@@ -1128,16 +1127,6 @@ def _serve_cached_content_hash_match(
         )
         return content_to_return, 0
 
-    if preserve_exact_search_evidence:
-        try:
-            from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS, search_result_evidence_level
-
-            tool_name_normalized = str(tool_name or "").lower()
-            if tool_name_normalized in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw_text) == "exact_content":
-                return raw, 0
-        except Exception:
-            pass
-
     if normalized_tool_name in FILE_LIKE_TOOLS:
         from ._tool_result_codecs import _compress_file_read
 
@@ -1233,8 +1222,6 @@ def _make_semantic_cache_key(context: dict[str, Any] | None, _raw: str) -> str |
                 # Exclude "path" from args so we can include a normalized path
                 # separately without volatile formatting differences.
                 "path",
-                # The bypass flag should never affect semantic identity.
-                "tok_bypass_cache",
             )
         }
     else:
@@ -1368,6 +1355,7 @@ def compress_recent_window(
     tool_compatible: bool = False,
     first_exact_evidence_seen: set[str] | None = None,
     preserve_exact_search_evidence: bool = False,
+    session_files_read: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     from ._pipeline import compress_recent_window_impl
@@ -1379,6 +1367,7 @@ def compress_recent_window(
         tool_compatible=tool_compatible,
         first_exact_evidence_seen=first_exact_evidence_seen,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
+        session_files_read=session_files_read,
     )
 
 

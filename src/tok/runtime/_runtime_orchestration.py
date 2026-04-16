@@ -29,6 +29,7 @@ from .pipeline.request_preparation import (
     _apply_tool_compatible_resend_diagnostics,
     _inject_system,
     _is_answer_ready_turn,
+    _is_read_only_audit_turn,
     _runtime_hints_for_turn,
 )
 from .pipeline.response_handling import handle_answer_repair
@@ -197,10 +198,12 @@ def build_tool_compatible_resend(
             behavior_signals["runtime_hint_cooldown_suppressed"] = suppressed_hint_count
         if len(runtime_hints) > RUNTIME_HINTS_MAX_PER_TURN:
             runtime_hints = runtime_hints[:RUNTIME_HINTS_MAX_PER_TURN]
+        exploration_mode = bool(translated_messages is not None and _is_read_only_audit_turn(translated_messages))
         _annotate_reacquisition_diagnostics(
             behavior_signals,
             answer_ready=answer_ready,
             answer_ready_repair_active=session._answer_ready_repair_active,
+            exploration_mode=exploration_mode,
         )
         from .core import logger
 

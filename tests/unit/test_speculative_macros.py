@@ -16,12 +16,7 @@ from tok.compression import (
 from tok.compression import _history_pipeline as history_pipeline
 from tok.compression import _pipeline as compression_pipeline
 from tok.neuro.ir import Instruction, Macro
-from tok.runtime.config import (
-    ANSWER_READY_REPAIR_HINT,
-    LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
-)
 from tok.runtime.memory.bridge_memory import BridgeMemoryState
-from tok.runtime.pipeline.tool_processing import build_tool_use_id_to_context
 from tok.universal_runtime import (
     RuntimeRequest,
     RuntimeSession,
@@ -297,36 +292,38 @@ class TestSemanticHashDedup:
         key_b = _make_semantic_cache_key(ctx_b, "x" * 500)
         assert key_a != key_b
 
-    def test_tok_bypass_cache_skips_stable_and_compression(self) -> None:
+    def test_first_read_is_never_compressed(self) -> None:
+        """Verify first exact observation of a file is always delivered verbatim."""
         path = "src/tok/foo.py"
         tool_id = "tid1"
         content = "class A:\n    def m(self):\n        pass\n\ndef top():\n    return 1\n" + ("# filler\n" * 200)
         cache: dict[str, str] = {}
+        session_files_read: set[str] = set()
 
-        # Seed semantic hash cache
-        compress_tool_results(
+        # First read should be verbatim (not compressed)
+        result1, breakdown1 = compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
             tool_use_id_to_context=_make_id_to_context(tool_id, "view_file", path),
             semantic_hash_cache=cache,
+            session_files_read=session_files_read,
         )
+        block_content1 = result1[0]["content"][0]["content"]
+        # First read should be full content
+        assert block_content1 == content
+        # Should not be semantically deduped on first read
+        assert breakdown1.get("semantic_dedup", 0) == 0
 
-        # Second pass with bypass enabled must return raw content unchanged.
-        id_to_ctx_bypass = {
-            tool_id: {
-                "name": "view_file",
-                "path": path,
-                "args": {"path": path, "tok_bypass_cache": True},
-            }
-        }
+        # Second read (repeat) should be compressed/stable_result
         result2, breakdown2 = compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
-            tool_use_id_to_context=id_to_ctx_bypass,
+            tool_use_id_to_context=_make_id_to_context(tool_id, "view_file", path),
             semantic_hash_cache=cache,
+            session_files_read=session_files_read,
         )
-        block_content = result2[0]["content"][0]["content"]
-        assert block_content == content
-        assert "@stable_result" not in block_content
-        assert breakdown2.get("tok_bypass_cache_applied", 0) == 1
+        block_content2 = result2[0]["content"][0]["content"]
+        # Second read should be compressed
+        assert len(block_content2) < len(content)
+        assert "@stable_result" in block_content2 or "tool:file_read" in block_content2
 
     def test_stable_payload_includes_skeleton_for_code(self) -> None:
         path = "src/tok/foo.py"
@@ -363,119 +360,12 @@ class TestStableResultGuidance:
     def test_stable_result_explanation_uses_supported_bypass_marker(
         self,
     ) -> None:
-        assert "@tok_bypass_next_read" in _STABLE_RESULT_EXPLANATION
-        assert "tok_bypass_cache=true" not in _STABLE_RESULT_EXPLANATION
+        # Bypass mechanism removed - first reads are now automatically verbatim
+        assert "@stable_result" in _STABLE_RESULT_EXPLANATION
 
-    def test_runtime_repair_hints_use_supported_bypass_marker(self) -> None:
-        assert "@tok_bypass_next_read" in ANSWER_READY_REPAIR_HINT
-        assert "@tok_bypass_next_read" in LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT
-        assert "tok_bypass_cache=true" not in ANSWER_READY_REPAIR_HINT
-        assert "tok_bypass_cache=true" not in LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT
-
-    def test_analysis_prompts_use_supported_bypass_marker(self) -> None:
-        assert "@tok_bypass_next_read" in TOK_EXPLORE_PROMPT
-        assert "@tok_bypass_next_read" in MINIMAL_PULSE_PROMPT
-        assert "tok_bypass_cache=true" not in TOK_EXPLORE_PROMPT
-        assert "tok_bypass_cache=true" not in MINIMAL_PULSE_PROMPT
+    def test_analysis_prompts_advise_against_parallel_first_pass_reads(self) -> None:
         assert "Do not fan out parallel reads on the first pass." in (TOK_EXPLORE_PROMPT)
         assert "Do not open multiple files in parallel on the first pass." in (MINIMAL_PULSE_PROMPT)
-
-
-class TestBypassMarkerContext:
-    def test_bypass_marker_sets_tok_bypass_cache_on_next_tool_use(
-        self,
-    ) -> None:
-        messages = [
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": "@tok_bypass_next_read"},
-                    {
-                        "type": "tool_use",
-                        "id": "t1",
-                        "name": "Read",
-                        "input": {"file_path": "/tmp/x.py", "offset": 0},
-                    },
-                ],
-            }
-        ]
-        ctx = build_tool_use_id_to_context(messages)
-        assert ctx["t1"]["args"].get("tok_bypass_cache") is True
-
-    def test_bypass_marker_is_one_shot_per_message(self) -> None:
-        messages = [
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": "@tok_bypass_next_read"},
-                    {
-                        "type": "tool_use",
-                        "id": "t1",
-                        "name": "Read",
-                        "input": {"file_path": "/tmp/a.py"},
-                    },
-                    {
-                        "type": "tool_use",
-                        "id": "t2",
-                        "name": "Read",
-                        "input": {"file_path": "/tmp/b.py"},
-                    },
-                ],
-            }
-        ]
-        ctx = build_tool_use_id_to_context(messages)
-        assert ctx["t1"]["args"].get("tok_bypass_cache") is True
-        assert ctx["t2"]["args"].get("tok_bypass_cache") is not True
-
-    def test_bypass_marker_on_non_read_tool_emits_invalid_signal(self) -> None:
-        from tok.runtime.pipeline.tool_processing import (
-            collect_tool_context_validation_signals,
-        )
-
-        messages = [
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": "@tok_bypass_next_read"},
-                    {
-                        "type": "tool_use",
-                        "id": "t1",
-                        "name": "grep_search",
-                        "input": {"query": "tok", "search_path": "src/tok"},
-                    },
-                ],
-            }
-        ]
-
-        ctx = build_tool_use_id_to_context(messages)
-        assert ctx["t1"]["args"].get("tok_bypass_cache") is not True
-        assert collect_tool_context_validation_signals(ctx).get("invalid_bypass_marker_application", 0) == 1
-
-    def test_bypass_marker_with_malformed_next_tool_emits_invalid_signal(
-        self,
-    ) -> None:
-        from tok.runtime.pipeline.tool_processing import (
-            collect_tool_context_validation_signals,
-        )
-
-        messages = [
-            {
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": "@tok_bypass_next_read"},
-                    {
-                        "type": "tool_use",
-                        "id": "t1",
-                        "name": "Read",
-                        "input": "not-a-dict",
-                    },
-                ],
-            }
-        ]
-
-        ctx = build_tool_use_id_to_context(messages)
-        assert "t1" not in ctx
-        assert collect_tool_context_validation_signals(ctx).get("invalid_bypass_marker_application", 0) == 1
 
 
 class TestResultCacheStablePayload:

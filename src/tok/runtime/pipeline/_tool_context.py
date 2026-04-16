@@ -44,13 +44,6 @@ class ToolContextModel(BaseModel):
         return cleaned or None
 
 
-def _is_supported_bypass_target(tool_name: str, tool_input: dict[str, Any]) -> bool:
-    lowered = str(tool_name or "").lower()
-    if lowered not in FILE_LIKE_TOOLS:
-        return False
-    return any(tool_input.get(key) for key in ("path", "file_path", "AbsolutePath", "TargetFile"))
-
-
 def logical_target_key_from_context(
     tool_name: str,
     *,
@@ -72,15 +65,6 @@ def logical_target_key_from_context(
     )
 
 
-def _should_bypass_next_tool_use(block: dict[str, Any]) -> bool:
-    """Check if a text block contains the bypass marker."""
-    return (
-        isinstance(block, dict)
-        and block.get("type") == "text"
-        and "@tok_bypass_next_read" in str(block.get("text", ""))
-    )
-
-
 def _extract_tool_input_fields(
     tool_input: dict[str, Any],
 ) -> tuple[str | None, str | None]:
@@ -90,38 +74,18 @@ def _extract_tool_input_fields(
         or tool_input.get("file_path")
         or tool_input.get("AbsolutePath")
         or tool_input.get("TargetFile")
+        or tool_input.get("SearchDirectory")  # find_by_name
+        or tool_input.get("search_folder_absolute_uri")  # code_search
     )
-    query = tool_input.get("query") or tool_input.get("pattern") or tool_input.get("search") or tool_input.get("text")
+    query = (
+        tool_input.get("query")
+        or tool_input.get("pattern")
+        or tool_input.get("Pattern")  # find_by_name
+        or tool_input.get("search")
+        or tool_input.get("search_term")  # code_search
+        or tool_input.get("text")
+    )
     return path, query
-
-
-def _apply_bypass_marker(
-    tool_input: dict[str, Any],
-    tool_name: str,
-    path: str | None,
-    tool_id: str | None,
-) -> tuple[dict[str, Any], bool]:
-    """
-    Apply bypass marker to tool_input if target is supported.
-
-    Returns updated tool_input and invalid_bypass_marker flag.
-    """
-    if _is_supported_bypass_target(str(tool_name), tool_input):
-        tool_input = dict(tool_input)
-        tool_input["tok_bypass_cache"] = True
-        logger.info(
-            "tok_bypass_cache applied via marker | tool_id=%s tool=%s path=%s",
-            tool_id,
-            tool_name,
-            str(path).strip() if path else "",
-        )
-        return tool_input, False
-    logger.warning(
-        "TOK_BYPASS_NEXT_READ_CONSUMED_BY_NON_READ_TOOL | marker ignored for unsupported tool | tool_id=%s tool=%s",
-        tool_id,
-        tool_name,
-    )
-    return tool_input, True
 
 
 def _build_context_dict(
@@ -129,7 +93,6 @@ def _build_context_dict(
     tool_input: dict[str, Any],
     path: str | None,
     query: str | None,
-    invalid_bypass_marker: bool,
 ) -> dict[str, Any]:
     """Build and validate the context dictionary for a tool use."""
     context_payload = {
@@ -140,18 +103,15 @@ def _build_context_dict(
     }
     try:
         validated = ToolContextModel.model_validate(context_payload)
-        context_dict = validated.model_dump()
+        return validated.model_dump()
     except ValidationError:
-        context_dict = {
+        return {
             "name": str(tool_name or "").strip(),
             "args": dict(tool_input) if isinstance(tool_input, dict) else {},
             "path": str(path).strip() if path else None,
             "query": str(query).strip() if query else None,
             "tool_context_validation_failed": True,
         }
-    if invalid_bypass_marker and "tool_context_validation_failed" not in context_dict:
-        context_dict["invalid_bypass_marker"] = True
-    return context_dict
 
 
 def _process_message_blocks(
@@ -159,49 +119,59 @@ def _process_message_blocks(
     result: dict[str, dict[str, Any]],
 ) -> None:
     """Process all blocks in a message for tool_use extraction."""
-    bypass_next_tool_use = False
-    invalid_bypass_index = 0
+    bypass_marker_pending = False
     for block in content:
-        if _should_bypass_next_tool_use(block):
-            bypass_next_tool_use = True
-            logger.info("tok_bypass_next_read marker observed in assistant text")
-        if not isinstance(block, dict) or block.get("type") != "tool_use":
+        if not isinstance(block, dict):
             continue
-        invalid_bypass_index, bypass_consumed = _process_single_tool_use(
-            block, result, bypass_next_tool_use, invalid_bypass_index
-        )
-        if bypass_consumed:
-            bypass_next_tool_use = False
+        block_type = block.get("type")
+        if block_type == "text":
+            text = str(block.get("text", ""))
+            if "@tok_bypass_next_read" in text:
+                bypass_marker_pending = True
+            continue
+        if block_type != "tool_use":
+            continue
+        tool_name = str(block.get("name", "")).lower()
+        is_file_like = tool_name in FILE_LIKE_TOOLS
+        # Only consume bypass marker on file-like tools
+        # Non-file tools get the invalid marker but don't consume it
+        apply_bypass = bypass_marker_pending
+        if bypass_marker_pending and not is_file_like:
+            # Non-file tool with pending marker - apply invalid marker but keep marker pending
+            apply_bypass = True
+        elif bypass_marker_pending and is_file_like:
+            # File-like tool consumes the marker
+            bypass_marker_pending = False
+        _process_single_tool_use(block, result, apply_bypass)
 
 
 def _process_single_tool_use(
     block: dict[str, Any],
     result: dict[str, dict[str, Any]],
-    bypass_next_tool_use: bool,
-    invalid_bypass_index: int,
-) -> tuple[int, bool]:
-    """
-    Process a single tool_use block and update result.
-
-    Returns updated invalid_bypass_index and whether bypass marker was consumed.
-    """
+    bypass_marker_pending: bool = False,
+) -> None:
+    """Process a single tool_use block and update result."""
     tool_id = block.get("id", "")
     tool_name = block.get("name", "")
     tool_input = block.get("input", {})
     if not tool_id or not isinstance(tool_input, dict):
-        if bypass_next_tool_use:
-            invalid_bypass_index += 1
-            result[f"__invalid_bypass_marker__:{invalid_bypass_index}"] = {"invalid_bypass_marker": True}
-        return invalid_bypass_index, False
+        return
 
     path, query = _extract_tool_input_fields(tool_input)
-    invalid_bypass_marker = False
-    bypass_consumed = False
-    if bypass_next_tool_use:
-        bypass_consumed = _is_supported_bypass_target(str(tool_name), tool_input)
-        tool_input, invalid_bypass_marker = _apply_bypass_marker(tool_input, str(tool_name), path, tool_id)
-    result[tool_id] = _build_context_dict(tool_name, tool_input, path, query, invalid_bypass_marker)
-    return invalid_bypass_index, bypass_consumed
+    context = _build_context_dict(tool_name, tool_input, path, query)
+
+    # Apply bypass marker if pending
+    if bypass_marker_pending:
+        normalized_tool_name = str(tool_name or "").lower()
+        if normalized_tool_name in FILE_LIKE_TOOLS:
+            # Valid: apply bypass to file-like tool
+            context["args"] = dict(context.get("args", {}))
+            context["args"]["tok_bypass_cache"] = True
+        else:
+            # Invalid: mark as invalid bypass application
+            context["invalid_bypass_marker"] = True
+
+    result[tool_id] = context
 
 
 def build_tool_use_id_to_context(
@@ -227,10 +197,10 @@ def collect_tool_context_validation_signals(
     for context in tool_use_id_to_context.values():
         if not isinstance(context, dict):
             continue
-        if context.get("invalid_bypass_marker"):
-            signals["invalid_bypass_marker_application"] = signals.get("invalid_bypass_marker_application", 0) + 1
         if context.get("tool_context_validation_failed"):
             signals["tool_context_validation_failed"] = signals.get("tool_context_validation_failed", 0) + 1
+        if context.get("invalid_bypass_marker"):
+            signals["invalid_bypass_marker_application"] = signals.get("invalid_bypass_marker_application", 0) + 1
     return signals
 
 
@@ -241,6 +211,8 @@ def _extract_path(tool_input: dict[str, Any]) -> str | None:
             or tool_input.get("file_path")
             or tool_input.get("AbsolutePath")
             or tool_input.get("TargetFile")
+            or tool_input.get("SearchDirectory")  # find_by_name
+            or tool_input.get("search_folder_absolute_uri")  # code_search
             or ""
         ).strip()
         or None
@@ -256,7 +228,9 @@ def _extract_query(tool_input: dict[str, Any]) -> str | None:
         str(
             tool_input.get("query")
             or tool_input.get("pattern")
+            or tool_input.get("Pattern")  # find_by_name
             or tool_input.get("search")
+            or tool_input.get("search_term")  # code_search
             or tool_input.get("text")
             or ""
         ).strip()

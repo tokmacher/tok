@@ -82,6 +82,7 @@ def collect_behavior_signals(
         repeated_tool_targets,
         result_cache,
         bump,
+        tool_use_id_to_context,
     )
 
     if tool_use_id_to_context:

@@ -13,7 +13,6 @@ from typing import Any, cast
 import tok.runtime.core as _core
 from tok.compression import (
     EDIT_LIKE_TOOLS,
-    FILE_LIKE_TOOLS,
     compress_history,
     compress_recent_window,
     compress_tool_results,
@@ -21,6 +20,7 @@ from tok.compression import (
     text_of,
 )
 from tok.neuro.ir import Instruction
+from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
 
 from .config import (
     _SHORT_SESSION_THRESHOLD,
@@ -70,7 +70,6 @@ from .pipeline.tool_processing import (
 from .policy.macro_handling import _jit_context_matches
 from .policy.semantic_validation import calculate_invisible_pressure
 from .repeat_targets import (
-    SEARCH_LIKE_TOOLS,
     HotSummaryRecord,
     RepeatTargetEvent,
     build_summary_for_family,
@@ -1088,15 +1087,6 @@ def prepare_request_impl(
             session._last_elevated_path = ""
         elif fidelity_overrides and current_path:
             session._last_elevated_path = current_path
-        if fidelity_overrides:
-            for ctx in id_to_context.values():
-                path = ctx.get("path")
-                if path in fidelity_overrides:
-                    tool_name = str(ctx.get("name", "")).lower()
-                    # Don't set tok_bypass_cache for file-like tools - they should still get stable result compression
-                    if tool_name not in FILE_LIKE_TOOLS:
-                        ctx["args"] = dict(ctx.get("args", {}))
-                        ctx["args"]["tok_bypass_cache"] = True
         if stream_recovery_history_floor_active:
             body["messages"] = translated_messages
         else:
@@ -1214,6 +1204,7 @@ def prepare_request_impl(
                 tool_compatible=effective_tool_compatible,
                 first_exact_evidence_seen=session._first_exact_evidence_seen,
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
+                session_files_read=session._files_read_this_session,
             )
             if request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(recent):
                 bridge_candidate_had_invalid = False
@@ -1267,6 +1258,7 @@ def prepare_request_impl(
                             tool_compatible=effective_tool_compatible,
                             first_exact_evidence_seen=session._first_exact_evidence_seen,
                             preserve_exact_search_evidence=preserve_exact_search_evidence,
+                            session_files_read=session._files_read_this_session,
                         )
                         candidate_recent = _bridge_preflight_safe_recent_suffix(candidate_recent) or []
                         if not candidate_recent:

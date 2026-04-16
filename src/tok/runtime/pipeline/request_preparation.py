@@ -229,7 +229,23 @@ def _is_read_only_audit_turn(messages: list[dict[str, Any]]) -> bool:
     if intent.is_read_only_audit:
         return True
     has_read_only_contract = any(pattern in lowered for pattern in _READ_ONLY_AUDIT_HINT_PATTERNS)
-    return has_read_only_contract and intent.audit_scope
+    if has_read_only_contract and intent.audit_scope:
+        return True
+    # Exploration mode: audit/investigation that requires documenting the process itself
+    if intent.audit_scope:
+        # Meta-observation: prompt asks to document HOW tools are used, not just results
+        # Detected by: process-verbs + tool-usage reference
+        process_verbs = ("narrate", "document", "record", "note", "describe", "list")
+        tool_refs = ("tool call", "each call", "every call", "as you", "for each")
+        has_process_verb = any(v in lowered for v in process_verbs)
+        has_tool_ref = any(r in lowered for r in tool_refs)
+        if has_process_verb and has_tool_ref:
+            return True
+        # Self-assessment patterns: evaluating quality of evidence/tool-output
+        self_assess = ("what i got back", "immediately useful", "re-query", "re-read", "workaround")
+        if any(s in lowered for s in self_assess):
+            return True
+    return False
 
 
 def _message_explicitly_requests_answer(
@@ -332,6 +348,7 @@ def _annotate_reacquisition_diagnostics(
     *,
     answer_ready: bool,
     answer_ready_repair_active: bool,
+    exploration_mode: bool = False,
 ) -> None:
     """Set diagnostic signals for anchor reacquisition attempts."""
     if not behavior_signals.get("answer_anchor_present", 0):
@@ -342,6 +359,10 @@ def _annotate_reacquisition_diagnostics(
         or behavior_signals.get("cached_file_read", 0) > 0
         or behavior_signals.get("cached_search", 0) > 0
     ):
+        return
+    # During exploration mode, reacquisition is expected - don't flag as problematic
+    if exploration_mode:
+        behavior_signals["exploration_reacquisition_expected"] = 1
         return
     behavior_signals["answer_anchor_reacquisition_attempt"] = 1
     if answer_ready:

@@ -586,6 +586,23 @@ def _rewrite_provider_safe_tool_ids(
             continue
 
         if role == "assistant":
+            # Skip rewriting tool IDs for protected messages to preserve
+            # thinking block integrity (prevents false mutation warnings)
+            if id(content) in protected_content_identities:
+                # Still track tool IDs for pairing, but don't modify
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        raw_tool_use_id = str(block.get("id", "")).strip()
+                        if raw_tool_use_id:
+                            occupied_ids.add(raw_tool_use_id)
+                            pending_pairs.append(
+                                {
+                                    "raw_id": raw_tool_use_id,
+                                    "new_id": raw_tool_use_id,
+                                    "consumed": False,
+                                }
+                            )
+                continue
             (
                 assistant_changed,
                 assistant_invalid,

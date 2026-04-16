@@ -103,6 +103,7 @@ def _track_assistant_tool_usage(
     repeated_tool_targets: set[tuple[str, str]],
     result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None,
     bump: Callable[[str, int], None],
+    tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     for msg in messages:
         if msg.get("role") != "assistant":
@@ -114,6 +115,7 @@ def _track_assistant_tool_usage(
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
+            tool_id = block.get("id", "")
             tool_name = str(block.get("name", "")).lower()
             tool_input = block.get("input", {})
             if not isinstance(tool_input, dict):
@@ -128,6 +130,12 @@ def _track_assistant_tool_usage(
             shell_file_path = extract_shell_file_read_path(command) if command else None
             is_shell_file_read = bool(shell_file_path and family == "file_read" and tool_name not in FILE_LIKE_TOOLS)
             effective_path = path or shell_file_path or ""
+            # Check for bypass cache flag in context (set by @tok_bypass_next_read)
+            has_bypass = False
+            if tool_use_id_to_context and tool_id:
+                ctx = tool_use_id_to_context.get(tool_id)
+                if ctx and isinstance(ctx.get("args"), dict):
+                    has_bypass = bool(ctx["args"].get("tok_bypass_cache"))
             _track_file_read_repeats(
                 effective_path,
                 logical_target,
@@ -140,6 +148,7 @@ def _track_assistant_tool_usage(
                 repeat_file_read_ids,
                 result_cache,
                 bump,
+                has_bypass,
             )
             _track_search_repeats(
                 query,
