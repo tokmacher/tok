@@ -66,8 +66,10 @@ class Bar:
 
         wire = state.wire_state()
 
-        # Wire state should include compact files alias; freshness stays in facts.
-        assert "f:/test/sample.py" in wire
+        # Wire state should include compact files alias via pointer; freshness stays in facts.
+        assert "f:" in wire  # files field with pointer reference
+        assert "@pointers" in wire
+        assert "/test/sample.py" in wire  # actual path in pointers block
         facts = state.hot.get("facts", [])
         assert facts and "file[/test/sample.py]:" in facts[0].value
 
@@ -86,10 +88,12 @@ class Bar:
 
         assert re.search(r"\|\~\d+t", facts[0].value), f"Token savings format missing: {facts[0].value}"
 
-        # Wire state includes files list (may not include full facts due to dedup)
+        # Wire state includes files list via pointer compression
         wire = state.wire_state()
         assert ">>>" in wire
-        assert "f:/test/file.py" in wire or "f:test/file.py" in wire
+        assert "f:" in wire  # files field with pointer reference
+        assert "@pointers" in wire
+        assert "/test/file.py" in wire  # actual path in pointers block
 
     def test_resend_reason_with_verified_current(self) -> None:
         """Verify resend reason is 'verified_current_state' when unchanged."""

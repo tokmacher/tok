@@ -22,6 +22,10 @@ class PointerRegistry:
         if self._next_idx >= 26:
             ptr += str(self._next_idx // 26)
 
+        # Only intern if it actually saves space
+        if len(value) <= len(ptr):
+            return value  # Interning saves nothing; return verbatim.
+
         self._next_idx += 1
         self.map[ptr] = value
         self.reverse_map[value] = ptr

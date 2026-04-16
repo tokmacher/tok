@@ -614,7 +614,7 @@ def tok_tool_result_impl(
         compress_install=_compress_install,
         compress_git_log=_compress_git_log_impl,
         compress_repetitive=lambda text: _compress_repetitive(text, command=_tool_command_hint(tool_context)),
-        compress_file_read=_compress_file_read,
+        compress_file_read=lambda text: _compress_file_read(text, tool_context=tool_context),
         compress_search_results=_compress_search_results,
         compress_stack_traces=_compress_stack_traces,
         compress_grep_context=_compress_grep_context,
@@ -885,7 +885,7 @@ def compress_tool_results_impl(
             if current_turn is not None and (current_turn - edit_step) < 2:
                 return False
         if files_fully_delivered is None:
-            return True
+            return False  # No tracking = not delivered; protects cold reads
         delivery_turn = files_fully_delivered.get(norm_path)
         if delivery_turn is None:
             return False
@@ -1316,7 +1316,7 @@ def compress_tool_results_impl(
                     content_hash = _compute_semantic_hash(raw)
                     prev_hash = semantic_hash_cache.get(cache_key)
                     if prev_hash == content_hash:
-                        compressed = _compress_file_read(raw)
+                        compressed = _compress_file_read(raw, tool_context=ctx)
                         if len(compressed) < len(raw):
                             saved = len(raw) - len(compressed)
                             breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)

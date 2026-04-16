@@ -246,6 +246,32 @@ def _normalize_error_content(raw: str) -> str | None:
     return None
 
 
+def _error_stub(tool: str, reason: str, fallback: str = "verbatim") -> str:
+    """Emit a structured, readable error stub. Never swallow failures silently."""
+    return f">>> tool:{tool}|status:error|reason:{reason}|fallback:{fallback}"
+
+
+def _compute_confidence(
+    content_hash: str | None,
+    cached_hash: str | None,
+    is_heuristic: bool = False,
+) -> tuple[str, str]:
+    """Return (confidence_level, reason) for stub metadata.
+
+    Levels:
+    - high: hash match confirmed
+    - medium: hash available but no cached reference
+    - low: heuristic applied (size/age threshold)
+    """
+    if content_hash and cached_hash and content_hash == cached_hash:
+        return "high", "hash-match"
+    if content_hash:
+        return "medium", "hash-available"
+    if is_heuristic:
+        return "low", "heuristic"
+    return "low", "default"
+
+
 _SOURCE_EVIDENCE_LINE_RE = re.compile(
     r"(?m)^\s*(?:\.?/)?[A-Za-z0-9_./-]+\.(?:py|ts|tsx|js|jsx|go|rs|rb|java|c|cc|cpp|h):\d+(?::|\s|$)"
 )
@@ -276,8 +302,10 @@ def _should_preserve_source_evidence_for_error_stub(
     normalized_tool_name = str(tool_name or "").lower().strip()
     if not normalized_tool_name and isinstance(context, dict):
         normalized_tool_name = str(context.get("name", "")).lower().strip()
-    if normalized_tool_name not in _SOURCE_EVIDENCE_SEARCH_TOOLS:
-        return False
+    # Always preserve search tool output - never convert it to error stubs
+    # even if it contains error-like patterns (e.g., "ValueError" in source code)
+    if normalized_tool_name in _SOURCE_EVIDENCE_SEARCH_TOOLS:
+        return True
     return _looks_like_source_evidence(raw_text)
 
 
@@ -1018,17 +1046,19 @@ def _handle_hash_mismatch_result(
         tool_name=tool_name,
         context=context,
     ):
-        stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
+        error_type = normalized_error[5:-1] if normalized_error else "unknown"
+        stub = _error_stub(tool=str(tool_name or "unknown"), reason=error_type)
         saved = len(raw_text) - len(stub)
         if saved < 0:
-            return normalized_error + "\n", 0
-        return stub, saved
+            return _error_stub(tool=str(tool_name or "unknown"), reason=error_type) + "\n", 0
+        return stub + "\n", saved
     compressed = tok_tool_result(
         raw_text,
         compression_level=compression_level,
         tool_context=context,
     )
-    header = f">>> tool:{tool_name}|delta|changed\n"
+    confidence, reason = _compute_confidence(None, None, is_heuristic=True)
+    header = f">>> tool:{tool_name}|delta|changed|confidence:{confidence}|reason:{reason}\n"
     return header + compressed, len(raw_text) - (len(header) + len(compressed))
 
 
@@ -1049,17 +1079,19 @@ def _handle_diff_result(
         tool_name=tool_name,
         context=context,
     ):
-        stub = f">>> tool:{tool_name}|delta|err:{normalized_error[5:-1]}\n"
+        error_type = normalized_error[5:-1] if normalized_error else "unknown"
+        stub = _error_stub(tool=str(tool_name or "unknown"), reason=error_type)
         saved = len(raw_text) - len(stub)
         if saved < 0:
-            return normalized_error + "\n", 0
-        return stub, saved
+            return _error_stub(tool=str(tool_name or "unknown"), reason=error_type) + "\n", 0
+        return stub + "\n", saved
     compressed = tok_tool_result(
         raw_text,
         compression_level=compression_level,
         tool_context=context,
     )
-    header = f">>> tool:{tool_name}|delta|changed\n"
+    confidence, reason = _compute_confidence(None, None, is_heuristic=True)
+    header = f">>> tool:{tool_name}|delta|changed|confidence:{confidence}|reason:{reason}\n"
     return header + compressed, len(raw_text) - (len(header) + len(compressed))
 
 
@@ -1071,7 +1103,8 @@ def _build_diff_result(
 ) -> tuple[str, int]:
     """Build the result with diff output."""
     changed_lines = _count_changed_lines(diff_lines)
-    header = f">>> tool:{tool_name}|delta|changed_lines:{changed_lines}"
+    confidence, reason = _compute_confidence(None, None, is_heuristic=True)
+    header = f">>> tool:{tool_name}|delta|changed_lines:{changed_lines}|confidence:{confidence}|reason:{reason}"
     diff_text = "".join(diff_lines)
     if _should_strip_diff_whitespace(normalized_tool_name):
         stripped_diff = [line for line in diff_lines if not line.startswith(" ")]
@@ -1131,7 +1164,7 @@ def _serve_cached_content_hash_match(
         from ._tool_result_codecs import _compress_file_read
 
         content_for_skeleton = cached_raw if host_stub_replayed else raw_text
-        compressed = _compress_file_read(content_for_skeleton)
+        compressed = _compress_file_read(content_for_skeleton, tool_context=context)
         if len(compressed) < len(content_for_skeleton):
             return compressed, len(content_for_skeleton) - len(compressed)
         # Small files return unchanged — don't skeletonize them
@@ -1144,7 +1177,8 @@ def _serve_cached_content_hash_match(
         )
         return payload, len(content_for_skeleton) - len(payload)
 
-    stub = f">>> tool:{tool_name}|unchanged|cached"
+    confidence, reason = _compute_confidence(cached_hash, cached_hash)
+    stub = f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"
     raw_args = context.get("args")
     raw_path = (
         context.get("path")

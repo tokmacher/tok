@@ -231,7 +231,7 @@ def test_compress_file_read_skeletonizes_large_files() -> None:
 
 
 def test_sift_stdout_preserves_small_files() -> None:
-    """Small files (≤100 lines, ≤5000 chars) must not be truncated by gateway sifting."""
+    """Small files (≤100 lines, ≤10000 chars) must not be truncated by gateway sifting."""
     lines = ["class PointerRegistry:"]
     lines.extend(f"    def method_{i}(self):" for i in range(10))
     lines.extend(f"        return self._data[{i}]" for i in range(10))
@@ -317,3 +317,69 @@ def test_compress_file_read_preserves_medium_small_slices() -> None:
     # Must return the original verbatim — no skeleton stub
     assert compressed == medium_slice
     assert ">>>" not in compressed
+
+
+def test_medium_small_file_preservation() -> None:
+    """Files between 5000-10000 chars must not be skeletonized (threshold raised to 10000)."""
+    # Generate ~90 lines, ~8000 chars - should now be preserved verbatim
+    lines = ["class MediumClass:"]
+    lines.extend(f"    def method_{i}(self, x: int) -> int:" for i in range(30))
+    lines.extend(f"        return x + {i}" for i in range(30))
+    lines.extend(f"    # This is a long comment to add characters and make it longer {i}" for i in range(75))
+    medium_slice = "\n".join(lines)
+    assert medium_slice.count("\n") + 1 <= 100
+    assert 5000 < len(medium_slice) <= 10000  # Between old and new threshold
+
+    compressed = _compress_file_read(medium_slice)
+
+    # Must return the original verbatim — no skeleton stub
+    assert compressed == medium_slice
+    assert ">>>" not in compressed
+
+
+def test_precision_read_not_compressed() -> None:
+    """Offset/limit based reads (precision reads) must never be compressed."""
+    # Create content that would normally be compressed (>10000 chars or >100 lines)
+    lines = ["class LargeClass:"]
+    lines.extend(f"    def method_{i}(self, x: int) -> int:" for i in range(150))
+    lines.extend(f"        return x + {i}" for i in range(150))
+    large_content = "\n".join(lines)
+    assert len(large_content) > 10000
+
+    # Without tool_context, it would be compressed
+    compressed_without_context = _compress_file_read(large_content)
+    assert len(compressed_without_context) < len(large_content)
+
+    # With offset in tool_context, should return verbatim (precision read)
+    tool_context = {"args": {"offset": 100, "limit": 50}}
+    compressed_with_offset = _compress_file_read(large_content, tool_context=tool_context)
+    assert compressed_with_offset == large_content
+
+    # With limit only, should also return verbatim
+    tool_context_limit = {"args": {"limit": 100}}
+    compressed_with_limit = _compress_file_read(large_content, tool_context=tool_context_limit)
+    assert compressed_with_limit == large_content
+
+    # With start/end, should also return verbatim
+    tool_context_start_end = {"args": {"start": 50, "end": 200}}
+    compressed_with_start_end = _compress_file_read(large_content, tool_context=tool_context_start_end)
+    assert compressed_with_start_end == large_content
+
+
+def test_grep_with_valueerror_not_error_stub() -> None:
+    """Grep results containing 'ValueError' must not be misclassified as error stubs."""
+    from tok.compression import _apply_result_cache
+
+    # Grep output that contains "ValueError" (common in source code)
+    grep_output = """src/errors.py:10:raise ValueError("Invalid input")
+src/errors.py:20:except ValueError as e:
+src/main.py:5:from errors import ValueError
+"""
+
+    context = {"name": "grep_search", "args": {"pattern": "ValueError"}}
+    result_cache = {}
+
+    # Should NOT be converted to error stub
+    compressed, _ = _apply_result_cache(grep_output, context, result_cache)
+    assert "|err:value_error|" not in compressed
+    assert "ValueError" in compressed  # Original content preserved

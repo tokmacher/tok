@@ -428,12 +428,18 @@ def _is_signature_continuation(prior_unclosed_parens: int, line: str) -> bool:
 
 
 _SMALL_FILE_MAX_LINES = 100
-_SMALL_FILE_MAX_CHARS = 5000
+_SMALL_FILE_MAX_CHARS = 10000
 
 
-def _compress_file_read(text: str) -> str:
+def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None) -> str:
     # Small files are never worth skeletonizing — the token savings are negligible
     # but the friction of losing access to the full content is high.
+    # Also skip skeletonization for precision reads (offset/limit based) - these are
+    # intentional targeted reads and should not be compressed.
+    if tool_context:
+        args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+        if any(k in args for k in ("offset", "limit", "start", "end")):
+            return text
     if len(text) <= _SMALL_FILE_MAX_CHARS and text.count("\n") + 1 <= _SMALL_FILE_MAX_LINES:
         return text
     lines = text.splitlines()

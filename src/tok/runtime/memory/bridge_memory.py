@@ -232,6 +232,7 @@ class MemoryEntry:
     value: str
     score: int = 1
     last_seen_turn: int = 0
+    verified_turn: int = 0  # Turn number when this entry was last confirmed accurate
 
 
 @dataclass
@@ -287,11 +288,12 @@ class BridgeMemoryState:
         bucket: dict[str, list[MemoryEntry]],
         current_field: str,
     ) -> None:
-        """Parse an entry line (|> value|score:X|last:Y) into the bucket."""
+        """Parse an entry line (|> value|score:X|last:Y|verified:Z) into the bucket."""
         parts = line[3:].split("|")
         value = parts[0].strip()
         score = 1
         last_seen = 0
+        verified = 0
         for part in parts[1:]:
             if part.startswith("score:"):
                 with contextlib.suppress(ValueError):
@@ -299,7 +301,12 @@ class BridgeMemoryState:
             elif part.startswith("last:"):
                 with contextlib.suppress(ValueError):
                     last_seen = int(part.split(":", 1)[1])
-        bucket.setdefault(current_field, []).append(MemoryEntry(value=value, score=score, last_seen_turn=last_seen))
+            elif part.startswith("verified:"):
+                with contextlib.suppress(ValueError):
+                    verified = int(part.split(":", 1)[1])
+        bucket.setdefault(current_field, []).append(
+            MemoryEntry(value=value, score=score, last_seen_turn=last_seen, verified_turn=verified)
+        )
 
     @staticmethod
     def _parse_rolling_cmd_line(
@@ -310,11 +317,15 @@ class BridgeMemoryState:
         parts = line[3:].split("|")
         value = parts[0].strip()
         last_seen = 0
+        verified = 0
         for part in parts[1:]:
             if part.startswith("last:"):
                 with contextlib.suppress(ValueError):
                     last_seen = int(part.split(":", 1)[1])
-        rolling_cmds.append(MemoryEntry(value=value, score=1, last_seen_turn=last_seen))
+            elif part.startswith("verified:"):
+                with contextlib.suppress(ValueError):
+                    verified = int(part.split(":", 1)[1])
+        rolling_cmds.append(MemoryEntry(value=value, score=1, last_seen_turn=last_seen, verified_turn=verified))
 
     @classmethod
     def _parse_mem_header(cls, line: str, state: BridgeMemoryState) -> None:
@@ -369,13 +380,19 @@ class BridgeMemoryState:
                 entries,
                 key=lambda e: (-e.score, -e.last_seen_turn, e.value),
             ):
-                lines.append(f"  |> {entry.value}|score:{entry.score}|last:{entry.last_seen_turn}")
+                line = f"  |> {entry.value}|score:{entry.score}|last:{entry.last_seen_turn}"
+                if entry.verified_turn > 0:
+                    line += f"|verified:{entry.verified_turn}"
+                lines.append(line)
         for extra in ("questions", "facts"):
             extra_entries = bucket.get(extra, [])
             if extra_entries:
                 lines.append(f"@field {extra}")
                 for entry in extra_entries:
-                    lines.append(f"  |> {entry.value}|score:{entry.score}|last:{entry.last_seen_turn}")
+                    line = f"  |> {entry.value}|score:{entry.score}|last:{entry.last_seen_turn}"
+                    if entry.verified_turn > 0:
+                        line += f"|verified:{entry.verified_turn}"
+                    lines.append(line)
 
     @staticmethod
     def _serialize_macro_line(macro: Macro) -> str:
@@ -594,9 +611,7 @@ class BridgeMemoryState:
 
         file_values = []
         for e in files:
-            val = e.value
-            if len(val) > 20:
-                val = self.pointers.get_pointer(val)
+            val = self.pointers.get_pointer(e.value)
             file_values.append(val)
 
         f_key = TOK_FIELD_ALIAS.get("files", "files")
@@ -646,7 +661,7 @@ class BridgeMemoryState:
             val = fact.value
             if ":" in val:
                 fk, fv = val.split(":", 1)
-                if fk in {"answer_file", "answer_verification"} and len(fv) > 20:
+                if fk in {"answer_file", "answer_verification"}:
                     fv = self.pointers.get_pointer(fv)
                     val = f"{fk}:{fv}"
             state_parts.append(val)
@@ -669,7 +684,7 @@ class BridgeMemoryState:
             v = e.value
             if field == "facts" and ":" in v:
                 fk, fv = v.split(":", 1)
-                if fk in {"answer_file", "answer_verification"} and len(fv) > 20:
+                if fk in {"answer_file", "answer_verification"}:
                     fv = self.pointers.get_pointer(fv)
                     v = f"{fk}:{fv}"
             values.append(v)
@@ -964,8 +979,9 @@ class BridgeMemoryState:
             if entry.value == value:
                 entry.score += score_delta
                 entry.last_seen_turn = self.turn
+                entry.verified_turn = self.turn  # Stamp verification on re-encounter
                 return
-        entries.append(MemoryEntry(value=value, score=score_delta, last_seen_turn=self.turn))
+        entries.append(MemoryEntry(value=value, score=score_delta, last_seen_turn=self.turn, verified_turn=self.turn))
 
     def _drop_conflicts(self, bucket: dict[str, list[MemoryEntry]], field: str, value: str) -> None:
         """Drop conflicting entries from a bucket."""
@@ -1038,6 +1054,11 @@ class BridgeMemoryState:
                 if fingerprint in durable_index.get(key, set()):
                     continue
                 self._upsert(self.durable, f, entry.value, score_delta=1)
+                # Stamp verified_turn on the newly promoted entry
+                for e in self.durable.get(f, []):
+                    if e.value == entry.value:
+                        e.verified_turn = self.turn
+                        break
                 promoted += 1
                 log_memory_promotion(f, entry.value, bucket="durable")
                 refreshed_entries = self.durable.get(f, [])
