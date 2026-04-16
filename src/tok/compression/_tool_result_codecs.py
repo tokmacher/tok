@@ -181,6 +181,18 @@ def _detect_tool_content_type(text: str) -> str:
         if oneline_matches >= 4 and oneline_matches / len(non_empty) > 0.4:
             return "git_log"
 
+    # Check for grep BEFORE ls to avoid files-only grep being misclassified as ls
+    if len(non_empty) >= 3:
+        grep_matches = sum(
+            1
+            for line in non_empty
+            if re.match(r"^[^\s:][^:]*:\d+:", line)  # path:line:content
+            or re.match(r"^[^\s:][^:]*:[^\n]+$", line)  # path:content
+            or re.match(r"^\S+\.\w{1,6}$", line.strip())  # files-only: just path
+        )
+        if grep_matches / len(non_empty) > 0.7:
+            return "grep"
+
     if len(non_empty) >= 8:
         la_lines = sum(1 for line in non_empty if re.match(r"^[dl-][rwx-]{9}", line))
         plain_file_lines = sum(
@@ -194,13 +206,6 @@ def _detect_tool_content_type(text: str) -> str:
         install_lines = sum(1 for line in non_empty if _INSTALL_PROGRESS_RE.match(line))
         if install_lines >= 5:
             return "install"
-
-    if len(non_empty) >= 3:
-        grep_matches = sum(
-            1 for line in non_empty if re.match(r"^[^\s:][^:]*:\d+:", line) or re.match(r"^[^\s:][^:]*:[^\n]+$", line)
-        )
-        if grep_matches / len(non_empty) > 0.7:
-            return "grep"
 
     if len(text) > 1000 and _CODE_PATTERNS.search(text):
         return "file"
@@ -330,43 +335,32 @@ def _compress_grep(text: str) -> str:
         return text
 
     file_count = len([k for k in order if k != "__other__"])
-    result = [f">>> tool:grep|matches:{total}|files:{file_count}"]
 
-    # Show up to 3 snippets per file for better discovery grounding
-    # For __other__, show first 3 explicitly before collapsing
+    # Scale snippet limit based on total matches:
+    # Small results (≤20) → show all; Medium (≤50) → 6/file; Large (>50) → 3/file
+    if total <= 20:
+        per_file_limit = 999  # effectively unlimited — show all
+    elif total <= 50:
+        per_file_limit = 6
+    else:
+        per_file_limit = 3
+
+    result = [f">>> tool:grep|matches:{total}|files:{file_count}"]
     for key in order:
         snippets = by_file[key]
-        if key == "__other__":
-            # Show first 3 __other__ snippets explicitly
-            shown = snippets[:3]
-            for _i, s in enumerate(shown):
-                result.append(f"__other__: {s[:80]}")
-            if len(snippets) > 3:
-                result.append(f"__other__: ... ({len(snippets) - 3} more)")
-        else:
-            # Show up to 3 snippets per file with line context
-            shown = snippets[:3]
-            for _i, s in enumerate(shown):
-                result.append(f"{key}: {s[:80]}")
-            if len(snippets) > 3:
-                result.append(f"{key}: ... ({len(snippets) - 3} more matches)")
+        limit = min(per_file_limit, len(snippets))
+        shown = snippets[:limit]
+        for _i, s in enumerate(shown):
+            result.append(f"{key}: {s[:80]}")
+        remaining = len(snippets) - limit
+        if remaining > 0:
+            result.append(f"{key}: ... ({remaining} more matches)")
 
-    # Add advisory footer for expensive searches
-    # Detect if search was scoped (single directory or specific path pattern)
-    has_scope = file_count == 1 or (
-        len(order) > 0 and all("/" in k or "\\" in k for k in order[:3] if k != "__other__")
-    )
-    estimated_tokens = _estimate_tokens(text)
-    advisory = _build_search_advisory(
-        match_count=total,
-        file_count=file_count,
-        estimated_tokens=estimated_tokens,
-        has_scope=has_scope,
-    )
-    if advisory:
-        result.append(advisory)
-
-    return "\n".join(result)
+    compressed = "\n".join(result)
+    # If compression doesn't save space, return original
+    if len(compressed) >= len(text):
+        return text
+    return compressed
 
 
 def _compress_repetitive(text: str, command: str = "") -> str:
@@ -434,7 +428,7 @@ def _is_signature_continuation(prior_unclosed_parens: int, line: str) -> bool:
 
 
 _SMALL_FILE_MAX_LINES = 100
-_SMALL_FILE_MAX_CHARS = 3000
+_SMALL_FILE_MAX_CHARS = 5000
 
 
 def _compress_file_read(text: str) -> str:

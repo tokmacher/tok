@@ -885,6 +885,7 @@ def test_prepare_request_bridge_cut_search_extends_to_valid_suffix(tmp_path, mon
         tool_compatible=False,
         first_exact_evidence_seen=None,
         preserve_exact_search_evidence=False,
+        session_files_read=None,
     ):
         del (
             tool_use_id_to_context,
@@ -892,6 +893,7 @@ def test_prepare_request_bridge_cut_search_extends_to_valid_suffix(tmp_path, mon
             tool_compatible,
             first_exact_evidence_seen,
             preserve_exact_search_evidence,
+            session_files_read,
         )
         return messages, {}
 
@@ -1035,6 +1037,7 @@ def test_prepare_request_bridge_cut_preflight_advances_to_safe_suffix(tmp_path, 
         tool_compatible=False,
         first_exact_evidence_seen=None,
         preserve_exact_search_evidence=False,
+        session_files_read=None,
     ):
         del (
             tool_use_id_to_context,
@@ -1042,6 +1045,7 @@ def test_prepare_request_bridge_cut_preflight_advances_to_safe_suffix(tmp_path, 
             tool_compatible,
             first_exact_evidence_seen,
             preserve_exact_search_evidence,
+            session_files_read,
         )
         return messages, {}
 
@@ -1141,6 +1145,7 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, 
         tool_compatible=False,
         first_exact_evidence_seen=None,
         preserve_exact_search_evidence=False,
+        session_files_read=None,
     ):
         del (
             tool_use_id_to_context,
@@ -1148,6 +1153,7 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, 
             tool_compatible,
             first_exact_evidence_seen,
             preserve_exact_search_evidence,
+            session_files_read,
         )
         return messages, {"file": 128}
 

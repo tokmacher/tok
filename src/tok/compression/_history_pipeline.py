@@ -1323,6 +1323,9 @@ def compress_tool_results_impl(
                             log_semantic_dedup(cache_key, saved)
                             block["content"] = compressed
                             continue
+                        # Small files return unchanged — preserve verbatim, don't build skeleton
+                        if compressed == raw:
+                            continue
                         summary = ""
                         if hot_summary_records is not None and ctx is not None:
                             path = ctx.get("path")

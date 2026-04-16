@@ -144,7 +144,7 @@ def sift_tool_results(body: dict[str, Any]) -> dict[str, Any]:
 
 _SIFT_MIN_CHARS = 80
 _SIFT_SMALL_FILE_MAX_LINES = 100
-_SIFT_SMALL_FILE_MAX_CHARS = 3000
+_SIFT_SMALL_FILE_MAX_CHARS = 5000
 
 
 def _sift_stdout(text: str) -> str:

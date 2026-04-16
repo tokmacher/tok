@@ -1,5 +1,5 @@
 from tok.compression import tok_tool_result, truncate_large_result
-from tok.compression._tool_result_codecs import _compress_file_read, _compress_grep
+from tok.compression._tool_result_codecs import _compress_file_read, _compress_grep, _detect_tool_content_type
 from tok.gateway._anthropic_optimizations import _sift_stdout
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
@@ -112,7 +112,7 @@ def test_truncate_large_result_truncates_large_files() -> None:
 
 
 def test_grep_shows_multiple_snippets_per_file() -> None:
-    """Multi-file grep should show up to 3 snippets per file, not just one."""
+    """Small result sets (≤20 matches) return verbatim — no compression overhead."""
     grep_output = "\n".join(
         [
             "src/main.py:10:def foo():",
@@ -126,16 +126,12 @@ def test_grep_shows_multiple_snippets_per_file() -> None:
 
     compressed = _compress_grep(grep_output)
 
-    # Should show 3 snippets for main.py (not just 1)
-    assert "src/main.py:10:" in compressed or "def foo():" in compressed
-    assert "src/main.py:20:" in compressed or "def bar():" in compressed
-    assert "src/main.py:30:" in compressed or "def baz():" in compressed
-    # 4th match should be collapsed
-    assert "more matches" in compressed
+    # With 6 total matches (≤20), compression adds no value — return verbatim
+    assert compressed == grep_output
 
 
 def test_grep_shows_other_snippets_explicitly() -> None:
-    """Lines that don't match grep format should show first 3 explicitly."""
+    """Small result sets (≤20 matches) return verbatim — no compression overhead."""
     grep_output = "\n".join(
         [
             "src/main.py:10:def foo():",
@@ -149,16 +145,59 @@ def test_grep_shows_other_snippets_explicitly() -> None:
 
     compressed = _compress_grep(grep_output)
 
-    # Should show first 3 __other__ snippets explicitly
-    assert "__other__:" in compressed
-    # Should NOT collapse all __other__ content
-    assert "unusual line" in compressed or "another unusual" in compressed
-    # 4th and 5th should be collapsed
-    assert "more)" in compressed
+    # With 6 total matches (≤20), compression adds no value — return verbatim
+    assert compressed == grep_output
+
+
+def test_grep_collapses_large_result_sets() -> None:
+    """Large grep results (>50 matches) should still collapse per-file snippets."""
+    lines = []
+    for i in range(60):
+        lines.append(f"src/main.py:{i * 10}:def method_{i}():")
+    for i in range(10):
+        lines.append(f"src/other.py:{i * 5}:def helper_{i}():")
+    grep_output = "\n".join(lines)
+
+    compressed = _compress_grep(grep_output)
+
+    # 70 total matches (>50) → 3 per file limit
+    assert "more matches" in compressed
+    # Should show first 3 snippets for main.py
+    assert "def method_0():" in compressed
+    assert "def method_1():" in compressed
+    assert "def method_2():" in compressed
+    # No advisory footer
+    assert "tok advisory" not in compressed
+
+
+def test_files_only_grep_not_misclassified_as_ls() -> None:
+    """Files-only grep results (just paths) must not be misclassified as ls output."""
+    # This simulates the second grep in the audit which returned just file paths
+    files_only_grep = "\n".join(
+        [
+            "src/tok/memory/pointers.py",
+            "src/tok/memory/__init__.py",
+            "src/tok/runtime/memory/bridge_memory.py",
+            "tests/unit/test_memory_pointers.py",
+            "src/tok/runtime/_session_persistence.py",
+            "src/tok/runtime/memory/__init__.py",
+            "src/tok/memory/__init__.py",
+            "src/tok/runtime/memory/__init__.py",
+        ]
+    )
+
+    # Should be detected as grep, not ls
+    kind = _detect_tool_content_type(files_only_grep)
+    assert kind == "grep", f"Expected 'grep', got '{kind}'"
+
+    # Compression should produce grep format, not ls format
+    compressed = _compress_grep(files_only_grep)
+    # For small results (8 matches ≤20), should return verbatim
+    assert compressed == files_only_grep
 
 
 def test_compress_file_read_preserves_small_files() -> None:
-    """Small files (≤100 lines, ≤3000 chars) must not be skeletonized."""
+    """Small files (≤100 lines, ≤5000 chars) must not be skeletonized."""
     # Simulate a file like pointers.py: 77 lines, ~2.5KB
     lines = ["class PointerRegistry:"]
     lines.extend(f"    def method_{i}(self):" for i in range(10))
@@ -166,7 +205,7 @@ def test_compress_file_read_preserves_small_files() -> None:
     lines.extend(f"    # comment {i}" for i in range(56))
     small_file = "\n".join(lines)
     assert small_file.count("\n") + 1 <= 100
-    assert len(small_file) <= 3000
+    assert len(small_file) <= 5000
 
     compressed = _compress_file_read(small_file)
 
@@ -183,7 +222,7 @@ def test_compress_file_read_skeletonizes_large_files() -> None:
     lines.extend(f"    y = self.data[{i}]" for i in range(200))
     large_file = "\n".join(lines)
     assert large_file.count("\n") + 1 > 100
-    assert len(large_file) > 3000
+    assert len(large_file) > 5000
 
     compressed = _compress_file_read(large_file)
 
@@ -192,14 +231,14 @@ def test_compress_file_read_skeletonizes_large_files() -> None:
 
 
 def test_sift_stdout_preserves_small_files() -> None:
-    """Small files (≤100 lines, ≤3000 chars) must not be truncated by gateway sifting."""
+    """Small files (≤100 lines, ≤5000 chars) must not be truncated by gateway sifting."""
     lines = ["class PointerRegistry:"]
     lines.extend(f"    def method_{i}(self):" for i in range(10))
     lines.extend(f"        return self._data[{i}]" for i in range(10))
     lines.extend(f"    # comment {i}" for i in range(56))
     small_file = "\n".join(lines)
     assert small_file.count("\n") + 1 <= 100
-    assert len(small_file) <= 3000
+    assert len(small_file) <= 5000
 
     result = _sift_stdout(small_file)
 
@@ -229,3 +268,52 @@ def test_sift_stdout_skips_already_compressed() -> None:
     compressed = ">>> tool:file_read|original_chars:5000|skeleton_lines:10\nimport os\ndef foo():"
     result = _sift_stdout(compressed)
     assert result == compressed
+
+
+def test_cache_hit_preserves_small_files() -> None:
+    """Small files must not be skeletonized on cache-hit (repeat read) path."""
+    from tok.compression import _apply_result_cache
+
+    # Simulate a small file like test_memory_pointers.py: 65 lines, ~2400 chars
+    lines = ["from tok.memory.pointers import PointerRegistry"]
+    lines.extend(f"    def test_method_{i}(self):" for i in range(10))
+    lines.extend(f"        assert reg.get_pointer('path_{i}') == '*A'" for i in range(10))
+    lines.extend(f"    # comment {i}" for i in range(44))
+    small_file = "\n".join(lines)
+    assert small_file.count("\n") + 1 <= 100
+    assert len(small_file) <= 5000
+
+    context = {"name": "view_file", "path": "test_memory_pointers.py", "args": {"path": "test_memory_pointers.py"}}
+    cache: dict = {}
+
+    # First call — populates cache
+    first_result, _first_saved = _apply_result_cache(small_file, context, cache)
+    # Second call — cache hit path
+    second_result, _second_saved = _apply_result_cache(small_file, context, cache)
+
+    # Both must return verbatim content — no skeleton stub
+    assert first_result == small_file
+    assert second_result == small_file
+    assert ">>>" not in first_result
+    assert ">>>" not in second_result
+
+
+def test_compress_file_read_preserves_medium_small_slices() -> None:
+    """Targeted code slices (≤100 lines, ≤5000 chars) must not be skeletonized.
+
+    This covers the case where a Bash sed/cat output of a 90-line slice
+    from a large file (e.g., bridge_memory.py lines 590-680) should be
+    preserved verbatim, not skeletonized.
+    """
+    lines = [f"def method_{i}(self):" for i in range(15)]
+    lines.extend(f"    x = self.data[{i}] + {i * 2} + self.offset[{i}]" for i in range(40))
+    lines.extend(f"    y = self.other[{i}] + self.buffer[{i}]" for i in range(35))
+    medium_slice = "\n".join(lines)
+    assert medium_slice.count("\n") + 1 <= 100
+    assert 3000 < len(medium_slice) <= 5000  # Between old and new threshold
+
+    compressed = _compress_file_read(medium_slice)
+
+    # Must return the original verbatim — no skeleton stub
+    assert compressed == medium_slice
+    assert ">>>" not in compressed

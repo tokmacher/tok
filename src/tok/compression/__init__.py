@@ -1134,6 +1134,9 @@ def _serve_cached_content_hash_match(
         compressed = _compress_file_read(content_for_skeleton)
         if len(compressed) < len(content_for_skeleton):
             return compressed, len(content_for_skeleton) - len(compressed)
+        # Small files return unchanged — don't skeletonize them
+        if compressed == content_for_skeleton:
+            return content_for_skeleton, 0
         payload = _build_stable_result_payload(
             content_for_skeleton,
             tool_name,
