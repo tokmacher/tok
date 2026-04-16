@@ -18,6 +18,8 @@ import re
 from typing import Any
 
 from tok.compression._tool_result_codecs import (
+    _CODE_PATTERNS,
+    _compress_file_read,
     _compress_git_log,
     _compress_grep,
     _compress_grep_context,
@@ -141,6 +143,8 @@ def sift_tool_results(body: dict[str, Any]) -> dict[str, Any]:
 
 
 _SIFT_MIN_CHARS = 80
+_SIFT_SMALL_FILE_MAX_LINES = 100
+_SIFT_SMALL_FILE_MAX_CHARS = 3000
 
 
 def _sift_stdout(text: str) -> str:
@@ -148,6 +152,10 @@ def _sift_stdout(text: str) -> str:
         return text
     # Skip already-compressed Tok content (repeat search, stable_result, etc.)
     if text.startswith(">>> "):
+        return text
+    # Small files: never truncate — token savings negligible, friction high
+    line_count = text.count("\n") + 1
+    if line_count <= _SIFT_SMALL_FILE_MAX_LINES and len(text) <= _SIFT_SMALL_FILE_MAX_CHARS:
         return text
     content_type = _detect_tool_content_type(text)
     if content_type == "ls":
@@ -165,6 +173,11 @@ def _sift_stdout(text: str) -> str:
     if content_type == "install":
         return _compress_install(text)
     if len(text) > 1200:
+        # For code-like content, use skeletonizer instead of blunt truncation
+        if content_type == "file" or _CODE_PATTERNS.search(text):
+            skeletonized = _compress_file_read(text)
+            if len(skeletonized) < len(text):
+                return skeletonized
         return truncate_large_result(text, limit=1200)
     return text
 

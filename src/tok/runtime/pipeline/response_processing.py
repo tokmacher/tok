@@ -582,43 +582,7 @@ def _repair_structured_answer_text(
 def _synthesize_answer_phase_fallback_text(
     session: RuntimeSession | None,
 ) -> str:
-    if session is None:
-        return ""
-    known_files, known_verifications = _extract_session_answer_anchors(session)
-    if not known_files or not known_verifications:
-        return ""
-
-    file_value = ""
-    for candidate in known_files:
-        normalized = _canonicalize_repo_path(candidate, known_files)
-        if normalized:
-            file_value = normalized
-            break
-        cleaned = candidate.strip().strip("'\"")
-        if cleaned:
-            file_value = cleaned
-            break
-
-    verification_value = ""
-    for candidate in known_verifications:
-        normalized = _normalize_verification_value(candidate, known_verifications).strip()
-        if normalized:
-            verification_value = normalized
-            break
-        cleaned = candidate.strip().strip("'\"")
-        if cleaned:
-            verification_value = cleaned
-            break
-
-    if not file_value and verification_value:
-        inferred = _file_from_verification_value(verification_value, known_files)
-        if inferred:
-            file_value = inferred
-
-    if not file_value or not verification_value:
-        return ""
-
-    return f"Grounded evidence supports this answer.\nFile={file_value}\nVerification={verification_value}"
+    return ""
 
 
 def _tool_compatible_mixed_turn_signals(

@@ -433,7 +433,15 @@ def _is_signature_continuation(prior_unclosed_parens: int, line: str) -> bool:
     return False
 
 
+_SMALL_FILE_MAX_LINES = 100
+_SMALL_FILE_MAX_CHARS = 3000
+
+
 def _compress_file_read(text: str) -> str:
+    # Small files are never worth skeletonizing — the token savings are negligible
+    # but the friction of losing access to the full content is high.
+    if len(text) <= _SMALL_FILE_MAX_CHARS and text.count("\n") + 1 <= _SMALL_FILE_MAX_LINES:
+        return text
     lines = text.splitlines()
     result: list[str] = []
     in_body = False

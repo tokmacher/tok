@@ -1656,6 +1656,8 @@ def compress_recent_window_impl(
             kind = _detect_tool_content_type_impl(content)
             if tool_name in FILE_LIKE_TOOLS:
                 kind = "file"
+            elif tool_name in SEARCH_LIKE_TOOLS and kind == "file":
+                kind = "grep"
             elif kind == "raw":
                 continue
             if kind == "pytest" and " FAILED" in content and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
@@ -1730,6 +1732,8 @@ def compress_recent_window_impl(
                 tool_name = str(context.get("name", "")).lower()
                 if tool_name in FILE_LIKE_TOOLS:
                     kind = "file"
+                elif tool_name in SEARCH_LIKE_TOOLS and kind == "file":
+                    kind = "grep"
                 elif kind == "raw":
                     continue
             effective_threshold = (

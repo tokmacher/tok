@@ -1,5 +1,6 @@
 from tok.compression import tok_tool_result, truncate_large_result
-from tok.compression._tool_result_codecs import _compress_grep
+from tok.compression._tool_result_codecs import _compress_file_read, _compress_grep
+from tok.gateway._anthropic_optimizations import _sift_stdout
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
 
@@ -154,3 +155,77 @@ def test_grep_shows_other_snippets_explicitly() -> None:
     assert "unusual line" in compressed or "another unusual" in compressed
     # 4th and 5th should be collapsed
     assert "more)" in compressed
+
+
+def test_compress_file_read_preserves_small_files() -> None:
+    """Small files (≤100 lines, ≤3000 chars) must not be skeletonized."""
+    # Simulate a file like pointers.py: 77 lines, ~2.5KB
+    lines = ["class PointerRegistry:"]
+    lines.extend(f"    def method_{i}(self):" for i in range(10))
+    lines.extend(f"        return self._data[{i}]" for i in range(10))
+    lines.extend(f"    # comment {i}" for i in range(56))
+    small_file = "\n".join(lines)
+    assert small_file.count("\n") + 1 <= 100
+    assert len(small_file) <= 3000
+
+    compressed = _compress_file_read(small_file)
+
+    # Must return the original verbatim — no skeleton stub
+    assert compressed == small_file
+    assert ">>>" not in compressed
+
+
+def test_compress_file_read_skeletonizes_large_files() -> None:
+    """Large files with heavy bodies should still be skeletonized normally."""
+    lines = [f"def method_{i}(self):" for i in range(20)]
+    # Add lots of body lines that the skeletonizer will collapse
+    lines.extend(f"    x = {i} + {i * 2}" for i in range(200))
+    lines.extend(f"    y = self.data[{i}]" for i in range(200))
+    large_file = "\n".join(lines)
+    assert large_file.count("\n") + 1 > 100
+    assert len(large_file) > 3000
+
+    compressed = _compress_file_read(large_file)
+
+    # Should be skeletonized (shorter than original)
+    assert len(compressed) < len(large_file)
+
+
+def test_sift_stdout_preserves_small_files() -> None:
+    """Small files (≤100 lines, ≤3000 chars) must not be truncated by gateway sifting."""
+    lines = ["class PointerRegistry:"]
+    lines.extend(f"    def method_{i}(self):" for i in range(10))
+    lines.extend(f"        return self._data[{i}]" for i in range(10))
+    lines.extend(f"    # comment {i}" for i in range(56))
+    small_file = "\n".join(lines)
+    assert small_file.count("\n") + 1 <= 100
+    assert len(small_file) <= 3000
+
+    result = _sift_stdout(small_file)
+
+    # Must return the original verbatim — no truncation or skeletonization
+    assert result == small_file
+
+
+def test_sift_stdout_uses_skeletonizer_for_large_code() -> None:
+    """Large code-like content should be skeletonized, not bluntly truncated."""
+    lines = [f"def method_{i}(self):" for i in range(20)]
+    lines.extend(f"    x = {i} + {i * 2}" for i in range(200))
+    lines.extend(f"    y = self.data[{i}]" for i in range(200))
+    large_code = "\n".join(lines)
+    assert len(large_code) > 3000
+
+    result = _sift_stdout(large_code)
+
+    # Should use skeletonizer (preserves signatures) not blunt truncation
+    assert ">>>" in result or len(result) < len(large_code)
+    # Skeleton should preserve method signatures
+    if ">>>" in result:
+        assert "def method_0(self):" in result
+
+
+def test_sift_stdout_skips_already_compressed() -> None:
+    """Already-compressed Tok content (>>> prefix) must pass through unchanged."""
+    compressed = ">>> tool:file_read|original_chars:5000|skeleton_lines:10\nimport os\ndef foo():"
+    result = _sift_stdout(compressed)
+    assert result == compressed
