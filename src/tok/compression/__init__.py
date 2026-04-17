@@ -1141,7 +1141,6 @@ def _serve_cached_content_hash_match(
                 "first_read_complete": True,
             }
         confidence, reason = _compute_confidence(cached_hash, cached_hash)
-        stub = f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"
         raw_args = context.get("args")
         raw_path = (
             context.get("path")
@@ -1150,14 +1149,34 @@ def _serve_cached_content_hash_match(
             or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
             or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
         )
+        stub_parts = [f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"]
         if raw_path:
-            stub += f"|path:{raw_path}"
+            stub_parts[0] += f"|path:{raw_path}"
+        if len(cached_raw) >= 100:
+            try:
+                from tok.runtime.repeat_targets import build_file_skeleton
+
+                skeleton = build_file_skeleton(cached_raw, max_chars=280, max_lines=14)
+                summary = " ".join(cached_raw.splitlines()[:3])
+                if len(summary) > 280:
+                    summary = summary[:279] + "…"
+                if skeleton:
+                    stub_parts.append(f"@stable_summary |> {summary}")
+                    stub_parts.append(f"@stable_skeleton |> {skeleton}")
+            except Exception:
+                logger.debug("Failed to build file skeleton", exc_info=True)
+        stub = "\n".join(stub_parts)
         if len(stub) >= len(raw_text):
             return raw_text, 0
         return stub, len(raw_text) - len(stub)
 
     # Handle search-like tools: compress repeat searches instead of bare stub
     if normalized_tool_name in SEARCH_LIKE_TOOLS:
+        from tok.runtime.repeat_targets import search_result_evidence_level
+
+        evidence = search_result_evidence_level(cached_raw)
+        if evidence == "exact_content" and first_read_complete:
+            return raw_text, 0
         from ._tool_result_codecs import _compress_grep
 
         compressed_search = _compress_grep(raw_text)

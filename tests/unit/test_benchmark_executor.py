@@ -61,6 +61,8 @@ class _FakeClient:
 
 
 class _StepRunner:
+    model: str = "test-model"
+
     def __init__(self, steps: list[dict[str, object]]) -> None:
         self._steps = list(steps)
 

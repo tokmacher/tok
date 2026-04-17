@@ -863,7 +863,7 @@ class UniversalTokRuntime:
                 file_path = session._extract_file_path_from_event(event)
                 raise TokSafetyError(
                     f"Cannot edit file '{file_path}': file was delivered as skeleton and must be re-read verbatim before editing. "
-                    f"Please read the file again without offset/limit parameters to get full content before editing."
+                    f"Use a precision read with offset/limit parameters to get verbatim content before editing."
                 )
 
             if session._is_verbatim_file_read(event):

@@ -276,7 +276,10 @@ def _compress_pytest(text: str, command: str = "") -> str:
             in_failure = line.startswith("_ FAILURES") or "FAILED" in line or in_failure
             result.append(line)
             continue
-        if in_failure or (line.startswith(("collected ", "platform ", "rootdir"))):
+        if in_failure:
+            result.append(line)
+            continue
+        if line.startswith(("collected ", "platform ", "rootdir")):
             result.append(line)
 
     header = f">>> tool:pytest|passed:{passed}|failed:{failed}"
