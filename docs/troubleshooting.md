@@ -94,7 +94,7 @@ tok evidence-gap ~/.tok/sessions --stress-dir tmp/stress_language/<timestamp>
 For reproducible release claims, refer to:
 
 - [`docs/claims_matrix.md`](./claims_matrix.md)
-- [`docs/benchmark_findings_0.1.0.md`](./benchmark_findings_0.1.0.md)
+- [`docs/live_smoke_matrix.md`](./live_smoke_matrix.md)
 
 ## Clean-Room Install Check
 
