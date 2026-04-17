@@ -51,19 +51,20 @@ class TestLocalMeshDiscovery:
         # Macro requires package.json
         macro = Macro(
             name="npm_install",
-            instructions=(Instruction(op="bash", args=("npm install",)),),
+            instructions=(Instruction(op="setup_cmd", args=()),),
             inputs=(),
             hit_count=5,
             context_requirements={"marker_file": "package.json"},
         )
         session.bridge_memory.macro_registry.macros["npm_install"] = macro
+        session.write_memory(">>> cmds:setup_cmd")
 
         runtime = UniversalTokRuntime()
-        prepared = runtime.prepare_request(_make_request(), session)
+        with patch.object(session.bridge_memory.macro_registry, "match_recent_sequence", return_value=macro):
+            prepared = runtime.prepare_request(_make_request(), session)
 
-        system = prepared.body.get("system", "")
-        assert "@npm_install" in system
-        assert "Available macros" in system
+        assert prepared.behavior_signals.get("jit_offer_available", 0) == 1
+        assert prepared.behavior_signals.get("jit_offer_npm_install", 0) == 1
 
     @patch("tok.universal_runtime._discover_project_markers")
     def test_no_hint_when_marker_missing(self, mock_discover) -> None:

@@ -16,7 +16,7 @@ def test_openai_chat_adapter_builds_system_and_user_messages() -> None:
     )
 
     assert messages[0]["role"] == "system"
-    assert "TOK" in messages[0]["content"]
+    assert "Existing system prompt" in str(messages[0]["content"])
     assert messages[-1]["role"] == "user"
     assert messages[-1]["content"] == "Fix the gateway"
     assert prepared.body["messages"][-1]["content"] == "Fix the gateway"

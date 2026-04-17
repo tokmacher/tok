@@ -4,6 +4,21 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolate_tok_session_state(tmp_path, monkeypatch) -> None:
+    """
+    Force pytest runs to use an isolated runtime state directory.
+
+    This prevents ambient ~/.tok data from leaking into tests and keeps
+    request preparation deterministic across repeated local runs.
+    """
+    isolated_root = tmp_path / "tok-session-state"
+    isolated_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("TOK_PROJECT_DIR", str(isolated_root))
+    monkeypatch.setenv("TOK_TEST_ISOLATED_SESSION", "1")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _disable_short_session_threshold(request):
     """
     Disable short session threshold for unit tests.
@@ -28,6 +43,7 @@ def _disable_short_session_threshold(request):
         "test_bridge_fidelity.py",
         "test_request_validation.py",
         "test_reacquisition_control.py",
+        "test_speculative_macros.py",
     }
 
     if test_file not in relevant_tests:

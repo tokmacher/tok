@@ -434,6 +434,53 @@ def _run_bridge_preflight(
             session.smoothness_tracker.record(
                 SmoothnessEventType.THINKING_BLOCK_MUTATION_RESTORED,
             )
+    elif (
+        _thinking_snapshot
+        and bridge_signals.get("thinking_block_mutated")
+        and bridge_signals.get("thinking_block_mutated_has_signature", 0) > 0
+    ):
+        behavior_signals["tok_bridge_thinking_mutation_unrestored"] = 1
+        behavior_signals["tok_release_blocking_thinking_mutation"] = 1
+        behavior_signals["tok_bridge_thinking_mutation_degraded_to_provider_safe"] = 1
+        mutation_event = _preflight_event_name("bridge_preflight_thinking_mutation_degraded_to_provider_safe", path)
+        logger.warning(
+            "%s: protected thinking mutation remained after restore attempt; falling back to provider-safe body",
+            mutation_event,
+        )
+        session.capture_event(
+            {
+                "event": mutation_event,
+                "behavior_signals": behavior_signals,
+                "thinking_mutation_msg_index": bridge_signals.get("thinking_block_mutated_msg_index"),
+                "thinking_mutation_before_hash": bridge_signals.get("thinking_block_mutated_before_hash"),
+                "thinking_mutation_after_hash": bridge_signals.get("thinking_block_mutated_after_hash"),
+            }
+        )
+        provider_safe_failures = validate_anthropic_bridge_body(original_body)
+        if provider_safe_failures:
+            _merge_signal_counts(
+                behavior_signals,
+                bridge_strict_failure_signals(provider_safe_failures),
+            )
+            return (
+                canonical_body,
+                behavior_signals,
+                True,
+                _local_bridge_invalid_history_response(
+                    "Tok bridge preflight blocked unrecoverable protected-thinking mutation and could not verify provider-safe fallback body."
+                ),
+            )
+        _log_bridge_body_structure(
+            mutation_event,
+            body=original_body,
+            headers=headers,
+            original_body=original_body,
+            compressed_request=False,
+            canonicalized_changed=bridge_canonicalized,
+            strict_failures=["thinking_block_mutation_unrestored"],
+            reverted_to_original=False,
+        )
+        return copy.deepcopy(original_body), behavior_signals, True, None
     tool_history_recovery_applied = False
     invalid_tool_history_unrecoverable = False
     strict_failures = validate_anthropic_bridge_body(canonical_body)

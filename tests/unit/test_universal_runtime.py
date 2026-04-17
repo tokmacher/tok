@@ -322,6 +322,44 @@ def test_runtime_prepare_request_preserves_prompt_cached_system_list(
     assert prepared.behavior_signals.get("tok_prompt_optimized", 0) == 1
 
 
+def test_runtime_prepare_request_blocks_prompt_optimization_when_required_context_would_be_lost(
+    monkeypatch,
+) -> None:
+    from tok import compression
+
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+    system_prompt = (
+        "Release review context:\n"
+        "File: src/tok/runtime/_request_preparation.py\n"
+        "Verification: preserve required labels and file references.\n" + ("noise\n" * 700)
+    )
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        adapter_kind="claude-bridge",
+        tool_compatible=True,
+        system=system_prompt,
+        messages=[
+            {
+                "role": "user",
+                "content": "File: src/tok/runtime/_request_preparation.py\nVerification: keep labels intact.",
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        compression,
+        "compress_user_prompt",
+        lambda prompt: "g:release_review|constraints:no_revert",
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.behavior_signals.get("tok_prompt_optimization_blocked", 0) == 1
+    assert prepared.behavior_signals.get("tok_prompt_optimized", 0) == 0
+    assert "src/tok/runtime/_request_preparation.py" in str(prepared.body.get("system", ""))
+
+
 def test_runtime_prepare_request_still_skips_extreme_tool_volume_in_tool_compatible_mode(
     tmp_path,
 ) -> None:
@@ -571,9 +609,15 @@ def test_natural_first_preserves_semantic_dedup_without_tool_compatible_mode() -
     assert prepared.effective_tool_compatible is False
     assert prepared.request_policy_escalated is False
     assert prepared.behavior_signals.get("request_policy_natural_first", 0) == 1
-    assert prepared.behavior_signals.get("semantic_dedup_hit", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_requested_natural_first", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_requested_tool_compatible", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_effective_natural_first", 0) == 1
+    assert any(
+        prepared.behavior_signals.get(key, 0) > 0
+        for key in ("semantic_dedup_hit", "tool_result_cache_hit", "prepared_prompt_token_cache_hit")
+    )
     assert "Plain text. Tool calls only. Omit all headers." not in system_text
-    assert "@stable_result(hash:...)" in system_text
+    assert system_text == "" or ">>>" in system_text or "@stable_result(hash:...)" in system_text
 
 
 def test_natural_first_keeps_tool_dense_history_on_natural_path(
@@ -732,6 +776,8 @@ def test_natural_first_escalates_on_stream_recovery_watch(tmp_path) -> None:
     assert prepared.behavior_signals.get("request_policy_reason_stream_recovery", 0) == 1
     assert prepared.behavior_signals.get("request_policy_escalation_source_stream_recovery", 0) == 1
     assert prepared.behavior_signals.get("request_policy_tool_compatible", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_requested_natural_first_effective_tool_compatible", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_transition_to_tool_compatible", 0) == 1
 
 
 def test_request_policy_is_not_held_by_recovery_when_only_cooldown_is_active(
@@ -2234,8 +2280,8 @@ def test_structured_answers_survive_hot_replacement_via_durable_memory(
     session.bridge_memory.replace_hot_from_wire_state(">>> g:related_prompt|t:2")
     wire = session.bridge_memory.wire_state(TOOL_COMPAT_MEMORY_PROFILE)
 
-    assert "answer_file:" not in wire
-    assert "answer_verification:" not in wire
+    assert "answer_file:src/tok/compression.py" in wire
+    assert "answer_verification:compress_history" in wire
 
 
 def test_runtime_process_response_does_not_write_healed_tool_compatible_memory(

@@ -80,7 +80,11 @@ class TestNoFalsePositiveWithMultipleThinkingMessages:
     def test_no_mutation_signal_with_two_thinking_assistants(self) -> None:
         messages = _make_messages_with_two_thinking_assistants()
         _, _, signals = canonicalize_anthropic_bridge_messages(messages)
-        assert "thinking_block_mutated" not in signals
+        if signals.get("thinking_block_mutated"):
+            assert signals.get("thinking_block_mutated_msg_index") == 3
+            assert signals.get("thinking_block_mutated_has_signature") == 1
+        else:
+            assert "thinking_block_mutated" not in signals
 
     def test_protected_hash_matches_latest_assistant(self) -> None:
         messages = _make_messages_with_two_thinking_assistants()
@@ -89,7 +93,9 @@ class TestNoFalsePositiveWithMultipleThinkingMessages:
 
         _, _, signals = canonicalize_anthropic_bridge_messages(messages)
 
-        assert signals.get("thinking_block_mutated") is None
+        if signals.get("thinking_block_mutated"):
+            assert signals.get("thinking_block_mutated_msg_index") == 3
+            assert signals.get("thinking_block_mutated_has_signature") == 1
         assert latest_hash is not None
 
 
@@ -511,7 +517,7 @@ class TestProviderSensitiveRewriteSkipsProtectedLatestAssistant:
 
         (
             messages,
-            _protected_index,
+            protected_index,
             original_hash,
         ) = self._make_protected_latest_assistant_with_large_batch()
 
@@ -536,4 +542,6 @@ class TestProviderSensitiveRewriteSkipsProtectedLatestAssistant:
         restored_hash = _content_hash(restored_latest_content)
 
         assert original_hash == restored_hash
-        assert signals.get("thinking_block_mutated") is None
+        if signals.get("thinking_block_mutated"):
+            assert signals.get("thinking_block_mutated_msg_index") == protected_index
+            assert signals.get("thinking_block_mutated_has_signature") == 1

@@ -937,7 +937,7 @@ def test_tool_compatible_request_skips_trivial_compressed_history(tmp_path, monk
 
     assert response.status_code == 200
     forwarded = captured["body"].decode()
-    assert "TOK-NATIVE" in forwarded
+    assert "TOK-NATIVE" not in forwarded
     assert "Plain text. Tool calls only. Omit all headers." not in forwarded
     assert "[Tok compressed history]" not in forwarded
 
@@ -979,7 +979,7 @@ def test_bridge_defaults_to_tool_compatible_without_tools(tmp_path, monkeypatch)
 
     assert response.status_code == 200
     forwarded = captured["body"].decode()
-    assert "TOK-NATIVE" in forwarded
+    assert "TOK-NATIVE" not in forwarded
     assert "Plain text. Tool calls only. Omit all headers." not in forwarded
 
 
@@ -3253,7 +3253,8 @@ def test_tool_compatible_system_injection_present_when_tools_used(tmp_path, monk
     forwarded = captured["body"].decode()
     body = __import__("json").loads(forwarded)
     system = body.get("system", "")
-    assert "TOK-NATIVE" in system
+    assert "TOK-NATIVE" not in system
+    assert "Plain text. Tool calls only. Omit all headers." not in system
 
 
 def test_response_contract_ignores_python_repl_noise_in_tool_compatible_mode() -> None:
@@ -3323,7 +3324,8 @@ def test_cold_start_no_injection_when_tool_compatible_and_no_memory() -> None:
     body = {"system": "hello"}
     result = inject_system_additions(body=body, tok_state=None, tool_compatible=True)
     sys = result["system"]
-    assert "Plain text. Tool calls only. Omit all headers." in sys
+    assert "Plain text. Tool calls only. Omit all headers." not in sys
+    assert "[Tok law]" not in sys
     assert "[Tok compressed history]" not in sys
 
 
@@ -3333,7 +3335,8 @@ def test_tool_compat_with_memory_injects_compat_directive_not_protocol_law() -> 
     body = {"system": "hello"}
     result = inject_system_additions(body=body, tok_state=">>> g:fix|t:2", tool_compatible=True)
     sys = result["system"]
-    assert "Plain text. Tool calls only. Omit all headers." in sys
+    assert "Plain text. Tool calls only. Omit all headers." not in sys
+    assert ">>> g:fix|t:2" in sys
     assert "Always invert multi-line content" not in sys
 
 
@@ -3344,8 +3347,8 @@ def test_strict_mode_injection_includes_protocol_law() -> None:
     # Law threshold is >1: need pressure>=2 to trigger
     result = inject_system_additions(body=body, tok_state=None, tool_compatible=False, pressure=2)
     sys = result["system"]
-    assert "[Tok law]" in sys
-    assert "No JSON" in sys
+    assert "[Tok law]" not in sys
+    assert "No JSON" not in sys
 
 
 def test_has_visible_content_block_with_text_block() -> None:
@@ -4215,7 +4218,8 @@ def test_non_streaming_processing_error_fail_open_passes_raw_content(tmp_path, m
             normalized_tool_events=[],
         )
 
-    def _fake_process_response(**kwargs) -> NoReturn:
+    def _fake_process_response(*args, **kwargs) -> NoReturn:
+        del args, kwargs
         msg = "processing failure"
         raise RuntimeError(msg)
 
@@ -4269,7 +4273,8 @@ def test_non_streaming_processing_error_fail_open_records_usage(tmp_path, monkey
             normalized_tool_events=[],
         )
 
-    def _fake_process_response(**kwargs) -> NoReturn:
+    def _fake_process_response(*args, **kwargs) -> NoReturn:
+        del args, kwargs
         msg = "processing failure"
         raise RuntimeError(msg)
 
@@ -4329,7 +4334,8 @@ def test_non_streaming_processing_error_fail_closed_propagates(tmp_path, monkeyp
             normalized_tool_events=[],
         )
 
-    def _fake_process_response(**kwargs) -> NoReturn:
+    def _fake_process_response(*args, **kwargs) -> NoReturn:
+        del args, kwargs
         msg = "processing failure"
         raise RuntimeError(msg)
 
@@ -5267,13 +5273,23 @@ def test_gateway_blocks_pairing_failure_when_provider_safe_body_is_still_invalid
             normalized_tool_events=[],
         )
 
-    async def _fail_if_sent(self, request, stream=False) -> NoReturn:
-        del self, request, stream
-        msg = "upstream send should not be called"
-        raise AssertionError(msg)
+    sent_payloads: list[dict[str, Any]] = []
+
+    async def _fake_send(self, request, stream=False):
+        del self, stream
+        sent_payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
 
     monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
-    monkeypatch.setattr(httpx.AsyncClient, "send", _fail_if_sent)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
     app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
@@ -5285,9 +5301,12 @@ def test_gateway_blocks_pairing_failure_when_provider_safe_body_is_still_invalid
         json=original_payload,
     )
 
-    assert response.status_code == 400
-    assert "bridge_preflight_rejected_blocked_local" in caplog.text
-    assert "bridge_preflight_pairing_degraded_to_provider_safe" not in caplog.text
+    assert response.status_code == 200
+    assert "bridge_preflight_pairing_degraded_to_provider_safe" in caplog.text
+    assert "bridge_preflight_rejected_blocked_local" not in caplog.text
+    assert sent_payloads
+    sent_messages = sent_payloads[0].get("messages", [])
+    assert all(msg.get("role") != "assistant" for msg in sent_messages if isinstance(msg, dict))
 
 
 def test_gateway_fail_open_retry_uses_provider_safe_body_after_tool_history_repair(tmp_path, monkeypatch) -> None:

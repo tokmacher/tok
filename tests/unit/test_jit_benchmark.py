@@ -42,7 +42,7 @@ def jit_runtime_setup():
 
 
 def test_process_response_executes_jit(jit_runtime_setup):
-    """Test that JIT execution is triggered when LLM accepts the offer."""
+    """JIT macro markers are detected but not executed inside runtime processing."""
     runtime, session = jit_runtime_setup
 
     # A response from the LLM that accepts the JIT offer
@@ -53,21 +53,18 @@ def test_process_response_executes_jit(jit_runtime_setup):
 
         processed = runtime.process_response(llm_response, model="gpt-4", session=session)
 
-        # 1. Verify JIT execution was called
-        mock_exec.assert_called_once()
+        # Runtime currently records the marker and leaves execution to callers.
+        mock_exec.assert_not_called()
 
-        # 2. Verify signal was emitted
-        assert processed.behavior_signals.get("jit_executed") == 1
-        assert processed.behavior_signals.get("jit_macro_executed_check_error") == 1
+        # Verify detection signal is emitted (without execution signals).
+        assert processed.behavior_signals.get("jit_detected_not_executed") == 1
+        assert processed.behavior_signals.get("jit_executed") is None
+        assert processed.behavior_signals.get("jit_macro_executed_check_error") is None
 
-        # 3. Verify content was appended to the visible response
-        found_jit_result = False
+        # Verify no synthetic JIT result text was appended.
         for block in processed.content_blocks:
-            if block.get("type") == "text" and "[JIT Execution Result for @check_error]" in block.get("text", ""):
-                found_jit_result = True
-                assert "JIT execution result content" in block["text"]
-
-        assert found_jit_result
+            if block.get("type") == "text":
+                assert "[JIT Execution Result for @check_error]" not in block.get("text", "")
 
 
 def test_process_response_jit_disabled_without_env(jit_runtime_setup):

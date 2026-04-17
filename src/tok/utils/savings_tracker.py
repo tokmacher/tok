@@ -710,6 +710,23 @@ class SavingsTracker:
             f"- degradation reason: {summary['last_degradation_reason'] or 'none'}"
         )
 
+    def format_compact_session_summary(self) -> str | None:
+        """Backward-compatible compact session formatter used by legacy callers/tests."""
+        summary = self.session_summary()
+        if summary is None:
+            return None
+
+        status = "active and helping"
+        if bool(summary.get("baseline_only")) or str(summary.get("session_quality", "")) == "degraded":
+            status = "degraded"
+
+        return (
+            f"Saved ${float(summary['cost_saved_usd']):.4f} "
+            f"({float(summary['savings_pct']):.1f}%) | "
+            f"status={status} | "
+            f"fallbacks={int(summary['fallback_count'])}"
+        )
+
     def session_input_saved_tokens(self) -> int:
         """Return total input-side tokens saved for the current session."""
         stats = self.load_stats()
@@ -794,6 +811,26 @@ class SavingsTracker:
             ),
             "last_degradation_reason": str(entry.get("degradation_reason", "")),
         }
+
+    def format_last_session(self) -> str | None:
+        """Backward-compatible formatter for the most recent completed session."""
+        summary = self.last_session_summary()
+        if summary is None:
+            return None
+
+        return (
+            "Last completed session:\n"
+            f"- date: {summary['date']}\n"
+            f"- turns: {int(summary['turns'])}\n"
+            f"- actual tokens: {int(summary['actual_tokens']):,}\n"
+            f"- baseline tokens: {int(summary['baseline_tokens']):,}\n"
+            f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
+            f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
+            f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
+            f"- cost saved: ${float(summary['cost_saved_usd']):.4f}\n"
+            f"- session quality: {summary['session_quality']}\n"
+            f"- degradation reason: {summary['last_degradation_reason'] or 'none'}"
+        )
 
     def recent_summary(self, recent_sessions: int) -> dict[str, int | float | str] | None:
         """Return an aggregate summary over the most recent completed sessions."""

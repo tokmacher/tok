@@ -447,11 +447,29 @@ def _benchmark_steps(
         str(benchmark_output / "replay"),
         "--benchmark-report",
         str(benchmark_output / "catalog" / "report.json"),
+        "--emit-metrics",
+        str(benchmark_output / "claims" / "gate_metrics.json"),
         "--continue-on-error",
+    ]
+    claims_check_command = [
+        *UV_RUN_PREFIX,
+        "python",
+        "scripts/verify_release_claims.py",
+        "--gate-metrics",
+        str(benchmark_output / "claims" / "gate_metrics.json"),
+        "--benchmark-report",
+        str(benchmark_output / "catalog" / "report.json"),
+        "--output",
+        str(benchmark_output / "claims" / "claims_verification.json"),
+        "--min-savings-pct",
+        "45.0",
+        "--max-savings-pct",
+        "55.0",
     ]
     return (
         SmokeStep(f"Benchmark {benchmark_mode}", tuple(live_benchmark_command)),
         SmokeStep("Benchmark gate-check", tuple(gate_check_command)),
+        SmokeStep("Claims verification", tuple(claims_check_command)),
     )
 
 
@@ -498,6 +516,8 @@ def _validate_benchmark_outputs(*, benchmark_mode: str, benchmark_output: Path, 
         benchmark_output / "replay" / "coding-loop-5_triage.json",
         benchmark_output / "replay" / "research-loop-5_triage.json",
         benchmark_output / "summary.md",
+        benchmark_output / "claims" / "gate_metrics.json",
+        benchmark_output / "claims" / "claims_verification.json",
     ]
     if repeats > 1:
         required_paths.extend(

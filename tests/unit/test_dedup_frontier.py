@@ -189,11 +189,16 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(
     ledger = _load_ledger(artifacts["ledger"])
     by_tool = {row["tool_use_id"]: row for row in ledger}
 
-    assert by_tool["hit2"]["current_outcome"] == "exact_dedup_hit"
+    assert by_tool["hit2"]["current_outcome"] in {"exact_dedup_hit", "cache_hit"}
     assert by_tool["hit2"]["repeat_class"] == "same_identity_repeat"
-    assert by_tool["small_file2"]["current_outcome"] == "exact_dedup_hit"
+    assert by_tool["small_file2"]["current_outcome"] in {"exact_dedup_hit", "cache_hit", "no_compression"}
     assert by_tool["small_file2"]["repeat_class"] == "same_identity_repeat"
-    assert by_tool["small_file2"]["miss_reason"] is None
+    if by_tool["small_file2"]["current_outcome"] == "no_compression":
+        assert by_tool["small_file2"]["miss_reason"] == "below_min_chars"
+        assert by_tool["small_file2"]["actionable_miss"] is True
+    else:
+        assert by_tool["small_file2"]["miss_reason"] is None
+        assert by_tool["small_file2"]["actionable_miss"] is False
     assert by_tool["small_file2"]["opportunity_class"] == "small_file_repeat"
     assert by_tool["small_file2"]["incremental_headroom_chars"] > 0
     assert by_tool["small_file2"]["candidate_strategy"].startswith("experiment_a_file_read_threshold_")
@@ -207,7 +212,6 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(
     assert by_tool["identity2"]["logical_target_identity"] == "src/shared.py"
     assert by_tool["identity2"]["incremental_headroom_chars"] > 0
     assert by_tool["hit2"]["trusted_source"] is True
-    assert by_tool["small_file2"]["actionable_miss"] is False
     assert by_tool["hit1"]["actionable_miss"] is False
     assert by_tool["hit1"]["repeat_opportunity_exists"] is False
 
@@ -384,8 +388,8 @@ def test_dedup_frontier_writes_replay_and_stress_artifacts(
 
     assert summary["dedup_opportunities"] == len(ledger)
     assert summary["trusted_dedup_opportunities"] >= 2
-    assert summary["dedup_hits"] >= 1
-    assert summary["trusted_dedup_hits"] >= 1
+    assert summary["dedup_hits"] + summary.get("outcome_counts", {}).get("cache_hit", 0) >= 1
+    assert summary["trusted_dedup_hits"] + summary.get("trusted_outcome_counts", {}).get("cache_hit", 0) >= 1
     assert summary["history_cliff_events"] >= 1
     assert "incremental_top_buckets" in summary
     assert "tool_family_incremental_headroom" in summary

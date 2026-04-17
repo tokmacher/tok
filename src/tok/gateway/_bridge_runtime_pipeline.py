@@ -149,6 +149,8 @@ def prepare_bridge_payload(
         bool(provider_safe_original_body.get("tools")),
         tok_tool_header or "<unset>",
     )
+    requested_request_policy = request_policy
+    requested_tool_compatible = request_tool_compatible
 
     prepared = _RUNTIME.prepare_request(
         RuntimeRequest(
@@ -177,6 +179,25 @@ def prepare_bridge_payload(
     behavior_signals = dict(prepared.behavior_signals)
     for key, value in source_behavior_signals.items():
         behavior_signals[key] = behavior_signals.get(key, 0) + value
+    behavior_signals[f"request_policy_requested_{requested_request_policy}"] = (
+        behavior_signals.get(f"request_policy_requested_{requested_request_policy}", 0) + 1
+    )
+    if requested_tool_compatible:
+        behavior_signals["request_policy_requested_tool_compatible"] = (
+            behavior_signals.get("request_policy_requested_tool_compatible", 0) + 1
+        )
+    else:
+        behavior_signals["request_policy_requested_non_tool_compatible"] = (
+            behavior_signals.get("request_policy_requested_non_tool_compatible", 0) + 1
+        )
+    if request_tool_compatible:
+        behavior_signals["request_policy_effective_tool_compatible"] = (
+            behavior_signals.get("request_policy_effective_tool_compatible", 0) + 1
+        )
+    else:
+        behavior_signals["request_policy_effective_natural_first"] = (
+            behavior_signals.get("request_policy_effective_natural_first", 0) + 1
+        )
     prompt_metrics = {
         "baseline_prompt_tokens": prepared.baseline_prompt_tokens,
         "prepared_prompt_tokens": prepared.prepared_prompt_tokens,
@@ -184,10 +205,18 @@ def prepare_bridge_payload(
         "hot_hint_tokens_added": prepared.hot_hint_tokens_added,
         "reacquisition_tokens_avoided_estimate": prepared.reacquisition_tokens_avoided_estimate,
     }
+    policy_reasons = sorted(
+        key.removeprefix("request_policy_reason_")
+        for key, value in behavior_signals.items()
+        if key.startswith("request_policy_reason_") and value
+    )
     logger.info(
-        "Prepared request policy: request_policy=%s, effective_tool_compatible=%s, escalated=%s",
+        "Prepared request policy: requested_policy=%s, requested_tool_compatible=%s, effective_policy=%s, effective_tool_compatible=%s, reasons=%s, escalated=%s",
+        requested_request_policy,
+        requested_tool_compatible,
         request_policy,
         request_tool_compatible,
+        ",".join(policy_reasons) if policy_reasons else "<none>",
         prepared.request_policy_escalated,
     )
 

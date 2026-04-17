@@ -183,6 +183,11 @@ class Sifter:
             n = (n // 26) - 1
         return result
 
+    @classmethod
+    def reset_pointers(cls) -> None:
+        """Reset pointer sequence so tests and deterministic runs stay stable."""
+        cls._pointer_counter = 0
+
     def _add_method_entries(
         self,
         node: ast.ClassDef,

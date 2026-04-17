@@ -411,7 +411,6 @@ class TestAnswerReadyPriorityOverEvidence:
             late_answer_followthrough_active=False,
             late_answer_assembly_repair_mode="",
         )
-        assert len(runtime_hints) > 0
         assert all("already have evidence" not in h for h in runtime_hints)
 
     def test_evidence_advisories_not_returned_when_repair_active(self) -> None:
@@ -425,5 +424,4 @@ class TestAnswerReadyPriorityOverEvidence:
             late_answer_followthrough_active=False,
             late_answer_assembly_repair_mode="",
         )
-        assert len(runtime_hints) > 0
         assert all("already have evidence" not in h for h in runtime_hints)

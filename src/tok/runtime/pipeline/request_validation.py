@@ -1123,6 +1123,8 @@ def _check_thinking_block_mutation(
                 before_has_signature,
             )
             signals["thinking_block_mutated"] = 1
+            signals["thinking_block_mutated_msg_index"] = protected_msg_index
+            signals["thinking_block_mutated_has_signature"] = 1 if before_has_signature else 0
         else:
             logger.debug(
                 "thinking_block_preserved | msg_index=%d | hash=%s | types=%s | has_signature=%s",

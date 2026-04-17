@@ -39,6 +39,16 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
             (replay_output / "coding-loop-5_stability.json").write_text("{}")
             (replay_output / "research-loop-5_stability.json").write_text("{}")
             (live_output / "summary.md").write_text("# summary\n")
+        if "gate-check" in command_tuple and "--emit-metrics" in command_tuple:
+            metrics_index = command_tuple.index("--emit-metrics") + 1
+            metrics_path = Path(command_tuple[metrics_index])
+            metrics_path.parent.mkdir(parents=True, exist_ok=True)
+            metrics_path.write_text('{"release_summary":{"avg_savings_pct":50.0}}')
+        if any("verify_release_claims.py" in part for part in command_tuple) and "--output" in command_tuple:
+            output_index = command_tuple.index("--output") + 1
+            claims_output = Path(command_tuple[output_index])
+            claims_output.parent.mkdir(parents=True, exist_ok=True)
+            claims_output.write_text('{"passed":true}')
         return subprocess.CompletedProcess(command_tuple, 0)
 
     monkeypatch.setattr(module.subprocess, "run", _fake_run)
@@ -78,7 +88,11 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
     assert str(output_root / "replay") in gate_command
     assert "--benchmark-report" in gate_command
     assert str(output_root / "catalog" / "report.json") in gate_command
+    assert "--emit-metrics" in gate_command
+    assert str(output_root / "claims" / "gate_metrics.json") in gate_command
 
     assert (output_root / "replay").exists()
     assert (output_root / "catalog" / "report.json").exists()
+    assert (output_root / "claims" / "gate_metrics.json").exists()
+    assert (output_root / "claims" / "claims_verification.json").exists()
     assert (output_root / "summary.md").exists()

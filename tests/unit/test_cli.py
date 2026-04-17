@@ -1657,6 +1657,11 @@ class TestCLI:
         class FakeComparison:
             def __init__(self, mode: str) -> None:
                 self.mode = mode
+                self.total_token_delta = -35
+                self.task_success_equal_or_better = True
+                self.cost_delta_usd = None
+                self.fairness_diagnostics: dict[str, Any] = {}
+                self.token_savings_without_cost_savings = False
 
             def to_dict(self) -> dict[str, Any]:
                 return {

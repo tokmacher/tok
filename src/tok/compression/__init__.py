@@ -357,6 +357,19 @@ Reply normally using plain text. No special formatting markers.
 _STABLE_RESULT_EXPLANATION = (
     "@stable_result(hash:...) = unchanged file/query. Reason from @stable_summary/@stable_skeleton."
 )
+_STABLE_RESULT_RECOVERY_HINT = (
+    "@stable_hint |> Need verbatim bytes? rerun Read with offset/limit (example: offset=1, limit=200)."
+)
+_RELEASE_CRITICAL_DOC_BASENAMES = frozenset(
+    {
+        "public-release-decision.md",
+        "release-checklist.md",
+        "claims_matrix.md",
+        "pricing_verification.md",
+        "live_smoke_matrix.md",
+        "readme.md",
+    }
+)
 
 # Explanation of Tok file freshness signals to help Claude understand they are system metadata
 TOK_FRESHNESS_SIGNALS_EXPLANATION = """\
@@ -712,6 +725,29 @@ def _apply_result_cache(
     )
 
 
+def _context_path(context: dict[str, Any]) -> str:
+    raw_args = context.get("args")
+    raw_path = (
+        context.get("path")
+        or (raw_args.get("path") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("file_path") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
+        or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
+    )
+    return str(raw_path or "").strip()
+
+
+def _is_release_critical_doc_context(context: dict[str, Any]) -> bool:
+    path = _context_path(context)
+    if not path:
+        return False
+    normalized = path.replace("\\", "/").lower()
+    basename = normalized.rsplit("/", maxsplit=1)[-1]
+    if basename not in _RELEASE_CRITICAL_DOC_BASENAMES:
+        return False
+    return "/docs/" in normalized or normalized.startswith("docs/") or basename == "readme.md"
+
+
 def _process_cache_hit(
     raw: str,
     raw_text: str,
@@ -737,6 +773,10 @@ def _process_cache_hit(
         raw_text,
         raw_text,
     )
+    if is_file_like and _is_release_critical_doc_context(context):
+        if host_stub_replayed and cached_raw:
+            return cached_raw, 0
+        return raw_text, 0
     if host_stub_replayed:
         _update_cache_after_hit(
             result_cache,
@@ -1141,17 +1181,11 @@ def _serve_cached_content_hash_match(
                 "first_read_complete": True,
             }
         confidence, reason = _compute_confidence(cached_hash, cached_hash)
-        raw_args = context.get("args")
-        raw_path = (
-            context.get("path")
-            or (raw_args.get("path") if isinstance(raw_args, dict) else None)
-            or (raw_args.get("file_path") if isinstance(raw_args, dict) else None)
-            or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
-            or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
-        )
+        raw_path = _context_path(context)
         stub_parts = [f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"]
         if raw_path:
             stub_parts[0] += f"|path:{raw_path}"
+        stub_parts.append(_STABLE_RESULT_RECOVERY_HINT)
         if len(cached_raw) >= 100:
             try:
                 from tok.runtime.repeat_targets import build_file_skeleton
@@ -1190,14 +1224,7 @@ def _serve_cached_content_hash_match(
 
     confidence, reason = _compute_confidence(cached_hash, cached_hash)
     stub = f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"
-    raw_args = context.get("args")
-    raw_path = (
-        context.get("path")
-        or (raw_args.get("path") if isinstance(raw_args, dict) else None)
-        or (raw_args.get("file_path") if isinstance(raw_args, dict) else None)
-        or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
-        or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
-    )
+    raw_path = _context_path(context)
     if raw_path:
         stub += f"|path:{raw_path}"
     return stub, len(raw_text) - len(stub)
