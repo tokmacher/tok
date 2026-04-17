@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -181,14 +182,13 @@ def _detect_tool_content_type(text: str) -> str:
         if oneline_matches >= 4 and oneline_matches / len(non_empty) > 0.4:
             return "git_log"
 
-    # Check for grep BEFORE ls to avoid files-only grep being misclassified as ls
+    # Check grep path/line output before ls-like listings.
     if len(non_empty) >= 3:
         grep_matches = sum(
             1
             for line in non_empty
-            if re.match(r"^[^\s:][^:]*:\d+:", line)  # path:line:content
-            or re.match(r"^[^\s:][^:]*:[^\n]+$", line)  # path:content
-            or re.match(r"^\S+\.\w{1,6}$", line.strip())  # files-only: just path
+            if re.match(r"^\S+:\d+:", line)  # path:line:content
+            or re.match(r"^\S+\.[A-Za-z0-9]{1,8}:[^\n]+$", line)  # file.ext:content
         )
         if grep_matches / len(non_empty) > 0.7:
             return "grep"
@@ -430,8 +430,380 @@ def _is_signature_continuation(prior_unclosed_parens: int, line: str) -> bool:
 _SMALL_FILE_MAX_LINES = 100
 _SMALL_FILE_MAX_CHARS = 10000
 
+_SECTION_MAP_RE = re.compile(r"^(class |def |async def )\s*(\w+)")
 
-def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None) -> str:
+
+def _build_section_map(lines: list[str]) -> str:
+    """Return a compact 'Name:LN,...' map of top-level scopes for the skeleton header."""
+    sections: list[str] = []
+    for i, line in enumerate(lines, 1):
+        m = _SECTION_MAP_RE.match(line)
+        if m:
+            sections.append(f"{m.group(2)}:L{i}")
+            if len(sections) >= 12:
+                break
+    return ",".join(sections)
+
+
+def _is_python_file(text: str, tool_context: dict[str, Any] | None = None) -> bool:
+    """Check if the content appears to be Python code."""
+    # Check file extension from context
+    if tool_context:
+        args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+        path = str(
+            args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
+        )
+        if path.endswith(".py") or path.endswith(".pyi"):
+            return True
+    # Check content heuristics
+    python_indicators = [
+        r"^\s*def\s+\w+\s*\(",
+        r"^\s*class\s+\w+",
+        r"^\s*import\s+\w+",
+        r"^\s*from\s+\w+\s+import",
+        r"^\s*async\s+def\s+\w+",
+        r"^\s*@\w+",
+        r"^\s*if\s+__name__\s*==\s*['\"]__main__['\"]",
+    ]
+    lines = text.splitlines()[:50]  # Check first 50 lines
+    match_count = 0
+    for line in lines:
+        for pattern in python_indicators:
+            if re.match(pattern, line):
+                match_count += 1
+                if match_count >= 3:
+                    return True
+    return False
+
+
+def _extract_python_skeleton(text: str) -> str | None:
+    """
+    Extract a structural skeleton from Python code using AST.
+
+    Returns the skeleton as a string, or None if parsing fails.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    except ValueError:
+        return None
+
+    lines = text.splitlines()
+    result: list[str] = []
+
+    def _get_decorators(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> list[str]:
+        """Extract decorator lines for a node."""
+        dec_lines = []
+        for dec in node.decorator_list:
+            line_num = getattr(dec, "lineno", 0)
+            if 1 <= line_num <= len(lines):
+                dec_lines.append(lines[line_num - 1].strip())
+        return dec_lines
+
+    def _format_function_signature(node: ast.FunctionDef | ast.AsyncFunctionDef, is_method: bool = False) -> str:
+        """Format a function/method signature with type annotations preserved."""
+        prefix = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
+        func_name = node.name
+
+        # Build argument string
+        args_parts: list[str] = []
+
+        def _fmt_arg(arg: ast.arg, default: ast.expr | None = None, prefix: str = "") -> str:
+            """Format one argument: [prefix]name[: annotation][ = default]."""
+            s = prefix + arg.arg
+            if arg.annotation and isinstance(arg.annotation, ast.AST):
+                try:
+                    s += f": {ast.unparse(arg.annotation)}"
+                except Exception:
+                    pass
+            if default is not None:
+                try:
+                    def_str = ast.unparse(default)
+                    s += f" = {def_str}" if len(def_str) <= 30 else " = ..."
+                except Exception:
+                    s += " = ..."
+            return s
+
+        # Handle positional-only args (Python 3.8+)
+        if hasattr(node.args, "posonlyargs"):
+            for arg in node.args.posonlyargs:
+                args_parts.append(_fmt_arg(arg))
+            if node.args.posonlyargs:
+                args_parts.append("/")
+
+        # Handle regular args (skip 'self' and 'cls' for methods).
+        # node.args.defaults aligns to the *tail* of (posonlyargs + args).
+        arg_start = 1 if is_method and node.args.args and node.args.args[0].arg in ("self", "cls") else 0
+        all_positional = (getattr(node.args, "posonlyargs", []) or []) + node.args.args
+        n_defaults = len(node.args.defaults)
+        default_start_idx = len(all_positional) - n_defaults
+        posonly_count = len(getattr(node.args, "posonlyargs", []) or [])
+        for i, arg in enumerate(node.args.args[arg_start:], start=arg_start):
+            abs_idx = posonly_count + i
+            default = node.args.defaults[abs_idx - default_start_idx] if abs_idx >= default_start_idx else None
+            args_parts.append(_fmt_arg(arg, default))
+
+        # Handle varargs (*args) — no default
+        if node.args.vararg:
+            args_parts.append(_fmt_arg(node.args.vararg, prefix="*"))
+
+        # Handle keyword-only args; kw_defaults is parallel (None means no default)
+        for arg, kw_default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=False):
+            args_parts.append(_fmt_arg(arg, kw_default))
+
+        # Handle kwargs (**kwargs) — no default
+        if node.args.kwarg:
+            args_parts.append(_fmt_arg(node.args.kwarg, prefix="**"))
+
+        # Build return annotation
+        return_ann = ""
+        if node.returns and isinstance(node.returns, ast.AST):
+            try:
+                ret_str = ast.unparse(node.returns)
+                return_ann = f" -> {ret_str}"
+            except Exception:
+                pass
+
+        sig = f"{prefix}def {func_name}({', '.join(args_parts)}){return_ann}:"
+        return sig
+
+    def _extract_body_summary(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> str:
+        """Extract a summary of the body (return/yield/raise statements, docstring)."""
+        body_summary: list[str] = []
+
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.Return, ast.Yield, ast.YieldFrom)):
+                try:
+                    val_str = ast.unparse(child.value) if child.value else ""
+                    if val_str:
+                        if len(val_str) > 40:
+                            val_str = val_str[:37] + "..."
+                        if isinstance(child, ast.Return):
+                            body_summary.append(f"return {val_str}")
+                        elif isinstance(child, ast.YieldFrom):
+                            body_summary.append(f"yield from {val_str}")
+                        else:
+                            body_summary.append(f"yield {val_str}")
+                except Exception:
+                    pass
+            elif isinstance(child, ast.Raise):
+                try:
+                    exc_str = ast.unparse(child.exc) if child.exc else ""
+                    if exc_str and len(exc_str) <= 40:
+                        body_summary.append(f"raise {exc_str}")
+                    else:
+                        body_summary.append("raise ...")
+                except Exception:
+                    body_summary.append("raise ...")
+            elif isinstance(child, ast.Assign):
+                # Check for dataclass-style field assignments
+                for target in child.targets:
+                    if isinstance(target, ast.Name) and target.id.isupper():
+                        # Module-level constants
+                        try:
+                            val_str = ast.unparse(child.value) if child.value else ""
+                            if val_str and len(val_str) <= 30:
+                                body_summary.append(f"{target.id} = {val_str}")
+                            else:
+                                body_summary.append(f"{target.id} = ...")
+                        except Exception:
+                            body_summary.append(f"{target.id} = ...")
+
+        return " | ".join(body_summary[:3])  # Limit to 3 items
+
+    def _process_class_body(node: ast.ClassDef, indent: str = "  ") -> list[str]:
+        """Process class body to extract method signatures and field declarations."""
+        class_lines: list[str] = []
+
+        # Process methods and nested classes
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # Add decorators
+                for dec_line in _get_decorators(child):
+                    class_lines.append(f"{indent}{dec_line}")
+
+                # Add method signature
+                sig = _format_function_signature(child, is_method=True)
+                class_lines.append(f"{indent}{sig}")
+
+                # Add body summary if it has interesting content
+                summary = _extract_body_summary(child)
+                if summary:
+                    class_lines.append(f"{indent}  # {summary}")
+
+            elif isinstance(child, ast.ClassDef):
+                # Nested class
+                for dec_line in _get_decorators(child):
+                    class_lines.append(f"{indent}{dec_line}")
+                class_lines.append(f"{indent}class {child.name}:")
+                nested_lines = _process_class_body(child, indent + "  ")
+                class_lines.extend(nested_lines)
+
+            elif isinstance(child, ast.AnnAssign):
+                # Annotated assignments: `name: Type` or `name: Type = default`
+                # These are the standard form for dataclass fields and typed class vars.
+                if isinstance(child.target, ast.Name):
+                    field_name = child.target.id
+                    try:
+                        ann_str = ast.unparse(child.annotation)
+                    except Exception:
+                        ann_str = "..."
+                    if child.value is not None:
+                        try:
+                            val_str = ast.unparse(child.value)
+                            val_part = f" = {val_str}" if len(val_str) <= 30 else " = ..."
+                        except Exception:
+                            val_part = " = ..."
+                    else:
+                        val_part = ""
+                    class_lines.append(f"{indent}{field_name}: {ann_str}{val_part}")
+
+            elif isinstance(child, ast.Assign):
+                # Untyped field assignments (class variables, dataclass fields)
+                for target in child.targets:
+                    if isinstance(target, ast.Name):
+                        field_name = target.id
+                        # Skip numeric constant tables and simple values
+                        is_simple_numeric = isinstance(child.value, ast.Constant) and isinstance(
+                            child.value.value, (int, float)
+                        )
+                        if not (is_simple_numeric and field_name.isupper()):
+                            # This is likely a field, not a constant
+                            try:
+                                if isinstance(child.value, ast.Constant):
+                                    val = child.value.value
+                                    if isinstance(val, str) and len(val) <= 30:
+                                        class_lines.append(f"{indent}{field_name} = '{val}'")
+                                    elif isinstance(val, (int, float)):
+                                        class_lines.append(f"{indent}{field_name} = ...")
+                                    else:
+                                        class_lines.append(f"{indent}{field_name} = ...")
+                                elif isinstance(child.value, ast.Call):
+                                    # Likely dataclass field() call
+                                    call_str = ast.unparse(child.value)
+                                    if len(call_str) <= 40:
+                                        class_lines.append(f"{indent}{field_name} = {call_str}")
+                                    else:
+                                        class_lines.append(f"{indent}{field_name} = field(...)")
+                                else:
+                                    class_lines.append(f"{indent}{field_name} = ...")
+                            except Exception:
+                                class_lines.append(f"{indent}{field_name} = ...")
+
+        return class_lines
+
+    # Process module-level nodes
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            # Import statements
+            names = [alias.name for alias in node.names]
+            result.append(f"import {', '.join(names)}")
+
+        elif isinstance(node, ast.ImportFrom):
+            # From ... import statements
+            module = node.module or ""
+            names = [alias.name for alias in node.names]
+            result.append(f"from {module} import {', '.join(names)}")
+
+        elif isinstance(node, ast.AnnAssign):
+            # Module-level annotated assignments: `name: Type` or `name: Type = val`
+            if isinstance(node.target, ast.Name):
+                field_name = node.target.id
+                try:
+                    ann_str = ast.unparse(node.annotation)
+                except Exception:
+                    ann_str = "..."
+                if node.value is not None:
+                    try:
+                        val_str = ast.unparse(node.value)
+                        val_part = f" = {val_str}" if len(val_str) <= 30 else " = ..."
+                    except Exception:
+                        val_part = " = ..."
+                else:
+                    val_part = ""
+                result.append(f"{field_name}: {ann_str}{val_part}")
+
+        elif isinstance(node, ast.Assign):
+            # Module-level assignments (constants, module-level variables)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    # Keep named constants (ALL_CAPS), skip numeric tables
+                    if target.id.isupper():
+                        try:
+                            val_str = ast.unparse(node.value) if node.value else ""
+                            # Skip large numeric dicts/lists
+                            if isinstance(node.value, (ast.Dict, ast.List, ast.Tuple)):
+                                size_hint = "dict" if isinstance(node.value, ast.Dict) else "list/tuple"
+                                result.append(f"{target.id} = <{size_hint}>")
+                            elif val_str and len(val_str) <= 30:
+                                result.append(f"{target.id} = {val_str}")
+                            else:
+                                result.append(f"{target.id} = ...")
+                        except Exception:
+                            result.append(f"{target.id} = ...")
+                    # Keep dataclass-style field assignments
+                    elif isinstance(node.value, ast.Call):
+                        func_name = ""
+                        if isinstance(node.value.func, ast.Name):
+                            func_name = node.value.func.id
+                        elif isinstance(node.value.func, ast.Attribute):
+                            func_name = node.value.func.attr
+                        if func_name in ("field", "Field", "dataclass"):
+                            try:
+                                call_str = ast.unparse(node.value)
+                                if len(call_str) <= 40:
+                                    result.append(f"{target.id} = {call_str}")
+                                else:
+                                    result.append(f"{target.id} = field(...)")
+                            except Exception:
+                                result.append(f"{target.id} = field(...)")
+
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Function definitions
+            for dec_line in _get_decorators(node):
+                result.append(dec_line)
+            sig = _format_function_signature(node, is_method=False)
+            result.append(sig)
+
+            # Add body summary for interesting content
+            summary = _extract_body_summary(node)
+            if summary:
+                result.append(f"  # {summary}")
+
+        elif isinstance(node, ast.ClassDef):
+            # Class definitions
+            for dec_line in _get_decorators(node):
+                result.append(dec_line)
+
+            # Build class declaration with bases
+            bases: list[str] = []
+            for base in node.bases:
+                try:
+                    base_str = ast.unparse(base)
+                    bases.append(base_str)
+                except Exception:
+                    pass
+
+            if bases:
+                result.append(f"class {node.name}({', '.join(bases)}):")
+            else:
+                result.append(f"class {node.name}:")
+
+            # Process class body
+            class_body = _process_class_body(node, indent="  ")
+            if class_body:
+                result.extend(class_body)
+            else:
+                result.append("  pass")
+
+    if not result:
+        return None
+
+    return "\n".join(result)
+
+
+def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, session: Any | None = None) -> str:
     # Small files are never worth skeletonizing — the token savings are negligible
     # but the friction of losing access to the full content is high.
     # Also skip skeletonization for precision reads (offset/limit based) - these are
@@ -440,8 +812,50 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None) -
         args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
         if any(k in args for k in ("offset", "limit", "start", "end")):
             return text
+        # Zero-heat check: never compress files that haven't been read before
+        file_heat = tool_context.get("file_heat") if isinstance(tool_context, dict) else None
+        if file_heat:
+            path = str(
+                args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
+            )
+            if path:
+                norm_path = path.lower().strip()
+                heat = file_heat.get(norm_path, 0.0) if isinstance(file_heat, dict) else 0.0
+                if heat == 0.0:
+                    return text
     if len(text) <= _SMALL_FILE_MAX_CHARS and text.count("\n") + 1 <= _SMALL_FILE_MAX_LINES:
         return text
+
+    # Try AST-based skeleton extraction for Python files
+    if _is_python_file(text, tool_context):
+        ast_skeleton = _extract_python_skeleton(text)
+        if ast_skeleton is not None:
+            original_chars = len(text)
+            skeleton_lines = ast_skeleton.count("\n") + 1
+            # Build a better section map from the AST skeleton
+            section_map = _build_section_map(ast_skeleton.splitlines())
+            # Track skeleton delivery for edit interception
+            if session and hasattr(session, "_skeleton_delivered_paths") and tool_context:
+                args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+                path = str(
+                    args.get("path")
+                    or args.get("file_path")
+                    or args.get("AbsolutePath")
+                    or args.get("TargetFile")
+                    or ""
+                )
+                if path:
+                    norm_path = path.lower().strip()
+                    session._skeleton_delivered_paths.add(norm_path)
+
+            header = (
+                f">>> tool:file_read|original_chars:{original_chars}|"
+                f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|edit_unsafe:true"
+                + (f"|sections:{section_map}" if section_map else "")
+            )
+            return header + "\n# [tok] skeleton only — re-read required before editing\n" + ast_skeleton
+
+    # Fall back to heuristic skeletonization for non-Python files
     lines = text.splitlines()
     result: list[str] = []
     in_body = False
@@ -539,10 +953,6 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None) -
 
     trimmed_result = result
     if len(result) > 32:
-        return text
-
-    trimmed_result = result
-    if len(result) > 32:
         head_count = 18
         tail_count = 8
         omitted = max(0, len(result) - head_count - tail_count)
@@ -553,11 +963,23 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None) -
 
     original_chars = len(text)
     compressed = "\n".join(trimmed_result)
+    section_map = _build_section_map(lines)
+    # Track skeleton delivery for edit interception
+    if session and hasattr(session, "_skeleton_delivered_paths") and tool_context:
+        args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+        path = str(
+            args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
+        )
+        if path:
+            norm_path = path.lower().strip()
+            session._skeleton_delivered_paths.add(norm_path)
+
     header = (
         f">>> tool:file_read|original_chars:{original_chars}|"
-        f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}"
+        f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|edit_unsafe:true"
+        + (f"|sections:{section_map}" if section_map else "")
     )
-    return header + "\n" + compressed
+    return header + "\n# [tok] skeleton only — re-read required before editing\n" + compressed
 
 
 def _compress_git_diff(text: str) -> str:
@@ -1187,7 +1609,61 @@ def _pytest_aware_truncation(text: str, lines: list[str], limit: int) -> str | N
     return parts[0] + marker + parts[1]
 
 
-def truncate_large_result(text: str, limit: int = 1200) -> str:
+def _extract_symbol_table(lines: list[str], start: int, end: int) -> str:
+    """
+    Scan lines[start:end] for top-level Python symbols and return a compact
+    @symbols block with line numbers, e.g.:
+
+        @symbols
+          |> L42  import hashlib
+          |> L87  class BridgeMemoryState:
+          |> L112 def wire_state(self, ...)
+          |> L340 def from_tok(cls, ...)
+
+    Only emits imports at the top of the omitted section, plus every class/def
+    whose indentation level is 0 or 4 (i.e. top-level and first-level methods).
+    Returns an empty string when no symbols are found (e.g. data/log output).
+    """
+    _import_re = re.compile(r"^(import |from \S+ import )")
+    _symbol_re = re.compile(r"^(\s*)(class |def |async def )(\w+)")
+    _MAX_SYMBOLS = 40
+
+    entries: list[str] = []
+
+    for rel_idx, raw in enumerate(lines[start:end]):
+        abs_line = start + rel_idx + 1  # 1-based line number for the reader
+        stripped = raw.rstrip()
+
+        # Gather leading imports compactly (first block only, max 5)
+        if _import_re.match(stripped):
+            if len([e for e in entries if "import" in e]) < 5:
+                entries.append(f"  |> L{abs_line:<5} {stripped[:80]}")
+            continue
+
+        m = _symbol_re.match(stripped)
+        if not m:
+            continue
+        indent = len(m.group(1))
+        if indent > 8:  # skip deeply nested helpers
+            continue
+        sig = stripped.strip()
+        if len(sig) > 72:
+            sig = sig[:69] + "..."
+        entries.append(f"  |> L{abs_line:<5} {sig}")
+        if len(entries) >= _MAX_SYMBOLS:
+            entries.append(f"  |> ... ({end - start - rel_idx} more lines not shown)")
+            break
+
+    if not entries:
+        return ""
+    return "@symbols\n" + "\n".join(entries) + "\n"
+
+
+def truncate_large_result(text: str, limit: int = 1200, *, already_compressed: bool = False) -> str:
+    # If already compressed (e.g., skeletonized by _compress_file_read), don't truncate further
+    if already_compressed:
+        return text
+
     if len(text) <= int(limit * 1.5):
         return text
 
@@ -1243,9 +1719,12 @@ def truncate_large_result(text: str, limit: int = 1200) -> str:
     tail_text = "".join(lines[tail_idx:])
     omitted_chars = max(0, len(text) - len(head_text) - len(tail_text))
     continuation_line = tail_idx + 1 if tail_idx < len(lines) else len(lines)
+    symbol_table = _extract_symbol_table(lines, head_idx, tail_idx)
     marker = (
         f"... [TRUNCATED {omitted_chars} CHARS; omitted lines "
-        f"{head_idx + 1}-{tail_idx}; continue at line {continuation_line}] ..."
+        f"{head_idx + 1}-{tail_idx}; continue at line {continuation_line}]\n"
+        f"{symbol_table}"
+        f"... [use offset={head_idx + 1} to read omitted section] ..."
     )
 
     compressed = head_text

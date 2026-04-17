@@ -29,9 +29,13 @@ class _TokReadableState:
     in_thought: bool = False
     in_msg_assistant: bool = False
     has_seen_any_at_block: bool = False
+    in_code_fence: bool = False  # True while inside a ``` ... ``` block
 
 
 def _handle_block_header(stripped: str, state: _TokReadableState) -> bool:
+    # Never treat @ lines inside a code fence as grammar block headers.
+    if state.in_code_fence:
+        return False
     if not _BLOCK_HEADER_RE.match(stripped):
         return False
     state.has_seen_any_at_block = True
@@ -103,6 +107,14 @@ def tok_to_readable(text: str) -> str:
 
     for line in lines:
         stripped = line.strip()
+
+        # Toggle code-fence tracking so that @ lines inside fences are not
+        # misidentified as Tok block headers (e.g. @stable_result in an example).
+        if stripped.startswith("```"):
+            state.in_code_fence = not state.in_code_fence
+            if _should_capture_plain_line(stripped, state):
+                output.append(line)
+            continue
 
         if stripped.startswith(">>>"):
             state.in_thought = False

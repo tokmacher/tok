@@ -117,6 +117,7 @@ def _build_context_dict(
 def _process_message_blocks(
     content: list[Any],
     result: dict[str, dict[str, Any]],
+    session: Any = None,
 ) -> None:
     """Process all blocks in a message for tool_use extraction."""
     bypass_marker_pending = False
@@ -142,13 +143,14 @@ def _process_message_blocks(
         elif bypass_marker_pending and is_file_like:
             # File-like tool consumes the marker
             bypass_marker_pending = False
-        _process_single_tool_use(block, result, apply_bypass)
+        _process_single_tool_use(block, result, apply_bypass, session)
 
 
 def _process_single_tool_use(
     block: dict[str, Any],
     result: dict[str, dict[str, Any]],
     bypass_marker_pending: bool = False,
+    session: Any = None,
 ) -> None:
     """Process a single tool_use block and update result."""
     tool_id = block.get("id", "")
@@ -159,6 +161,10 @@ def _process_single_tool_use(
 
     path, query = _extract_tool_input_fields(tool_input)
     context = _build_context_dict(tool_name, tool_input, path, query)
+
+    # Add session to context if available
+    if session is not None:
+        context["session"] = session
 
     # Apply bypass marker if pending
     if bypass_marker_pending:
@@ -176,6 +182,7 @@ def _process_single_tool_use(
 
 def build_tool_use_id_to_context(
     messages: list[dict[str, Any]],
+    session: Any = None,
 ) -> dict[str, dict[str, Any]]:
     """Walk assistant messages to build tool_use_id -> context map."""
     result: dict[str, dict[str, Any]] = {}
@@ -185,7 +192,7 @@ def build_tool_use_id_to_context(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        _process_message_blocks(content, result)
+        _process_message_blocks(content, result, session)
     return result
 
 

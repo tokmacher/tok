@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping
 from typing import Any
 
 from . import _history_pipeline as _history
@@ -76,6 +77,7 @@ def tok_tool_result_impl(
     content: str,
     compression_level: str = "balanced",
     tool_context: dict[str, Any] | None = None,
+    session: Any | None = None,
 ) -> str:
     """Compress a tool result using the history pipeline."""
     _sync_threshold()
@@ -83,12 +85,14 @@ def tok_tool_result_impl(
         content,
         compression_level=compression_level,
         tool_context=tool_context,
+        session=session,
     )
 
 
 def compress_tool_results_impl(
     messages: list[dict[str, Any]],
-    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None = None,
+    result_cache: MutableMapping[str, dict[str, object] | tuple[str, str, float] | tuple[str, str] | tuple[str]]
+    | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
@@ -101,6 +105,7 @@ def compress_tool_results_impl(
     keep_turns_window: int | None = None,
     preserve_exact_search_evidence: bool = False,
     recently_edited_files: dict[str, int] | None = None,
+    file_heat: dict[str, float] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Compress tool results in messages using the history pipeline."""
     _sync_threshold()
@@ -119,6 +124,7 @@ def compress_tool_results_impl(
         keep_turns_window=keep_turns_window,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         recently_edited_files=recently_edited_files,
+        file_heat=file_heat,
     )
 
 
@@ -130,6 +136,7 @@ def compress_recent_window_impl(
     first_exact_evidence_seen: set[str] | None = None,
     preserve_exact_search_evidence: bool = False,
     session_files_read: set[str] | None = None,
+    file_heat: dict[str, float] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     _sync_threshold()
@@ -141,4 +148,5 @@ def compress_recent_window_impl(
         first_exact_evidence_seen=first_exact_evidence_seen,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         session_files_read=session_files_read,
+        file_heat=file_heat,
     )

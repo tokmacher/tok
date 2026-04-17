@@ -9,6 +9,7 @@ __all__ = [
     "ReplayGateError",
     "SessionError",
     "TokError",
+    "TokSafetyError",
 ]
 
 
@@ -34,3 +35,7 @@ class ReplayGateError(TokError):
 
 class InvalidSessionStateError(SessionError):
     """Raised when the session is not in a valid state for the requested action."""
+
+
+class TokSafetyError(TokError):
+    """Raised when a safety check fails and prevents an unsafe operation."""

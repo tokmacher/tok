@@ -313,6 +313,10 @@ def process_response_impl(
     has_tool = any(block.get("type") == "tool_use" for block in contract.content_blocks)
     has_answer_text = _is_answer_like_visible_text(visible_text)
 
+    # Feature: response mining — extract file paths / line refs from assistant text
+    if visible_text:
+        session.mine_response_paths(visible_text)
+
     natural_response_acceptable = bool(getattr(session, "_natural_response_acceptable_this_turn", False))
     recovered_valid = is_safe_visible_contract_output(
         visible_text,

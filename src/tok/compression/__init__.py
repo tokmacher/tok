@@ -13,14 +13,6 @@ import time as time_module
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    ValidationError,
-    field_validator,
-    model_validator,
-)
-
 from tok.utils.event_logging import log_delta_compress
 
 if TYPE_CHECKING:
@@ -43,60 +35,9 @@ class CutEligibility:
     reason: str
 
 
-class StableResultPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    semantic_hash: str
-    verified_unchanged: bool = True
-    summary: str | None = None
-    skeleton: str | None = None
-    replayed_cached_bytes: bool = False
-    precision_read: bool = False
-
-    @field_validator("semantic_hash")
-    @classmethod
-    def _semantic_hash_must_not_be_blank(cls, value: str) -> str:
-        normalized = str(value or "").strip()
-        if not normalized:
-            msg = "blank semantic hash"
-            raise ValueError(msg)
-        return normalized
-
-    @field_validator("summary", "skeleton")
-    @classmethod
-    def _normalize_optional_payload_text(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        cleaned = str(value).strip()
-        return cleaned or None
-
-    @model_validator(mode="after")
-    def _reject_precision_payloads(self) -> StableResultPayload:
-        if self.precision_read:
-            msg = "precision reads must stay verbatim"
-            raise ValueError(msg)
-        if not self.summary and not self.skeleton:
-            msg = "stable payload requires summary or skeleton"
-            raise ValueError(msg)
-        return self
-
-    def render(self) -> str:
-        payload_lines = [f"@stable_result(hash:{self.semantic_hash})"]
-        if self.verified_unchanged:
-            payload_lines.append("@stable_status |> verified_unchanged")
-        if self.summary:
-            payload_lines.append(f"@stable_summary |> {self.summary}")
-        if self.skeleton:
-            payload_lines.append(f"@stable_skeleton |> {self.skeleton}")
-        payload = "\n".join(payload_lines)
-        if self.replayed_cached_bytes:
-            payload = ">>> replayed_cached_bytes|verified_unchanged\n" + payload
-        return payload
-
-
 # Type alias for result cache entries (supports legacy formats)
 # Format: (content_hash, raw_content, timestamp) or legacy 2-tuple/1-tuple
-ResultCacheEntry: TypeAlias = tuple[str, str, float] | tuple[str, str] | tuple[str]
+ResultCacheEntry: TypeAlias = dict[str, object] | tuple[str, str, float] | tuple[str, str] | tuple[str]
 
 # Maximum number of entries in the result cache to bound memory usage
 RESULT_CACHE_MAX_SIZE = 256
@@ -116,7 +57,12 @@ def classify_cut_eligibility(msg: dict[str, Any]) -> CutEligibility:
     if isinstance(content, str):
         return CutEligibility(True, "eligible")
     if isinstance(content, list):
+        if not content:
+            return CutEligibility(True, "eligible")
+        all_tool_results = all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
         has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+        if all_tool_results:
+            return CutEligibility(True, "eligible")
         if has_tool_result:
             return CutEligibility(False, "user_contains_tool_result_block")
         return CutEligibility(True, "eligible")
@@ -653,6 +599,7 @@ def tok_tool_result(
     content: str,
     compression_level: str = "balanced",
     tool_context: dict[str, Any] | None = None,
+    session: Any | None = None,
 ) -> str:
     """Convert large tool result to dense tok representation."""
     from ._pipeline import tok_tool_result_impl
@@ -661,6 +608,7 @@ def tok_tool_result(
         content,
         compression_level=compression_level,
         tool_context=tool_context,
+        session=session,
     )
 
 
@@ -714,7 +662,7 @@ def _apply_result_cache(
             prefer_normalized_error=True,
         )
 
-    cached_hash, cached_raw, timestamp, entry_length = _unpack_cache_entry(cached_entry)
+    cached_hash, cached_raw, timestamp, first_read_complete, entry_length = _unpack_cache_entry(cached_entry)
 
     # Check staleness for entries with timestamps (3-tuple) or legacy entries (1/2-tuple)
     if _is_cache_entry_stale(timestamp, ttl_seconds):
@@ -780,6 +728,7 @@ def _process_cache_hit(
     cached_raw_text: str,
     compression_level: str,
     preserve_exact_search_evidence: bool = False,
+    first_read_complete: bool = True,
 ) -> tuple[str, int]:
     """Process a cache hit and return compressed result."""
     host_stub_replayed = _should_replay_host_stub(
@@ -815,6 +764,7 @@ def _process_cache_hit(
             host_stub_replayed=True,
             _compression_level=compression_level,
             preserve_exact_search_evidence=preserve_exact_search_evidence,
+            first_read_complete=first_read_complete,
         )
 
     if _is_content_hash_match(raw_text, cached_raw_text):
@@ -844,6 +794,7 @@ def _process_cache_hit(
             host_stub_replayed=False,
             _compression_level=compression_level,
             preserve_exact_search_evidence=preserve_exact_search_evidence,
+            first_read_complete=first_read_complete,
         )
 
     # Content changed - need to compute diff
@@ -888,7 +839,12 @@ def _store_cache_entry(
     normalized_error = _normalize_error_content(raw_text)
     content_hash = hashlib.sha256(raw_text.encode()).hexdigest()[:8]
     with _result_cache_lock:
-        result_cache[cache_key] = (content_hash, raw, time_module.time())
+        result_cache[cache_key] = {
+            "hash": content_hash,
+            "raw": raw,
+            "timestamp": time_module.time(),
+            "first_read_complete": False,
+        }
         while len(result_cache) > RESULT_CACHE_MAX_SIZE:
             try:
                 oldest = next(iter(result_cache))
@@ -913,21 +869,33 @@ def _store_cache_entry(
 
 
 def _unpack_cache_entry(
-    entry: tuple[Any, ...],
-) -> tuple[str, str, float | None, int]:
+    entry: tuple[Any, ...] | dict[str, Any],
+) -> tuple[str, str, float | None, bool, int]:
+    """Unpack cache entry, handling both old tuple format and new dict format."""
+    # Handle new dict format
+    if isinstance(entry, dict):
+        return (
+            str(entry.get("hash", "")),
+            str(entry.get("raw", "")),
+            cast("float | None", entry.get("timestamp")),
+            bool(entry.get("first_read_complete", True)),  # Default True for safety
+            4,  # Dict format version
+        )
+    # Handle legacy tuple format (backwards compatibility)
     entry_length = len(entry)
     if entry_length >= 3:
         return (
             str(entry[0]),
             str(entry[1]),
             cast("float | None", entry[2]),
+            True,  # Legacy entries assumed complete
             entry_length,
         )
     if entry_length == 2:
-        return str(entry[0]), str(entry[1]), None, entry_length
+        return str(entry[0]), str(entry[1]), None, True, entry_length
     if entry_length == 1:
-        return str(entry[0]), "", None, entry_length
-    return "", "", None, entry_length
+        return str(entry[0]), "", None, True, entry_length
+    return "", "", None, True, entry_length
 
 
 def _is_cache_entry_stale(timestamp: float | None, ttl_seconds: int) -> bool:
@@ -1147,35 +1115,59 @@ def _serve_cached_content_hash_match(
     host_stub_replayed: bool,
     _compression_level: str,
     preserve_exact_search_evidence: bool = False,
+    first_read_complete: bool = True,
 ) -> tuple[str, int]:
+    from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
+
     current_time = time_module.time()
     if is_precision_read:
         # For precision reads, return the content we want to use
         # If host_stub_replayed, use cached_raw (actual content), not raw (stub)
         content_to_return = cached_raw if host_stub_replayed else raw
-        result_cache[cache_key] = (
-            cached_hash,
-            content_to_return,
-            current_time,
-        )
+        result_cache[cache_key] = {
+            "hash": cached_hash,
+            "raw": content_to_return,
+            "timestamp": current_time,
+            "first_read_complete": first_read_complete,
+        }
         return content_to_return, 0
 
     if normalized_tool_name in FILE_LIKE_TOOLS:
-        from ._tool_result_codecs import _compress_file_read
-
-        content_for_skeleton = cached_raw if host_stub_replayed else raw_text
-        compressed = _compress_file_read(content_for_skeleton, tool_context=context)
-        if len(compressed) < len(content_for_skeleton):
-            return compressed, len(content_for_skeleton) - len(compressed)
-        # Small files return unchanged — don't skeletonize them
-        if compressed == content_for_skeleton:
-            return content_for_skeleton, 0
-        payload = _build_stable_result_payload(
-            content_for_skeleton,
-            tool_name,
-            host_stub_replayed,
+        if not first_read_complete:
+            result_cache[cache_key] = {
+                "hash": cached_hash,
+                "raw": cached_raw,
+                "timestamp": current_time,
+                "first_read_complete": True,
+            }
+        confidence, reason = _compute_confidence(cached_hash, cached_hash)
+        stub = f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"
+        raw_args = context.get("args")
+        raw_path = (
+            context.get("path")
+            or (raw_args.get("path") if isinstance(raw_args, dict) else None)
+            or (raw_args.get("file_path") if isinstance(raw_args, dict) else None)
+            or (raw_args.get("AbsolutePath") if isinstance(raw_args, dict) else None)
+            or (raw_args.get("TargetFile") if isinstance(raw_args, dict) else None)
         )
-        return payload, len(content_for_skeleton) - len(payload)
+        if raw_path:
+            stub += f"|path:{raw_path}"
+        if len(stub) >= len(raw_text):
+            return raw_text, 0
+        return stub, len(raw_text) - len(stub)
+
+    # Handle search-like tools: compress repeat searches instead of bare stub
+    if normalized_tool_name in SEARCH_LIKE_TOOLS:
+        from ._tool_result_codecs import _compress_grep
+
+        compressed_search = _compress_grep(raw_text)
+        if len(compressed_search) < len(raw_text):
+            confidence, reason = _compute_confidence(cached_hash, cached_hash)
+            return (
+                f">>> tool:{tool_name}|matches_compressed|cached|confidence:{confidence}|reason:{reason}\n"
+                + compressed_search,
+                len(raw_text) - len(compressed_search),
+            )
 
     confidence, reason = _compute_confidence(cached_hash, cached_hash)
     stub = f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"
@@ -1190,37 +1182,6 @@ def _serve_cached_content_hash_match(
     if raw_path:
         stub += f"|path:{raw_path}"
     return stub, len(raw_text) - len(stub)
-
-
-def _build_stable_result_payload(
-    raw_text: str,
-    tool_name: str | None,
-    host_stub_replayed: bool,
-) -> str:
-    try:
-        from tok.runtime.repeat_targets import (
-            build_file_skeleton,
-            build_file_summary,
-        )
-
-        stable_hash = _compute_semantic_hash(raw_text)
-        summary = build_file_summary(raw_text, max_chars=280, max_lines=12) or " ".join(raw_text.split())[:280]
-        skeleton = build_file_skeleton(raw_text, max_chars=280, max_lines=14)
-        return StableResultPayload.model_validate(
-            {
-                "semantic_hash": stable_hash,
-                "verified_unchanged": True,
-                "summary": summary,
-                "skeleton": skeleton,
-                "replayed_cached_bytes": host_stub_replayed,
-            }
-        ).render()
-    except ValidationError:
-        logger.debug("stable_payload_validation_failed for tool %s", tool_name)
-        return f">>> tool:{tool_name}|stable_payload_validation_failed"
-    except Exception as e:
-        logger.debug("stable_payload_build_failed for tool %s: %s", tool_name, e)
-        return f">>> tool:{tool_name}|stable_payload_build_failed"
 
 
 def _apply_file_cache(
@@ -1302,7 +1263,9 @@ def _make_semantic_cache_key(context: dict[str, Any] | None, _raw: str) -> str |
 
 def compress_tool_results(
     messages: list[dict[str, Any]],
-    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None = None,
+    result_cache: (
+        MutableMapping[str, ResultCacheEntry] | dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None
+    ) = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
@@ -1315,13 +1278,14 @@ def compress_tool_results(
     keep_turns_window: int | None = None,
     preserve_exact_search_evidence: bool = False,
     recently_edited_files: dict[str, int] | None = None,
+    file_heat: dict[str, float] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
 
     return compress_tool_results_impl(
         messages,
-        result_cache=result_cache,
+        result_cache=cast("MutableMapping[str, ResultCacheEntry] | None", result_cache),
         tool_use_id_to_context=tool_use_id_to_context,
         compression_level=compression_level,
         semantic_hash_cache=semantic_hash_cache,
@@ -1334,6 +1298,7 @@ def compress_tool_results(
         keep_turns_window=keep_turns_window,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         recently_edited_files=recently_edited_files,
+        file_heat=file_heat,
     )
 
 

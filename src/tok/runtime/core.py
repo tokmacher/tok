@@ -46,6 +46,9 @@ from ._session_observation import (
     hot_recent_runtime_hints as hot_recent_runtime_hints_impl,
 )
 from ._session_observation import (
+    mine_response_paths as mine_response_paths_impl,
+)
+from ._session_observation import (
     prepared_prompt_tokens as prepared_prompt_tokens_impl,
 )
 from ._session_observation import (
@@ -59,6 +62,12 @@ from ._session_observation import (
 )
 from ._session_observation import (
     record_search_snapshot as record_search_snapshot_impl,
+)
+from ._session_observation import (
+    record_symbol_locations as record_symbol_locations_impl,
+)
+from ._session_observation import (
+    record_traceback_errors as record_traceback_errors_impl,
 )
 from ._session_persistence import (
     bridge_memory_file,
@@ -256,6 +265,8 @@ class RuntimeSession:
     _tool_required_latch_streak: int = field(default=0, init=False, repr=False)
     _answer_phase_expected_this_turn: bool = field(default=False, init=False, repr=False)
     _natural_response_acceptable_this_turn: bool = field(default=False, init=False, repr=False)
+    # Track files that have been delivered as skeletons to prevent unsafe edits
+    _skeleton_delivered_paths: set[str] = field(default_factory=set, init=False, repr=False)
 
     def record_fallback_event(self) -> None:
         """Increment the consecutive fail-open counter and degrade to baseline when threshold is reached."""
@@ -357,6 +368,62 @@ class RuntimeSession:
         """Keep natural-first in tool-compatible mode briefly after tool-history recovery."""
         self._request_policy_tool_recovery_watch_turns = max(self._request_policy_tool_recovery_watch_turns, turns)
         self._request_policy_tool_mode_sticky_turns = max(self._request_policy_tool_mode_sticky_turns, turns)
+
+    def _is_edit_tool_event(self, event: NormalizedToolEvent) -> bool:
+        """Check if this tool event is an edit-like tool."""
+        from tok.compression import EDIT_LIKE_TOOLS
+
+        return event.name.lower() in EDIT_LIKE_TOOLS
+
+    def _is_unsafe_skeleton_edit(self, event: NormalizedToolEvent) -> bool:
+        """Check if this edit is unsafe because the file was delivered as skeleton."""
+        if not hasattr(self, "_skeleton_delivered_paths"):
+            return False
+
+        file_path = self._extract_file_path_from_event(event)
+        if not file_path:
+            return False
+
+        norm_path = file_path.lower().strip()
+        return norm_path in self._skeleton_delivered_paths
+
+    def _extract_file_path_from_event(self, event: NormalizedToolEvent) -> str | None:
+        """Extract file path from a normalized tool event."""
+        # First try the direct path field
+        if event.path:
+            return str(event.path)
+
+        # Then try common path arguments
+        args = event.args if isinstance(event.args, dict) else {}
+        for key in ("file_path", "path", "AbsolutePath", "TargetFile", "file"):
+            path = args.get(key)
+            if path:
+                return str(path)
+
+        return None
+
+    def _is_verbatim_file_read(self, event: NormalizedToolEvent) -> bool:
+        """Check if this is a verbatim file read (no offset/limit parameters)."""
+        if event.name.lower() not in ("read", "read_file", "fileread"):
+            return False
+
+        args = event.args if isinstance(event.args, dict) else {}
+        # Check for precision read parameters (offset, limit, start, end)
+        precision_params = ("offset", "limit", "start", "end")
+        return not any(key in args for key in precision_params)
+
+    def _clear_skeleton_tracking(self, event: NormalizedToolEvent) -> None:
+        """Clear skeleton tracking for a file when it's read verbatim."""
+        if not hasattr(self, "_skeleton_delivered_paths"):
+            return
+
+        file_path = self._extract_file_path_from_event(event)
+        if not file_path:
+            return
+
+        norm_path = file_path.lower().strip()
+        if norm_path in self._skeleton_delivered_paths:
+            self._skeleton_delivered_paths.remove(norm_path)
 
     def adaptive_keep_turns(self) -> int:
         """Dynamically reduce history depth as the session grows."""
@@ -470,6 +537,18 @@ class RuntimeSession:
     def record_search_snapshot(self, query: str, snippet: str) -> bool:
         """Record a search snapshot in bridge memory."""
         return record_search_snapshot_impl(self, query, snippet)
+
+    def record_symbol_locations(self, raw_grep_output: str) -> int:
+        """Extract symbol location facts from raw grep output."""
+        return record_symbol_locations_impl(self, raw_grep_output)
+
+    def record_traceback_errors(self, text: str) -> int:
+        """Extract traceback file:line pairs and write them as errs facts."""
+        return record_traceback_errors_impl(self, text)
+
+    def mine_response_paths(self, text: str) -> int:
+        """Mine file paths and line numbers from assistant response text."""
+        return mine_response_paths_impl(self, text)
 
     def record_history_snapshot(self, path: str, revision: str, snippet: str) -> bool:
         """Record a git history snapshot in bridge memory."""
@@ -771,15 +850,36 @@ class UniversalTokRuntime:
         self.tool_executor = RuntimeToolExecutor()
         self.semantic_validator = SemanticValidator()
 
-    def execute_tool_event(self, event: NormalizedToolEvent) -> dict[str, Any]:
+    def execute_tool_event(
+        self,
+        event: NormalizedToolEvent,
+        session: RuntimeSession | None = None,
+    ) -> dict[str, Any]:
         """Execute a normalized tool event using the shared runtime tools."""
+        if session is not None:
+            if session._is_edit_tool_event(event) and session._is_unsafe_skeleton_edit(event):
+                from tok.exceptions import TokSafetyError
+
+                file_path = session._extract_file_path_from_event(event)
+                raise TokSafetyError(
+                    f"Cannot edit file '{file_path}': file was delivered as skeleton and must be re-read verbatim before editing. "
+                    f"Please read the file again without offset/limit parameters to get full content before editing."
+                )
+
+            if session._is_verbatim_file_read(event):
+                session._clear_skeleton_tracking(event)
+
         return self.tool_executor.execute_normalized_tool(event)
 
-    def execute_tool_events_batch(self, events: list[NormalizedToolEvent]) -> list[dict[str, Any]]:
+    def execute_tool_events_batch(
+        self,
+        events: list[NormalizedToolEvent],
+        session: RuntimeSession | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute multiple tool events and return results."""
         results: list[dict[str, Any]] = []
         for event in events:
-            result = self.execute_tool_event(event)
+            result = self.execute_tool_event(event, session=session)
             results.append(result)
         return results
 

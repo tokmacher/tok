@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+# Matches grep output lines: path:lineno: content
+_GREP_PATH_RE = re.compile(r"^([^:\s][^:]+\.[a-zA-Z]{1,8}):\d+:")
 
 from pydantic import BaseModel, ConfigDict
 
@@ -518,6 +522,12 @@ def _apply_default_snapshots(
     if tool_name in SEARCH_LIKE_TOOLS and query:
         if session.record_search_snapshot(query, snippet):
             captured[1] += 1
+        session.record_symbol_locations(snippet)
+        # Bump heat for every file referenced in the grep output
+        for line in snippet.splitlines():
+            m = _GREP_PATH_RE.match(line)
+            if m:
+                session.bridge_memory.bump_file_heat(m.group(1), weight=0.3)
 
 
 def _record_file_history_snapshot(session: RuntimeSession, command: str, snippet: str, captured: list[int]) -> None:
@@ -584,6 +594,11 @@ def _record_search_snapshot(
             search_query = sq
     if search_query and session.record_search_snapshot(search_query, snippet):
         captured[1] += 1
+    session.record_symbol_locations(snippet)
+    for line in snippet.splitlines():
+        m = _GREP_PATH_RE.match(line)
+        if m:
+            session.bridge_memory.bump_file_heat(m.group(1), weight=0.3)
 
 
 def _capture_repeat_target_snapshots(
@@ -619,6 +634,19 @@ def _capture_repeat_target_snapshots(
         )
         for k, v in step_signals.items():
             signals[k] = signals.get(k, 0) + v
+
+        # Feature: traceback → errs facts
+        if "Traceback (most recent call last):" in snippet or 'File "' in snippet:
+            n = session.record_traceback_errors(snippet)
+            if n:
+                signals["traceback_errs_recorded"] = signals.get("traceback_errs_recorded", 0) + n
+
+        # Feature: Edit observation — treat edit result as updated file snapshot
+        from tok.compression import EDIT_LIKE_TOOLS
+
+        if tool_name in EDIT_LIKE_TOOLS and path and snippet:
+            session.bridge_memory.bump_file_heat(path, weight=1.0)
+            session.record_file_snapshot(path, snippet)
 
     if captured[0]:
         signals["file_snapshot_captured"] = captured[0]

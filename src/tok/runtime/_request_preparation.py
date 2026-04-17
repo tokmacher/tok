@@ -72,6 +72,7 @@ from .policy.semantic_validation import calculate_invisible_pressure
 from .repeat_targets import (
     HotSummaryRecord,
     RepeatTargetEvent,
+    build_file_skeleton,
     build_summary_for_family,
     evidence_identity_key,
     resolve_evidence_intent,
@@ -312,6 +313,11 @@ def observe_repeat_target_result_impl(
     ]
     repeat_count = len(recent_events)
     stuck_count = len(stuck_events)
+    # Compute skeleton for file reads to enable rich hot-file hints
+    skeleton = ""
+    if family == "file_read":
+        skeleton = build_file_skeleton(text, max_chars=280, max_lines=14)
+
     updated = HotSummaryRecord(
         tool_family=family,
         logical_target=logical_target,
@@ -331,6 +337,7 @@ def observe_repeat_target_result_impl(
             (record.unchanged_result_count + 1) if unchanged_result and record else (1 if unchanged_result else 0)
         ),
         evidence_intent=(record.evidence_intent if record else evidence_intent),
+        skeleton=skeleton,
     )
     signals: dict[str, int] = {}
     if session_self.is_predictive_cache_hit(family, logical_target):
@@ -589,7 +596,10 @@ def _resolve_effective_tool_compatible(
 
     # Short session detection: avoid tok overhead for sessions < threshold turns
     current_turn = session.bridge_memory.turn
-    if current_turn < _SHORT_SESSION_THRESHOLD:
+    has_bridge_tool_material = request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(
+        request.messages
+    )
+    if current_turn < _SHORT_SESSION_THRESHOLD and not has_bridge_tool_material:
         behavior_signals["short_session_baseline_mode"] = 1
         return False, ["short_session"]
 
@@ -812,7 +822,7 @@ def prepare_request_impl(
 
     _speculative_macro_hint: str | None = None
 
-    id_to_context = build_tool_use_id_to_context(translated_messages)
+    id_to_context = build_tool_use_id_to_context(translated_messages, session)
     for ctx in id_to_context.values():
         path = ctx.get("path")
         if path:
@@ -1109,6 +1119,7 @@ def prepare_request_impl(
                 keep_turns_window=TOK_FILE_DELIVERY_STALE_TURNS,
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
                 recently_edited_files=dict(session._recently_edited_files),
+                file_heat=dict(session.bridge_memory._file_heat),
             )
             tool_saved = sum(type_breakdown.values()) // 4
             if tool_saved > 0:
@@ -1148,7 +1159,9 @@ def prepare_request_impl(
             skip_reason = "stream_recovery_history_floor"
             history_skip_reason = skip_reason
             behavior_signals["stream_recovery_history_floor_applied"] = 1
-        elif session.bridge_memory.turn < _SHORT_SESSION_THRESHOLD:
+        elif session.bridge_memory.turn < _SHORT_SESSION_THRESHOLD and not (
+            request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(body["messages"])
+        ):
             # Short session: skip ALL compression to avoid overhead
             should_skip_history = True
             skip_reason = "short_session"

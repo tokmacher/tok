@@ -849,14 +849,14 @@ def build_file_skeleton(text: str, *, max_chars: int, max_lines: int) -> str:
         return ""
     signatures: list[str] = []
     seen: set[str] = set()
-    for line in all_lines:
+    for lineno, line in enumerate(all_lines, 1):
         if not _SCOPE_RE.match(line):
             continue
         cleaned = line.strip().rstrip(":")
         if not cleaned or cleaned in seen:
             continue
         seen.add(cleaned)
-        signatures.append(cleaned)
+        signatures.append(f"{cleaned} [L{lineno}]")
         if len(signatures) >= max_lines:
             break
     return _join_summary_lines(signatures, max_chars)
@@ -947,3 +947,4 @@ class HotSummaryRecord:
     stuck_window_count: int = 0
     unchanged_result_count: int = 0
     evidence_intent: EvidenceIntent | None = None
+    skeleton: str = ""

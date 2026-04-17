@@ -168,6 +168,33 @@ def _jaccard_tokens(text: str) -> set[str]:
 
 _JACCARD_THRESHOLD = 0.25
 
+_SECTION_NAV_RE = re.compile(r"^(class |def |async def )\s*(\w+)")
+_SECTION_NAV_MIN_LINES = 100  # Only annotate files large enough to benefit
+
+_GREP_LINE_RE = re.compile(r"^([^:\s][^:]*):(\d+):\s*(.*)$")
+_DEF_NAME_RE = re.compile(r"^\s*(?:class|def|async def)\s+(\w+)")
+_SYMBOL_MAX = 8  # max symbol facts extracted per grep call
+
+# Response mining: backtick-quoted paths or bare paths followed by line references
+_RESPONSE_FILE_PATH_RE = re.compile(r"`([\w./\-]+\.[a-zA-Z]{1,8})`|([\w./\-]+\.[a-zA-Z]{1,8}):(\d+)")
+_RESPONSE_AT_LINE_RE = re.compile(r"at line (\d+).*?`?([\w./\-]+\.[a-zA-Z]{1,8})`?")
+
+# Traceback frame extraction
+_TB_FRAME_RE = re.compile(r'File "([^"]+)", line (\d+)')
+_TB_JS_FRAME_RE = re.compile(r"at \w+ \(([^)]+):(\d+):\d+\)")
+
+
+def _build_section_nav(text: str, max_sections: int = 10) -> str:
+    """Return a compact 'Name:LN,...' navigation map for large files."""
+    sections: list[str] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        m = _SECTION_NAV_RE.match(line)
+        if m:
+            sections.append(f"{m.group(2)}:L{i}")
+            if len(sections) >= max_sections:
+                break
+    return ",".join(sections)
+
 
 def _match_facts_to_questions(
     questions: list[MemoryEntry],
@@ -837,10 +864,13 @@ class BridgeMemoryState:
         if not digest:
             digest = " ".join(snippet.split())[:160]
 
-        # Enhanced fact format: includes line count and token savings indicator
+        # Enhanced fact format: includes line count, token savings, and nav map for large files
         fact_key = f"file[{normalized_path}]"
-        # Format: file[path]:LINE_COUNT|digest|~TOKENS_SAVED
+        nav = _build_section_nav(snippet) if line_count >= _SECTION_NAV_MIN_LINES else ""
+        # Format: file[path]:LINE_COUNT|digest|~TOKENS_SAVED[|nav:SECTIONS]
         value = f"{fact_key}:{line_count}|{digest}|~{estimated_tokens}t"
+        if nav:
+            value += f"|nav:{nav}"
 
         base_score = 2
         heat_bonus = int(heat * 2)
@@ -871,6 +901,31 @@ class BridgeMemoryState:
         self._upsert(self.hot, "facts", value, score_delta=2)
         self._trim_all()
         return True
+
+    def record_symbol_locations(self, raw_grep_output: str) -> int:
+        """Extract definition lines from raw grep output and store symbol[Name]:file:LN facts."""
+        seen: set[str] = set()
+        count = 0
+        for line in raw_grep_output.splitlines():
+            m = _GREP_LINE_RE.match(line)
+            if not m:
+                continue
+            filepath, lineno, content = m.group(1), m.group(2), m.group(3)
+            dm = _DEF_NAME_RE.match(content)
+            if not dm:
+                continue
+            name = dm.group(1)
+            key = f"{name}:{filepath}"
+            if key in seen:
+                continue
+            seen.add(key)
+            self._upsert(self.hot, "facts", f"symbol[{name}]:{filepath}:L{lineno}", score_delta=2)
+            count += 1
+            if count >= _SYMBOL_MAX:
+                break
+        if count:
+            self._trim_all()
+        return count
 
     def record_history_snapshot(self, path: str, revision: str, snippet: str) -> bool:
         normalized_path = path.strip()
@@ -928,14 +983,11 @@ class BridgeMemoryState:
             # or just parts[1] if only 3 parts exist
             if "|" in rest:
                 parts = rest.split("|")
-                if len(parts) >= 2:
-                    # digest is between LINE_COUNT and ~tokens
-                    # If last part starts with ~, digest is parts[1] (or parts[1:-1] joined)
-                    if len(parts) >= 3 and parts[-1].startswith("~"):
-                        digest = "|".join(parts[1:-1]) if len(parts) > 3 else parts[1]
-                    else:
-                        digest = parts[1]
-                    if digest:  # Only store non-empty digests
+                # Strip metadata parts (~tokens, nav:...) to isolate the digest
+                data_parts = [p for p in parts if not p.startswith("~") and not p.startswith("nav:")]
+                if len(data_parts) >= 2:
+                    digest = data_parts[1]
+                    if digest:
                         result[path] = digest
             else:
                 # Legacy format: just digest
@@ -957,6 +1009,59 @@ class BridgeMemoryState:
         self._upsert(self.hot, "questions", value, score_delta=1)
         self._trim_all()
         return True
+
+    def record_traceback_errors(self, text: str) -> int:
+        """Extract file:line pairs from a traceback and write them as errs facts."""
+        seen: set[str] = set()
+        count = 0
+        for m in _TB_FRAME_RE.finditer(text):
+            path, lineno = m.group(1), m.group(2)
+            if "site-packages" in path or "node_modules" in path:
+                continue
+            key = f"{path}:L{lineno}"
+            if key in seen:
+                continue
+            seen.add(key)
+            self._upsert(self.hot, "errs", key, score_delta=2)
+            count += 1
+        for m in _TB_JS_FRAME_RE.finditer(text):
+            path, lineno = m.group(1), m.group(2)
+            if "node_modules" in path:
+                continue
+            key = f"{path}:L{lineno}"
+            if key in seen:
+                continue
+            seen.add(key)
+            self._upsert(self.hot, "errs", key, score_delta=2)
+            count += 1
+        if count:
+            self._trim_all()
+        return count
+
+    def mine_response_paths(self, text: str) -> int:
+        """Extract file paths and line references mentioned in assistant text and update facts."""
+        count = 0
+        for m in _RESPONSE_FILE_PATH_RE.finditer(text):
+            path = m.group(1) or m.group(2)
+            lineno = m.group(3)
+            if not path or len(path) < 4:
+                continue
+            self.bump_file_heat(path, weight=0.5)
+            if lineno:
+                self._upsert(self.hot, "facts", f"symbol[mention]:{path}:L{lineno}", score_delta=1)
+            else:
+                self._upsert(self.hot, "files", path[:96], score_delta=1)
+            count += 1
+        for m in _RESPONSE_AT_LINE_RE.finditer(text):
+            lineno, path = m.group(1), m.group(2)
+            if not path or len(path) < 4:
+                continue
+            self.bump_file_heat(path, weight=0.5)
+            self._upsert(self.hot, "facts", f"symbol[mention]:{path}:L{lineno}", score_delta=1)
+            count += 1
+        if count:
+            self._trim_all()
+        return count
 
     def _upsert(
         self,

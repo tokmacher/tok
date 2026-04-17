@@ -6,6 +6,7 @@ import contextlib
 import copy
 import difflib
 import re
+from collections.abc import MutableMapping
 from typing import Any
 
 from tok.runtime.config import (
@@ -153,7 +154,7 @@ def compress_history_impl(
             if cls.eligible:
                 eligible_indices.append(i)
             elif cls.reason in _CUT_REJECTION_REASONS:
-                if bridge_cut_search and cls.reason in ("user_contains_tool_result_block", "non_user"):
+                if bridge_cut_search and cls.reason == "user_contains_tool_result_block":
                     eligible_indices.append(i)
                 else:
                     rejection_counts[cls.reason] = rejection_counts.get(cls.reason, 0) + 1
@@ -597,6 +598,7 @@ def tok_tool_result_impl(
     content: str,
     compression_level: str = "balanced",
     tool_context: dict[str, Any] | None = None,
+    session: Any | None = None,
 ) -> str:
     """Compress a tool result using registry-based compressors."""
     if len(content) <= TOOL_COMPRESS_THRESHOLD:
@@ -614,7 +616,7 @@ def tok_tool_result_impl(
         compress_install=_compress_install,
         compress_git_log=_compress_git_log_impl,
         compress_repetitive=lambda text: _compress_repetitive(text, command=_tool_command_hint(tool_context)),
-        compress_file_read=lambda text: _compress_file_read(text, tool_context=tool_context),
+        compress_file_read=lambda text: _compress_file_read(text, tool_context=tool_context, session=session),
         compress_search_results=_compress_search_results,
         compress_stack_traces=_compress_stack_traces,
         compress_grep_context=_compress_grep_context,
@@ -626,7 +628,11 @@ def tok_tool_result_impl(
     compressed = compressor(content) if compressor else content
 
     compressed = _tighten_compressed_output(kind, compressed, compression_level)
-    compressed = truncate_large_result(compressed)
+
+    # Detect if content was already skeletonized by _compress_file_read
+    # Skeleton markers: "|> [N lines" or "|> [... lines"
+    already_compressed = kind == "file" and ("|> [" in compressed or "lines]" in compressed)
+    compressed = truncate_large_result(compressed, already_compressed=already_compressed)
 
     saved = original_chars - len(compressed)
     if saved <= 0:
@@ -641,70 +647,10 @@ def tok_tool_result_impl(
     return compressed
 
 
-def _build_last_file_read_ids(
-    messages: list[dict[str, Any]],
-    tool_use_id_to_context: dict[str, dict[str, Any]] | None,
-) -> frozenset[str]:
-    """
-    Return tool_use_ids of the most recent file-like read per normalized path.
-
-    These entries are exempted from result-cache compression so the model always
-    has at least one verbatim copy of each file in context.
-    """
-    if tool_use_id_to_context is None:
-        return frozenset()
-
-    path_to_last_id: dict[str, str] = {}
-    for msg in messages:
-        content = msg.get("content")
-        if msg.get("role") != "tool_result":
-            continue
-        if isinstance(content, list):
-            for block in content:
-                if not (isinstance(block, dict) and block.get("type") == "tool_result"):
-                    continue
-                tool_id = block.get("tool_use_id", "")
-                ctx = tool_use_id_to_context.get(tool_id)
-                if not ctx:
-                    continue
-                tool_name = str(ctx.get("name", "")).lower()
-                if tool_name not in FILE_LIKE_TOOLS:
-                    continue
-                args = ctx.get("args")
-                if not isinstance(args, dict):
-                    continue
-                path = str(
-                    args.get("path")
-                    or args.get("file_path")
-                    or args.get("AbsolutePath")
-                    or args.get("TargetFile")
-                    or ""
-                )
-                if path:
-                    path_to_last_id[path] = tool_id
-        elif isinstance(content, str):
-            tool_id = msg.get("tool_use_id", "")
-            ctx = tool_use_id_to_context.get(tool_id)
-            if not ctx:
-                continue
-            tool_name = str(ctx.get("name", "")).lower()
-            if tool_name not in FILE_LIKE_TOOLS:
-                continue
-            args = ctx.get("args")
-            if not isinstance(args, dict):
-                continue
-            path = str(
-                args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
-            )
-            if path:
-                path_to_last_id[path] = tool_id
-
-    return frozenset(path_to_last_id.values())
-
-
 def compress_tool_results_impl(
     messages: list[dict[str, Any]],
-    result_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None = None,
+    result_cache: MutableMapping[str, dict[str, object] | tuple[str, str, float] | tuple[str, str] | tuple[str]]
+    | None = None,
     tool_use_id_to_context: dict[str, dict[str, Any]] | None = None,
     compression_level: str = "balanced",
     semantic_hash_cache: dict[str, str] | None = None,
@@ -717,9 +663,10 @@ def compress_tool_results_impl(
     keep_turns_window: int | None = None,
     preserve_exact_search_evidence: bool = False,
     recently_edited_files: dict[str, int] | None = None,
+    file_heat: dict[str, float] | None = None,
+    session: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
-    last_file_read_ids = _build_last_file_read_ids(messages, tool_use_id_to_context)
     precision_ranges_by_path: dict[str, list[tuple[int, int]]] = {}
     last_full_file_by_path: dict[str, str] = {}
     search_seen_matches: dict[str, set[str]] = {}
@@ -906,6 +853,25 @@ def compress_tool_results_impl(
             return bool(args.get("tok_bypass_cache"))
         return False
 
+    def _is_zero_heat(context: dict[str, Any] | None) -> bool:
+        """Check if file has zero heat (never been read before in this session)."""
+        if not file_heat or not context:
+            return False
+        args = context.get("args") if isinstance(context, dict) else None
+        if not isinstance(args, dict):
+            return False
+        path = str(
+            args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
+        )
+        if not path:
+            return False
+        # Normalize path for lookup
+        norm_path = path.lower().strip()
+        if session_files_read is not None and norm_path in session_files_read:
+            return False
+        heat = file_heat.get(norm_path, 0.0)
+        return heat == 0.0
+
     def _cache_semantic_hash(
         context: dict[str, Any] | None,
         raw: str,
@@ -1037,6 +1003,8 @@ def compress_tool_results_impl(
                 tool_id = msg.get("tool_use_id", "")
                 context = tool_use_id_to_context.get(tool_id)
                 if context:
+                    tool_name = str(context.get("name", "")).lower()
+                    is_file_like_tool = tool_name in FILE_LIKE_TOOLS
                     norm_path = _extract_normalized_path(context)
                     # First: check if this is a first exact observation (must be before last_file_read_ids check)
                     if _preserve_first_exact_observation(context, content, norm_path):
@@ -1050,21 +1018,18 @@ def compress_tool_results_impl(
                         breakdown["bypass_reacquire"] = breakdown.get("bypass_reacquire", 0) + 1
                         msg["content"] = content
                         continue
-                if tool_id in last_file_read_ids:
-                    if context:
-                        norm_path = _extract_normalized_path(context)
-                        _mark_file_fully_delivered(norm_path)
-                    continue
-                # Remaining processing for files not in last_file_read_ids and not first-exact
+                # Remaining processing for non-bypassed and non-first-exact content.
                 if context:
                     norm_path = _extract_normalized_path(context)
-                    if session_files_read is not None and norm_path and norm_path not in session_files_read:
+                    if (
+                        is_file_like_tool
+                        and session_files_read is not None
+                        and norm_path
+                        and norm_path not in session_files_read
+                    ):
                         session_files_read.add(norm_path)
                         if semantic_hash_cache is not None and len(content) >= _SEMANTIC_HASH_MIN_CHARS:
                             _cache_semantic_hash(context, content, semantic_hash_cache)
-                        _mark_file_fully_delivered(norm_path)
-                        continue
-                    if not _is_file_fully_delivered(norm_path):
                         _mark_file_fully_delivered(norm_path)
                         continue
                     compressed, saved = _apply_result_cache(
@@ -1286,28 +1251,35 @@ def compress_tool_results_impl(
                         _record_feature_telemetry("file_reread_diff", "skipped")
                 last_full_file_by_path[norm_path] = raw
 
-            if tool_id in last_file_read_ids:
-                norm_path = _extract_normalized_path(ctx) if ctx else ""
-                _mark_file_fully_delivered(norm_path)
-                continue
-
             norm_path = _extract_normalized_path(ctx) if ctx else ""
-            if session_files_read is not None and norm_path and norm_path not in session_files_read:
-                session_files_read.add(norm_path)
-                if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
-                    _cache_semantic_hash(ctx, raw, semantic_hash_cache)
+            # First-session preservation: None means fresh session, preserve all file reads
+            if (
+                tool_name in FILE_LIKE_TOOLS
+                and session_files_read is not None
+                and norm_path
+                and norm_path not in session_files_read
+            ):
+                if session_files_read is not None:
+                    session_files_read.add(norm_path)
+                    if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
+                        _cache_semantic_hash(ctx, raw, semantic_hash_cache)
                 _mark_file_fully_delivered(norm_path)
                 continue
 
             # Only apply semantic dedup if this is a repeat read in the current session
             # First reads must be preserved verbatim (not compressed)
             if (
-                _is_file_fully_delivered(norm_path)
+                tool_name in FILE_LIKE_TOOLS
+                and _is_file_fully_delivered(norm_path)
                 and (session_files_read is None or norm_path in session_files_read)
                 and semantic_hash_cache is not None
                 and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
                 and tool_use_id_to_context is not None
             ):
+                # Zero-heat check: never compress files that haven't been read before
+                if tool_name in FILE_LIKE_TOOLS and _is_zero_heat(ctx):
+                    block["content"] = raw
+                    continue
                 cache_key = _make_semantic_cache_key(ctx, raw)
                 ctx_args = ctx.get("args") if isinstance(ctx, dict) else None
                 if isinstance(ctx_args, dict) and any(k in ctx_args for k in ("offset", "limit", "start", "end")):
@@ -1316,7 +1288,7 @@ def compress_tool_results_impl(
                     content_hash = _compute_semantic_hash(raw)
                     prev_hash = semantic_hash_cache.get(cache_key)
                     if prev_hash == content_hash:
-                        compressed = _compress_file_read(raw, tool_context=ctx)
+                        compressed = _compress_file_read(raw, tool_context=ctx, session=session)
                         if len(compressed) < len(raw):
                             saved = len(raw) - len(compressed)
                             breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)
@@ -1372,7 +1344,7 @@ def compress_tool_results_impl(
                         semantic_hash_cache[cache_key] = content_hash
 
             if (
-                _is_file_fully_delivered(norm_path)
+                tool_name in FILE_LIKE_TOOLS
                 and result_cache is not None
                 and tool_use_id_to_context is not None
                 and not bypass_result_cache
@@ -1402,10 +1374,16 @@ def compress_tool_results_impl(
                     block["content"] = compressed
                     continue
 
+            # Zero-heat check: never compress files that haven't been read before
+            if tool_name in FILE_LIKE_TOOLS and _is_zero_heat(ctx):
+                block["content"] = raw
+                continue
+
             compressed = tok_tool_result_impl(
                 raw,
                 compression_level=compression_level,
                 tool_context=ctx,
+                session=session,
             )
             if TOK_ENABLE_STACK_REPEAT_DELTA:
                 kind = _detect_tool_content_type_impl(raw)
@@ -1528,6 +1506,7 @@ def compress_recent_window_impl(
     first_exact_evidence_seen: set[str] | None = None,
     preserve_exact_search_evidence: bool = False,
     session_files_read: set[str] | None = None,
+    file_heat: dict[str, float] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to recent window messages."""
 
@@ -1627,6 +1606,24 @@ def compress_recent_window_impl(
             first_exact_evidence_seen.add(key)
         return True
 
+    def _is_zero_heat(context: dict[str, Any] | None) -> bool:
+        """Check if file has zero heat (never been read before in this session)."""
+        if not file_heat or not context:
+            return False
+        args = context.get("args") if isinstance(context, dict) else None
+        if not isinstance(args, dict):
+            return False
+        path = str(
+            args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
+        )
+        if not path:
+            return False
+        norm_path = path.lower().strip()
+        if session_files_read is not None and norm_path in session_files_read:
+            return False
+        heat = file_heat.get(norm_path, 0.0)
+        return heat == 0.0
+
     breakdown: dict[str, int] = {}
     compressors: dict[str, Compressor] = {
         "file": _compress_file_read,
@@ -1656,6 +1653,14 @@ def compress_recent_window_impl(
             if _first_exact_guard(ctx, content):
                 msg["content"] = content
                 continue
+            # First-session preservation: None means fresh session, preserve all file reads
+            if tool_name in FILE_LIKE_TOOLS:
+                norm_path = _extract_normalized_path(ctx)
+                if bool(norm_path) and (session_files_read is None or norm_path not in session_files_read):
+                    continue
+                # Zero-heat check: never compress files that haven't been read before
+                if _is_zero_heat(ctx):
+                    continue
             kind = _detect_tool_content_type_impl(content)
             if tool_name in FILE_LIKE_TOOLS:
                 kind = "file"
@@ -1715,7 +1720,12 @@ def compress_recent_window_impl(
                 )
                 norm_path = _extract_normalized_path(tool_ctx)
                 is_first_ever = first_exact_evidence_seen is not None and key and key not in first_exact_evidence_seen
-                is_first_session = session_files_read is not None and norm_path and norm_path not in session_files_read
+                # None means "fresh session" for file reads only — search tools use first_exact_evidence_seen
+                is_first_session = (
+                    tool_name in FILE_LIKE_TOOLS
+                    and bool(norm_path)
+                    and (session_files_read is None or norm_path not in session_files_read)
+                )
 
                 if is_first_ever or is_first_session:
                     if is_first_ever and first_exact_evidence_seen is not None:

@@ -41,6 +41,15 @@ def record_search_snapshot(session: RuntimeSession, query: str, snippet: str) ->
     return recorded
 
 
+def record_symbol_locations(session: RuntimeSession, raw_grep_output: str) -> int:
+    """Extract and store symbol location facts from raw grep output."""
+    count = session.bridge_memory.record_symbol_locations(raw_grep_output)
+    if count:
+        session._bump_signals({"symbol_locations_recorded": count})
+        session._save_bridge_memory()
+    return count
+
+
 def record_history_snapshot(session: RuntimeSession, path: str, revision: str, snippet: str) -> bool:
     """Record a git history snapshot in bridge memory and persist state."""
     recorded = session.bridge_memory.record_history_snapshot(path, revision, snippet)
@@ -56,6 +65,24 @@ def record_metadata_snapshot(session: RuntimeSession, path: str, subtype: str, s
     if recorded:
         session._save_bridge_memory()
     return recorded
+
+
+def record_traceback_errors(session: RuntimeSession, text: str) -> int:
+    """Extract traceback file:line pairs and write them as errs facts."""
+    count = session.bridge_memory.record_traceback_errors(text)
+    if count:
+        session._bump_signals({"traceback_errs_recorded": count})
+        session._save_bridge_memory()
+    return count
+
+
+def mine_response_paths(session: RuntimeSession, text: str) -> int:
+    """Mine file paths and line numbers from assistant response text."""
+    count = session.bridge_memory.mine_response_paths(text)
+    if count:
+        session._bump_signals({"response_paths_mined": count})
+        session._save_bridge_memory()
+    return count
 
 
 def prepared_prompt_tokens(session: RuntimeSession, payload: dict[str, Any]) -> int:
@@ -108,12 +135,14 @@ def _build_hot_hint(record: HotSummaryRecord, current_turn: int) -> tuple[str, d
     """
     label = record.display_target
     if record.tool_family == "file_read":
-        reminder = f"@hot_recent_file:{label} |> {record.summary}"
+        lines = [f"@hot_recent_file:{label} |> {record.summary}"]
+        if record.skeleton:
+            lines.append(f"@hot_skeleton |> {record.skeleton}")
+        block = "\n".join(lines)
     elif record.tool_family == "search":
-        reminder = f"@hot_recent_search:{label} |> {record.summary}"
+        block = f"@hot_recent_search:{label} |> {record.summary}"
     else:
-        reminder = f"@hot_recent_command:{label} |> {record.summary}"
-    block = reminder
+        block = f"@hot_recent_command:{label} |> {record.summary}"
 
     metrics: dict[str, int] = {
         "hot_recent_hint_injected": 1,
