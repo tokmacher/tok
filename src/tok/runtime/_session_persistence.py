@@ -112,7 +112,7 @@ def load_result_cache(session: RuntimeSession) -> dict[str, Any]:
     try:
         result = json.loads(path.read_text())
         if isinstance(result, dict):
-            cleaned = {}
+            cleaned: dict[str, Any] = {}
             current_time = time_module.time()
             for key, value in result.items():
                 if isinstance(value, list) and len(value) == 3:
@@ -121,6 +121,15 @@ def load_result_cache(session: RuntimeSession) -> dict[str, Any]:
                         cleaned[key] = value
                 elif isinstance(value, list) and len(value) == 2:
                     cleaned[key] = value
+                elif isinstance(value, dict):
+                    # Reset first_read_complete for every entry loaded from a prior
+                    # session.  The persistent cache exists to avoid re-hashing; it
+                    # does NOT grant compression rights at the start of a new session.
+                    # Without this reset, cross-session cache hits skip verbatim
+                    # delivery and return a skeleton stub on the very first Read.
+                    entry: dict[str, Any] = dict(value)
+                    entry["first_read_complete"] = False
+                    cleaned[key] = entry
                 else:
                     cleaned[key] = value
             return cleaned
