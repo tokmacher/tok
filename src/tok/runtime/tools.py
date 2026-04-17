@@ -43,7 +43,6 @@ try:
         TokDelta,
         TokDeltaTracker,
         apply_delta,
-        delta_to_tok,
         diff_tok,
     )
     from tok.utils.sifter import Sifter
@@ -51,7 +50,6 @@ except ImportError:
     TokDelta = None
     apply_delta = None
     diff_tok = None
-    delta_to_tok = None
     TokDeltaTracker = None
     Sifter = None
 

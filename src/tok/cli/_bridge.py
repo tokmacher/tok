@@ -313,19 +313,3 @@ def bridge_status() -> None:
     console.print(
         "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
     )
-
-
-@bridge_app.command("logs")
-def bridge_logs(
-    lines: int = typer.Argument(40, help="Number of lines to show"),
-) -> None:
-    """Tail the bridge log file."""
-    if not LOG_FILE.exists():
-        console.print("[yellow]No log file found[/yellow]")
-        raise typer.Exit(1)
-
-    content = LOG_FILE.read_text().splitlines()
-    for line in content[-lines:]:
-        # Strip legacy prefix if present to avoid confusing Rich markup
-        line = line.removeprefix("[tok-bridge] ")
-        console.print(line, markup=True)

@@ -396,16 +396,6 @@ def _compress_repetitive(text: str, command: str = "") -> str:
     return header + "\n" + "\n".join(result)
 
 
-def get_and_consume_fidelity_override(path: str) -> bool:
-    """Deprecated: use fidelity_overrides parameter instead."""
-    return False
-
-
-def set_fidelity_overrides(overrides: dict[str, int]) -> None:
-    """Deprecated: use fidelity_overrides parameter instead."""
-    pass
-
-
 _SIGNATURE_CONTINUATION_RE = re.compile(r"^[)\],]\s*$|^[)\],]\s*[#]|,\s*$|\S\s*\\$")
 
 _SIGNATURE_OPEN_PAREN_RE = re.compile(r"\(")

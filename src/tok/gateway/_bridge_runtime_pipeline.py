@@ -158,7 +158,7 @@ def prepare_bridge_payload(
             adapter_kind="claude-bridge",
             tool_compatible=request_tool_compatible,
             request_policy=cast(
-                "Literal['legacy_tool_compatible', 'natural_first', 'forced_baseline']",
+                Literal["legacy_tool_compatible", "natural_first", "forced_baseline"],
                 request_policy,
             ),
             request_has_tools=bool(provider_safe_original_body.get("tools")),

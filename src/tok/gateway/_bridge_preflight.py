@@ -37,6 +37,7 @@ from ._bridge_comparison import (
     _payloads_materially_differ,
     _request_fingerprint_diff,
 )
+from ._signal_utils import _merge_signal_counts
 
 __all__ = [
     "_count_user_messages_with_mixed_tool_result_content",
@@ -248,13 +249,6 @@ def _large_file_read_burst_response(message: str) -> Response:
         status_code=400,
         media_type="application/json",
     )
-
-
-def _merge_signal_counts(target: dict[str, int], extra: dict[str, int] | None) -> None:
-    if not extra:
-        return
-    for key, value in extra.items():
-        target[key] = target.get(key, 0) + value
 
 
 def _capture_outgoing_guard_forensics(
