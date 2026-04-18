@@ -126,9 +126,10 @@ experimental.
 ## Demonstrated Savings
 
 Here's an example of the `tok stats` output from a long session with heavy tool-result
-repetition (207 API calls):
+repetition (207 API calls). This is **not typical** — it represents an upper bound from
+a highly repetitive workload:
 
-![Tok Savings Output showing 82 percent saved](docs/images/tok_stats.png)
+![Tok Savings Output — upper-bound example from a high-repetition session](docs/images/tok_stats.png)
 
 This output from a high-repetition session shows an upper-bound example. Your actual
 savings depend on session length, tool usage patterns, and provider pricing:
@@ -236,7 +237,10 @@ directly — the bridge handles all encoding and decoding transparently.
 - Python `3.10+`
 - macOS or Linux
 - Claude Code installed and available as `claude`
-- An API key or provider configuration that Claude Code can already use
+- An Anthropic API key (`ANTHROPIC_API_KEY`) already configured for Claude Code
+
+Tok is a proxy — it does not manage API keys. It forwards whatever credentials Claude
+Code already uses. If `claude` works without Tok, it will work with Tok.
 
 ## Model Provider Support
 

@@ -23,5 +23,8 @@ What you expected to happen.
 - Claude Code version:
 - Model/provider:
 
+**Diagnostics**
+Output of `tok doctor` (run while bridge is active, if applicable):
+
 **Additional context**
 Logs, screenshots, or any other relevant information.
