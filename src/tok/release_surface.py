@@ -56,6 +56,7 @@ EXPERIMENTAL_ROOT_EXPORTS: tuple[str, ...] = (
 
 SUPPORTED_CLI_ROOT_COMMANDS: tuple[str, ...] = (
     "bridge",
+    "init",
     "install",
     "doctor",
     "stats",

@@ -63,19 +63,20 @@ The first open-source release supports exactly this path:
 
 ```bash
 pip install tok-protocol
-tok install              # setup/migration helper (no wrapper by default)
-tok bridge start         # starts the bridge on port 9090
+tok init                  # optional: create .tok/ workspace and .env
+tok install               # setup/migration helper (no wrapper by default)
+tok bridge start          # starts the bridge on port 9090
 ANTHROPIC_BASE_URL=http://localhost:9090 claude
-tok bridge status        # check bridge health
-tok doctor               # session diagnostics
-tok bridge stop          # stop cleanly
-tok stats                # view savings
+tok bridge status         # check bridge health
+tok doctor                # session diagnostics
+tok bridge stop           # stop cleanly
+tok stats                 # view savings
 ```
 
 Default behavior is explicit. Tok does not override `claude` unless you opt in with
 `tok install --wrap-claude`.
 
-The main CLI commands for `0.1.0` are: `tok install`,
+The main CLI commands for `0.1.0` are: `tok init`, `tok install`,
 `tok bridge start|status|logs|stop`, `tok doctor`, and `tok stats`.
 
 ## Experimental Provider Paths
@@ -129,19 +130,22 @@ repetition (207 API calls):
 
 ![Tok Savings Output showing 82 percent saved](docs/images/tok_stats.png)
 
-This output from a high-repetition session shows an upper-bound example. For release
-decisions, use the claims matrix and reproducible benchmark commands:
+This output from a high-repetition session shows an upper-bound example. Your actual
+savings depend on session length, tool usage patterns, and provider pricing:
 
-- **Reference release band**: 45–55% on validated benchmark workflows (not a universal
-  guarantee)
-- **Automatic baseline fallback** for short sessions where compression adds overhead
+- **Typical sessions (8+ turns)**: meaningful input-token savings on sustained work with
+  repeated file reads and search operations
+- **Short sessions (< 8 turns)**: Tok defaults to baseline since compression overhead
+  exceeds savings
 - **Fail-open safety** — if compression risks fidelity, Tok falls back to uncompressed
 
 See:
 
-- [`docs/claims_matrix.md`](./docs/claims_matrix.md)
-- [`docs/pricing_verification.md`](./docs/pricing_verification.md)
-- [`docs/live_smoke_matrix.md`](./docs/live_smoke_matrix.md)
+- [`docs/claims_matrix.md`](./docs/claims_matrix.md) — detailed claim evidence and
+  status
+- [`docs/pricing_verification.md`](./docs/pricing_verification.md) — pricing methodology
+- [`docs/live_smoke_matrix.md`](./docs/live_smoke_matrix.md) — automated smoke test
+  results
 
 ## Technical Overview
 
@@ -156,17 +160,15 @@ Tok achieves its compression through several deterministic techniques:
 - **Error normalization**: Similar errors collapse to canonical forms like
   `|err:enoent|`
 
-### Macro System
+### Macro System (Experimental)
 
 - **Pattern recognition**: Repeated command sequences are automatically learned as
   macros
-- **Cross-session persistence**: High-value macros survive bridge restarts and system
-  reboots
-- **Cross-workflow reuse**: Macros learned in one project automatically apply to new
-  projects
-- **ROI tracking**: Macros with lifetime savings > ROI_PROTECTION_THRESHOLD are
-  preserved indefinitely
-- **Durable promotion**: High-value macros graduate from hot memory to durable storage
+- **Cross-session persistence**: High-value macros survive bridge restarts
+- **ROI tracking**: Macros with lifetime savings above a threshold are preserved
+
+> **Note**: The macro system is active in the runtime pipeline but not part of the
+> supported 0.1.0 surface. Its behavior may change.
 
 ### Wire Protocol
 
@@ -182,36 +184,15 @@ Tok achieves its compression through several deterministic techniques:
 - **O(1) rolling state**: Constant-time updates regardless of conversation length
 - **Fail-open safety**: Automatic fallback to baseline if compression risks fidelity
 
-### Pointer System
+### Pointer System (Experimental)
 
-- **Cross-reference tracking**: Automatically detects when files, functions, or concepts
-  are referenced across the conversation
-- **Implicit graph building**: Maintains relationships between entities without explicit
-  user annotation
-- **Context preservation**: Pointers ensure that when a file is mentioned later, its
-  full context remains accessible
-- **Memory efficiency**: References are stored as lightweight pointers rather than
-  duplicating content
-
-### Semantic Validation System
-
-- **Invisible Pressure**: Quantifies protocol drift and cognitive overhead from repeated
-  operations
-- **Memory Lift**: Measures knowledge accumulation through structured memory promotions
-- **Semantic Regression**: Detects when the model falls back to verbose, non-optimized
-  responses
-- **Real-time monitoring**: Continuous validation ensures Tok maintains its compression
-  benefits
+Internal cross-reference tracking for files, functions, and concepts. Not part of the
+supported 0.1.0 surface.
 
 ### Code Analysis (Sifter)
 
-- **AST-based extraction**: Parses Python code to extract function signatures, type
-  annotations, and structure
-- **Verbatim hashing**: Generates compact fingerprints for identical code blocks
-- **Structural analysis**: Identifies code patterns and relationships for intelligent
-  compression
-- **Cross-file understanding**: Maintains awareness of codebase structure across the
-  conversation
+Internal AST-based extraction for Python code structure. Used by the compression engine
+but not part of the supported 0.1.0 public API.
 
 ## Tok Syntax Examples
 
@@ -247,23 +228,8 @@ Tok achieves its compression through several deterministic techniques:
 # Expands to: pytest src/ --cov=src --cov-report=html
 ```
 
-### Pointer System
-
-```tok
-@pointers
-  |> *A=src/main.py
-  |> *B=DatabaseConnection
-  |> *C=UserAuthentication
-
-# References use lightweight pointers:
-f:*A|cmds:pytest|b:*C
-```
-
-### Memory State
-
-```tok
->>> t:5|g:implement_auth|f:*A,*B|cmds:npm_test|facts:*C handles JWT|next:add_middleware
-```
+These examples illustrate the internal wire protocol. Users do not write Tok syntax
+directly — the bridge handles all encoding and decoding transparently.
 
 ## Prerequisites
 
@@ -310,6 +276,7 @@ pip install .
 Run this exact bridge-first flow:
 
 ```bash
+tok init          # optional: create project workspace
 tok install
 tok bridge start
 ANTHROPIC_BASE_URL=http://localhost:9090 claude
@@ -418,61 +385,28 @@ tok stats
 
 Baseline prices are calculated using current Openrouter USD rates.
 
-## Mode Selection Guidelines
+## Mode Selection
 
-Tok operates in several modes, each optimized for different scenarios:
+Tok supports two modes via the `TOK_MODE` environment variable:
 
-### Available Modes
+- **`tool-compatible`** (default): Applies compression with a `natural_first` request
+  policy. This is the recommended mode and the only supported mode for 0.1.0.
+- **`baseline`**: No compression. All requests pass through unchanged. Use for
+  debugging, measuring Tok's impact, or short sessions where compression overhead
+  exceeds savings.
 
-- **baseline**: No compression. Use for debugging or measuring Tok's impact.
-- **tok-minimal**: Lightweight compression with enhanced context preservation. Best for
-  short sessions (5-10 turns).
-- **tok-native**: Standard Tok compression with structured memory. Good balance of
-  savings and fidelity.
-- **tok-tool-compatible**: Maximum compression with tool-result caching. Best for long
-  sessions (15+ turns) with repeated operations.
-- **tok-neuro**: Experimental mode with advanced macro learning. For power users with
-  recurring workflows.
+### When to Use Baseline
 
-### Automatic Mode Selection
-
-Tok automatically selects the optimal mode based on session characteristics:
-
-- **Short sessions (< 8 turns)**: Tok defaults to baseline to avoid compression
-  overhead. The savings from compression don't outweigh the cost of maintaining
-  structured state for very short conversations.
-- **Medium sessions (8-15 turns)**: Tok-minimal or tok-native modes provide good savings
-  while preserving context.
-- **Long sessions (15+ turns)**: Tok-tool-compatible mode maximizes savings through
-  aggressive caching and delta compression.
-
-### Manual Mode Override
-
-To manually select a mode:
-
-```bash
-TOK_MODE=tok-minimal tok bridge start
-claude
-```
-
-### Recommendations by Use Case
-
-| Use Case                             | Recommended Mode    | Reason                                |
-| ------------------------------------ | ------------------- | ------------------------------------- |
-| Quick questions (< 5 turns)          | baseline            | Overhead exceeds savings              |
-| Bug investigation (5-15 turns)       | tok-minimal         | Preserves context while saving tokens |
-| Feature implementation (15-30 turns) | tok-native          | Balanced savings and fidelity         |
-| Large refactoring (30+ turns)        | tok-tool-compatible | Maximum savings from repeated reads   |
-| Recurring workflows (daily work)     | tok-neuro           | Learns and reuses macros              |
-
-### When to Stay on Baseline
-
-Keep Tok in baseline mode if:
+Set `TOK_MODE=baseline` if:
 
 - You're debugging Tok itself
 - You need exact token counts for pricing estimates
 - The session is very short (< 5 turns)
 - You're testing a new model provider
+
+```bash
+TOK_MODE=baseline tok bridge start
+```
 
 ### Switching Modes Mid-Session
 
@@ -480,7 +414,7 @@ You can restart the bridge with a different mode at any time:
 
 ```bash
 tok bridge stop
-TOK_MODE=tok-tool-compatible tok bridge start
+tok bridge start
 ```
 
 The new mode applies to subsequent requests. Existing session state is preserved.

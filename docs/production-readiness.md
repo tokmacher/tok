@@ -17,6 +17,19 @@ Runtime defaults and release posture for Tok.
 | Fallback mode         | `baseline`                                         | Requests pass through without compression                            |
 | Fail-open             | enabled                                            | Bridge errors are designed to pass through as upstream requests      |
 | Port                  | 9090                                               | Configurable via `--port`                                            |
+| Bind address          | `0.0.0.0`                                          | Bridge listens on all interfaces; see Security Note below            |
+
+## Security Note: Bind Address
+
+The bridge binds to `0.0.0.0` by default, meaning it accepts connections from all
+network interfaces. Since the bridge proxies requests containing API keys, be aware of
+this on multi-homed machines. If you want the bridge to accept only local connections:
+
+- Use `--port` and rely on firewall rules, or
+- Set the bind address explicitly in your environment if your deployment requires it
+
+For typical single-user workstation use (the intended 0.1.0 scenario), this is safe
+because the bridge is only reachable from the local machine.
 
 ## Release Posture
 

@@ -13,8 +13,8 @@
 - `tok install` auto-configures shell integration for zsh/bash/fish
 - `tok doctor` health check command
 - Health endpoint at `/health`
-- 1067 test functions across 70 files covering compression, translation, stats, pricing,
-  and CLI
+- 1478 test functions across 100+ files covering compression, translation, stats,
+  pricing, CLI, smoke, and release surface validation
 - Mock Anthropic server for integration testing without API keys
 - GitHub Actions CI (Python 3.10, 3.11, 3.12 on ubuntu-latest and macos-latest)
 - `py.typed` marker for PEP 561

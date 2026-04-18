@@ -8,7 +8,8 @@ Env knobs (defaults shown):
   TOK_TURNS            10
   TOK_DELAY_SECONDS    0.2
   TOK_PROMPT           "Give me a one-line repo summary."
-  TOK_MODE             tool-compatible   # or TOK_REQUEST_POLICY=natural_first
+  TOK_MODE             tool-compatible
+  TOK_REQUEST_POLICY   natural_first
 """
 
 from __future__ import annotations
@@ -21,7 +22,6 @@ from pathlib import Path
 import openai
 
 import tok
-from tok.testing.frontier import DEFAULT_FRONTIER_PROFILES, apply_frontier_env
 
 
 def _require_env(name: str) -> str:
@@ -41,21 +41,8 @@ def _load_config() -> dict[str, str | int | float]:
         "turns": int(os.getenv("TOK_TURNS", "10")),
         "delay": float(os.getenv("TOK_DELAY_SECONDS", "0.2")),
         "prompt": os.getenv("TOK_PROMPT", "Give me a one-line repo summary."),
-        "profile_name": os.getenv("TOK_FRONTIER_PROFILE", "balanced"),
         "artifact_path": os.getenv("TOK_FRONTIER_ARTIFACT", ""),
     }
-
-
-def _get_profile(profile_name: str):
-    """Find and return the frontier profile by name."""
-    profile = next(
-        (candidate for candidate in DEFAULT_FRONTIER_PROFILES if candidate.name == profile_name),
-        None,
-    )
-    if profile is None:
-        msg = f"Unknown TOK_FRONTIER_PROFILE={profile_name!r}"
-        raise SystemExit(msg)
-    return profile
 
 
 def _run_turn(
@@ -64,7 +51,6 @@ def _run_turn(
     model: str,
     client: openai.OpenAI,
     session: tok.RuntimeSession,
-    profile,
 ) -> dict[str, object]:
     """Run a single turn and return the result row."""
     messages = [{"role": "user", "content": f"{prompt} (turn {i})"}]
@@ -89,8 +75,6 @@ def _run_turn(
 
     return {
         "turn": i,
-        "profile": profile.name,
-        "mode": profile.mode,
         "input_saved_tokens": int(prepared.input_saved_tokens),
         "output_saved_tokens": int(processed.output_saved_tokens),
         "provider_total_tokens": int(getattr(response.usage, "total_tokens", 0)),
@@ -102,32 +86,26 @@ def _run_turn(
 def main() -> None:
     """Run Tok wrap/process with OpenRouter."""
     config = _load_config()
-    profile = _get_profile(config["profile_name"])
 
-    os.environ.setdefault("TOK_MODE", profile.env.get("TOK_MODE", "tool-compatible"))
-    os.environ.setdefault(
-        "TOK_REQUEST_POLICY",
-        profile.env.get("TOK_REQUEST_POLICY", "natural_first"),
-    )
+    os.environ.setdefault("TOK_MODE", os.getenv("TOK_MODE", "tool-compatible"))
+    os.environ.setdefault("TOK_REQUEST_POLICY", os.getenv("TOK_REQUEST_POLICY", "natural_first"))
 
     client = openai.OpenAI(base_url=config["base_url"], api_key=config["api_key"])
     session = tok.RuntimeSession()
     rows: list[dict[str, object]] = []
 
-    with apply_frontier_env(profile.env):
-        for i in range(config["turns"]):
-            row = _run_turn(
-                i,
-                config["prompt"],
-                config["model"],
-                client,
-                session,
-                profile,
-            )
-            rows.append(row)
+    for i in range(config["turns"]):
+        row = _run_turn(
+            i,
+            config["prompt"],
+            config["model"],
+            client,
+            session,
+        )
+        rows.append(row)
 
-            if config["delay"] > 0:
-                time.sleep(config["delay"])
+        if config["delay"] > 0:
+            time.sleep(config["delay"])
 
     if config["artifact_path"]:
         path = Path(config["artifact_path"])

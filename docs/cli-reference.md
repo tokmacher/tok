@@ -11,6 +11,7 @@ If you are new to Tok, start with [`README.md`](../README.md) or the full workfl
 
 ```bash
 tok install
+tok init
 tok bridge start
 ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok bridge status
@@ -22,11 +23,14 @@ tok stats
 `tok install` is a setup/migration helper. To opt into legacy auto-routing, use
 `tok install --wrap-claude`.
 
+`tok init` creates a project-local `.tok/` workspace and optional `.env` / `.gitignore`
+entries. Run it once per project before starting the bridge.
+
 ## Bridge Commands
 
 ```bash
 tok bridge start [--port 9090] [--keep-turns 2] [--debug] [--foreground]
-tok bridge start [--capture] [--fail-open/--no-fail-open]
+tok bridge start [--api-base URL] [--capture] [--fail-open/--no-fail-open]
 tok bridge status
 tok bridge logs [40]
 tok bridge stop [--force]
@@ -35,6 +39,9 @@ tok bridge stop [--force]
 Use:
 
 - `start` to launch the bridge
+- `start --api-base URL` to point the bridge at a non-Anthropic upstream (e.g.
+  `https://openrouter.ai/api/v1`)
+- `start --keep-turns N` to control how many recent turns are kept verbatim (default 2)
 - `status` to confirm the bridge is live and Tok is helping
 - `logs` to inspect the bridge log file
 - `stop` to end the session and print a compact summary

@@ -43,7 +43,7 @@ python -m build
 
 ## Code Style
 
-- Line length: 79 characters
+- Line length: 120 characters (enforced by ruff)
 - Linter: ruff (E, F, I, N, W, UP, B, C901 rules)
 - Type checker: mypy (strict on release surface)
 

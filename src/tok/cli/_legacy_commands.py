@@ -84,7 +84,7 @@ def live_benchmark(
         typer.Option("--output", "-o", help="Output directory for artifacts"),
     ] = None,
     temperature: Annotated[float, typer.Option("--temperature", help="Sampling temperature")] = 0.0,
-    max_tokens: Annotated[int, typer.Option("--max-tokens", help="Completion token cap")] = 300,
+    max_tokens: Annotated[int, typer.Option("--max-tokens", help="Completion token cap")] = 1024,
     timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds")] = 120.0,
     turns: Annotated[
         int | None,

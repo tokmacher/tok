@@ -1357,6 +1357,20 @@ _OPENAI_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "bash": {
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "description": "Run a shell command (only pytest commands are allowed in this benchmark)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The command to run"},
+                },
+                "required": ["command"],
+            },
+        },
+    },
 }
 
 
@@ -1888,6 +1902,7 @@ class LiveBenchmarkRunner:
             openai_tools = _build_openai_tools_param(allowed_tools)
             if openai_tools:
                 create_kwargs["tools"] = openai_tools
+                create_kwargs["tool_choice"] = "auto"
 
         response = None
         try:

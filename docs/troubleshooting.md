@@ -74,8 +74,9 @@ benefits accumulate over longer conversations where repeated file reads, tool ou
 and context build up.
 
 For release verification, use the maintained benchmark and claims matrix flow rather
-than a single ad-hoc run. Sessions of 50+ turns are more likely to land in the 45-55%
-reference band; shorter sessions may show lower or inconsistent savings due to:
+than a single ad-hoc run. Savings vary significantly by session: long sessions with
+heavy tool usage (file reads, search, repeated operations) tend to show the strongest
+results. Shorter sessions may show lower savings due to:
 
 - Less opportunity for semantic deduplication
 - Fewer repeated tool calls to cache

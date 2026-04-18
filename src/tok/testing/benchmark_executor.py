@@ -1498,7 +1498,10 @@ class ToolLoopExecutor:
             "Tool parameters: "
             "view_file(path, start?, end?) — start/end are 1-based line numbers for reading a range. "
             "grep_search(pattern, path?) — search file contents. "
-            "list_dir(path). "
+            "list_dir(path) — list directory contents. "
+            "edit_file(path, old_string, new_string) — replace text in a file. "
+            "run_tests(command) — run a pytest command. "
+            "bash(command) — run a shell command. "
         )
         del condition
         tool_instruction = "When you need a tool, call it using the function calling interface. " + tool_params
