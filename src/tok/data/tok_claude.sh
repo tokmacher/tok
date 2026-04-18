@@ -5,7 +5,7 @@
 # SOURCE this file directly from the installed package path if needed:
 #   source /path/to/site-packages/tok/data/tok_claude.sh
 #
-# `tok install` adds the correct source line to ~/.zshrc or ~/.bashrc for you.
+# `tok install --wrap-claude` adds the correct source line to ~/.zshrc or ~/.bashrc.
 #
 # This defines only a `claude` function:
 #   1. Starts the current Tok bridge if it is not already running

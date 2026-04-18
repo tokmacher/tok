@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # tok_claude.sh — Shell integration for Tok + Claude Code
 #
-# This repo copy is for development. Public installs should prefer `tok install`,
+# This repo copy is for development. Public installs should prefer
+# `tok install --wrap-claude`,
 # which sources the packaged script from the installed tok-protocol path.
 #
 # If you need to source this file manually during local development:

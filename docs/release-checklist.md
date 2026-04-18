@@ -22,7 +22,8 @@ Steps for cutting a Tok release.
 - [ ] Run the clean-room install verification from the README
 - [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.0`
 - [ ] Run live Claude bridge validation on the supported path: `tok install`,
-  `tok bridge start`, `claude`, `tok bridge status`, `tok doctor`, `tok stats`,
+  `tok bridge start`, `ANTHROPIC_BASE_URL=http://localhost:9090 claude`,
+  `tok bridge status`, `tok doctor`, `tok stats`, then exit Claude and run
   `tok bridge stop`
 - [ ] Treat any frontier/OpenRouter report as advisory validation only; do not let it
   redefine the Claude bridge default

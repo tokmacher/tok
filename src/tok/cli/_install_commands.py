@@ -10,6 +10,13 @@ from ._cli_support import console
 
 
 def install(
+    wrap_claude: Annotated[
+        bool,
+        typer.Option(
+            "--wrap-claude",
+            help="Install the optional claude() shell wrapper that auto-routes through Tok.",
+        ),
+    ] = False,
     uninstall: Annotated[
         bool,
         typer.Option(
@@ -18,8 +25,12 @@ def install(
         ),
     ] = False,
 ) -> None:
-    """Install or remove the Tok shell wrapper that adds `claude()`."""
+    """Manage optional Tok shell integration."""
     from tok.utils import shell_integration
+
+    if wrap_claude and uninstall:
+        console.print("[red]Cannot combine `--wrap-claude` with `--uninstall`.[/red]")
+        raise typer.Exit(2)
 
     try:
         if uninstall:
@@ -30,11 +41,26 @@ def install(
                 )
             else:
                 console.print("[yellow]Tok shell integration was not present in ~/.zshrc or ~/.bashrc.[/yellow]")
-        else:
+        elif wrap_claude:
             rc_path = shell_integration.install()
             console.print(f"[green]✅ Tok shell integration installed in {rc_path}.[/green]")
             console.print("[dim]Reload your shell: source " + str(rc_path) + "[/dim]")
-            console.print("[dim]Next step: run `tok bridge start`, then `claude`, then `tok doctor`.[/dim]")
+            console.print("[dim]Wrapper mode enabled: `claude` will auto-start Tok bridge routing in this shell.[/dim]")
+            console.print("[dim]Next step: run `claude`, then `tok doctor`.[/dim]")
+        else:
+            removed = shell_integration.uninstall()
+            if removed:
+                console.print(
+                    "[yellow]Removed legacy `claude()` Tok wrapper from:[/yellow] "
+                    + ", ".join(str(path) for path in removed)
+                )
+            else:
+                console.print("[green]Tok install complete.[/green]")
+            console.print(
+                "[dim]Default mode is explicit: run `tok bridge start`, then "
+                "`ANTHROPIC_BASE_URL=http://localhost:9090 claude`.[/dim]"
+            )
+            console.print("[dim]Optional wrapper mode: run `tok install --wrap-claude` if you want auto-routing.[/dim]")
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc

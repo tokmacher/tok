@@ -63,17 +63,17 @@ The first open-source release supports exactly this path:
 
 ```bash
 pip install tok-protocol
- tok install              # adds claude() shell wrapper
+tok install              # setup/migration helper (no wrapper by default)
 tok bridge start         # starts the bridge on port 9090
-claude                   # use Claude exactly as before
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok bridge status        # check bridge health
 tok doctor               # session diagnostics
 tok bridge stop          # stop cleanly
 tok stats                # view savings
 ```
 
-After `tok install`, you run `claude` exactly as before. Tok intercepts traffic
-invisibly.
+Default behavior is explicit. Tok does not override `claude` unless you opt in with
+`tok install --wrap-claude`.
 
 The main CLI commands for `0.1.0` are: `tok install`,
 `tok bridge start|status|logs|stop`, `tok doctor`, and `tok stats`.
@@ -284,8 +284,8 @@ Tok is validated and tested with:
 Other OpenAI-compatible providers may work but are untested. If you use a different
 provider, Tok will attempt compression but behavior is not guaranteed.
 
-`tok install` adds a `claude()` shell wrapper to `~/.zshrc` or `~/.bashrc`. It does not
-replace the `tok` CLI itself.
+`tok install` is now a setup/migration helper and does not modify `claude` by default.
+If you want legacy auto-routing behavior, run `tok install --wrap-claude`.
 
 **Note**: Due to recent issues around usage limits within Claude Code, it has been
 occasionally difficult to verify consistent Tok behavior across tasks (particularly
@@ -311,13 +311,20 @@ Run this exact bridge-first flow:
 
 ```bash
 tok install
-source ~/.zshrc  # or source ~/.bashrc
 tok bridge start
-claude
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok bridge status
 tok doctor
 tok bridge stop
 tok stats
+```
+
+Optional wrapper mode:
+
+```bash
+tok install --wrap-claude
+source ~/.zshrc  # or source ~/.bashrc
+claude
 ```
 
 The normal happy path is:
@@ -340,18 +347,18 @@ Fallbacks              0
 If you see `Degraded to baseline: yes` or fallback counts rising, Tok protected the
 session by serving requests without compression.
 
-If `claude` is still not found after `tok install`, reload your shell with
+If you enabled wrapper mode and `claude` is still not found, reload your shell with
 `source ~/.zshrc` or `source ~/.bashrc` before debugging Tok itself.
 
 ## First 10 Minutes Troubleshooting
 
-| If you see this                                 | Check this first                                              | Likely fix                                                                                                              |
-| ----------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `tok: command not found`                        | Was the package installed into the active Python environment? | Re-activate the environment and run `pip install tok-protocol` again.                                                   |
-| `claude: command not found` after `tok install` | Was your shell reloaded?                                      | Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.                                                       |
-| `Bridge not running`                            | Did `tok bridge start` succeed?                               | Restart with `tok bridge start --foreground` and inspect `tok bridge logs`.                                             |
-| No savings visible yet                          | Is the session still very short?                              | Keep working for a few turns, then run `tok doctor` and `tok stats --last-session`, or `tok stats` for a lifetime view. |
-| `Degraded to baseline: yes`                     | Did the session fall back for safety?                         | Run `tok doctor` first, then follow the steps in [`docs/troubleshooting.md`](docs/troubleshooting.md).                  |
+| If you see this                                               | Check this first                                              | Likely fix                                                                                                              |
+| ------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `tok: command not found`                                      | Was the package installed into the active Python environment? | Re-activate the environment and run `pip install tok-protocol` again.                                                   |
+| `claude: command not found` after `tok install --wrap-claude` | Was your shell reloaded?                                      | Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.                                                       |
+| `Bridge not running`                                          | Did `tok bridge start` succeed?                               | Restart with `tok bridge start --foreground` and inspect `tok bridge logs`.                                             |
+| No savings visible yet                                        | Is the session still very short?                              | Keep working for a few turns, then run `tok doctor` and `tok stats --last-session`, or `tok stats` for a lifetime view. |
+| `Degraded to baseline: yes`                                   | Did the session fall back for safety?                         | Run `tok doctor` first, then follow the steps in [`docs/troubleshooting.md`](docs/troubleshooting.md).                  |
 
 ## Clean-Room Install Verification
 
@@ -405,7 +412,7 @@ To compare the same workflow with no compression:
 
 ```bash
 TOK_MODE=baseline tok bridge start
-claude
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok stats
 ```
 

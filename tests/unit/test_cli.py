@@ -38,6 +38,20 @@ class TestCLI:
         assert "stop" in result.output
         assert "status" in result.output
 
+    def test_bridge_stop_help_shows_force_flag(self) -> None:
+        result = runner.invoke(app, ["bridge", "stop", "--help"])
+        assert result.exit_code == 0
+        assert "--force" in result.output
+
+    def test_bridge_stop_force_flag_forwards_to_backend(self, monkeypatch) -> None:
+        calls: dict[str, bool] = {}
+
+        monkeypatch.setattr("tok.cli._bridge.bridge_stop", lambda force=False: calls.setdefault("force", force))
+        result = runner.invoke(app, ["bridge", "stop", "--force"])
+
+        assert result.exit_code == 0
+        assert calls["force"] is True
+
     def test_doctor_help(self) -> None:
         result = runner.invoke(app, ["doctor", "--help"])
         assert result.exit_code == 0
@@ -106,16 +120,59 @@ class TestCLI:
             "medium",
         )
 
-    def test_install_uses_shell_integration_backend(self, monkeypatch, tmp_path) -> None:
-        monkeypatch.setattr("tok.utils.shell_integration.install", lambda: tmp_path / ".zshrc")
+    def test_install_default_mode_does_not_write_shell_wrapper(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.utils.shell_integration.uninstall", lambda: [])
+        monkeypatch.setattr(
+            "tok.utils.shell_integration.install",
+            lambda: (_ for _ in ()).throw(AssertionError("install() should not be called in default mode")),
+        )
 
         result = runner.invoke(app, ["install"])
+
+        assert result.exit_code == 0
+        assert "Tok install complete." in result.output
+        assert "Default mode is explicit" in result.output
+        assert "ANTHROPIC_BASE_URL=http://localhost:9090 claude" in result.output
+        assert "tok install --wrap-claude" in result.output
+
+    def test_install_default_mode_removes_legacy_wrapper_when_present(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr("tok.utils.shell_integration.uninstall", lambda: [tmp_path / ".zshrc"])
+        monkeypatch.setattr(
+            "tok.utils.shell_integration.install",
+            lambda: (_ for _ in ()).throw(AssertionError("install() should not be called in default mode")),
+        )
+
+        result = runner.invoke(app, ["install"])
+
+        assert result.exit_code == 0
+        assert "Removed legacy `claude()` Tok wrapper from:" in result.output
+        assert ".zshrc" in result.output
+        assert "Default mode is explicit" in result.output
+
+    def test_install_wrap_claude_uses_shell_integration_backend(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr("tok.utils.shell_integration.install", lambda: tmp_path / ".zshrc")
+
+        result = runner.invoke(app, ["install", "--wrap-claude"])
 
         assert result.exit_code == 0
         assert "Tok shell integration installed in" in result.output
         assert ".zshrc" in result.output
         assert "Reload your shell:" in result.output
-        assert "tok bridge start" in result.output
+        assert "Wrapper mode enabled" in result.output
+
+    def test_install_uninstall_removes_existing_shell_integration(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr("tok.utils.shell_integration.uninstall", lambda: [tmp_path / ".zshrc"])
+
+        result = runner.invoke(app, ["install", "--uninstall"])
+
+        assert result.exit_code == 0
+        assert "Tok shell integration removed from:" in result.output
+        assert ".zshrc" in result.output
+
+    def test_install_rejects_wrap_claude_and_uninstall_combination(self) -> None:
+        result = runner.invoke(app, ["install", "--wrap-claude", "--uninstall"])
+        assert result.exit_code == 2
+        assert "Cannot combine `--wrap-claude` with `--uninstall`." in result.output
 
     def test_bridge_status_shows_mode_and_session_summary(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
@@ -379,7 +436,7 @@ class TestCLI:
         assert "Bridge started on :9090 (PID 4321)" in result.output
         assert "Capture directory:" in result.output
         assert ".tok/sessions" in result.output
-        assert "run `claude`" in result.output
+        assert "ANTHROPIC_BASE_URL=http://localhost:9090 claude" in result.output
 
     def test_bridge_start_enables_session_reset(self, monkeypatch, tmp_path) -> None:
         from tok.cli import _bridge, _cli_support
@@ -628,6 +685,7 @@ class TestCLI:
         )
         monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
         monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
         monkeypatch.setattr(_bridge, "read_collector_pid", lambda: None)
         monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
@@ -652,6 +710,53 @@ class TestCLI:
         assert "Last Session" in output
         assert "Saved $" in output
         assert "Verdict" in output
+
+    def test_bridge_stop_refuses_in_self_bridged_context_without_force(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+        monkeypatch.setattr(_bridge, "read_collector_pid", lambda: None)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+        monkeypatch.setattr(_bridge, "COLLECTOR_PID_FILE", tmp_path / "collector.pid")
+        monkeypatch.setattr(
+            _bridge.os,
+            "kill",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("os.kill should not be called")),
+        )
+
+        result = runner.invoke(app, ["bridge", "stop"])
+
+        assert result.exit_code == 2
+        assert "Refusing to stop bridge from an active bridged Claude session." in result.output
+        assert "tok bridge stop --force" in result.output
+
+    def test_bridge_stop_force_allows_stop_in_self_bridged_context(self, monkeypatch, tmp_path, capsys) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+        monkeypatch.setattr(_bridge, "read_collector_pid", lambda: None)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+        monkeypatch.setattr(_bridge, "COLLECTOR_PID_FILE", tmp_path / "collector.pid")
+
+        calls = {"checked": False}
+
+        def fake_kill(pid, sig) -> None:
+            assert pid == 123
+            if sig == signal.SIGTERM:
+                return
+            if sig == 0 and not calls["checked"]:
+                calls["checked"] = True
+                raise ProcessLookupError
+            return
+
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+
+        _bridge.bridge_stop(force=True)
+        output = capsys.readouterr().out
+
+        assert "Bridge stopped" in output
 
     def test_savings_breakdown_shows_behavior_signals(self, tmp_path, monkeypatch) -> None:
         tracker = SavingsTracker(

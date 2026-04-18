@@ -16,9 +16,10 @@ tok doctor
 - Re-activate the environment, then run `pip install tok-protocol` or `pip install .`.
 - Verify with `tok --help`.
 
-### `claude: command not found` after `tok install`
+### `claude: command not found` after `tok install --wrap-claude`
 
-- `tok install` updated your shell rc file, but the current shell has not reloaded it.
+- `tok install --wrap-claude` updated your shell rc file, but the current shell has not
+  reloaded it.
 - Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.
 - Then run `tok doctor` again before assuming the bridge is at fault.
 
@@ -29,6 +30,12 @@ tok doctor
 - If it still fails, use `tok bridge start --foreground` so errors stay in the current
   terminal.
 - Inspect recent bridge logs with `tok bridge logs 100`.
+
+### `tok bridge stop` refused with a self-bridged warning
+
+- Tok now protects against in-band self-cutoff.
+- Exit Claude first, then run `tok bridge stop` from your shell.
+- If you intentionally need in-band shutdown, run `tok bridge stop --force`.
 
 ## Runtime Diagnosis
 
@@ -109,7 +116,7 @@ tok install
 tok bridge start --help
 ```
 
-If this sequence fails, fix install and shell integration before debugging the runtime.
+If this sequence fails, fix install and bridge startup before debugging the runtime.
 
 ## Repo Checkout Smoke
 
@@ -128,7 +135,7 @@ To compare behavior with compression disabled:
 
 ```bash
 TOK_MODE=baseline tok bridge start
-claude
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok stats
 ```
 

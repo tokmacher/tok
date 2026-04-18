@@ -104,7 +104,8 @@ def init(
             console.print(f"[dim]Leaving existing .env unchanged:[/dim] {root / '.env'}")
 
     console.print(
-        "\n[bold]Next steps:[/bold]\n- `tok install`\n- `tok bridge start`\n- `claude`\n- `tok doctor --report`\n"
+        "\n[bold]Next steps:[/bold]\n- `tok bridge start`\n- `ANTHROPIC_BASE_URL=http://localhost:9090 claude`\n- `tok doctor --report`\n"
+        "- Optional wrapper mode: `tok install --wrap-claude`\n"
     )
 
 

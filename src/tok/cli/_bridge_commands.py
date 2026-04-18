@@ -47,11 +47,19 @@ def bridge_start(
     )
 
 
-def bridge_stop() -> None:
+def bridge_stop(
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Force stop even when called from a bridged Claude session.",
+        ),
+    ] = False,
+) -> None:
     """Stop the Tok bridge server."""
     from ._bridge import bridge_stop as bridge_stop_command
 
-    bridge_stop_command()
+    bridge_stop_command(force=force)
 
 
 def bridge_status() -> None:

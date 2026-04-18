@@ -8,9 +8,8 @@ use this page when you want the complete operating flow.
 Tok's first open-source release is intentionally narrow and Claude-first:
 
 - install the Python package
-- add the `claude()` shell wrapper
 - start the bridge
-- use Claude normally
+- route Claude through the bridge explicitly
 - diagnose with `status`, `doctor`, `stats`, and logs
 
 The bridge is the supported product path. Broader platform and SDK work come later. The
@@ -46,18 +45,16 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 ```bash
 pip install tok-protocol
 tok install
-source ~/.zshrc  # or source ~/.bashrc
 tok bridge start
-claude
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok bridge status
 tok doctor
 tok bridge stop
 tok stats
 ```
 
-`tok install` adds a `claude()` shell wrapper. It does **not** replace the real `tok`
-CLI. If `claude` is still missing after install, reload your shell before digging into
-bridge logs or runtime health.
+`tok install` is a setup/migration helper and does not wrap `claude` by default. If you
+want legacy auto-routing behavior, use `tok install --wrap-claude`.
 
 ## What Success Looks Like
 
@@ -169,7 +166,9 @@ concrete recommendation:
 ### Stop
 
 `tok bridge stop` prints a compact session summary, which makes it the easiest
-end-of-session checkpoint.
+end-of-session checkpoint. If you call it from an active bridged Claude turn, it now
+refuses by default to avoid self-cutoff; use `tok bridge stop --force` only when
+intentional.
 
 ### Logs
 

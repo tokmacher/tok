@@ -12,12 +12,15 @@ If you are new to Tok, start with [`README.md`](../README.md) or the full workfl
 ```bash
 tok install
 tok bridge start
-claude
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok bridge status
 tok doctor [--report]
 tok bridge stop
 tok stats
 ```
+
+`tok install` is a setup/migration helper. To opt into legacy auto-routing, use
+`tok install --wrap-claude`.
 
 ## Bridge Commands
 
@@ -26,7 +29,7 @@ tok bridge start [--port 9090] [--keep-turns 2] [--debug] [--foreground]
 tok bridge start [--capture] [--fail-open/--no-fail-open]
 tok bridge status
 tok bridge logs [40]
-tok bridge stop
+tok bridge stop [--force]
 ```
 
 Use:
@@ -35,6 +38,7 @@ Use:
 - `status` to confirm the bridge is live and Tok is helping
 - `logs` to inspect the bridge log file
 - `stop` to end the session and print a compact summary
+- `stop --force` to intentionally stop from an active bridged Claude turn
 
 ## Health And Savings
 

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 import httpx
 import typer
@@ -35,6 +36,43 @@ from ._cli_support import (
 )
 
 bridge_app = typer.Typer(help="Bridge management commands")
+
+_LOCAL_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _normalized_host(host: str | None) -> str | None:
+    if not host:
+        return None
+    value = host.strip().lower()
+    return value or None
+
+
+def _parsed_port(parsed_url: Any) -> int | None:
+    if parsed_url.port is not None:
+        return int(parsed_url.port)
+    if parsed_url.scheme == "http":
+        return 80
+    if parsed_url.scheme == "https":
+        return 443
+    return None
+
+
+def _is_self_bridged_invocation(port: int) -> bool:
+    base_url = os.getenv("ANTHROPIC_BASE_URL", "").strip()
+    if not base_url:
+        return False
+
+    parsed = urlparse(base_url)
+    target_host = _normalized_host(parsed.hostname)
+    target_port = _parsed_port(parsed)
+    bridge_host = _normalized_host(os.getenv("TOK_BRIDGE_HOST", "localhost"))
+    if not target_host or target_port is None or not bridge_host:
+        return False
+    if target_port != port:
+        return False
+    if target_host == bridge_host:
+        return True
+    return target_host in _LOCAL_HOST_ALIASES and bridge_host in _LOCAL_HOST_ALIASES
 
 
 @bridge_app.command("start")
@@ -123,7 +161,10 @@ def bridge_start(
                 if r.status_code == 200:
                     console.print(f"[green]Bridge started on :{port} (PID {proc.pid})[/green]")
                     console.print(f"Logs: {LOG_FILE}")
-                    console.print("[dim]Next step: run `claude`, then `tok bridge status` or `tok doctor`.[/dim]")
+                    console.print(
+                        "[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:9090 claude`, then "
+                        "`tok bridge status` or `tok doctor`.[/dim]"
+                    )
                     if capture:
                         console.print(f"Capture directory: {memory_root() / 'sessions'}")
                     return
@@ -148,7 +189,7 @@ def bridge_start(
 
 
 @bridge_app.command("stop")
-def bridge_stop() -> None:
+def bridge_stop(force: bool = False) -> None:
     """Stop the Tok bridge server."""
     port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
     pid = get_running_bridge_pid(port)
@@ -157,6 +198,13 @@ def bridge_stop() -> None:
     if not pid:
         console.print("[yellow]Bridge not running[/yellow]")
         raise typer.Exit(0)
+
+    if _is_self_bridged_invocation(port) and not force:
+        console.print("[yellow]Refusing to stop bridge from an active bridged Claude session.[/yellow]")
+        console.print(
+            "[dim]Run `tok bridge stop --force` if intentional, or stop from a separate shell after this turn.[/dim]"
+        )
+        raise typer.Exit(2)
 
     for p in [pid]:
         try:
