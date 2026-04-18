@@ -9,8 +9,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 import pytest
 
-from tok.neuro.ir import Instruction, Macro, MacroProvenance, MacroRegistry
-from tok.neuro.miner import IRPatternMiner
+from tok.macros.ir import Instruction, Macro, MacroProvenance, MacroRegistry
+from tok.macros.miner import IRPatternMiner
 
 
 @pytest.fixture
@@ -156,7 +156,7 @@ def test_hierarchical_mining_naming():
     existing_registry = MacroRegistry()
     existing_registry.register(Macro(name="auto_macro_0", instructions=(), inputs=()))
 
-    from tok.neuro.ir import TokIR
+    from tok.macros.ir import TokIR
 
     history = TokIR(
         instructions=(

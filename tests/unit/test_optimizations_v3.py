@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tok.neuro.ir import Instruction, Macro, MacroRegistry
+from tok.macros.ir import Instruction, Macro, MacroRegistry
 from tok.runtime.memory.bridge_memory import BridgeMemoryState
 from tok.universal_runtime import (
     RuntimeRequest,

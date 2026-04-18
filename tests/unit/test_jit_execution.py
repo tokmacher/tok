@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 import pytest
 
-from tok.neuro.ir import Instruction, Macro, MacroRegistry
+from tok.macros.ir import Instruction, Macro, MacroRegistry
 from tok.runtime.core import RuntimeSession, UniversalTokRuntime
 from tok.runtime.memory.bridge_memory import MemoryEntry
 from tok.runtime.policy.macro_handling import execute_jit_macro
@@ -83,7 +83,7 @@ def test_jit_execution_runner(jit_execution_setup):
     registry, session, macro = jit_execution_setup
 
     # Test the symbolic runner directly
-    with patch("tok.neuro.ir.execute_ir") as mock_exec:
+    with patch("tok.macros.ir.execute_ir") as mock_exec:
         mock_exec.return_value = "Found 3 matches."
 
         result = execute_jit_macro(

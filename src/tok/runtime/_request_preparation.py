@@ -19,7 +19,7 @@ from tok.compression import (
     inject_system_additions,
     text_of,
 )
-from tok.neuro.ir import Instruction
+from tok.macros.ir import Instruction
 from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
 
 from .config import (

@@ -15,7 +15,7 @@ from tok.compression import (
 )
 from tok.compression import _history_pipeline as history_pipeline
 from tok.compression import _pipeline as compression_pipeline
-from tok.neuro.ir import Instruction, Macro
+from tok.macros.ir import Instruction, Macro
 from tok.runtime.memory.bridge_memory import BridgeMemoryState
 from tok.universal_runtime import (
     RuntimeRequest,

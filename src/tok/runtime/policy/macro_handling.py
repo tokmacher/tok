@@ -62,7 +62,7 @@ def _attribute_macro_savings(session: "RuntimeSession", wire_state: str) -> None
 
 def _heal_macro_from_repair(macro_name: str, memory_state: "BridgeMemoryState", heal_turn: int = 0) -> None:
     """Detect if the agent diverged from a JIT-offered macro and update it."""
-    from tok.neuro.ir import Instruction
+    from tok.macros.ir import Instruction
 
     macro = memory_state.macro_registry.get(macro_name)
     if not macro:
@@ -119,7 +119,7 @@ def execute_jit_macro(session: "RuntimeSession", macro_name: str, args_raw: str)
     inputs = _parse_jit_args(args_raw)
 
     try:
-        from tok.neuro.ir import TokIR, execute_ir
+        from tok.macros.ir import TokIR, execute_ir
 
         result = execute_ir(
             TokIR(macro.instructions),

@@ -17,7 +17,7 @@ import sys
 # Ensure project root is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from tok.neuro.ir import (
+from tok.macros.ir import (
     Instruction,
     Macro,
     MacroProvenance,

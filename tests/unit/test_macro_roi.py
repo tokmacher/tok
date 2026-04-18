@@ -6,7 +6,7 @@ import datetime
 
 import pytest
 
-from tok.neuro.ir import Instruction, Macro, MacroRegistry
+from tok.macros.ir import Instruction, Macro, MacroRegistry
 from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 
 

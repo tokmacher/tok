@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tok.compression import text_of
-from tok.neuro.integration import distill_bridge_history
+from tok.macros.integration import distill_bridge_history
 from tok.runtime.config import _PROJECT_MARKER_FILES
 from tok.runtime.policy.smart_policy import (
     advance_state,

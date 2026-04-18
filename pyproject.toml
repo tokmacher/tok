@@ -147,6 +147,7 @@ module = "tok.gateway.*"
 ignore_errors = true
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 pythonpath = ["src"]
 testpaths = [
     "tests/unit",
@@ -164,7 +165,7 @@ source = ["src/tok"]
 omit = [
     "src/tok/analysis/*",
     "src/tok/monitoring/*",
-    "src/tok/neuro/*",
+    "src/tok/macros/*",
     "src/tok/testing/*",
     "src/tok/adapters/*",
     "src/tok/cli/_dev.py",

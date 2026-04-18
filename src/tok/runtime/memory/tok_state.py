@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from tok.compression import TOK_FIELD_ALIAS, TOK_REVERSE_ALIAS
-from tok.neuro.memory import (
+from tok.macros.memory import (
     ConstraintMemory,
     EpisodeMemory,
     LessonMemory,

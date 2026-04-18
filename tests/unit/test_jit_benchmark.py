@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 import pytest
 
-from tok.neuro.ir import Instruction, Macro
+from tok.macros.ir import Instruction, Macro
 from tok.universal_runtime import RuntimeSession, UniversalTokRuntime
 
 

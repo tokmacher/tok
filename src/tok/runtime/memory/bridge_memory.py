@@ -15,8 +15,8 @@ from tok.compression import (
     TOK_FIELD_ALIAS,
     TOK_REVERSE_ALIAS,
 )
+from tok.macros.ir import Instruction, Macro, MacroRegistry
 from tok.memory.pointers import PointerRegistry
-from tok.neuro.ir import Instruction, Macro, MacroRegistry
 from tok.runtime.policy.smart_policy import (
     CANONICAL_WIRE_FIELD_ORDER,
     MemoryProjectionProfile,

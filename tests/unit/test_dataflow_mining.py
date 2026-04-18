@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from tok.neuro.ir import Instruction, Macro, MacroRegistry, TokIR
-from tok.neuro.miner import IRPatternMiner
+from tok.macros.ir import Instruction, Macro, MacroRegistry, TokIR
+from tok.macros.miner import IRPatternMiner
 from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
 from tok.universal_runtime import RuntimeSession, _jit_context_matches
 
@@ -228,7 +228,7 @@ def test_context_requirements_set_during_mining() -> None:
         MemoryEntry(value="edit src/tok/cli.py", last_seen_turn=6),
     ]
 
-    from tok.neuro.integration import distill_bridge_history
+    from tok.macros.integration import distill_bridge_history
 
     discovered = distill_bridge_history(state, miner=miner)
 

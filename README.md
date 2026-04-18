@@ -142,7 +142,6 @@ See:
 - [`docs/claims_matrix.md`](./docs/claims_matrix.md)
 - [`docs/pricing_verification.md`](./docs/pricing_verification.md)
 - [`docs/live_smoke_matrix.md`](./docs/live_smoke_matrix.md)
-- [`benchmarks/README.md`](./benchmarks/README.md)
 
 ## Technical Overview
 

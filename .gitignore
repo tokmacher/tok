@@ -68,6 +68,17 @@ tmp/
 .claude/
 CLAUDE.md
 
+# Campaign artifacts
+campaign_ledger.md
+repo_refactor_prompt_pack/
+
+# Benchmark results
+Benchmark/assets/
+docs/images/tok_metrics.json
+
+# IDE
+.windsurf/
+
 # Visualization
 viz/
 
