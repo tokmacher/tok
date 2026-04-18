@@ -17,6 +17,7 @@ from tok.runtime.pipeline.request_validation import (
     bridge_strict_failure_signals,
     canonicalize_anthropic_bridge_body,
     has_blocking_outgoing_failures,
+    has_invalid_tool_history_failures,
     has_provider_sensitive_failures,
     has_recoverable_immediate_pairing_failures,
     quarantine_invalid_tool_history_messages,
@@ -45,34 +46,15 @@ __all__ = [
     "_run_bridge_preflight",
 ]
 
-_LOCAL_INVALID_TOOL_HISTORY_FAILURES = frozenset(
-    {
-        "invalid_tool_use_block",
-        "invalid_tool_result_block",
-        "assistant_tool_use_missing_next_tool_result",
-        "assistant_tool_use_incomplete_next_tool_result_coverage",
-        "tool_result_unknown_tool_use_id",
-        "tool_result_not_immediately_after_assistant_tool_use",
-        "user_tool_result_after_text",
-        "bridge_wire_model_invalid",
-    }
-)
-
 
 def _should_block_invalid_tool_history_locally(
     strict_failures: list[str],
 ) -> bool:
-    return any(failure in _LOCAL_INVALID_TOOL_HISTORY_FAILURES for failure in strict_failures)
+    return has_invalid_tool_history_failures(strict_failures)
 
 
 def _should_return_read_burst_hint(failures: list[str]) -> bool:
-    return bool(
-        {
-            "provider_sensitive_large_tool_use_text_interleaving",
-            "provider_sensitive_assistant_tool_use_text_interleaving",
-        }
-        & set(failures)
-    )
+    return has_provider_sensitive_failures(failures)
 
 
 def _assistant_tool_use_text_segments(

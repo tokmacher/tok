@@ -5,6 +5,7 @@ from tok.runtime.memory.bridge_memory import (
     BridgeMemoryState,
     clean_system_context,
 )
+from tok.runtime.pipeline.request_validation import should_optimize_prompts
 from tok.universal_runtime import detect_prompt_bloat
 
 
@@ -31,6 +32,21 @@ def test_detect_prompt_bloat_leakage() -> None:
 
     # Doesn't trigger for small overlapping words
     assert not detect_prompt_bloat("Instructions: do it.", "Implement it.")
+
+
+def test_detect_prompt_bloat_uses_default_when_threshold_env_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TOK_PROMPT_BLOAT_THRESHOLD", "not-a-number")
+    assert detect_prompt_bloat("x" * 2001)
+
+
+def test_should_optimize_prompts_uses_growth_signal() -> None:
+    assert should_optimize_prompts("small prompt", {"tok_prompt_growth_high": 1})
+
+
+def test_should_optimize_prompts_uses_default_when_limit_env_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TOK_PROMPT_OPTIMIZE_LIMIT", "invalid")
+    assert should_optimize_prompts("x" * 2501, {})
+    assert not should_optimize_prompts("short prompt", {})
 
 
 def test_compress_user_prompt_complex_markdown() -> None:

@@ -20,9 +20,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-      - run: pip install build
-      - run: python -m build
+      - uses: astral-sh/setup-uv@v6
+      - name: Validate tag/version consistency
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PROJECT_VERSION=$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          data = tomllib.loads(Path("pyproject.toml").read_text())
+          print(data["project"]["version"])
+          PY
+          )
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PROJECT_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match pyproject version ($PROJECT_VERSION)"
+            exit 1
+          fi
+      - run: uv sync --frozen --extra dev
+      - run: uv build
       - uses: actions/upload-artifact@v4
         with:
           name: dist

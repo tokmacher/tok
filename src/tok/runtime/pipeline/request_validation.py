@@ -4,7 +4,6 @@ import copy
 import hashlib
 import json
 import logging
-import os
 import re
 from typing import Annotated, Any, Literal
 
@@ -16,6 +15,20 @@ from pydantic import (
     ValidationError,
     field_validator,
     model_validator,
+)
+
+from .bridge_message_diagnostics import (
+    collect_provider_sensitivity_risks as _collect_bridge_provider_sensitivity_risks,
+)
+from .bridge_message_diagnostics import (
+    summarize_bridge_pairing,
+)
+from .bridge_message_diagnostics import (
+    summarize_message_structure as _summarize_message_structure,
+)
+from .prompt_optimization import (
+    detect_prompt_bloat,
+    should_optimize_prompts,
 )
 
 logger = logging.getLogger("tok.runtime.validation")
@@ -72,11 +85,6 @@ _NON_BLOCKING_OUTGOING_FAILURES = frozenset(
         "first_message_not_user",
     }
 )
-_PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD = 16
-_DEFAULT_PROMPT_BLOAT_THRESHOLD_CHARS = 2000
-_DEFAULT_PROMPT_OPTIMIZE_LIMIT_CHARS = 2500
-_USER_PROMPT_LEAK_MIN_CHARS = 200
-_USER_PROMPT_LEAK_SNIPPET_CHARS = 100
 _PROVIDER_SENSITIVE_FAILURES = frozenset(
     {
         "provider_sensitive_large_tool_use_text_interleaving",
@@ -1572,174 +1580,15 @@ def _collect_bridge_tool_result_shape_risks(
     return risks
 
 
-def _collect_bridge_provider_sensitivity_risks(
-    messages: list[dict[str, Any]],
-) -> dict[str, int]:
-    """Return provider-sensitive mixed assistant tool/text batch risks."""
-    if not isinstance(messages, list):
-        return {}
-
-    risks: dict[str, int] = {}
-    for index, message in enumerate(messages):
-        if not isinstance(message, dict):
-            continue
-        if str(message.get("role", "")).strip() != "assistant":
-            continue
-        content = message.get("content")
-        if not isinstance(content, list):
-            continue
-
-        tool_positions = [
-            block_index
-            for block_index, block in enumerate(content)
-            if isinstance(block, dict) and block.get("type") == "tool_use"
-        ]
-        if not tool_positions:
-            continue
-        first_tool = tool_positions[0]
-        tool_use_count = len(tool_positions)
-        has_text_between_or_after_tool_uses = any(
-            isinstance(block, dict) and block.get("type") == "text" and block_index > first_tool
-            for block_index, block in enumerate(content)
-        )
-        if tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD:
-            risks["assistant_large_tool_use_batch"] = risks.get("assistant_large_tool_use_batch", 0) + 1
-        if has_text_between_or_after_tool_uses:
-            risks["assistant_tool_use_text_interleaving"] = risks.get("assistant_tool_use_text_interleaving", 0) + 1
-        if tool_use_count >= _PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD and has_text_between_or_after_tool_uses:
-            next_message = messages[index + 1] if index + 1 < len(messages) else None
-            next_content = next_message.get("content") if isinstance(next_message, dict) else None
-            next_tool_result_count = 0
-            if isinstance(next_content, list):
-                next_tool_result_count = sum(
-                    1 for block in next_content if isinstance(block, dict) and block.get("type") == "tool_result"
-                )
-            risks["assistant_large_tool_use_text_interleaving"] = (
-                risks.get("assistant_large_tool_use_text_interleaving", 0) + 1
-            )
-            if next_tool_result_count:
-                risks["provider_sensitive_large_tool_use_text_interleaving"] = (
-                    risks.get(
-                        "provider_sensitive_large_tool_use_text_interleaving",
-                        0,
-                    )
-                    + 1
-                )
-
-    return risks
-
-
-def _summarize_message_blocks(
-    content: str | list[dict[str, Any]],
-    summary: dict[str, Any],
-) -> list[str]:
-    """Summarize blocks within a message."""
-    blocks_summary = []
-    if isinstance(content, list):
-        for b in content:
-            if not isinstance(b, dict):
-                blocks_summary.append("non_dict")
-                continue
-            b_type = b.get("type", "unknown")
-            blocks_summary.append(str(b_type))
-            if b_type == "tool_use":
-                summary["tool_use_blocks"] += 1
-            elif b_type == "tool_result":
-                summary["tool_result_blocks"] += 1
-            elif b_type not in _ALLOWED_BLOCK_TYPES:
-                unsupported = summary["unsupported_blocks"]
-                unsupported[b_type] = unsupported.get(b_type, 0) + 1
-    elif isinstance(content, str):
-        blocks_summary.append("str")
-    else:
-        blocks_summary.append("empty" if content is None else "unknown")
-    return blocks_summary
-
-
 def summarize_message_structure(
     messages: list[dict[str, Any]],
 ) -> str | dict[str, Any]:
     """Return a compact structural summary safe for bridge diagnostics."""
-    if not isinstance(messages, list):
-        return f"invalid_messages_type:{type(messages).__name__}"
-
-    summary: dict[str, Any] = {
-        "count": len(messages),
-        "sequence": [],
-        "user_msgs": 0,
-        "assistant_msgs": 0,
-        "tool_use_blocks": 0,
-        "tool_result_blocks": 0,
-        "unsupported_blocks": {},
-        "field_shape_risks": {},
-    }
-
-    role_seq: list[str] = []
-    for msg in messages:
-        if not isinstance(msg, dict):
-            role_seq.append(f"<{type(msg).__name__}>")
-            continue
-
-        role = str(msg.get("role", "none"))
-        if role == "user":
-            summary["user_msgs"] += 1
-        elif role == "assistant":
-            summary["assistant_msgs"] += 1
-
-        content = msg.get("content")
-        # Pass content as-is if str or list, otherwise empty list
-        typed_content: str | list[dict[str, Any]] = content if isinstance(content, (str, list)) else []
-        blocks_summary = _summarize_message_blocks(typed_content, summary)
-
-        role_seq.append(f"{role}[{','.join(blocks_summary)}]")
-
-    summary["sequence"] = role_seq
-    summary["field_shape_risks"] = _collect_bridge_tool_result_shape_risks(messages)
-    summary["provider_sensitivity_risks"] = _collect_bridge_provider_sensitivity_risks(messages)
-    return summary
-
-
-def summarize_bridge_pairing(
-    messages: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Return assistant->next-user tool pairing snapshots for bridge diagnostics."""
-    if not isinstance(messages, list):
-        return []
-    timeline: list[dict[str, Any]] = []
-    for index, message in enumerate(messages):
-        if not isinstance(message, dict):
-            continue
-        if str(message.get("role", "")).strip() != "assistant":
-            continue
-        content = message.get("content")
-        if not isinstance(content, list):
-            continue
-        tool_use_ids = [
-            str(block.get("id", "")).strip()
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "tool_use"
-        ]
-        if not tool_use_ids:
-            continue
-        next_message = messages[index + 1] if index + 1 < len(messages) else None
-        next_role = str(next_message.get("role", "")).strip() if isinstance(next_message, dict) else "<none>"
-        next_content = next_message.get("content") if isinstance(next_message, dict) else None
-        next_tool_result_ids: list[str] = []
-        if isinstance(next_content, list):
-            next_tool_result_ids = [
-                str(block.get("tool_use_id", "")).strip()
-                for block in next_content
-                if isinstance(block, dict) and block.get("type") == "tool_result"
-            ]
-        timeline.append(
-            {
-                "assistant_index": index,
-                "next_role": next_role,
-                "tool_use_ids": tool_use_ids,
-                "next_tool_result_ids": next_tool_result_ids,
-            }
-        )
-    return timeline
+    return _summarize_message_structure(
+        messages,
+        allowed_block_types=_ALLOWED_BLOCK_TYPES,
+        shape_risk_collector=_collect_bridge_tool_result_shape_risks,
+    )
 
 
 def _validate_tool_use_block(block: dict[str, Any], role: str, failures: list[str]) -> None:
@@ -1911,6 +1760,10 @@ def has_provider_sensitive_failures(failures: list[str]) -> bool:
     return any(failure in _PROVIDER_SENSITIVE_FAILURES for failure in failures)
 
 
+def has_invalid_tool_history_failures(failures: list[str]) -> bool:
+    return any(failure in _INVALID_TOOL_HISTORY_FAILURES for failure in failures)
+
+
 def has_recoverable_immediate_pairing_failures(
     failures: list[str],
 ) -> bool:
@@ -1990,75 +1843,12 @@ def validate_anthropic_request_body(body: dict[str, Any]) -> list[str]:
     return failures
 
 
-def detect_prompt_bloat(system_prompt: str | list[dict[str, Any]] | None, user_prompt: str = "") -> bool:
-    """
-    Identify when system prompts are unusually large or contain leaked user content.
-
-    Returns True if the system prompt exceeds the TOK_PROMPT_BLOAT_THRESHOLD (default 2000)
-    or if it appears to contain a substantial portion of the current user prompt.
-    """
-    if system_prompt is None:
-        return False
-
-    # Threshold for automatic optimization (chars)
-    bloat_threshold = int(os.getenv("TOK_PROMPT_BLOAT_THRESHOLD", str(_DEFAULT_PROMPT_BLOAT_THRESHOLD_CHARS)))
-
-    system_text = ""
-    if isinstance(system_prompt, list):
-        system_text = " ".join(
-            str(block.get("text", ""))
-            for block in system_prompt
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    else:
-        system_text = str(system_prompt)
-
-    if len(system_text) > bloat_threshold:
-        return True
-
-    # Check if user prompt content is leaking into system context (e.g. flattening)
-    if user_prompt and len(user_prompt) > _USER_PROMPT_LEAK_MIN_CHARS:
-        # Check if a substantial part of the user prompt is in the system prompt
-        snippet = user_prompt[:_USER_PROMPT_LEAK_SNIPPET_CHARS].strip()
-        if snippet and snippet in system_text:
-            return True
-
-    return False
-
-
-def should_optimize_prompts(
-    system_prompt: str | list[dict[str, Any]] | None,
-    session_metrics: dict[str, int],
-) -> bool:
-    """Check if optimization is recommended based on size thresholds or size metrics."""
-    # Threshold for intervention (chars)
-    size_limit = int(os.getenv("TOK_PROMPT_OPTIMIZE_LIMIT", str(_DEFAULT_PROMPT_OPTIMIZE_LIMIT_CHARS)))
-
-    system_text = ""
-    if isinstance(system_prompt, list):
-        system_text = " ".join(
-            str(block.get("text", ""))
-            for block in system_prompt
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    elif system_prompt:
-        system_text = str(system_prompt)
-
-    if len(system_text) > size_limit:
-        return True
-
-    # Check for high growth rate signal if provided in metrics
-    if session_metrics.get("tok_prompt_growth_high"):
-        return True
-
-    return detect_prompt_bloat(system_prompt)
-
-
 __all__ = [
     "bridge_strict_failure_signals",
     "canonicalize_anthropic_bridge_body",
     "canonicalize_anthropic_bridge_messages",
     "detect_prompt_bloat",
+    "has_invalid_tool_history_failures",
     "has_provider_sensitive_failures",
     "has_recoverable_immediate_pairing_failures",
     "normalize_tool_use_blocks",
