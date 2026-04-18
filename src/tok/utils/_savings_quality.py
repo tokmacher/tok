@@ -146,8 +146,8 @@ def session_quality(
         or signals.get("stream_recovery_fallback", 0)
         or signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
         or signals.get("tok_bridge_invalid_tool_history_blocked", 0)
-        or signals.get("repeat_file_read", 0)
-        or signals.get("repeat_search", 0)
+        or signals.get("repeat_file_read", 0) > 2
+        or signals.get("repeat_search", 0) > 2
         or (
             tokens_saved > 0
             and signals.get("answer_anchor_present", 0) == 0
