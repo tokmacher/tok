@@ -2054,3 +2054,222 @@ def test_summarize_message_structure_includes_unsupported_blocks() -> None:
 
     assert summary["unsupported_blocks"] == {}
     assert summary["tool_use_blocks"] == 1
+
+
+def test_bridge_preflight_safe_recent_suffix_with_tool_result_only_start(tmp_path) -> None:
+    """Parallel agents produce tool_result-only user messages at the start of the recent suffix.
+
+    The safe suffix finder should still find a valid candidate when the
+    tool_result IDs all match tool_use IDs from preceding assistant messages.
+    """
+    from tok.runtime._request_preparation import _bridge_preflight_safe_recent_suffix
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "agent_1_t1", "content": "result 1"},
+                {"type": "tool_result", "tool_use_id": "agent_1_t2", "content": "result 2"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "I found something."},
+                {"type": "tool_use", "id": "agent_1_t3", "name": "bash", "input": {"command": "ls"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "agent_1_t3", "content": "file list"},
+            ],
+        },
+        {"role": "assistant", "content": "Done."},
+        {"role": "user", "content": "Next step"},
+        {"role": "assistant", "content": "Continuing."},
+    ]
+
+    result = _bridge_preflight_safe_recent_suffix(messages)
+    assert result is not None
+    assert str(result[0].get("content", "")).strip() == "Next step"
+
+
+def test_bridge_preflight_safe_recent_suffix_tool_result_only_with_complete_pairing(tmp_path) -> None:
+    """When tool_result-only user messages have complete pairing within the suffix,
+    the fallback should select the earliest one as the safe starting point.
+
+    Dangling tool_results (whose tool_uses were cut from history) are allowed
+    as long as every tool_use within the suffix has a matching tool_result.
+    """
+    from tok.runtime._request_preparation import _bridge_preflight_safe_recent_suffix
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "dangling_t0", "content": "old result"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "pa_t1", "name": "view_file", "input": {"path": "x.py"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "pa_t1", "content": "file content"},
+            ],
+        },
+        {"role": "assistant", "content": "Done."},
+    ]
+
+    result = _bridge_preflight_safe_recent_suffix(messages)
+    assert result is not None
+    assert len(result) == len(messages)
+    assert result[0] is messages[0]
+
+
+def test_bridge_preflight_safe_recent_suffix_all_tool_results_no_safe_pairing(tmp_path) -> None:
+    """When tool_result IDs don't match any tool_use in the suffix, return None."""
+    from tok.runtime._request_preparation import _bridge_preflight_safe_recent_suffix
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "orphan_id", "content": "orphan result"},
+            ],
+        },
+        {"role": "assistant", "content": "No matching tool use."},
+    ]
+
+    result = _bridge_preflight_safe_recent_suffix(messages)
+    assert result is None
+
+
+def test_tool_result_only_suffix_safe_pairing_valid() -> None:
+    """Paired tool_result-only suffix should validate successfully."""
+    from tok.runtime._request_preparation import _tool_result_only_suffix_has_safe_pairing
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "r1"},
+                {"type": "tool_result", "tool_use_id": "t2", "content": "r2"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "t3", "name": "bash", "input": {}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t3", "content": "r3"},
+            ],
+        },
+        {"role": "assistant", "content": "Done."},
+        {"role": "user", "content": "Next"},
+        {"role": "assistant", "content": "Continuing."},
+    ]
+
+    assert _tool_result_only_suffix_has_safe_pairing(messages) is True
+
+    messages_no_tool_use: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "orphan", "content": "r"},
+            ],
+        },
+        {"role": "assistant", "content": "No tool use here."},
+    ]
+
+    assert _tool_result_only_suffix_has_safe_pairing(messages_no_tool_use) is False
+
+    messages_unmatched_tool_use: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "r1"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "t2", "name": "bash", "input": {}},
+            ],
+        },
+    ]
+
+    assert _tool_result_only_suffix_has_safe_pairing(messages_unmatched_tool_use) is False
+
+
+def test_parallel_agent_bridge_compression_does_not_degrade(tmp_path) -> None:
+    """Full bridge request with parallel agent interleaving should compress without fallback.
+
+    This reproduces the scenario where plan mode + parallel agents produce
+    rapid-fire tool_use/tool_result pairs that previously caused:
+    - tok_history_cut_point_missing_with_tools
+    - tok_history_cut_blocked_tool_result
+    - tok_fallback_activated cascade
+    """
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+
+    tool_calls = 8
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Analyze all files"},
+    ]
+    for i in range(tool_calls):
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": f"agent_t{i}",
+                        "name": "view_file",
+                        "input": {"path": f"src/tok/file_{i}.py"},
+                    }
+                ],
+            }
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": f"agent_t{i}",
+                        "content": f"file {i} content " * 50,
+                    }
+                ],
+            }
+        )
+
+    messages.append({"role": "assistant", "content": "Analysis complete."})
+    messages.append({"role": "user", "content": "Now write tests"})
+    messages.append({"role": "assistant", "content": "Writing tests."})
+
+    prepared = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            adapter_kind="claude-bridge",
+            tool_compatible=True,
+            messages=messages,
+        ),
+        session,
+    )
+    canonical, _changed, _signals = canonicalize_anthropic_bridge_body(prepared.body)
+
+    assert prepared.behavior_signals.get("tok_history_pairing_safety_degraded", 0) == 0
+    if prepared.compressed:
+        assert validate_anthropic_bridge_body(canonical) == []
+        assert len(prepared.body["messages"]) < len(messages)
