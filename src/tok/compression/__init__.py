@@ -358,7 +358,7 @@ _STABLE_RESULT_EXPLANATION = (
     "@stable_result(hash:...) = unchanged file/query. Reason from @stable_summary/@stable_skeleton."
 )
 _STABLE_RESULT_RECOVERY_HINT = (
-    "@stable_hint |> Need verbatim bytes? rerun Read with offset/limit (example: offset=1, limit=200)."
+    "@stable_hint |> File unchanged — summary shown to save tokens. Read offset=1 for full content."
 )
 _RELEASE_CRITICAL_DOC_BASENAMES = frozenset(
     {

@@ -294,7 +294,7 @@ def test_cache_hit_preserves_small_files() -> None:
     assert first_result == small_file
     # Repeat read should be a stable guided stub with explicit recovery hints.
     assert second_result.startswith(">>> tool:view_file|unchanged|cached|")
-    assert "Need verbatim bytes? rerun Read with offset/limit" in second_result
+    assert "Read offset=1 for full content" in second_result
     assert "@stable_skeleton |>" in second_result
     assert ">>>" not in first_result
     assert ">>> tool:view_file|unchanged|cached|" in second_result

@@ -1,1 +1,7 @@
-collect_ignore_glob = ["**/*.py"]
+collect_ignore = [
+    "patch_suites",
+    "replay",
+    "stability",
+    "stress",
+    "tiny_patch",
+]

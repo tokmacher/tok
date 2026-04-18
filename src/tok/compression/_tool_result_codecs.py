@@ -803,7 +803,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
     # intentional targeted reads and should not be compressed.
     if tool_context:
         args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
-        if any(k in args for k in ("offset", "limit", "start", "end")):
+        if any(k in args for k in ("offset", "limit", "start", "end")) or args.get("verbatim"):
             return text
         # Zero-heat check: never compress files that haven't been read before
         file_heat = tool_context.get("file_heat") if isinstance(tool_context, dict) else None
@@ -846,7 +846,12 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|edit_unsafe:true"
                 + (f"|sections:{section_map}" if section_map else "")
             )
-            return header + "\n# [tok] skeleton only — re-read required before editing\n" + ast_skeleton
+            return (
+                header
+                + "\n# [tok optimized] File unchanged — showing structure to save tokens\n"
+                + "# Full content: Read path=... offset=1 (adds limit=N for specific section)\n"
+                + ast_skeleton
+            )
 
     # Fall back to heuristic skeletonization for non-Python files
     lines = text.splitlines()
@@ -972,7 +977,12 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
         f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|edit_unsafe:true"
         + (f"|sections:{section_map}" if section_map else "")
     )
-    return header + "\n# [tok] skeleton only — re-read required before editing\n" + compressed
+    return (
+        header
+        + "\n# [tok optimized] File unchanged — showing structure to save tokens\n"
+        + "# Full content: Read path=... offset=1 (adds limit=N for specific section)\n"
+        + compressed
+    )
 
 
 def _compress_git_diff(text: str) -> str:

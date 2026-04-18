@@ -92,8 +92,10 @@ def degradation_reason(
         return "stream transport instability"
     if recovery_holdover_count > 0:
         return "recovery holdover"
-    if tool_history_recovery_count > 0:
+    if tool_history_recovery_count >= 3:
         return "heavy tool-mode recovery"
+    elif tool_history_recovery_count > 0:
+        return "tool-mode recovery"
     if signals.get("fail_open_compat_response", 0) or signals.get("processing_error", 0):
         return "fail-open compatibility"
     if signals.get("semantic_drift_detected", 0) or signals.get("non_tok_response", 0):
@@ -140,8 +142,11 @@ def session_quality(
         or signals.get("fail_open_retry_upstream_pairing_disagreement", 0)
         or signals.get("tok_bridge_provider_pairing_risk_detected", 0)
         or signals.get("tok_bridge_assistant_tool_use_text_interleaving_blocked", 0)
-        or signals.get("tok_bridge_tool_history_repaired", 0)
-        or signals.get("tok_bridge_tool_history_pairing_repaired", 0)
+        or (
+            signals.get("tok_bridge_tool_history_repaired", 0)
+            + signals.get("tok_bridge_tool_history_pairing_repaired", 0)
+        )
+        >= 2
         or signals.get("stream_recovery_retry", 0)
         or signals.get("stream_recovery_fallback", 0)
         or signals.get("tok_bridge_invalid_tool_history_quarantined", 0)
