@@ -48,7 +48,7 @@ The Claude bridge remains the primary acceptance surface.
    - Older messages are compressed into a `>>>` rolling state line using the live bridge
      memory schema
    - Only the last `keep_turns` human turns are kept verbatim
-   - Tool-use/tool-result pairs are never split
+   - Tool-use/tool-result pairs are preserved as intact pairs
 1. The runtime injects the Tok output directive and projected memory
 1. Compressed request is forwarded to `api.anthropic.com`
 
@@ -68,8 +68,8 @@ The Claude bridge remains the primary acceptance surface.
 ### Fail-Open Behavior
 
 If any error occurs during compression or translation, the bridge transparently passes
-the raw request/response through. The user never sees a Tok-related error; worst case is
-higher token cost for that request.
+the raw request/response through. In normal fail-open paths, users should continue
+without a Tok-specific interruption; worst case is higher token cost for that request.
 
 ## Runtime Contract
 
@@ -97,14 +97,13 @@ derived-contract drift rather than a competing second IDL.
 - Structured bridge memory is authoritative when present; `memory.tok` is a
   compatibility fallback only.
 - Projection remains bounded and deterministic—fields are emitted only when populated,
-  but ordering never changes.
+  with stable ordering.
 
 ### Request Preparation Rules
 
 1. Keep the last `keep_turns` human turns verbatim; everything older compresses into the
    state line via `BridgeMemoryState`.
-1. Tool-use/tool-result pairs must remain intact (never split across compression
-   boundaries).
+1. Tool-use/tool-result pairs are kept intact across compression boundaries.
 1. Tool density determines whether history rewrite is skipped to preserve fidelity on
    heavy tool sessions.
 1. The runtime keeps semantic deduplication, tool-result compression, and history
@@ -131,8 +130,8 @@ derived-contract drift rather than a competing second IDL.
 
 - Cold starts prefer structured memory; wire fallback is only used when structured
   memory is empty.
-- Memory ingestion always writes the latest `>>>` line to both structured state and
-  fallback files, keeping bridge replays consistent.
+- Memory ingestion writes the latest `>>>` line to structured state and, when needed,
+  fallback files to keep bridge replays consistent.
 - File/search snapshots are recorded through runtime helpers and surfaced to telemetry
   as `file_snapshot_recorded` / `search_snapshot_recorded` signals.
 

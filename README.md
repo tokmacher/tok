@@ -528,7 +528,7 @@ After working on the codebase, run the full validation flow using `uv run` to ex
 the core regression suite, lint, and type checks:
 
 ```bash
-pre-commit run --all-files
+uv run pre-commit run --all-files
 uv run python -m pytest tests/unit/test_architecture.py tests/unit/validation_metrics.py tests/unit/test_adversarial.py tests/unit/test_memory_growth.py tests/unit/test_bridge_fidelity.py tests/unit/test_encoder_transformer.py tests/unit/test_schema_validation.py tests/unit/test_sifter.py tests/unit/test_error_handling.py -v
 uv run ruff check src/tok/ tests/unit
 uv run mypy src/tok/

@@ -82,11 +82,12 @@ A public release requires:
 The expected automated revalidation pass for that candidate is:
 
 ```bash
-pre-commit run --all-files
-ruff check src/tok tests
-mypy src/tok
-pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
-python -m build
+uv sync --frozen --extra dev
+uv run pre-commit run --all-files
+uv run ruff check src/tok tests
+uv run mypy src/tok
+uv run pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
+uv build
 ```
 
 ## Paired IDL Audit Rule

@@ -7,16 +7,17 @@ Steps for cutting a Tok release.
 - [ ] Worktree is clean or intentionally quarantined; do not tag from a churn-heavy
   bridge/runtime branch
 - [ ] All CI checks pass on `main`
-- [ ] Run full test suite locally: `pytest tests/unit tests/integration -v`
-- [ ] Run lint and hygiene: `pre-commit run --all-files && ruff check src/tok tests`
-- [ ] Run type check: `mypy src/tok/`
-- [ ] Run maintainer release smoke: `python scripts/run_release_smoke.py`
+- [ ] Run full test suite locally: `uv run pytest tests/unit tests/integration -v`
+- [ ] Run lint and hygiene:
+  `uv run pre-commit run --all-files && uv run ruff check src/tok tests`
+- [ ] Run type check: `uv run mypy src/tok/`
+- [ ] Run maintainer release smoke: `uv run python scripts/run_release_smoke.py`
 - [ ] Confirm the release-surface gate passes and no experimental root exports are
   advertised as canonical
 - [ ] Reconcile pricing claims via `docs/pricing_verification.md`
 - [ ] Reconcile benchmark/savings claims via `docs/claims_matrix.md`
 - [ ] Confirm automated and manual live-smoke coverage via `docs/live_smoke_matrix.md`
-- [ ] Build package: `python -m build`
+- [ ] Build package: `uv build`
 - [ ] Verify wheel installs cleanly in a fresh venv
 - [ ] Run the clean-room install verification from the README
 - [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.0`
@@ -36,19 +37,17 @@ Steps for cutting a Tok release.
 Recommended local gate sequence for the exact release candidate:
 
 ```bash
-python scripts/run_release_smoke.py
-pre-commit run --all-files
-ruff check src/tok tests
-mypy src/tok
-pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
-python -m build
+uv sync --frozen --extra dev
+uv run python scripts/run_release_smoke.py
+uv run pre-commit run --all-files
+uv run ruff check src/tok tests
+uv run mypy src/tok
+uv run pytest tests/unit tests/integration -v --cov=src/tok --cov-fail-under=80
+uv build
 ```
 
-If the release check is running in an offline or sandboxed environment that already has
-build requirements installed, `python -m build --no-isolation` is an acceptable local
-fallback. The canonical release command remains `python -m build`. The release smoke
-harness already uses a self-contained `uv run --with build --with hatchling` build step
-so maintainers can verify packaging before running the canonical command.
+For maintainers and CI parity, `uv` is canonical. End-user install/onboarding commands
+in user-facing docs remain `pip`-first.
 
 ## Release
 

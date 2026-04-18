@@ -15,7 +15,7 @@ Runtime defaults and release posture for Tok.
 | Legacy request policy | `legacy_tool_compatible`                           | Explicit rollback path; opt in only when you need the older behavior |
 | Frontier validation   | OpenRouter probes                                  | Advisory only; do not select the public default                      |
 | Fallback mode         | `baseline`                                         | Requests pass through without compression                            |
-| Fail-open             | enabled                                            | Bridge errors never block upstream requests                          |
+| Fail-open             | enabled                                            | Bridge errors are designed to pass through as upstream requests      |
 | Port                  | 9090                                               | Configurable via `--port`                                            |
 
 ## Release Posture
@@ -24,8 +24,9 @@ Runtime defaults and release posture for Tok.
 - The bridge is the only supported product surface
 - SDK/wrapper path exists but is experimental
 - No breaking changes are guaranteed before 1.0
-- The automated local gate for a release candidate is `pre-commit`, `ruff`, `mypy`,
-  `pytest ... --cov-fail-under=80`, and `python -m build`
+- The automated local gate for a release candidate is `uv sync --frozen --extra dev`,
+  `uv run pre-commit`, `uv run ruff`, `uv run mypy`,
+  `uv run pytest ... --cov-fail-under=80`, and `uv build`
 - The current release candidate is gated on one final live Claude validation pass
   against the supported bridge workflow
 - The release candidate should be tagged only from a quiet, clean tree after that
@@ -44,8 +45,8 @@ Runtime defaults and release posture for Tok.
 
 1. **Fail-open**: if the bridge encounters an error, requests are forwarded without
    compression
-1. **Observable degradation**: `tok doctor` and `tok bridge status` always report
-   session health
+1. **Observable degradation**: `tok doctor` and `tok bridge status` report session
+   health signals
 1. **No data leaves your machine**: Tok runs locally; only your normal API calls leave
 
 ## Monitoring
