@@ -1225,7 +1225,7 @@ def test_modified_files_parsing_preserves_leading_path_chars(monkeypatch, tmp_pa
             "",
         )
 
-    monkeypatch.setattr("tok.testing.benchmark_executor._git", _fake_git)
+    monkeypatch.setattr("tok.testing.benchmark_executor._tool_executor._git", _fake_git)
     executor = BenchmarkToolExecutor(workspace, allowed_tools=("view_file",), timeout_seconds=30)
 
     assert executor.modified_files() == (
@@ -1245,7 +1245,7 @@ def test_family_evaluator_modified_files_parsing_preserves_leading_chars(monkeyp
             "",
         )
 
-    monkeypatch.setattr("tok.testing.benchmark_executor._git", _fake_git)
+    monkeypatch.setattr("tok.testing.benchmark_executor._evaluator._git", _fake_git)
     evaluator = FamilyEvaluator(catalog_root=tmp_path)
 
     assert evaluator._modified_files(tmp_path) == ("src/calculator.py", "tests/test_calculator.py")
