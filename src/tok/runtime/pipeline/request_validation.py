@@ -17,13 +17,13 @@ from pydantic import (
     model_validator,
 )
 
-from .bridge_message_diagnostics import (
+from .bridge_message_validation import (
     collect_provider_sensitivity_risks as _collect_bridge_provider_sensitivity_risks,
 )
-from .bridge_message_diagnostics import (
+from .bridge_message_validation import (
     summarize_bridge_pairing,
 )
-from .bridge_message_diagnostics import (
+from .bridge_message_validation import (
     summarize_message_structure as _summarize_message_structure,
 )
 from .prompt_optimization import (
@@ -437,7 +437,7 @@ def _canonicalize_bridge_message(
 
     canonical_role = "assistant" if role == "assistant" else "user"
     raw_content = message.get("content")
-    blocks, drops = _normalize_message_content_to_blocks(raw_content if isinstance(raw_content, (str, list)) else "")
+    blocks, drops = _normalize_message_content_to_blocks(raw_content if isinstance(raw_content, str | list) else "")
     if canonical_role == "user":
         filtered_blocks: list[dict[str, Any]] = []
         for block in blocks:
@@ -958,7 +958,7 @@ def _process_bridged_message(
         return None, True
 
     if not changed and not preserve_content:
-        changed = _check_changed_content(msg, orig_content if isinstance(orig_content, (str, list)) else "", role)
+        changed = _check_changed_content(msg, orig_content if isinstance(orig_content, str | list) else "", role)
 
     return msg, changed
 

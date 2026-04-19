@@ -7,7 +7,7 @@ from .runtime.core import (
     UniversalTokRuntime,
     apply_schema_adaptations,
 )
-from .runtime.memory.session_helpers import _discover_project_markers
+from .runtime.memory.session_state import _discover_project_markers
 from .runtime.pipeline.request_validation import detect_prompt_bloat
 from .runtime.pipeline.response_processing import (
     malformed_tok_signals,

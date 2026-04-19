@@ -51,7 +51,7 @@ from .config import (
 )
 from .core import UniversalTokRuntime, logger
 from .memory.bridge_memory import clean_system_context
-from .memory.session_helpers import extract_memory_items
+from .memory.session_state import extract_memory_items
 from .pipeline.request_preparation import (
     _capture_repeat_target_snapshots,
     _has_unresolved_tool_required_conditions,

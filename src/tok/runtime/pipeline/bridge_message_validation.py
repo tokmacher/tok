@@ -127,7 +127,7 @@ def summarize_message_structure(
             summary["assistant_msgs"] += 1
 
         content = message.get("content")
-        typed_content: str | list[dict[str, Any]] = content if isinstance(content, (str, list)) else []
+        typed_content: str | list[dict[str, Any]] = content if isinstance(content, str | list) else []
         blocks_summary = _summarize_message_blocks(
             typed_content,
             summary,

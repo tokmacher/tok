@@ -101,7 +101,7 @@ from .memory.answer_memory import (
     reinforce_structured_answer_memory,
 )
 from .memory.bridge_memory import BridgeMemoryState
-from .memory.session_helpers import (
+from .memory.session_state import (
     calculate_reasoning_depth,
     get_adaptive_keep_turns,
     session_write_memory,

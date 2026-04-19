@@ -38,7 +38,7 @@ from ._bridge_comparison import (
     _payloads_materially_differ,
     _request_fingerprint_diff,
 )
-from ._signal_utils import _merge_signal_counts
+from ._signal_constants import _merge_signal_counts
 
 __all__ = [
     "_count_user_messages_with_mixed_tool_result_content",

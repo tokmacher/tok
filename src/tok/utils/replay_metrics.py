@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tok.compression import compress_history, compress_tool_results
-from tok.runtime.memory.session_helpers import get_adaptive_keep_turns
+from tok.runtime.memory.session_state import get_adaptive_keep_turns
 from tok.runtime.pipeline.response_processing import response_contract_for_mode
 from tok.runtime.pipeline.tool_processing import (
     build_tool_use_id_to_context,

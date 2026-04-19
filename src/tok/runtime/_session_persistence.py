@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config import RESULT_CACHE_TTL_SECONDS
 from .memory.bridge_memory import BridgeMemoryState
-from .memory.session_helpers import _discover_project_markers
+from .memory.session_state import _discover_project_markers
 from .types import EpisodeEntry, EpisodeLedger
 
 if TYPE_CHECKING:

@@ -22,7 +22,7 @@ from . import (
     _response_contract_for_mode,
     logger,
 )
-from ._signal_utils import _merge_signal_counts
+from ._signal_constants import _merge_signal_counts
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
