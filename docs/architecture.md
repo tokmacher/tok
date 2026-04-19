@@ -1,7 +1,7 @@
 # Architecture
 
 For visual flow diagrams, see [architecture-diagrams.md](./architecture-diagrams.md).
-For the active roadmap and tranche sequencing, see `roadmap.md` in the repository root.
+For the active roadmap, see `ops/archive/roadmap_20260419_stale.md` (archived).
 
 Current architecture posture:
 

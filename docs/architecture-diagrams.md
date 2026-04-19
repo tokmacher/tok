@@ -168,4 +168,4 @@ flowchart TB
 
 ______________________________________________________________________
 
-See the repository root `roadmap.md` for latest planning and phase status.
+See `ops/archive/roadmap_20260419_stale.md` for archived planning and phase status.
