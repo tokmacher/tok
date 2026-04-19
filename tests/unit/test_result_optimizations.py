@@ -111,6 +111,17 @@ def test_truncate_large_result_truncates_large_files() -> None:
     assert "... [TRUNCATED" in truncated
 
 
+def test_truncate_large_result_respects_already_compressed_flag() -> None:
+    """Pre-compressed (e.g., skeletonized) output should not be truncated again."""
+    large_text = "A" * 5000
+
+    truncated = truncate_large_result(large_text, limit=1200)
+    assert "... [TRUNCATED" in truncated
+
+    preserved = truncate_large_result(large_text, limit=1200, already_compressed=True)
+    assert preserved == large_text
+
+
 def test_grep_shows_multiple_snippets_per_file() -> None:
     """Small result sets (≤20 matches) return verbatim — no compression overhead."""
     grep_output = "\n".join(

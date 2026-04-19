@@ -59,7 +59,7 @@ class RuntimeToolExecutor:
 
     def __init__(
         self,
-        log_path: str = "execution.log",
+        log_path: str = os.path.join("tmp", "execution.log"),
         workspace_root: str | None = None,
     ) -> None:
         self.log_path = log_path
@@ -259,6 +259,13 @@ class RuntimeToolExecutor:
         """Log command execution details to a file."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"\n{'=' * 20}\n[{timestamp}] COMMAND: {cmd}\nEXIT CODE: {returncode}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}\n{'=' * 20}\n"
+
+        try:
+            log_dir = os.path.dirname(self.log_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            logger.debug("Failed to ensure log directory for %s", self.log_path)
 
         # Simple rotation: keep the log file under a reasonable size (e.g., 500KB)
         try:
@@ -494,8 +501,9 @@ class RuntimeToolExecutor:
                 logger.debug("Output Snippet:\n%s", snippet)
                 if len(lines) > 5:
                     logger.debug(
-                        "... (%d more lines in execution.log)",
+                        "... (%d more lines in %s)",
                         len(lines) - 5,
+                        self.log_path,
                     )
 
             res_msg = f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"

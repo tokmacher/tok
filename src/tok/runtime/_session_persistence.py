@@ -26,6 +26,7 @@ def initialize_session_storage(session: RuntimeSession, *, explicit_memory_dir: 
             session.memory_dir = Path(project_dir) / ".tok"
         else:
             session.memory_dir = Path.home() / ".tok"
+    provided_fallback_memory = session.fallback_memory
     # Save the load_global_macros flag BEFORE overwriting bridge_memory
     load_global_macros_flag = session.bridge_memory.load_global_macros
     if not load_global_macros_flag:
@@ -34,7 +35,8 @@ def initialize_session_storage(session: RuntimeSession, *, explicit_memory_dir: 
         session._load_global_macros = not explicit_memory_dir
     session.bridge_memory = load_bridge_memory(session)
     session.result_cache = load_result_cache(session)
-    session.fallback_memory = load_fallback_memory(session)
+    loaded_fallback_memory = load_fallback_memory(session)
+    session.fallback_memory = provided_fallback_memory or loaded_fallback_memory
     if session.fallback_memory and not session.bridge_memory.wire_state():
         session.bridge_memory.ingest_wire_state(session.fallback_memory)
         save_bridge_memory(session)

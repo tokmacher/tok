@@ -237,7 +237,7 @@ class TokOrchestrator:
         self.compute_budget = compute_budget if compute_budget is not None else 20  # Max compute-intensive operations
         self.MAX_PROMPT_TOKENS = 8192  # Total budget for all content
         self.workspace_root = os.getcwd()
-        self.log_path = "execution.log"
+        self.log_path = os.path.join("tmp", "execution.log")
         self.max_tokens = 4096  # Production default
         self.last_tool_sig: str | None = None
         self.consecutive_repeats = 0
@@ -317,7 +317,12 @@ class TokOrchestrator:
             if shadowed:
                 os.rename("tok.py", "tok.py.tmp")
 
-            cmd = "uv run python -c \"from tok.utils.sifter import Sifter; s = Sifter.from_dir('src/tok', naked=False, minify=True); open('territory.tok', 'w').write(s)\""
+            cmd = (
+                'uv run python -c "from pathlib import Path; from tok.utils.sifter import Sifter; '
+                "s = Sifter.from_dir('src/tok', naked=False, minify=True); "
+                "out = Path('tmp/orchestrator/territory.tok'); out.parent.mkdir(parents=True, exist_ok=True); "
+                'out.write_text(s)"'
+            )
             proc = subprocess.run(
                 cmd,
                 shell=True,  # nosec B602
@@ -342,6 +347,13 @@ class TokOrchestrator:
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"\n{'=' * 20}\n[{timestamp}] COMMAND: {cmd}\nEXIT CODE: {returncode}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}\n{'=' * 20}\n"
+
+        try:
+            log_dir = os.path.dirname(self.log_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            logger.debug("Failed to ensure log directory for %s", self.log_path, exc_info=True)
 
         # Simple rotation: keep the log file under a reasonable size (e.g., 500KB)
         try:

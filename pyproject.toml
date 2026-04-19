@@ -80,12 +80,12 @@ ignore = [
     "E402",              # Module level import not at top of file
     "SLF001",            # Private member accessed
     "ANN001",            # Missing type annotation for function argument
-    "UP038",             # Use X | Y in isinstance
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E501", "S101", "D103"]  # Examples can have long lines, asserts, missing docstrings
 "tests/*" = ["S101", "D103", "D102"]     # Tests can use asserts, have missing docstrings
+"tests/fixtures/**" = ["I001"]           # Fixture workspaces have their own import conventions
 "scripts/*" = ["S101"]                    # Scripts can use asserts
 
 [tool.ruff.lint.mccabe]

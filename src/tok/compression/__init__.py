@@ -601,11 +601,11 @@ def _compress_install(text: str) -> str:
     return _compress_install(text)
 
 
-def truncate_large_result(text: str, limit: int = 1200) -> str:
+def truncate_large_result(text: str, limit: int = 1200, *, already_compressed: bool = False) -> str:
     """Head-tail truncation for extremely large results to prevent context flooding."""
     from ._pipeline import truncate_large_result as _truncate_large_result
 
-    return _truncate_large_result(text, limit=limit)
+    return _truncate_large_result(text, limit=limit, already_compressed=already_compressed)
 
 
 def tok_tool_result(
