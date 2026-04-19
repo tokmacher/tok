@@ -350,7 +350,7 @@ class Bridge(SerializationProtocol):
 
         """
         # Type assertion to handle the generic object parameter
-        if not isinstance(data, (str, dict, list)):
+        if not isinstance(data, str | dict | list):
             raise TypeError(f"Expected str, dict, or list, got {type(data)}")
         return Bridge().detect_and_convert(data)
 

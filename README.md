@@ -103,8 +103,10 @@ the public release path remains Claude Code first. Other experimental paths incl
 - **Qwen** — set `QWEN_API_KEY` and configure your endpoint
 - **Local models** — point Claude Code at your local inference server
 
-No configuration changes required in Tok itself. Just set up Claude Code with your
-provider as usual, then start the bridge.
+Tok manages its own bridge routing transparently. To use the bridge-first workflow,
+point Claude Code at the bridge using `ANTHROPIC_BASE_URL=http://localhost:9090` (or use
+`tok install --wrap-claude` for shell-level auto-routing). No Tok-specific config files
+are required.
 
 ## What Tok Is / Is Not
 
@@ -256,10 +258,6 @@ provider, Tok will attempt compression but behavior is not guaranteed.
 
 `tok install` is now a setup/migration helper and does not modify `claude` by default.
 If you want legacy auto-routing behavior, run `tok install --wrap-claude`.
-
-**Note**: Due to recent issues around usage limits within Claude Code, it has been
-occasionally difficult to verify consistent Tok behavior across tasks (particularly
-short-running ones).
 
 ## Install
 

@@ -61,7 +61,7 @@ def _content_text(content: str | dict[str, Any] | list[Any]) -> str:
             return str(content.get("text", ""))
         if "content" in content:
             inner = content.get("content")
-            return _content_text(inner if isinstance(inner, (str, list, dict)) else "")
+            return _content_text(inner if isinstance(inner, str | list | dict) else "")
     return str(content)
 
 

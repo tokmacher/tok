@@ -761,7 +761,7 @@ def _calculate_negative_score(text: str, lower: str) -> int:
     """Calculate negative score contribution."""
     score = 0
     for prefixes, points in _NEGATIVE_SCORE_PREFIXES:
-        if isinstance(prefixes, (tuple, str)):
+        if isinstance(prefixes, tuple | str):
             if lower.startswith(prefixes):
                 score -= points
     for exc in _NEGATIVE_EXCEPTIONS:

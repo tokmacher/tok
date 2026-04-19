@@ -23,7 +23,7 @@ def _flatten_strings(
 ) -> None:
     if isinstance(value, str):
         collector.append(value)
-    elif isinstance(value, (int, float, bool)):
+    elif isinstance(value, int | float | bool):
         collector.append(str(value))
     elif isinstance(value, dict):
         for child in value.values():

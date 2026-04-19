@@ -32,7 +32,7 @@ def _str_tuple(values: Any) -> tuple[str, ...]:
     if isinstance(values, str):
         cleaned = _clean_str(values)
         return (cleaned,) if cleaned else ()
-    if not isinstance(values, (list, tuple)):
+    if not isinstance(values, list | tuple):
         cleaned = _clean_str(values)
         return (cleaned,) if cleaned else ()
     result: list[str] = []
@@ -48,7 +48,7 @@ def _dict_tuple(values: Any) -> tuple[dict[str, Any], ...]:
         return ()
     if isinstance(values, dict):
         return (dict(values),)
-    if not isinstance(values, (list, tuple)):
+    if not isinstance(values, list | tuple):
         return ()
     result: list[dict[str, Any]] = []
     for value in values:

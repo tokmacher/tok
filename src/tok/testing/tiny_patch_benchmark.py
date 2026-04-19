@@ -383,7 +383,7 @@ def _turn_diagnostics(
                 continue
             signals = (turn.get("response_metrics") or {}).get("response_behavior_signals") or {}
             for key, value in signals.items():
-                if isinstance(value, (int, float)) and value:
+                if isinstance(value, int | float) and value:
                     tok_signal_counts[key] += int(value)
             if int(signals.get("tok_bridge_strict_failure", 0) or 0) > 0:
                 warning_counts["tok_bridge_strict_failure"] += 1
@@ -560,7 +560,7 @@ def _build_forensics_report(task_runs_root: Path) -> dict[str, Any]:
                 saved_total += int(compression_metrics.get("total_saved_tokens", 0) or 0)
                 type_breakdown = compression_metrics.get("type_breakdown") or {}
                 for key, value in type_breakdown.items():
-                    if isinstance(value, (int, float)) and value:
+                    if isinstance(value, int | float) and value:
                         codec_saved[str(key)] += int(value)
                 input_signals = compression_metrics.get("input_behavior_signals") or {}
                 response_signals = response_metrics.get("response_behavior_signals") or {}

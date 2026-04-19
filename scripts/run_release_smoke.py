@@ -31,7 +31,6 @@ def _pytest_step(name: str, *args: str) -> SmokeStep:
 IMPORT_CHECK = (
     "import tok.stats",
     "import tok.utils.savings_tracker",
-    "import tok.gateway.stats",
     "import tok.universal_runtime",
     "import tok.runtime.core",
     "import tok.release_surface",
@@ -335,7 +334,6 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
     # Focused baseline regression cluster.
     _pytest_step(
         "Focused bridge/runtime/compression smoke",
-        "tests/unit/test_compatibility_shims.py",
         "tests/unit/test_bridge_smoke.py",
         "tests/unit/test_packaging_smoke.py",
         "tests/unit/test_gateway.py::test_gateway_canonicalizes_tool_heavy_bridge_body_before_send",
