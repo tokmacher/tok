@@ -40,6 +40,20 @@ _CLAUDE_SONNET = ModelProfile(
     prefer_stable_file_stubs=True,
 )
 
+_QWEN3_CODER = ModelProfile(
+    name="qwen3-coder",
+    repair_loop_susceptibility=0.7,
+    compression_aggressiveness=0.4,
+    prefer_stable_file_stubs=True,
+)
+
+_GLM_5 = ModelProfile(
+    name="glm-5",
+    repair_loop_susceptibility=0.4,
+    compression_aggressiveness=0.6,
+    prefer_stable_file_stubs=True,
+)
+
 _DEFAULT = ModelProfile(
     name="default",
     repair_loop_susceptibility=0.3,
@@ -60,6 +74,12 @@ _MODEL_PROFILES: dict[str, ModelProfile] = {
     "claude-sonnet-4": _CLAUDE_SONNET,
     "claude-sonnet-4.6": _CLAUDE_SONNET,
     "anthropic/claude-sonnet-4": _CLAUDE_SONNET,
+    "qwen3-coder": _QWEN3_CODER,
+    "qwen3-coder-next": _QWEN3_CODER,
+    "qwen/qwen3-coder": _QWEN3_CODER,
+    "qwen/qwen3-coder-next": _QWEN3_CODER,
+    "glm-5": _GLM_5,
+    "z-ai/glm-5": _GLM_5,
 }
 
 

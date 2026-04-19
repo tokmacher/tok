@@ -403,20 +403,16 @@ class TestCLI:
         assert "tok bridge start" in result.output
 
     def test_bridge_start_with_capture_prints_capture_directory(self, monkeypatch, tmp_path) -> None:
-        from tok.cli import _bridge, _cli_support
+        from tok.cli import _cli_support
 
         def no_bridge(port) -> None:
-            return None
-
-        def no_collector(_debug=False) -> None:
             return None
 
         def fake_memory_root():
             return tmp_path / ".tok"
 
-        for mod in (_bridge, _cli_support):
+        for mod in (_cli_support,):
             monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
-            monkeypatch.setattr(mod, "start_collector", no_collector)
             monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
             monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
             monkeypatch.setattr(mod, "memory_root", fake_memory_root)
@@ -439,17 +435,13 @@ class TestCLI:
         assert "ANTHROPIC_BASE_URL=http://localhost:9090 claude" in result.output
 
     def test_bridge_start_enables_session_reset(self, monkeypatch, tmp_path) -> None:
-        from tok.cli import _bridge, _cli_support
+        from tok.cli import _cli_support
 
         def no_bridge(port) -> None:
             return None
 
-        def no_collector(_debug=False) -> None:
-            return None
-
-        for mod in (_bridge, _cli_support):
+        for mod in (_cli_support,):
             monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
-            monkeypatch.setattr(mod, "start_collector", no_collector)
             monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
             monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
 
@@ -474,17 +466,13 @@ class TestCLI:
         assert captured["env"]["TOK_RESET_SESSION"] == "1"
 
     def test_bridge_start_foreground_forwards_api_base(self, monkeypatch, tmp_path) -> None:
-        from tok.cli import _bridge, _cli_support
+        from tok.cli import _cli_support
 
         def no_bridge(port) -> None:
             return None
 
-        def no_collector(_debug=False) -> None:
-            return None
-
-        for mod in (_bridge, _cli_support):
+        for mod in (_cli_support,):
             monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
-            monkeypatch.setattr(mod, "start_collector", no_collector)
             monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
             monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
 
@@ -510,20 +498,16 @@ class TestCLI:
         assert captured["_api_base"] == "https://example.test/custom"
 
     def test_bridge_start_subprocess_exports_custom_api_base(self, monkeypatch, tmp_path) -> None:
-        from tok.cli import _bridge, _cli_support
+        from tok.cli import _cli_support
 
         def no_bridge(port) -> None:
-            return None
-
-        def no_collector(_debug=False) -> None:
             return None
 
         def fake_memory_root():
             return tmp_path / ".tok"
 
-        for mod in (_bridge, _cli_support):
+        for mod in (_cli_support,):
             monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
-            monkeypatch.setattr(mod, "start_collector", no_collector)
             monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
             monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
             monkeypatch.setattr(mod, "memory_root", fake_memory_root)
@@ -687,9 +671,7 @@ class TestCLI:
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
         monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
         monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
-        monkeypatch.setattr(_bridge, "read_collector_pid", lambda: None)
         monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
-        monkeypatch.setattr(_bridge, "COLLECTOR_PID_FILE", tmp_path / "collector.pid")
 
         calls = {"checked": False}
 
@@ -716,9 +698,7 @@ class TestCLI:
 
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
         monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
-        monkeypatch.setattr(_bridge, "read_collector_pid", lambda: None)
         monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
-        monkeypatch.setattr(_bridge, "COLLECTOR_PID_FILE", tmp_path / "collector.pid")
         monkeypatch.setattr(
             _bridge.os,
             "kill",
@@ -736,9 +716,7 @@ class TestCLI:
 
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
         monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
-        monkeypatch.setattr(_bridge, "read_collector_pid", lambda: None)
         monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
-        monkeypatch.setattr(_bridge, "COLLECTOR_PID_FILE", tmp_path / "collector.pid")
 
         calls = {"checked": False}
 

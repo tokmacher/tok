@@ -11,7 +11,8 @@ That broader ambition remains later-stage work.
 Tok is standardized around the bridge-first runtime in `src/tok/gateway/__init__.py`.
 
 - Primary runtime: the Claude Code bridge
-- Secondary runtime: `adapters/orchestrator.py` and related archived/custom-agent paths
+- Secondary runtime: alternative agent paths (see release_surface.py for supported vs
+  experimental split)
 - Acceptance target: invisible operation inside the bridge, not protocol purity in
   isolation
 - Current release target: a trustworthy Claude-first public release, not cross-surface

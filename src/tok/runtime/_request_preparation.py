@@ -81,6 +81,10 @@ from .repeat_targets import (
 )
 from .types import PreparedRuntimeRequest, RuntimeRequest
 
+# Lazy-load all public symbols from runtime.core into this module's namespace.
+# This allows prepare_request_impl() to call _core symbols without circular
+# import issues at module load time. All symbols are re-exported at the
+# compression pipeline layer (compression/__init__.py) for public consumption.
 globals().update(vars(_core))
 
 _RECENT_COMMAND_WINDOW = 10

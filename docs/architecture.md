@@ -176,7 +176,7 @@ src/tok/
 - Bridge transport adaptation: `runtime/pipeline/request_preparation.py`,
   `runtime/pipeline/request_validation.py`
 - Experimental / legacy: deeper orchestrator internals, monitoring/dashboard code, and
-  archive material
+  analysis tooling
 
 The release surface for `0.1.0` is intentionally narrower than the repository layout:
 see `src/tok/release_surface.py` for the supported-versus-experimental split that

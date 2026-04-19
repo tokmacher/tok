@@ -464,8 +464,6 @@ The repository is intentionally split by audience and lifecycle:
 - `docs/maintainers/`: roadmap, refactoring notes, and maintainer-only planning
 - `examples/`: experimental wrapper/API examples outside the default bridge-first path
 - `tests/`: unit, integration, replay, and stability coverage
-- `archive/`: curated historical research and superseded implementation records, kept
-  for provenance and excluded from the release surface
 
 ## Validation Workflow
 

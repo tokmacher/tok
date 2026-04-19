@@ -7,8 +7,6 @@ import logging
 import os
 import socket
 import subprocess
-import sys
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,8 +25,6 @@ console = Console()
 TOK_DIR = Path.home() / ".tok"
 PID_FILE = TOK_DIR / "bridge.pid"
 LOG_FILE = TOK_DIR / "bridge.log"
-COLLECTOR_PID_FILE = TOK_DIR / "collector.pid"
-COLLECTOR_LOG_FILE = TOK_DIR / "collector.log"
 
 RUNTIME_WARNING_SIGNALS = (
     "non_tok_response",
@@ -183,74 +179,6 @@ def get_running_bridge_pid(port: int) -> int | None:
         return pid
 
     return None
-
-
-def read_collector_pid() -> int | None:
-    """Read Collector PID from file and validate it's alive."""
-    if not COLLECTOR_PID_FILE.exists():
-        return None
-    try:
-        pid = int(COLLECTOR_PID_FILE.read_text().strip())
-        os.kill(pid, 0)
-        return pid
-    except (ValueError, ProcessLookupError, PermissionError):
-        pass
-    with contextlib.suppress(PermissionError):
-        COLLECTOR_PID_FILE.unlink(missing_ok=True)
-    return None
-
-
-def start_collector(_debug: bool = False) -> None:
-    """Start the telemetry collector in the background."""
-    existing = read_collector_pid()
-    if existing:
-        return
-
-    on_port = find_pids_on_port(8000)
-    if on_port:
-        COLLECTOR_PID_FILE.write_text(str(on_port[0]))
-        return
-
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(Path(__file__).parent.parent.parent)
-
-    log_file = open(COLLECTOR_LOG_FILE, "a")
-
-    try:
-        cmd = [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "tok.collector.main:app",
-            "--port",
-            "8000",
-        ]
-
-        proc = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=log_file,
-            stderr=log_file,
-            start_new_session=True,
-        )
-    finally:
-        log_file.close()
-
-    COLLECTOR_PID_FILE.write_text(str(proc.pid))
-
-    for _ in range(10):
-        time.sleep(0.2)
-        try:
-            import httpx
-
-            r = httpx.get(collector_url("/health"), timeout=0.5)
-            if r.status_code in (
-                200,
-                404,
-            ):
-                return
-        except Exception:
-            pass
 
 
 def memory_root() -> Path:
@@ -526,21 +454,17 @@ def interaction_quality_rows(
 
 
 __all__ = [
-    "COLLECTOR_LOG_FILE",
-    "COLLECTOR_PID_FILE",
     "LOG_FILE",
     "PID_FILE",
     "RUNTIME_WARNING_SIGNALS",
     "TOK_DIR",
     "bridge_url",
-    "collector_url",
     "console",
     "find_pids_on_port",
     "get_running_bridge_pid",
     "interaction_quality_rows",
     "memory_root",
     "msg_text",
-    "read_collector_pid",
     "read_pid",
     "render_stats_panel",
     "runtime_verdict",
@@ -550,6 +474,5 @@ __all__ = [
     "session_recommendation",
     "session_signals_text",
     "session_status_rows",
-    "start_collector",
     "status_border",
 ]

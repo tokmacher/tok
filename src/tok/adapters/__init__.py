@@ -14,11 +14,7 @@ class OrchestratorConfig:
 
 
 def __getattr__(name: str) -> object:
-    """Lazy-load Agent and TokOrchestrator to avoid circular imports."""
-    if name == "Agent":
-        from .agent import Agent
-
-        return Agent
+    """Lazy-load TokOrchestrator to avoid circular imports."""
     if name == "TokOrchestrator":
         from .orchestrator import TokOrchestrator
 
@@ -28,8 +24,6 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
-    # Agent (lazy — requires OPENROUTER_API_KEY at runtime)
-    "Agent",
     "ClaudeBridgeAdapter",
     "OpenAIChatAdapter",
     "OrchestratorAdapter",

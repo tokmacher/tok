@@ -16,7 +16,6 @@ import typer
 from tok.stats import SavingsTracker
 
 from ._cli_support import (
-    COLLECTOR_PID_FILE,
     LOG_FILE,
     PID_FILE,
     TOK_DIR,
@@ -24,14 +23,12 @@ from ._cli_support import (
     console,
     get_running_bridge_pid,
     memory_root,
-    read_collector_pid,
     render_stats_panel,
     runtime_verdict,
     savings_headline,
     savings_style,
     session_signals_text,
     session_status_rows,
-    start_collector,
     status_border,
 )
 
@@ -108,8 +105,6 @@ def bridge_start(
         raise typer.Exit(0)
 
     TOK_DIR.mkdir(parents=True, exist_ok=True)
-
-    start_collector(_debug=debug)
 
     if foreground:
         from tok.gateway import run_bridge
@@ -245,15 +240,6 @@ def bridge_stop(force: bool = False) -> None:
                 border_style=status_border(verdict_style),
             )
         )
-
-    collector_pid = read_collector_pid()
-    if collector_pid:
-        try:
-            os.kill(collector_pid, signal.SIGTERM)
-            console.print(f"[green]Collector stopped (PID {collector_pid})[/green]")
-        except (ProcessLookupError, PermissionError):
-            pass
-    COLLECTOR_PID_FILE.unlink(missing_ok=True)
 
 
 @bridge_app.command("status")
