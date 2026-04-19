@@ -10,7 +10,6 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
-import tok.runtime.core as _core
 from tok.compression import (
     EDIT_LIKE_TOOLS,
     compress_history,
@@ -49,7 +48,7 @@ from .config import (
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOK_TOOL_REQUIRED_LATCH_THRESHOLD,
 )
-from .core import UniversalTokRuntime, logger
+from .core import RuntimeSession, UniversalTokRuntime, logger
 from .memory.bridge_memory import clean_system_context
 from .memory.session_state import extract_memory_items
 from .pipeline.request_preparation import (
@@ -88,12 +87,6 @@ from .repeat_targets import (
     stable_digest,
 )
 from .types import PreparedRuntimeRequest, RuntimeRequest
-
-# Lazy-load all public symbols from runtime.core into this module's namespace.
-# This allows prepare_request_impl() to call _core symbols without circular
-# import issues at module load time. All symbols are re-exported at the
-# compression pipeline layer (compression/__init__.py) for public consumption.
-globals().update(vars(_core))
 
 _RECENT_COMMAND_WINDOW = 10
 _DEFAULT_JIT_HIT_THRESHOLD = 3
@@ -247,7 +240,7 @@ def _prompt_optimization_materially_degrades_context(
 
 
 def _record_structured_answer_expectation(
-    session: _core.RuntimeSession,
+    session: RuntimeSession,
     body: dict[str, Any],
 ) -> None:
     latest_user_prompt = ""
@@ -283,7 +276,7 @@ def _bridge_candidate_body(
 
 def _bridge_history_cut_candidate(
     *,
-    session: _core.RuntimeSession,
+    session: RuntimeSession,
     request: RuntimeRequest,
     messages: list[dict[str, Any]],
     system: Any,
@@ -306,7 +299,7 @@ def _bridge_history_cut_candidate(
 
 
 def observe_repeat_target_result_impl(
-    session_self: _core.RuntimeSession,
+    session_self: RuntimeSession,
     *,
     tool_id: str,
     tool_name: str,
@@ -490,7 +483,7 @@ def observe_repeat_target_result_impl(
 
 def _resolve_effective_tool_compatible(
     request: RuntimeRequest,
-    session: _core.RuntimeSession,
+    session: RuntimeSession,
     _translated_messages: list[dict[str, Any]],
     _normalized_tool_events: list[Any],
     behavior_signals: dict[str, int],
@@ -652,7 +645,7 @@ def _restore_latest_assistant_thinking(
 def prepare_request_impl(
     runtime_self: UniversalTokRuntime,
     request: RuntimeRequest,
-    session: _core.RuntimeSession,
+    session: RuntimeSession,
     *,
     result_cache: dict[str, Any] | None = None,
 ) -> PreparedRuntimeRequest:
