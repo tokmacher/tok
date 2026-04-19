@@ -1325,6 +1325,7 @@ def compress_tool_results(
     preserve_exact_search_evidence: bool = False,
     recently_edited_files: dict[str, int] | None = None,
     file_heat: dict[str, float] | None = None,
+    model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
@@ -1345,6 +1346,7 @@ def compress_tool_results(
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         recently_edited_files=recently_edited_files,
         file_heat=file_heat,
+        model_profile=model_profile,
     )
 
 
@@ -1404,6 +1406,7 @@ def compress_recent_window(
     first_exact_evidence_seen: set[str] | None = None,
     preserve_exact_search_evidence: bool = False,
     session_files_read: set[str] | None = None,
+    model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     from ._pipeline import compress_recent_window_impl
@@ -1416,6 +1419,7 @@ def compress_recent_window(
         first_exact_evidence_seen=first_exact_evidence_seen,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         session_files_read=session_files_read,
+        model_profile=model_profile,
     )
 
 

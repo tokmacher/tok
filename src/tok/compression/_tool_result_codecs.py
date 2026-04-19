@@ -797,15 +797,26 @@ def _extract_python_skeleton(text: str) -> str | None:
 
 
 def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, session: Any | None = None) -> str:
-    # Small files are never worth skeletonizing — the token savings are negligible
-    # but the friction of losing access to the full content is high.
-    # Also skip skeletonization for precision reads (offset/limit based) - these are
-    # intentional targeted reads and should not be compressed.
+    _agg = 1.0
+    if tool_context and isinstance(tool_context, dict):
+        mp = tool_context.get("_model_profile")
+        if mp is not None:
+            _agg = getattr(mp, "compression_aggressiveness", 1.0)
+    elif session is not None:
+        mp = getattr(session, "model_profile", None)
+        if mp is not None:
+            _agg = getattr(mp, "compression_aggressiveness", 1.0)
+    if _agg < 0.5:
+        return text
+    _small_chars = _SMALL_FILE_MAX_CHARS
+    _small_lines = _SMALL_FILE_MAX_LINES
+    if _agg < 0.8:
+        _small_chars = _SMALL_FILE_MAX_CHARS * 3
+        _small_lines = _SMALL_FILE_MAX_LINES * 3
     if tool_context:
         args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
         if any(k in args for k in ("offset", "limit", "start", "end")) or args.get("verbatim"):
             return text
-        # Zero-heat check: never compress files that haven't been read before
         file_heat = tool_context.get("file_heat") if isinstance(tool_context, dict) else None
         if file_heat:
             path = str(
@@ -816,7 +827,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 heat = file_heat.get(norm_path, 0.0) if isinstance(file_heat, dict) else 0.0
                 if heat == 0.0:
                     return text
-    if len(text) <= _SMALL_FILE_MAX_CHARS and text.count("\n") + 1 <= _SMALL_FILE_MAX_LINES:
+    if len(text) <= _small_chars and text.count("\n") + 1 <= _small_lines:
         return text
 
     # Try AST-based skeleton extraction for Python files

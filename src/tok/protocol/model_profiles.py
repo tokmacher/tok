@@ -17,6 +17,9 @@ class ModelProfile:
     repair_loop_susceptibility: float
     compression_aggressiveness: float
     prefer_stable_file_stubs: bool
+    skeletonize_files: bool = True
+    stable_result_enabled: bool = True
+    skeleton_max_lines: int = 0
 
 
 _DEEPSEEK_V3_2 = ModelProfile(
@@ -45,13 +48,17 @@ _QWEN3_CODER = ModelProfile(
     repair_loop_susceptibility=0.7,
     compression_aggressiveness=0.4,
     prefer_stable_file_stubs=True,
+    skeletonize_files=False,
+    stable_result_enabled=False,
 )
 
 _GLM_5 = ModelProfile(
     name="glm-5",
-    repair_loop_susceptibility=0.4,
-    compression_aggressiveness=0.6,
+    repair_loop_susceptibility=0.65,
+    compression_aggressiveness=0.3,
     prefer_stable_file_stubs=True,
+    skeletonize_files=False,
+    stable_result_enabled=False,
 )
 
 _DEFAULT = ModelProfile(

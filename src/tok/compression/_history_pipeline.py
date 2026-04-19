@@ -665,6 +665,7 @@ def compress_tool_results_impl(
     recently_edited_files: dict[str, int] | None = None,
     file_heat: dict[str, float] | None = None,
     session: Any | None = None,
+    model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
     precision_ranges_by_path: dict[str, list[tuple[int, int]]] = {}
@@ -672,6 +673,8 @@ def compress_tool_results_impl(
     search_seen_matches: dict[str, set[str]] = {}
     stack_prev_by_signature: dict[str, str] = {}
     feature_telemetry: dict[str, dict[str, int]] = {}
+    _skip_stable_result = model_profile is not None and not getattr(model_profile, "stable_result_enabled", True)
+    _skip_file_skeleton = model_profile is not None and not getattr(model_profile, "skeletonize_files", True)
 
     def _record_feature_telemetry(
         feature: str,
@@ -1144,7 +1147,11 @@ def compress_tool_results_impl(
                         block["content"] = compressed
                         continue
                     # Apply semantic hash compression for repeat search
-                    if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
+                    if (
+                        not _skip_stable_result
+                        and semantic_hash_cache is not None
+                        and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
+                    ):
                         cache_key = _make_semantic_cache_key(ctx, raw)
                         if cache_key is not None:
                             content_hash = _compute_semantic_hash(raw)
@@ -1269,7 +1276,8 @@ def compress_tool_results_impl(
             # Only apply semantic dedup if this is a repeat read in the current session
             # First reads must be preserved verbatim (not compressed)
             if (
-                tool_name in FILE_LIKE_TOOLS
+                not _skip_stable_result
+                and tool_name in FILE_LIKE_TOOLS
                 and _is_file_fully_delivered(norm_path)
                 and (session_files_read is None or norm_path in session_files_read)
                 and semantic_hash_cache is not None
@@ -1288,6 +1296,22 @@ def compress_tool_results_impl(
                     content_hash = _compute_semantic_hash(raw)
                     prev_hash = semantic_hash_cache.get(cache_key)
                     if prev_hash == content_hash:
+                        if _skip_file_skeleton:
+                            summary = ""
+                            if hot_summary_records is not None:
+                                record_key = f"file_read|{norm_path}"
+                                record = hot_summary_records.get(record_key)
+                                if record and hasattr(record, "summary"):
+                                    summary = record.summary
+                            if summary:
+                                token = f"@stable_result(hash:{content_hash})\n@stable_summary |> {_truncate_stable_snippet(summary, 280)}"
+                                saved = len(raw) - len(token)
+                                if saved > 0:
+                                    breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)
+                                    log_semantic_dedup(cache_key, saved)
+                                    block["content"] = token
+                                    continue
+                            continue
                         compressed = _compress_file_read(raw, tool_context=ctx, session=session)
                         if len(compressed) < len(raw):
                             saved = len(raw) - len(compressed)
@@ -1507,6 +1531,7 @@ def compress_recent_window_impl(
     preserve_exact_search_evidence: bool = False,
     session_files_read: set[str] | None = None,
     file_heat: dict[str, float] | None = None,
+    model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to recent window messages."""
 
@@ -1625,8 +1650,13 @@ def compress_recent_window_impl(
         return heat == 0.0
 
     breakdown: dict[str, int] = {}
+    _skip_file_skeleton = model_profile is not None and not getattr(model_profile, "skeletonize_files", True)
+
+    def _file_compressor(text: str) -> str:
+        return _compress_file_read(text, tool_context={"_model_profile": model_profile} if model_profile else None)
+
     compressors: dict[str, Compressor] = {
-        "file": _compress_file_read,
+        "file": _file_compressor,
         "grep": _compress_grep,
         "grep_context": _compress_grep_context,
         "stack_trace": _compress_stack_traces,
@@ -1679,6 +1709,8 @@ def compress_recent_window_impl(
                 continue
             compressor = compressors.get(kind)
             if compressor is None:
+                continue
+            if kind == "file" and _skip_file_skeleton:
                 continue
             compressed: str = compressor(content)
             saved = len(content) - len(compressed)
@@ -1758,6 +1790,8 @@ def compress_recent_window_impl(
                 continue
             compressor = compressors.get(kind)
             if compressor is None:
+                continue
+            if kind == "file" and _skip_file_skeleton:
                 continue
             compressed_block: str = compressor(raw)
             saved = len(raw) - len(compressed_block)

@@ -106,6 +106,7 @@ def compress_tool_results_impl(
     preserve_exact_search_evidence: bool = False,
     recently_edited_files: dict[str, int] | None = None,
     file_heat: dict[str, float] | None = None,
+    model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Compress tool results in messages using the history pipeline."""
     _sync_threshold()
@@ -125,6 +126,7 @@ def compress_tool_results_impl(
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         recently_edited_files=recently_edited_files,
         file_heat=file_heat,
+        model_profile=model_profile,
     )
 
 
@@ -137,6 +139,7 @@ def compress_recent_window_impl(
     preserve_exact_search_evidence: bool = False,
     session_files_read: set[str] | None = None,
     file_heat: dict[str, float] | None = None,
+    model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to tool_result blocks in the recent window."""
     _sync_threshold()
@@ -149,4 +152,5 @@ def compress_recent_window_impl(
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         session_files_read=session_files_read,
         file_heat=file_heat,
+        model_profile=model_profile,
     )
