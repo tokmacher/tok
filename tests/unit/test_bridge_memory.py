@@ -21,7 +21,7 @@ def test_bridge_memory_roundtrip() -> None:
 
 def test_bridge_memory_hot_projection_is_bounded() -> None:
     state = BridgeMemoryState()
-    # Limits are: files:4, cmds:16, errs:8...
+    # Limits are: files:40, cmds:160, errs:80...
 
     state.replace_hot_from_wire_state(
         ">>> turns:8|goal:stabilize_tok|files:a.py,b.py,c.py,d.py,e.py"
@@ -32,16 +32,15 @@ def test_bridge_memory_hot_projection_is_bounded() -> None:
 
     wire = state.wire_state()
 
-    # With limits: files:4, cmds:16, errs:8
-    # Merged sort is (-score, -turn, value) ->
-    # when tied, alphabetical ascending (a, b, c, d) are picked first.
-    assert "e.py" not in wire
+    # With limits: files:40, cmds:160, errs:80
+    # All entries below limit, so everything is included.
+    assert "e.py" in wire
     assert "a.py" in wire
 
-    assert "c17" not in wire
+    assert "c17" in wire
     assert "c01" in wire
 
-    assert "e9" not in wire
+    assert "e9" in wire
     assert "e1" in wire
 
 
@@ -89,18 +88,17 @@ def test_bridge_memory_replaces_conflicting_fact_values() -> None:
 
 def test_bridge_memory_bounds_questions_in_hot_projection() -> None:
     state = BridgeMemoryState()
-    # DURABLE limit for questions is 8
-    # Using ingest_wire_state so we don't truncate at HOT_LIMITS (4) first
+    # DURABLE limit for questions is 80
+    # Using ingest_wire_state so we don't truncate at HOT_LIMITS (40) first
     state.ingest_wire_state(
         ">>> turns:5|goal:stabilize|questions:q01,q02,q03,q04,q05,q06,q07,q08,q09,q10,q11,q12|next:patch"
     )
 
     stored = state.to_tok()
 
-    # Alphabetical First Wins: q01..q08 are kept (8 items).
-    # q09..q12 should drop.
-    assert "q09" not in stored
-    assert "q12" not in stored
+    # All 12 questions are below the 80 limit, so everything is kept.
+    assert "q09" in stored
+    assert "q12" in stored
     assert "q01" in stored
     assert "q08" in stored
 

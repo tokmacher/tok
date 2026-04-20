@@ -64,37 +64,37 @@ MULTI_VALUE_FIELDS = {
     "goal",
 }
 HOT_LIMITS = {
-    "turns": 1,
-    "goal": 4,
-    "files": 4,
-    "edited": 4,
-    "cmds": 16,
-    "tests": 8,
-    "errs": 8,
-    "blockers": 4,
-    "constraints": 4,
-    "questions": 4,
-    "next": 2,
-    "facts": 16,
+    "turns": 10,
+    "goal": 40,
+    "files": 40,
+    "edited": 40,
+    "cmds": 160,
+    "tests": 80,
+    "errs": 80,
+    "blockers": 40,
+    "constraints": 40,
+    "questions": 40,
+    "next": 20,
+    "facts": 160,
 }
 DURABLE_LIMITS = {
-    "turns": 1,
-    "goal": 4,
-    "files": 8,
-    "edited": 8,
-    "cmds": 8,
-    "tests": 8,
-    "errs": 8,
-    "blockers": 8,
-    "constraints": 8,
-    "questions": 8,
-    "next": 4,
-    "facts": 32,
+    "turns": 10,
+    "goal": 40,
+    "files": 80,
+    "edited": 80,
+    "cmds": 80,
+    "tests": 80,
+    "errs": 80,
+    "blockers": 80,
+    "constraints": 80,
+    "questions": 80,
+    "next": 40,
+    "facts": 320,
 }
 
 # Hard caps on total entries across all fields in each bucket
-HOT_TOTAL_CAP = 60
-DURABLE_TOTAL_CAP = 200
+HOT_TOTAL_CAP = 600
+DURABLE_TOTAL_CAP = 2000
 
 
 _SECTION_HEADERS: dict[str, str] = {
