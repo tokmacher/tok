@@ -34,7 +34,9 @@ Tok intercepts LLM traffic and applies deterministic compression:
 - **Semantic deduplication**: Repeated file reads, search results, and tool outputs are
   cached and stubbed
 - **Delta compression**: Changed content shows only the diff, not the full payload
-- **Rolling state**: Conversation history compresses to O(1) size regardless of length
+- **Rolling state**: Conversation history is capped at a fixed memory footprint —
+  entries only drop when the cap is reached after very long sessions (practical
+  conversations are effectively unlimited)
 - **Lossless round-trip**: Everything re-hydrates perfectly on the way back
 
 The result is typically lower token volume on sustained sessions, while preserving the
@@ -184,7 +186,8 @@ Tok achieves its compression through several deterministic techniques:
 
 - **Hot/durable buckets**: Recent context vs. long-term knowledge with different decay
   rates
-- **O(1) rolling state**: Constant-time updates regardless of conversation length
+- **Bounded rolling state**: Updates are constant-time; memory caps at ~600 hot + ~2000
+  durable entries — practical sessions never reach the cap
 - **Fail-open safety**: Automatic fallback to baseline if compression risks fidelity
 
 ### Pointer System (Experimental)

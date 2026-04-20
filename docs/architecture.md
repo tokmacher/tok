@@ -245,5 +245,6 @@ The input compression (`compress_history`) works by:
 1. The summary is encoded as a `>>>` state line appended to the injected runtime
    directive
 
-This produces O(1) context growth — the state line is a fixed size regardless of
-conversation length.
+This produces bounded context growth — the state line is capped at a fixed maximum size.
+Entries are only trimmed when the cap is reached, which requires very long sessions with
+high entry diversity. Practical conversations are effectively unlimited.
