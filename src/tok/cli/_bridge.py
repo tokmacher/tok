@@ -10,7 +10,6 @@ import time
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
-import httpx
 import typer
 
 from tok.stats import SavingsTracker
@@ -19,8 +18,8 @@ from ._cli_support import (
     LOG_FILE,
     PID_FILE,
     TOK_DIR,
-    bridge_url,
     console,
+    get_bridge_health_response,
     get_running_bridge_pid,
     memory_root,
     render_stats_panel,
@@ -55,6 +54,10 @@ def _parsed_port(parsed_url: Any) -> int | None:
 
 
 def _is_self_bridged_invocation(port: int) -> bool:
+    marker = os.getenv("TOK_SELF_BRIDGED_SESSION", "").strip().lower()
+    if marker not in {"1", "true", "yes", "on"}:
+        return False
+
     base_url = os.getenv("ANTHROPIC_BASE_URL", "").strip()
     if not base_url:
         return False
@@ -152,7 +155,7 @@ def bridge_start(
         for _ in range(15):
             time.sleep(0.2)
             try:
-                r = httpx.get(bridge_url(port, "/health"), timeout=1.0)
+                r = get_bridge_health_response(port, timeout=1.0, attempts=1, backoff_seconds=0.0)
                 if r.status_code == 200:
                     console.print(f"[green]Bridge started on :{port} (PID {proc.pid})[/green]")
                     console.print(f"Logs: {LOG_FILE}")
@@ -163,8 +166,6 @@ def bridge_start(
                     if capture:
                         console.print(f"Capture directory: {memory_root() / 'sessions'}")
                     return
-            except httpx.ConnectError:
-                pass
             except Exception:
                 pass
 
@@ -195,11 +196,17 @@ def bridge_stop(force: bool = False) -> None:
         raise typer.Exit(0)
 
     if _is_self_bridged_invocation(port) and not force:
-        console.print("[yellow]Refusing to stop bridge from an active bridged Claude session.[/yellow]")
-        console.print(
-            "[dim]Run `tok bridge stop --force` if intentional, or stop from a separate shell after this turn.[/dim]"
-        )
-        raise typer.Exit(2)
+        try:
+            health = get_bridge_health_response(port, timeout=0.8, attempts=1, backoff_seconds=0.0)
+            health_ok = health.status_code == 200
+        except Exception:
+            health_ok = False
+        if health_ok:
+            console.print("[yellow]Refusing to stop bridge from an active bridged Claude session.[/yellow]")
+            console.print(
+                "[dim]Run `tok bridge stop --force` if intentional, or stop from a separate shell after this turn.[/dim]"
+            )
+            raise typer.Exit(2)
 
     for p in [pid]:
         try:
@@ -253,9 +260,7 @@ def bridge_status() -> None:
         raise typer.Exit(1)
 
     try:
-        import httpx
-
-        r = httpx.get(bridge_url(port, "/health"), timeout=2.0)
+        r = get_bridge_health_response(port, timeout=2.0, attempts=2, backoff_seconds=0.2)
         if r.status_code == 200:
             payload = r.json()
             session_summary: dict[str, Any] = {
@@ -338,10 +343,8 @@ def bridge_status() -> None:
                     "[dim]Next step: keep working for a few turns, then run `tok stats --last-session` if savings are still unclear.[/dim]"
                 )
             return
-    except httpx.ConnectError:
+    except Exception:
         pass
-    except Exception as exc:
-        console.print(f"[dim]Status check error: {exc.__class__.__name__}: {exc}[/dim]")
 
     console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
     console.print(

@@ -50,5 +50,7 @@ _tok_start_bridge() {
 
 claude() {
     _tok_start_bridge || return 1
-    ANTHROPIC_BASE_URL="http://${TOK_BRIDGE_HOST}:${TOK_BRIDGE_PORT}" command claude "$@"
+    TOK_SELF_BRIDGED_SESSION=1 \
+        ANTHROPIC_BASE_URL="http://${TOK_BRIDGE_HOST}:${TOK_BRIDGE_PORT}" \
+        command claude "$@"
 }

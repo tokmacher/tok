@@ -7,6 +7,7 @@ import logging
 import os
 import socket
 import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,7 @@ console = Console()
 TOK_DIR = Path.home() / ".tok"
 PID_FILE = TOK_DIR / "bridge.pid"
 LOG_FILE = TOK_DIR / "bridge.log"
+_LOOPBACK_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 RUNTIME_WARNING_SIGNALS = (
     "non_tok_response",
@@ -43,6 +45,72 @@ def bridge_url(port: int | None = None, path: str = "") -> str:
     if port is None:
         port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
     return f"http://{host}:{port}{path}"
+
+
+def _normalize_host(host: str) -> str:
+    return host.strip().lower().strip("[]")
+
+
+def _format_host_for_url(host: str) -> str:
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def bridge_health_urls(port: int | None = None, path: str = "/health") -> list[str]:
+    """Build bridge health probe URLs with loopback fallbacks for local hosts."""
+    configured_host = os.getenv("TOK_BRIDGE_HOST", "localhost").strip() or "localhost"
+    if port is None:
+        port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+
+    if _normalize_host(configured_host) in _LOOPBACK_HOST_ALIASES:
+        host_candidates = ["127.0.0.1", "localhost", "::1"]
+    else:
+        host_candidates = [configured_host]
+
+    urls: list[str] = []
+    seen: set[str] = set()
+    for host in host_candidates:
+        key = _normalize_host(host)
+        if key in seen:
+            continue
+        seen.add(key)
+        urls.append(f"http://{_format_host_for_url(host)}:{port}{path}")
+    return urls
+
+
+def get_bridge_health_response(
+    port: int | None = None,
+    *,
+    timeout: float = 2.0,
+    attempts: int = 2,
+    backoff_seconds: float = 0.15,
+):
+    """Probe bridge health robustly and return the last response or raise connection errors."""
+    import httpx
+
+    attempts = max(1, attempts)
+    urls = bridge_health_urls(port=port, path="/health")
+    last_response = None
+    last_exception: Exception | None = None
+
+    for attempt in range(attempts):
+        for url in urls:
+            try:
+                response = httpx.get(url, timeout=timeout)
+                if response.status_code == 200:
+                    return response
+                last_response = response
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                last_exception = exc
+        if attempt + 1 < attempts and backoff_seconds > 0:
+            time.sleep(backoff_seconds)
+
+    if last_response is not None:
+        return last_response
+    if last_exception is not None:
+        raise last_exception
+    raise RuntimeError("bridge health probe failed without response")
 
 
 def collector_url(path: str = "") -> str:

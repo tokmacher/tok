@@ -270,6 +270,48 @@ class TestCLI:
         assert "Tok active, watch session" in result.output
         assert "context reacquisition" in result.output
 
+    def test_bridge_status_recovers_when_localhost_probe_fails(self, monkeypatch) -> None:
+        import httpx
+
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setenv("TOK_BRIDGE_HOST", "localhost")
+
+        attempted_urls: list[str] = []
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "tool-compatible",
+                    "request_policy": "natural_first",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "session_tokens_saved": 20,
+                    "session_savings_pct": 10.0,
+                    "session_quality": "clean",
+                    "last_degradation_reason": "",
+                }
+
+        def fake_get(url: str, timeout: float):
+            attempted_urls.append(url)
+            if "localhost" in url:
+                return FakeResponse()
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr("httpx.get", fake_get)
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 0
+        assert "Bridge running on :9090 (PID 321)" in result.output
+        assert any("127.0.0.1" in url for url in attempted_urls)
+        assert any("localhost" in url for url in attempted_urls)
+
     def test_bridge_status_surfaces_attribution_signals(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
 
@@ -697,8 +739,14 @@ class TestCLI:
         from tok.cli import _bridge
 
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
+        monkeypatch.setenv("TOK_SELF_BRIDGED_SESSION", "1")
         monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
         monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+        monkeypatch.setattr(
+            _bridge,
+            "get_bridge_health_response",
+            lambda *args, **kwargs: SimpleNamespace(status_code=200),
+        )
         monkeypatch.setattr(
             _bridge.os,
             "kill",
@@ -715,6 +763,7 @@ class TestCLI:
         from tok.cli import _bridge
 
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
+        monkeypatch.setenv("TOK_SELF_BRIDGED_SESSION", "1")
         monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
         monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
 
@@ -732,6 +781,32 @@ class TestCLI:
         monkeypatch.setattr(_bridge.os, "kill", fake_kill)
 
         _bridge.bridge_stop(force=True)
+        output = capsys.readouterr().out
+
+        assert "Bridge stopped" in output
+
+    def test_bridge_stop_does_not_refuse_without_self_bridged_marker(self, monkeypatch, tmp_path, capsys) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
+        monkeypatch.delenv("TOK_SELF_BRIDGED_SESSION", raising=False)
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+
+        calls = {"checked": False}
+
+        def fake_kill(pid, sig) -> None:
+            assert pid == 123
+            if sig == signal.SIGTERM:
+                return
+            if sig == 0 and not calls["checked"]:
+                calls["checked"] = True
+                raise ProcessLookupError
+            return
+
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+
+        _bridge.bridge_stop()
         output = capsys.readouterr().out
 
         assert "Bridge stopped" in output

@@ -26,8 +26,8 @@ from tok.runtime.policy.smart_policy import (
 from tok.stats import SavingsTracker
 
 from ._cli_support import (
-    bridge_url,
     console,
+    get_bridge_health_response,
     get_running_bridge_pid,
     interaction_quality_rows,
     memory_root,
@@ -82,9 +82,7 @@ def stats_command(
     health_payload = None
     if pid:
         try:
-            import httpx
-
-            resp = httpx.get(bridge_url(port, "/health"), timeout=2.0)
+            resp = get_bridge_health_response(port, timeout=2.0, attempts=2, backoff_seconds=0.2)
             if resp.status_code == 200:
                 health_payload = resp.json()
         except Exception:
@@ -552,9 +550,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
     if pid:
         console.print(f"[green]✅ Bridge process: PID {pid}[/green]")
         try:
-            import httpx
-
-            resp = httpx.get(bridge_url(port, "/health"), timeout=2.0)
+            resp = get_bridge_health_response(port, timeout=2.0, attempts=2, backoff_seconds=0.2)
             if resp.status_code == 200:
                 console.print(f"[green]✅ Health endpoint reachable on :{port}[/green]")
                 payload = resp.json()
