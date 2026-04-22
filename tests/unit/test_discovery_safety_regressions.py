@@ -5,10 +5,10 @@ import time
 from typing import Any
 
 from tok.compression._history_pipeline import compress_tool_results_impl
+from tok.compression._tool_result_advisory import clear_advisory_cooldown
 from tok.compression._tool_result_codecs import (
     _build_search_advisory,
     _compress_grep,
-    clear_advisory_cooldown,
 )
 from tok.runtime.core import RuntimeSession
 from tok.runtime.pipeline._tool_context import build_tool_use_id_to_context

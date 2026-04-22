@@ -15,44 +15,30 @@ from tok.runtime.memory.answer_memory import extract_structured_answer_memory
 from tok.runtime.policy.translator import IS_TOK, postprocess_response
 from tok.runtime.types import ProcessedRuntimeResponse
 
-from .request_validation import normalize_tool_use_blocks
+from ._bridge_wire_models import normalize_tool_use_blocks
+from ._response_processing_patterns import (
+    IDENTIFIER_RE as _IDENTIFIER_RE,
+)
+from ._response_processing_patterns import (
+    PATH_RE as _PATH_RE,
+)
+from ._response_processing_patterns import (
+    STRUCTURED_FIELD_NAMES as _STRUCTURED_FIELD_NAMES,
+)
+from ._response_processing_patterns import (
+    STRUCTURED_LABEL_RE as _STRUCTURED_LABEL_RE,
+)
+from ._response_processing_patterns import (
+    TOOL_INTENT_TEXT_RE as _TOOL_INTENT_TEXT_RE,
+)
+from ._response_processing_patterns import (
+    VERIFICATION_STOPWORDS as _VERIFICATION_STOPWORDS,
+)
 
 if TYPE_CHECKING:
     from tok.runtime.core import RuntimeSession
 
 logger = logging.getLogger("tok.runtime")
-_STRUCTURED_LABEL_RE = re.compile(r"(?<![\w-])(file|verification|related)(?![\w-])\s*[:=]\s*([^\n|]+)", re.IGNORECASE)
-_STRUCTURED_FIELD_NAMES = ("file", "verification", "related")
-_IDENTIFIER_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
-_PATH_RE = re.compile(r"(?:^|[\s`'\"])((?:src/)?[A-Za-z0-9_./-]+\.(?:py|ts|tsx|js|jsx|go|rs|rb))(?:[:#]L?\d+)?")
-_TOOL_INTENT_TEXT_RE = re.compile(
-    r"(@tool\b|tool_use\b|\"type\"\s*:\s*\"tool_use\"|'type'\s*:\s*'tool_use'|\bcall(?:ing)?\s+(?:the\s+)?tool\b)",
-    re.IGNORECASE,
-)
-_VERIFICATION_STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "as",
-    "at",
-    "by",
-    "class",
-    "for",
-    "from",
-    "function",
-    "in",
-    "is",
-    "line",
-    "method",
-    "of",
-    "on",
-    "or",
-    "result",
-    "the",
-    "to",
-    "via",
-    "with",
-}
 
 
 def heal_drift(

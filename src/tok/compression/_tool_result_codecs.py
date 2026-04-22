@@ -14,7 +14,6 @@ from ._tool_result_advisory import (
     _build_search_advisory,
     _estimate_tokens,
     _is_tok_cli_command,
-    clear_advisory_cooldown,  # noqa: F401
 )
 from ._tool_result_file_read import _compress_file_read
 from ._tool_result_truncation import truncate_large_result
