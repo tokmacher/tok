@@ -35,7 +35,7 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 
 ## Prerequisites
 
-- Python `3.10+`
+- Python `3.10`-`3.12` (tested for `0.1.0`)
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - provider/API configuration that already works with Claude Code
@@ -253,6 +253,8 @@ Keep Tok on, but inspect the degradation reason before deciding the bridge is at
 ## Next Docs
 
 - [`docs/cli-reference.md`](./cli-reference.md) for the command surface
+- [`docs/diagnostics.md`](./diagnostics.md) for interpreting `status`, `doctor`, and
+  common recovery signals like `compat-fallback` and `answer_ready_*`
 - [`docs/troubleshooting.md`](./troubleshooting.md) for fallback and degraded-session
   diagnosis
 - [`docs/production-readiness.md`](./production-readiness.md) for advanced runtime

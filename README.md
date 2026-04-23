@@ -5,8 +5,8 @@
 [![Python](https://img.shields.io/pypi/pyversions/tok-protocol.svg)](https://pypi.org/project/tok-protocol/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Tok is designed to reduce LLM token costs on longer sessions, without altering your
-workflow.**
+**Tok is designed to reduce LLM token costs on longer sessions, without changing how you
+use Claude Code once it's routed through the local bridge.**
 
 Savings come primarily from **input token compression** (prompt/context optimization)
 with additional savings from response compression. Short sessions (< 8 turns) default to
@@ -25,7 +25,8 @@ as before while Tok runs underneath and saves tokens automatically.
 - **Teams** with shared API budgets looking to stretch their token allowances
 - **Power users** who work on long-running sessions where context accumulates
 
-If you already use Claude Code, Tok works out of the box. No workflow changes required.
+If you already use Claude Code, Tok is a small add-on: start the bridge and point Claude
+at it via `ANTHROPIC_BASE_URL=http://localhost:9090`.
 
 ## What Tok Does
 
@@ -225,7 +226,7 @@ directly — the bridge handles all encoding and decoding transparently.
 
 ## Prerequisites
 
-- Python `3.10+`
+- Python `3.10`-`3.12` (tested for `0.1.0`)
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - An Anthropic API key (`ANTHROPIC_API_KEY`) already configured for Claude Code

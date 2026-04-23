@@ -186,7 +186,9 @@ async def send_with_tok_fail_open_retry(
         )
         retry_signals["rate_limit_retry_exhausted"] = 1
 
-    logger.warning(
+    # This is an invariant/health assertion, not an error event. Keep it visible at
+    # INFO so it doesn't read like a triggered fallback during normal operation.
+    logger.info(
         "Fail-open check: status=%d, compressed=%s, has_orig=%s, fail_open=%s",
         response.status_code,
         compressed_request,

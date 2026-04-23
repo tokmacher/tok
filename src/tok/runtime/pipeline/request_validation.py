@@ -904,7 +904,10 @@ def _check_thinking_block_mutation(
                     )
                     return
                 seen_mutation_pairs.add(mutation_pair)
-            logger.warning(
+            # This mutation is frequently transient: bridge preflight attempts a
+            # protected restore and may clear the penalized signal. Keep the signal,
+            # but avoid warning-level noise that can look like a correctness failure.
+            logger.debug(
                 "THINKING_BLOCK_MUTATION_DETECTED | "
                 "msg_index=%d | "
                 "before_hash=%s | after_hash=%s | "
