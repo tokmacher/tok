@@ -63,51 +63,13 @@ Use:
 - `tok savings` only as a compatibility alias for `tok stats`
 
 Advanced maintainer utilities remain available, but they are intentionally hidden from
-the default help surface in `0.1.0` so new users land on one clear workflow.
+the default help surface in `0.1.0` so new users land on one clear workflow. Hidden
+commands such as capture review, release gating, conversion helpers, and developer tools
+are maintainer-only for this release and may change without compatibility guarantees.
 
-## Capture And Evidence Review
-
-```bash
-tok capture-summary PATH.jsonl
-tok capture-review DIR [--verdict clean|watch|investigate] [--reason TEXT]
-tok capture-review DIR [--candidates] [--coverage] [--stress-dir DIR]
-tok evidence-gap DIR [--stress-dir DIR]
-```
-
-These commands are for diagnosing repeated degradation classes and ranking replay
-coverage opportunities. They are useful for advanced operators and maintainers, not for
-the default first-run flow.
-
-## Release Gate
-
-```bash
-tok gate-check tests/fixtures/replay \
-  --fixtures fixtures.json \
-  --config gate-config.json \
-  --stability-dir tests/fixtures/stability \
-  --frontier-report tmp/compression_frontier/compression_frontier_report.json \
-  --required-benchmarks coding-loop-5,research-loop-5 \
-  --export results.json
-```
-
-Use this for maintainer release checks and CI parity. See
-[`docs/release-checklist.md`](./release-checklist.md) and
-[`docs/CICD_INTEGRATION.md`](./CICD_INTEGRATION.md).
-
-## CI/CD Integration
-
-For details on running Tok's test and gate tooling in CI, see
-[`docs/CICD_INTEGRATION.md`](./CICD_INTEGRATION.md).
-
-## Format Tools
-
-```bash
-tok convert INPUT [--to tok|json|md] [--file]
-tok parse INPUT [--file]
-```
-
-These commands are secondary utilities. The bridge-first workflow is the supported
-product path.
+For maintainer workflows, see [`docs/release-checklist.md`](./release-checklist.md) and
+[`docs/CICD_INTEGRATION.md`](./CICD_INTEGRATION.md) instead of treating those commands
+as public onboarding material.
 
 ## Related Docs
 

@@ -252,56 +252,23 @@ RELEASE_SURFACE_DRIFT_CHECK = (
 # Packaging/install contract gate for defended import surface.
 CLEAN_INSTALL_IMPORT_CHECK = (
     "import textwrap",
-    """code = textwrap.dedent('''\
-import os
-import subprocess
-import sys
-import tempfile
-import venv
-from pathlib import Path
-
-
-def _venv_python(venv_dir: Path) -> Path:
-    bin_dir = "Scripts" if os.name == "nt" else "bin"
-    return venv_dir / bin_dir / "python"
-
-
-root = Path.cwd()
-
-with tempfile.TemporaryDirectory(prefix="tok-clean-import-") as td:
-    tmp = Path(td)
-    dist_dir = tmp / "dist"
-    dist_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build a wheel from the current checkout.
-    subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist_dir)],
-        cwd=root,
-        check=True,
-    )
-    wheels = sorted(dist_dir.glob("*.whl"))
-    assert wheels, f"No wheel produced in {dist_dir}"
-    wheel = wheels[-1]
-
-    # Fresh venv install + import check.
-    venv_dir = tmp / "venv"
-    venv.EnvBuilder(with_pip=True).create(venv_dir)
-    vpy = _venv_python(venv_dir)
-    assert vpy.exists(), f"Venv python missing at {vpy}"
-
-    subprocess.run(
-        [str(vpy), "-m", "pip", "install", "--quiet", str(wheel)],
-        check=True,
-    )
-
-    check_code = (
-        "import tok; "
-        "from tok.release_surface import SUPPORTED_ROOT_EXPORTS; "
-        "assert set(tok.__all__) == set(SUPPORTED_ROOT_EXPORTS), (tok.__all__, SUPPORTED_ROOT_EXPORTS); "
-        "print('clean install/import smoke OK')"
-    )
-    subprocess.run([str(vpy), "-c", check_code], check=True)
-''')""",
+    "code = textwrap.dedent('''\n"
+    "import os, subprocess, sys, tempfile, tomllib, venv\n"
+    "from pathlib import Path\n\n"
+    "def _venv_python(v): bin_dir = 'Scripts' if os.name == 'nt' else 'bin'; return v / bin_dir / 'python'\n\n"
+    "root = Path.cwd()\n"
+    "with tempfile.TemporaryDirectory(prefix='tok-clean-import-') as td:\n"
+    "    tmp = Path(td); dist_dir = tmp / 'dist'; dist_dir.mkdir(parents=True, exist_ok=True)\n"
+    "    expected_version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']\n"
+    "    subprocess.run([sys.executable, '-m', 'build', '--wheel', '--sdist', '--outdir', str(dist_dir)], cwd=root, check=True)\n"
+    "    wheels = sorted(dist_dir.glob('*.whl')); assert wheels, 'no wheel'; wheel = wheels[-1]\n"
+    "    sdists = sorted(dist_dir.glob('*.tar.gz')); assert sdists, 'no sdist'\n"
+    "    venv_dir = tmp / 'venv'; venv.EnvBuilder(with_pip=True).create(venv_dir)\n"
+    "    vpy = _venv_python(venv_dir); assert vpy.exists(), 'venv missing'\n"
+    "    subprocess.run([str(vpy), '-m', 'pip', 'install', '--quiet', str(wheel)], check=True)\n"
+    "    check = f\"import tok; from importlib import metadata; from tok.release_surface import SUPPORTED_ROOT_EXPORTS; assert metadata.version('tok-protocol') == {expected_version!r}; assert set(tok.__all__) == set(SUPPORTED_ROOT_EXPORTS); print(1)\"\n"
+    "    subprocess.run([str(vpy), '-c', check], check=True)\n"
+    "''')",
     "exec(code, globals(), globals())",
 )
 
@@ -318,6 +285,7 @@ SMOKE_CATALOG_TASKS: tuple[str, ...] = (
 
 SMOKE_STEPS: tuple[SmokeStep, ...] = (
     # Baseline command visibility.
+    SmokeStep("CLI version", (*UV_RUN_PREFIX, "tok", "--version")),
     SmokeStep("CLI help", (*UV_RUN_PREFIX, "tok", "--help")),
     SmokeStep("Bridge help", (*UV_RUN_PREFIX, "tok", "bridge", "--help")),
     SmokeStep("Doctor help", (*UV_RUN_PREFIX, "tok", "doctor", "--help")),
@@ -377,6 +345,16 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
             "python",
             "-m",
             "build",
+        ),
+    ),
+    _inline_python_step(
+        "Artifact metadata smoke",
+        (
+            "import subprocess",
+            "from pathlib import Path",
+            "files = sorted(str(path) for path in Path('dist').glob('*.whl')) + sorted(str(path) for path in Path('dist').glob('*.tar.gz'))",
+            "assert files, 'no dist artifacts to validate'",
+            "subprocess.run(['uv', 'run', '--with', 'twine', 'python', '-m', 'twine', 'check', *files], check=True)",
         ),
     ),
 )

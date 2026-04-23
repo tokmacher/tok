@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from rich.logging import RichHandler
 
 from ._bridge_commands import register as register_bridge_commands
+from ._cli_support import console
 from ._dev import dev_app
 from ._init_commands import register as register_init_commands
 from ._install_commands import register as register_install_commands
@@ -29,7 +30,37 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-app = typer.Typer(help="Tok — bridge-first CLI for Claude Code", add_completion=False)
+app = typer.Typer(
+    help="Tok — bridge-first CLI for Claude Code",
+    add_completion=False,
+    invoke_without_command=True,
+)
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        from ._release import _tok_version
+
+        console.print(f"tok {_tok_version()}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Show the Tok version and exit.",
+        is_eager=True,
+    ),
+) -> None:
+    """Tok — bridge-first CLI for Claude Code."""
+    _version_callback(version)
+    if ctx.invoked_subcommand is None:
+        console.print(ctx.get_help())
+
+
 bridge_app = typer.Typer(help="Bridge-first workflow commands")
 app.add_typer(bridge_app, name="bridge")
 app.add_typer(metrics_app, name="metrics", hidden=True)

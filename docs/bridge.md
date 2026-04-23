@@ -239,6 +239,10 @@ tok evidence-gap ~/.tok/sessions --stress-dir tmp/stress_language/<timestamp>
 
 This usually gives a cleaner picture than lifetime totals alone.
 
+These capture files are maintainer diagnostics. Tok redacts obvious bearer/API-key
+material before writing them, but captures can still contain session content and should
+be reviewed before sharing.
+
 ### `Session quality: watch`
 
 Tok is still saving tokens, but the session shows some friction such as fallback,

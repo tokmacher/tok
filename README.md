@@ -81,34 +81,20 @@ Default behavior is explicit. Tok does not override `claude` unless you opt in w
 The main CLI commands for `0.1.0` are: `tok init`, `tok install`,
 `tok bridge start|status|logs|stop`, `tok doctor`, and `tok stats`.
 
-## Experimental Provider Paths
+## Validation-Only Provider Paths
 
-Tok can be pointed at OpenAI-compatible APIs, but for the focused 0.1.0 release those
-paths are validation-only and not part of the public default story. To use OpenRouter
-for experimental validation:
+Tok can be pointed at OpenAI-compatible APIs, but for the focused `0.1.0` release those
+paths are validation-only and explicitly outside the supported default story. The public
+contract is still the Claude Code bridge workflow.
 
-```bash
-# Set your OpenRouter API key
-export OPENROUTER_API_KEY=your_key_here
+Experimental validation may be useful for:
 
-# Configure Claude Code to use OpenRouter (in ~/.claude/config or environment)
-# Then start the bridge normally
-tok bridge start
-claude
-```
+- OpenRouter and other OpenAI-compatible endpoints
+- DeepSeek or Qwen endpoints you already operate
+- local inference servers that mimic the Anthropic/OpenAI-style request shape
 
-Tok automatically detects the provider and applies compression during validation, but
-the public release path remains Claude Code first. Other experimental paths include:
-
-- **OpenRouter** — access to 100+ models through a single API
-- **DeepSeek** — set `DEEPSEEK_API_KEY` and configure your endpoint
-- **Qwen** — set `QWEN_API_KEY` and configure your endpoint
-- **Local models** — point Claude Code at your local inference server
-
-Tok manages its own bridge routing transparently. To use the bridge-first workflow,
-point Claude Code at the bridge using `ANTHROPIC_BASE_URL=http://localhost:9090` (or use
-`tok install --wrap-claude` for shell-level auto-routing). No Tok-specific config files
-are required.
+These paths are not part of the supported `0.1.0` onboarding flow, are not surfaced in
+the default CLI help, and may change without compatibility guarantees.
 
 ## What Tok Is / Is Not
 
@@ -247,17 +233,13 @@ directly — the bridge handles all encoding and decoding transparently.
 Tok is a proxy — it does not manage API keys. It forwards whatever credentials Claude
 Code already uses. If `claude` works without Tok, it will work with Tok.
 
-## Model Provider Support
+## Provider Posture
 
-Tok is validated and tested with:
+The supported `0.1.0` product path is Claude Code routed through the local Tok bridge.
 
-- **Anthropic Claude** (primary target)
-- **OpenAI GPT models**
-- **DeepSeek**
-- **Qwen**
-
-Other OpenAI-compatible providers may work but are untested. If you use a different
-provider, Tok will attempt compression but behavior is not guaranteed.
+Validation-only evidence also exists for some OpenAI-compatible providers, but those
+paths are not the public contract for this release. Treat them as experimental unless a
+future release promotes them into the supported surface.
 
 `tok install` is now a setup/migration helper and does not modify `claude` by default.
 If you want legacy auto-routing behavior, run `tok install --wrap-claude`.
@@ -340,6 +322,7 @@ Use this when validating the package from scratch:
 python -m venv .venv
 source .venv/bin/activate
 pip install tok-protocol
+tok --version
 tok --help
 tok install
 tok bridge start --help
@@ -355,6 +338,7 @@ python -m build
 python -m venv .venv
 source .venv/bin/activate
 pip install dist/tok_protocol-0.1.0-py3-none-any.whl
+tok --version
 tok --help
 tok install
 tok bridge start --help
@@ -424,21 +408,21 @@ tok bridge start
 
 The new mode applies to subsequent requests. Existing session state is preserved.
 
-## Experimental: Python SDK Path
+## Experimental: Python Submodule APIs
 
-> **Note**: This path is experimental and not the primary workflow. The bridge-first CLI
-> above is the supported release surface.
+> **Note**: These APIs are experimental. They are not part of the supported `0.1.0`
+> contract, are intentionally absent from the root `tok` namespace, and may change
+> without compatibility guarantees.
 
-For programmatic use outside Claude Code, Tok exposes a minimal SDK:
+For advanced evaluation work outside the bridge-first CLI, use explicit submodule
+imports such as:
 
-1. Create one `RuntimeSession`
-1. Call `tok.wrap(...)` to prepare a request
-1. Send through your OpenAI-compatible client
-1. Call `tok.process(...)` on the response
-1. Reuse the same session for subsequent turns
+- `tok.runtime.core.RuntimeSession`
+- `tok.runtime.types.RuntimeRequest`
+- `tok.universal_runtime.UniversalTokRuntime`
 
 See [`examples/tok_wrap_example.py`](examples/tok_wrap_example.py) and
-[`examples/README.md`](examples/README.md).
+[`examples/README.md`](examples/README.md) for the current experimental examples.
 
 ## Docs Map
 

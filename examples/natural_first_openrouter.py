@@ -1,5 +1,6 @@
 """
-Run Tok wrap/process with OpenRouter using the natural-first policy.
+Run Tok's experimental submodule runtime flow with OpenRouter using the natural-first
+policy.
 
 Env knobs (defaults shown):
   OPENROUTER_API_KEY   required
@@ -21,7 +22,9 @@ from pathlib import Path
 
 import openai
 
-import tok
+from tok.runtime.core import RuntimeSession
+from tok.runtime.types import RuntimeRequest
+from tok.universal_runtime import UniversalTokRuntime
 
 
 def _require_env(name: str) -> str:
@@ -45,16 +48,20 @@ def _load_config() -> dict[str, str | int | float]:
     }
 
 
+_RUNTIME = UniversalTokRuntime()
+
+
 def _run_turn(
     i: int,
     prompt: str,
     model: str,
     client: openai.OpenAI,
-    session: tok.RuntimeSession,
+    session: RuntimeSession,
 ) -> dict[str, object]:
     """Run a single turn and return the result row."""
     messages = [{"role": "user", "content": f"{prompt} (turn {i})"}]
-    prepared = tok.wrap(messages, model=model, session=session)
+    request = RuntimeRequest(model=model, messages=messages, adapter_kind="wrap", tool_compatible=True)
+    prepared = _RUNTIME.prepare_request(request, session)
 
     body_messages = (
         [{"role": "system", "content": prepared.body["system"]}] if prepared.body.get("system") else []
@@ -68,7 +75,7 @@ def _run_turn(
     )
     text = response.choices[0].message.content or ""
 
-    processed = tok.process(text, model=model, session=session)
+    processed = _RUNTIME.process_response(text, model=model, session=session, tool_compatible=True)
     combined_signals = dict(prepared.behavior_signals)
     for key, value in processed.behavior_signals.items():
         combined_signals[key] = combined_signals.get(key, 0) + int(value)
@@ -91,7 +98,7 @@ def main() -> None:
     os.environ.setdefault("TOK_REQUEST_POLICY", os.getenv("TOK_REQUEST_POLICY", "natural_first"))
 
     client = openai.OpenAI(base_url=config["base_url"], api_key=config["api_key"])
-    session = tok.RuntimeSession()
+    session = RuntimeSession()
     rows: list[dict[str, object]] = []
 
     for i in range(config["turns"]):

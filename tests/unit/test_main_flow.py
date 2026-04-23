@@ -8,31 +8,49 @@ from pathlib import Path
 import pytest
 
 import tok
-from tok.universal_runtime import ProcessedRuntimeResponse, RuntimeSession
+from tok.runtime.core import RuntimeSession, UniversalTokRuntime
+from tok.runtime.types import ProcessedRuntimeResponse, RuntimeRequest
 
 
-def test_public_wrap_routes_through_runtime(tmp_path) -> None:
+def test_public_bridge_import_succeeds() -> None:
+    assert hasattr(tok, "Bridge")
+    bridge_cls = tok.Bridge
+    assert bridge_cls is not None
+
+
+def test_experimental_root_imports_raise_attribute_error() -> None:
+    for name in ("wrap", "process", "RuntimeSession"):
+        with pytest.raises(AttributeError):
+            getattr(tok, name)
+
+
+def test_wrap_via_submodule(tmp_path) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    runtime = UniversalTokRuntime()
 
-    prepared = tok.wrap(
-        [{"role": "user", "content": "Summarize the task"}],
+    request = RuntimeRequest(
         model="claude-sonnet-4",
-        session=session,
+        messages=[{"role": "user", "content": "Summarize the task"}],
         system="Existing system prompt",
+        adapter_kind="wrap",
+        tool_compatible=True,
     )
+    prepared = runtime.prepare_request(request, session)
 
     assert prepared.body["messages"][0]["role"] == "user"
     assert prepared.body["system"].startswith("Existing system prompt")
     assert isinstance(prepared.behavior_signals, dict)
 
 
-def test_public_process_routes_through_runtime(tmp_path) -> None:
+def test_process_via_submodule(tmp_path) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    runtime = UniversalTokRuntime()
 
-    result = tok.process(
+    result = runtime.process_response(
         ">>> turns:1|goal:ship\n@msg role:assistant\n  |> done",
         model="claude-sonnet-4",
         session=session,
+        tool_compatible=True,
     )
 
     assert isinstance(result, ProcessedRuntimeResponse)

@@ -1,5 +1,5 @@
 """
-Minimal recipe for the experimental tok.wrap / tok.process path.
+Minimal recipe for the experimental explicit-submodule runtime path.
 
 Caller owns the RuntimeSession, sends ``prepared.body`` to an OpenAI-compatible
 SDK call, then reuses the same session on the next turn.
@@ -11,12 +11,11 @@ import os
 
 import openai
 
-import tok
+from tok.runtime.core import RuntimeSession
+from tok.runtime.types import RuntimeRequest
 
-# 1. Create one RuntimeSession and keep it for the whole conversation.
-session = tok.RuntimeSession()
+session = RuntimeSession()
 
-# 2. Build messages as usual.
 messages = [
     {
         "role": "user",
@@ -25,12 +24,11 @@ messages = [
 ]
 model = os.getenv("TOK_MODEL", "deepseek/deepseek-v3.2")
 
-# 3. Prepare the request. For OpenAI-style chat APIs, prepend the system string
-#    as a system message, then append prepared.body["messages"].
-prepared = tok.wrap(messages, model=model, session=session)
 
+runtime = __import__("tok.universal_runtime", fromlist=["UniversalTokRuntime"]).UniversalTokRuntime()
+request = RuntimeRequest(model=model, messages=messages, system=None, adapter_kind="wrap", tool_compatible=True)
+prepared = runtime.prepare_request(request, session)
 
-# 4. Send the prepared request through any OpenAI-compatible client.
 client = openai.OpenAI(
     base_url=os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
     api_key=os.getenv("OPENROUTER_API_KEY", ""),
@@ -49,11 +47,9 @@ request_body = {
 response = client.chat.completions.create(**request_body)
 response_text = response.choices[0].message.content or ""
 
-# 5. Process the model text. Inspect visible text, updated_memory, and saved tokens.
-result = tok.process(response_text, model=model, session=session)
+result = runtime.process_response(response_text, model=model, session=session, tool_compatible=True)
 visible_blocks = [b for b in result.content_blocks if b.get("type") == "text"]
 
-# 6. Reuse the same RuntimeSession on the next turn.
 next_messages = [
     *messages,
     {"role": "assistant", "content": response_text},
@@ -62,4 +58,7 @@ next_messages = [
         "content": "Answer in one line and keep the same context.",
     },
 ]
-next_prepared = tok.wrap(next_messages, model=model, session=session)
+next_request = RuntimeRequest(
+    model=model, messages=next_messages, system=None, adapter_kind="wrap", tool_compatible=True
+)
+next_prepared = runtime.prepare_request(next_request, session)

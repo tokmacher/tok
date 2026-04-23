@@ -13,6 +13,7 @@ import atexit
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -62,11 +63,61 @@ PID_FILE = TOK_DIR / "bridge.pid"
 logger = logging.getLogger("tok.gateway")
 
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
+_CAPTURE_SENSITIVE_KEYS = {
+    "authorization",
+    "x_api_key",
+    "api_key",
+    "access_token",
+    "refresh_token",
+    "bearer_token",
+    "openai_api_key",
+    "openrouter_api_key",
+    "anthropic_api_key",
+}
+_CAPTURE_INLINE_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bBearer\s+[A-Za-z0-9._\-+/=]+\b", re.IGNORECASE), "Bearer <redacted>"),
+    (re.compile(r"\bsk-[A-Za-z0-9._\-]+\b"), "sk-<redacted>"),
+)
 
 
 def _default_api_base() -> str:
     configured = os.getenv("TOK_API_BASE", ANTHROPIC_API_BASE).strip()
     return configured or ANTHROPIC_API_BASE
+
+
+def _default_bind_host() -> str:
+    configured = os.getenv("TOK_BRIDGE_BIND_HOST", "127.0.0.1").strip()
+    return configured or "127.0.0.1"
+
+
+def _is_sensitive_capture_key(key: str) -> bool:
+    normalized = key.strip().lower().replace("-", "_")
+    return normalized in _CAPTURE_SENSITIVE_KEYS or normalized.endswith("_api_key")
+
+
+def _redact_capture_string(value: str) -> str:
+    redacted = value
+    for pattern, replacement in _CAPTURE_INLINE_SECRET_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
+
+
+def _sanitize_capture_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if isinstance(key, str) and _is_sensitive_capture_key(key):
+                sanitized[key] = "<redacted>"
+            else:
+                sanitized[key] = _sanitize_capture_payload(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_capture_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_capture_payload(item) for item in value]
+    if isinstance(value, str):
+        return _redact_capture_string(value)
+    return value
 
 
 def _parse_request_body(
@@ -300,8 +351,9 @@ class BridgeSession:
             "system": body.get("system", ""),
         }
         try:
+            sanitized_record = _sanitize_capture_payload(record)
             with open(self._capture_file, "a") as f:
-                f.write(json.dumps(record) + "\n")
+                f.write(json.dumps(sanitized_record) + "\n")
         except Exception as exc:
             logger.debug("Capture write error: %s", exc)
 
@@ -310,8 +362,9 @@ class BridgeSession:
         if not self.capture or self._capture_file is None:
             return
         try:
+            sanitized_record = _sanitize_capture_payload(record)
             with open(self._capture_file, "a") as f:
-                f.write(json.dumps(record) + "\n")
+                f.write(json.dumps(sanitized_record) + "\n")
         except Exception as exc:
             logger.debug("Capture write error: %s", exc)
 
@@ -501,8 +554,8 @@ def run_bridge(
         logger.exception("Failed to create bridge application: %s", exc)
         raise
 
-    host_display = os.getenv("TOK_BRIDGE_HOST", "localhost")
-    logger.info("Listening on http://%s:%d", host_display, port)
+    bind_host = _default_bind_host()
+    logger.info("Listening on http://%s:%d", bind_host, port)
     logger.info("Keeping last %d human turns verbatim", keep_turns)
     logger.info("Fail-open: %s", "enabled" if fail_open else "disabled")
     logger.info("Upstream API base: %s", session.api_base)
@@ -515,7 +568,7 @@ def run_bridge(
     )
 
     try:
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level=log_level)
+        uvicorn.run(app, host=bind_host, port=port, log_level=log_level)
     except Exception as exc:
         logger.exception("Bridge server exited unexpectedly on port %d: %s", port, exc)
         raise

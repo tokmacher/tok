@@ -36,8 +36,8 @@ python -m build
 ## Testing Expectations
 
 - Run the full pytest suite before merging: `pytest tests/unit/ tests/integration/ -v`.
-- The release-surface coverage gate is 80%. Use the checked-in `.coveragerc` when
-  running `pytest --cov=src/tok`.
+- The release-surface coverage gate is 80%. Use the coverage configuration in
+  `pyproject.toml` when running `pytest --cov=src/tok --cov-fail-under=80`.
 - The `uv` lockfile governs precise dependency versions. `uv sync` keeps you aligned
   with the lockfile, while `pip install -e "[.dev]"` may resolve newer versions; prefer
   `uv sync` if you need deterministic results.

@@ -99,6 +99,9 @@ tok capture-review ~/.tok/sessions --candidates
 tok evidence-gap ~/.tok/sessions --stress-dir tmp/stress_language/<timestamp>
 ```
 
+These capture files are for maintainer diagnosis. They redact obvious credential
+material, but they can still contain session content, so review them before sharing.
+
 For reproducible release claims, refer to:
 
 - [`docs/claims_matrix.md`](./claims_matrix.md)

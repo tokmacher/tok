@@ -29,9 +29,9 @@ The default CLI help surface should reinforce that path by centering:
 
 The only supported product path in this release is the bridge-first workflow above.
 
-Python helper APIs such as `tok.wrap(...)` and `tok.process(...)` remain available for
-advanced or experimental integration work, but they are not part of the supported 0.1
-public release story and should not be documented as canonical.
+The root `tok` namespace is intentionally narrow for `0.1.0`. Experimental Python APIs
+may still be reachable through explicit submodules, but they are not part of the
+supported public contract and should not be documented as canonical.
 
 The release-surface manifest in `src/tok/release_surface.py` is the source of truth for
 what counts as supported, experimental, and internal in this release.
@@ -71,11 +71,13 @@ The following are explicitly out of scope for the first release:
 A public release requires:
 
 1. All CI checks green on `main`
+1. Tag-only release workflow enforces the same validation bar before publish
 1. No regressions in `success_rate=1.0` on required benchmark families
 1. Savings stay in the validated reference band (45-55%)
 1. Pricing claims are sourced from `src/tok/utils/pricing.py` and reconciled in
    `docs/pricing_verification.md`
 1. Onboarding docs are coherent and tested in a clean-room venv
+1. Release artifacts build cleanly and the packaged wheel install path is revalidated
 1. No known security issues
 1. Coverage for the supported release surface stays at or above 80%
 1. Live Claude validation confirms the bridge-first workflow behaves correctly against a

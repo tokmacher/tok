@@ -64,7 +64,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tok"]
-exclude = ["archive/", "research/", "results/", "tests/", "scripts/", "examples/"]
+exclude = [
+    "archive/",
+    "research/",
+    "results/",
+    "tests/",
+    "scripts/",
+    "examples/",
+    "docs/maintainers/",
+    "CLAUDE.md",
+]
 
 [tool.hatch.build.targets.sdist]
 exclude = ["archive/", ".claude/", ".hypothesis/", ".mypy_cache/", ".ruff_cache/", "dist/", "tmp/"]
@@ -171,41 +180,25 @@ omit = [
     "src/tok/testing/*",
     "src/tok/adapters/*",
     "src/tok/cli/_dev.py",
-    "src/tok/cli/_install.py",
     "src/tok/cli/_protocol_tools.py",
     "src/tok/evidence_review.py",
     "src/tok/fixture_generator.py",
-    "src/tok/format_bridge.py",
-    "src/tok/encoder.py",
-    "src/tok/gateway.py",
     "src/tok/gateway/__main__.py",
     "src/tok/gateway/pricing.py",
-    "src/tok/gateway/stats.py",
     "src/tok/gateway/telemetry.py",
     "src/tok/gateway/utils.py",
+    "src/tok/gateway/stats.py",
     "src/tok/live_benchmark.py",
     "src/tok/live_runner.py",
-    "src/tok/parser.py",
-    "src/tok/pricing.py",
     "src/tok/prompt.py",
     "src/tok/prompt_analyzer.py",
-    "src/tok/protocol/*",
     "src/tok/replay_metrics.py",
-    "src/tok/savings_tracker.py",
-    "src/tok/schema.py",
-    "src/tok/sifter.py",
-    "src/tok/smart_policy.py",
     "src/tok/stress_harness.py",
     "src/tok/telemetry.py",
-    "src/tok/tok_orchestrator.py",
-    "src/tok/transformer.py",
-    "src/tok/translator.py",
     "src/tok/utils/batch_transform.py",
     "src/tok/utils/delta.py",
-    "src/tok/utils/sifter.py",
     "src/tok/utils/tok_linter.py",
     "src/tok/utils/tok_registry.py",
-    "src/tok/utils/transformer.py",
 ]
 
 [tool.coverage.report]

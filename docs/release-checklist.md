@@ -18,7 +18,13 @@ Steps for cutting a Tok release.
 - [ ] Reconcile benchmark/savings claims via `docs/claims_matrix.md`
 - [ ] Confirm automated and manual live-smoke coverage via `docs/live_smoke_matrix.md`
 - [ ] Build package: `uv build`
+- [ ] Validate built artifact metadata and README rendering locally:
+  `uv run --with twine python -m twine check dist/*.whl dist/*.tar.gz`
 - [ ] Verify wheel installs cleanly in a fresh venv
+- [ ] Verify the sdist is present in `dist/` and includes release-critical metadata
+  files
+- [ ] Verify `tok --version` reports the tagged release version from the installed
+  artifact
 - [ ] Run the clean-room install verification from the README
 - [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.0`
 - [ ] Run live Claude bridge validation on the supported path: `tok install`,
@@ -57,6 +63,8 @@ in user-facing docs remain `pip`-first.
 - [ ] Tag the commit: `git tag v0.x.x`
 - [ ] Push the tag: `git push origin v0.x.x`
 - [ ] Watch the `Release` GitHub Actions workflow build the artifacts
+- [ ] Confirm publish only ran from a `v*` tag path and not from any manual dispatch
+  path
 - [ ] Confirm the workflow publishes to PyPI via trusted publishing
 - [ ] Confirm the workflow creates the GitHub Release and uploads `dist/*`
 

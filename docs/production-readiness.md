@@ -9,27 +9,37 @@ Runtime defaults and release posture for Tok.
 
 ## Runtime Defaults
 
-| Setting               | Default                                            | Notes                                                                |
-| --------------------- | -------------------------------------------------- | -------------------------------------------------------------------- |
-| Compression path      | `tool-compatible` (`natural_first` request policy) | Claude-first default; validated on coding and research loops         |
-| Legacy request policy | `legacy_tool_compatible`                           | Explicit rollback path; opt in only when you need the older behavior |
-| Frontier validation   | OpenRouter probes                                  | Advisory only; do not select the public default                      |
-| Fallback mode         | `baseline`                                         | Requests pass through without compression                            |
-| Fail-open             | enabled                                            | Bridge errors are designed to pass through as upstream requests      |
-| Port                  | 9090                                               | Configurable via `--port`                                            |
-| Bind address          | `0.0.0.0`                                          | Bridge listens on all interfaces; see Security Note below            |
+| Setting               | Default                                            | Notes                                                                     |
+| --------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
+| Compression path      | `tool-compatible` (`natural_first` request policy) | Claude-first default; validated on coding and research loops              |
+| Legacy request policy | `legacy_tool_compatible`                           | Explicit rollback path; opt in only when you need the older behavior      |
+| Frontier validation   | OpenRouter probes                                  | Advisory only; do not select the public default                           |
+| Fallback mode         | `baseline`                                         | Requests pass through without compression                                 |
+| Fail-open             | enabled                                            | Bridge errors are designed to pass through as upstream requests           |
+| Port                  | 9090                                               | Configurable via `--port`                                                 |
+| Bind address          | `127.0.0.1`                                        | Configurable via `TOK_BRIDGE_BIND_HOST`; client URL host remains separate |
 
 ## Security Note: Bind Address
 
-The bridge binds to `0.0.0.0` by default, meaning it accepts connections from all
-network interfaces. Since the bridge proxies requests containing API keys, be aware of
-this on multi-homed machines. If you want the bridge to accept only local connections:
+The bridge binds to `127.0.0.1` by default, accepting connections only from the local
+machine. Since the bridge proxies requests containing API keys, this is the safe default
+for a single-user workstation.
 
-- Use `--port` and rely on firewall rules, or
-- Set the bind address explicitly in your environment if your deployment requires it
+To expose the bridge on a specific interface (e.g. for containerized or multi-machine
+deployments), set the `TOK_BRIDGE_BIND_HOST` environment variable before starting the
+bridge:
 
-For typical single-user workstation use (the intended 0.1.0 scenario), this is safe
-because the bridge is only reachable from the local machine.
+```bash
+export TOK_BRIDGE_BIND_HOST=0.0.0.0   # listen on all interfaces (use with firewall rules)
+export TOK_BRIDGE_BIND_HOST=192.168.1.100  # listen on specific interface
+tok bridge start
+```
+
+For typical single-user workstation use (the intended 0.1.0 scenario), the default
+`127.0.0.1` bind is correct and no configuration is needed.
+
+`TOK_BRIDGE_HOST` still controls the client-facing bridge URL used by helper scripts and
+status probes when you intentionally connect through a non-default hostname.
 
 ## Release Posture
 

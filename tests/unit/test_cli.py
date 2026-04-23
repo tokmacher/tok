@@ -31,6 +31,16 @@ class TestCLI:
         assert "convert" not in result.output
         assert "parse" not in result.output
 
+    def test_version(self) -> None:
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert "0.1.0" in result.output
+
+    def test_version_shows_program_name(self) -> None:
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert result.output.strip().startswith("tok ")
+
     def test_bridge_help(self) -> None:
         result = runner.invoke(app, ["bridge", "--help"])
         assert result.exit_code == 0
@@ -1461,6 +1471,63 @@ class TestCLI:
         assert "stream-empty=2" in result.output
         assert "stream-read=3" in result.output
         assert "held=1" in result.output
+
+    def test_doctor_report_redacts_secret_env_values(self, monkeypatch, tmp_path) -> None:
+        memory_dir = tmp_path / ".tok"
+        memory_dir.mkdir()
+        (memory_dir / "bridge_memory.tok").write_text("state:present\n")
+
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setattr("tok.cli._release.memory_root", lambda: memory_dir)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-123")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret-456")
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path / "project"))
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "tool-compatible",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "session_tokens_saved": 0,
+                    "session_savings_pct": 0.0,
+                    "session_quality": "clean",
+                    "last_degradation_reason": "",
+                    "semantic_drift_count": 0,
+                    "fail_open_count": 0,
+                    "non_tok_count": 0,
+                    "answer_anchor_miss_count": 0,
+                    "repeat_search_count": 0,
+                    "repeat_file_read_count": 0,
+                    "state_resend_full_count": 0,
+                    "state_resend_delta_count": 0,
+                    "state_resend_suppressed_count": 0,
+                    "smoothness_score": 100,
+                    "labour_index": 0,
+                    "current_mode": "FULL_TOK",
+                    "stream_instability_events": 0,
+                    "thinking_mutation_events": 0,
+                    "task_score": 100,
+                    "repeated_active_file_reads": 0,
+                }
+
+        monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["doctor", "--report"])
+
+        assert result.exit_code == 0
+        assert "Tok Doctor report (safe to share)" in result.output
+        assert "env_OPENAI_API_KEY=set" in result.output
+        assert "env_OPENROUTER_API_KEY=set" in result.output
+        assert "env_TOK_PROJECT_DIR=set" in result.output
+        assert "sk-secret-123" not in result.output
+        assert "or-secret-456" not in result.output
 
     def test_gate_check_export_includes_behavior_signals_and_fixture_metadata(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)

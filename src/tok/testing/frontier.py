@@ -783,10 +783,13 @@ def run_openrouter_probe(
 ) -> FrontierOpenRouterSummary:
     import time
 
-    import tok
+    from tok.runtime.core import RuntimeSession
+    from tok.runtime.types import RuntimeRequest
+    from tok.universal_runtime import UniversalTokRuntime
 
     client = _load_openai_client(base_url=base_url, api_key=api_key)
-    session = tok.RuntimeSession()
+    session = RuntimeSession()
+    runtime = UniversalTokRuntime()
     turn_rows: list[FrontierOpenRouterTurn] = []
     total_failures = 0
     savings_values: list[float] = []
@@ -798,12 +801,13 @@ def run_openrouter_probe(
             local_failure = ""
             turn_behavior: dict[str, int] = {}
             try:
-                prepared = tok.wrap(
-                    [{"role": "user", "content": f"{prompt} (turn {index})"}],
+                request = RuntimeRequest(
                     model=model,
-                    session=session,
+                    messages=[{"role": "user", "content": f"{prompt} (turn {index})"}],
+                    adapter_kind="wrap",
                     tool_compatible=profile.mode != "tok-native",
                 )
+                prepared = runtime.prepare_request(request, session)
                 body_messages = (
                     [{"role": "system", "content": prepared.body["system"]}] if prepared.body.get("system") else []
                 ) + prepared.body["messages"]
@@ -814,7 +818,7 @@ def run_openrouter_probe(
                     max_tokens=200,
                 )
                 text = response.choices[0].message.content or ""
-                processed = tok.process(
+                processed = runtime.process_response(
                     text,
                     model=model,
                     session=session,
