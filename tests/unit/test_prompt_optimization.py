@@ -1,7 +1,12 @@
 import pytest
+
 from tok.compression import compress_user_prompt
+from tok.runtime.memory.bridge_memory import (
+    BridgeMemoryState,
+    clean_system_context,
+)
+from tok.runtime.pipeline.request_validation import should_optimize_prompts
 from tok.universal_runtime import detect_prompt_bloat
-from tok.bridge_memory import BridgeMemoryState, clean_system_context
 
 
 @pytest.fixture
@@ -9,7 +14,7 @@ def memory_state():
     return BridgeMemoryState()
 
 
-def test_detect_prompt_bloat_size_threshold():
+def test_detect_prompt_bloat_size_threshold() -> None:
     """Verify that prompts over the character threshold are detected."""
     small = "A short system prompt."
     large = "x" * 2001
@@ -17,11 +22,9 @@ def test_detect_prompt_bloat_size_threshold():
     assert detect_prompt_bloat(large)
 
 
-def test_detect_prompt_bloat_leakage():
+def test_detect_prompt_bloat_leakage() -> None:
     """Verify that user prompt leakage into system context is detected."""
-    user_prompt = "Implement a calculator with these exact specs:" + (
-        " y" * 150
-    )
+    user_prompt = "Implement a calculator with these exact specs:" + (" y" * 150)
     system_prompt = f"Previous instructions: {user_prompt}\nNow do it."
 
     # Correctly identifies leakage when significant part of user prompt is in system
@@ -31,7 +34,22 @@ def test_detect_prompt_bloat_leakage():
     assert not detect_prompt_bloat("Instructions: do it.", "Implement it.")
 
 
-def test_compress_user_prompt_complex_markdown():
+def test_detect_prompt_bloat_uses_default_when_threshold_env_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TOK_PROMPT_BLOAT_THRESHOLD", "not-a-number")
+    assert detect_prompt_bloat("x" * 2001)
+
+
+def test_should_optimize_prompts_uses_growth_signal() -> None:
+    assert should_optimize_prompts("small prompt", {"tok_prompt_growth_high": 1})
+
+
+def test_should_optimize_prompts_uses_default_when_limit_env_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TOK_PROMPT_OPTIMIZE_LIMIT", "invalid")
+    assert should_optimize_prompts("x" * 2501, {})
+    assert not should_optimize_prompts("short prompt", {})
+
+
+def test_compress_user_prompt_complex_markdown() -> None:
     """Test compression with nested markdown, lists, and multiple goals."""
     verbose = """
     # High Level Goal
@@ -66,18 +84,15 @@ def test_compress_user_prompt_complex_markdown():
     assert "Avoid using" in compressed
 
 
-def test_compress_user_prompt_no_matches_fallback():
+def test_compress_user_prompt_no_matches_fallback() -> None:
     """Verify fallback behavior when no heuristics match."""
-    verbose = (
-        "This is a very long string that doesn't look like instructions but is very long "
-        * 10
-    )
+    verbose = "This is a very long string that doesn't look like instructions but is very long " * 10
     compressed = compress_user_prompt(verbose)
     assert "goal:" in compressed
     assert len(compressed) < 150
 
 
-def test_clean_system_context_multiple_calls():
+def test_clean_system_context_multiple_calls() -> None:
     """Ensure cleaning doesn't fail or double-compress weirdly on repeat calls."""
     state = BridgeMemoryState()
     verbose = "Goal: Task A\n" + ("x" * 3000)
@@ -92,7 +107,7 @@ def test_clean_system_context_multiple_calls():
     assert len(cleaned_2) <= len(cleaned_1)
 
 
-def test_compress_user_prompt_file_extensions():
+def test_compress_user_prompt_file_extensions() -> None:
     """Verify various file extensions are captured."""
     text = "Check main.rs, helper.go, and script.sh"
     compressed = compress_user_prompt(text)
@@ -101,7 +116,7 @@ def test_compress_user_prompt_file_extensions():
     assert "script.sh" in compressed
 
 
-def test_clean_system_context_memory_integration():
+def test_clean_system_context_memory_integration() -> None:
     """Verify extracted info is actually in the memory state after cleaning."""
     state = BridgeMemoryState()
     verbose = "Implement Phase 8 requirements pronto."
@@ -116,8 +131,8 @@ def test_clean_system_context_memory_integration():
 
 def test_clean_system_context_preserves_list_shape_without_cached_text_block(
     monkeypatch,
-):
-    import tok.compression as compression
+) -> None:
+    from tok import compression
 
     state = BridgeMemoryState()
     monkeypatch.setattr(
@@ -142,14 +157,11 @@ def test_clean_system_context_preserves_list_shape_without_cached_text_block(
 
     assert isinstance(cleaned, list)
     assert cleaned[0]["text"] == "Prelude"
-    assert (
-        cleaned[1]["text"]
-        == "### Optimized Task Context\ng:phase_9|constraints:preserve_shape"
-    )
+    assert cleaned[1]["text"] == "### Optimized Task Context\ng:phase_9|constraints:preserve_shape"
     assert cleaned[2]["type"] == "tool_use"
 
 
-def test_compress_user_prompt_megaprompt():
+def test_compress_user_prompt_megaprompt() -> None:
     """Simulate a massive 30K+ char prompt with noise and a single clear goal."""
     noise = "This is a random log line from a previous session.\n" * 500
     goal_line = "Goal: Ensure Phase 7b is verified robustly."
@@ -159,42 +171,31 @@ def test_compress_user_prompt_megaprompt():
     assert len(verbose) > 25000
 
     compressed = compress_user_prompt(verbose)
-    print(f"Megaprompt: {len(verbose)} -> {len(compressed)}")
 
     assert "Phase 7b" in compressed
     assert len(compressed) < 2000
-    print("✅ Megaprompt stress test passed")
 
 
-def test_incremental_stacking():
-    """Verify that as prompts 'stack up', the bridge consolidates information without loss."""
+def test_incremental_stacking() -> None:
+    """Verify that as prompts 'stack up', the bridge consolidates to the latest goal."""
+    from typing import cast
+
     state = BridgeMemoryState()
 
-    # turn 1: Goal A provided
     sys1 = "Goal: Phase A"
     clean1 = clean_system_context(state, sys1)
-    # state now has Phase A
     state.turn += 1
 
-    # turn 2: Orchestrator stack: [Old Context] + [New Goal B]
-    sys2 = clean1 + "\nGoal: Phase B"
+    sys2 = cast("str", clean1) + "\nGoal: Phase B"
     clean_system_context(state, sys2)
-    # clean2 should capture Phase B. (Pre-filtering will skip Phase A already in clean1)
     state.turn += 1
 
-    wire = state.wire_state()
-    # verify both are in memory buckets (hot or durable)
+    state.wire_state()
     hot_goals = [e.value for e in state.hot.get("goal", [])]
     durable_goals = [e.value for e in state.durable.get("goal", [])]
     all_goals = hot_goals + durable_goals
 
-    assert any("Phase A" in g for g in all_goals)
     assert any("Phase B" in g for g in all_goals)
-
-    # The actual system prompt sent to the LLM (via inject_system_additions)
-    # would be small because it's built from this consolidated wire state.
-    print(f"Consolidated wire: {wire}")
-    print("✅ Incremental stacking passed")
 
 
 if __name__ == "__main__":

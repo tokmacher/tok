@@ -1,10 +1,12 @@
 import json
 
-from tok.replay_metrics import analyze_replay_fixture
 from tok.universal_runtime import calculate_invisible_pressure
+from tok.utils.replay_metrics import analyze_replay_fixture
 
 
-def test_analyze_replay_fixture_counts_response_contract_drift(tmp_path):
+def test_analyze_replay_fixture_counts_response_contract_drift(
+    tmp_path,
+) -> None:
     fixture = tmp_path / "grammar_drift.jsonl"
     fixture.write_text(
         json.dumps(
@@ -25,9 +27,7 @@ def test_analyze_replay_fixture_counts_response_contract_drift(tmp_path):
         )
         + "\n"
     )
-    fixture.with_suffix(".jsonl.meta.json").write_text(
-        json.dumps({"model": "claude-sonnet-4"})
-    )
+    fixture.with_suffix(".jsonl.meta.json").write_text(json.dumps({"model": "claude-sonnet-4"}))
 
     metrics = analyze_replay_fixture(fixture)
 
@@ -36,7 +36,9 @@ def test_analyze_replay_fixture_counts_response_contract_drift(tmp_path):
     assert calculate_invisible_pressure(metrics.behavior_totals) == 2
 
 
-def test_analyze_replay_fixture_supports_message_per_line_format(tmp_path):
+def test_analyze_replay_fixture_supports_message_per_line_format(
+    tmp_path,
+) -> None:
     fixture = tmp_path / "subtle_drift.jsonl"
     fixture.write_text(
         "\n".join(
@@ -57,9 +59,7 @@ def test_analyze_replay_fixture_supports_message_per_line_format(tmp_path):
         )
         + "\n"
     )
-    fixture.with_suffix(".jsonl.meta.json").write_text(
-        json.dumps({"model": "claude-sonnet-4"})
-    )
+    fixture.with_suffix(".jsonl.meta.json").write_text(json.dumps({"model": "claude-sonnet-4"}))
 
     metrics = analyze_replay_fixture(fixture)
 
@@ -72,7 +72,7 @@ def test_analyze_replay_fixture_supports_message_per_line_format(tmp_path):
 
 def test_analyze_replay_fixture_respects_tool_compatible_response_mode(
     tmp_path,
-):
+) -> None:
     fixture = tmp_path / "adapter_fixture.jsonl"
     fixture.write_text(
         json.dumps(
@@ -101,7 +101,7 @@ def test_analyze_replay_fixture_respects_tool_compatible_response_mode(
 
 def test_analyze_replay_fixture_counts_reacquisition_pressure_from_user_tool_results(
     tmp_path,
-):
+) -> None:
     fixture = tmp_path / "release_reacquisition.jsonl"
     search_result = "\n".join(
         [
@@ -236,19 +236,13 @@ def test_analyze_replay_fixture_counts_reacquisition_pressure_from_user_tool_res
         )
         + "\n"
     )
-    fixture.with_suffix(".jsonl.meta.json").write_text(
-        json.dumps({"model": "claude-sonnet-4"})
-    )
+    fixture.with_suffix(".jsonl.meta.json").write_text(json.dumps({"model": "claude-sonnet-4"}))
 
     metrics = analyze_replay_fixture(fixture)
 
     assert (
-        metrics.behavior_totals.get("repeat_file_read", 0)
-        + metrics.behavior_totals.get("cached_file_read", 0)
+        metrics.behavior_totals.get("repeat_file_read", 0) + metrics.behavior_totals.get("cached_file_read", 0)
     ) == 1
-    assert (
-        metrics.behavior_totals.get("repeat_search", 0)
-        + metrics.behavior_totals.get("cached_search", 0)
-    ) == 1
+    assert (metrics.behavior_totals.get("repeat_search", 0) + metrics.behavior_totals.get("cached_search", 0)) == 1
     assert metrics.input_saved_tokens > 0
     assert metrics.savings_pct > 0

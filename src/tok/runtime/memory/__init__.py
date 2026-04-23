@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Lazy exports for runtime memory helpers."""
+
+from __future__ import annotations
 
 from importlib import import_module
 from typing import Any
@@ -15,9 +15,9 @@ _SYMBOLS = {
     "AnswerMemory": (".answer_memory", "AnswerMemory"),
     "extract_answers": (".answer_memory", "extract_answers"),
     "ground_answers_in_memory": (".answer_memory", "ground_answers_in_memory"),
-    "SessionHelpers": (".session_helpers", "SessionHelpers"),
-    "initialize_session": (".session_helpers", "initialize_session"),
-    "update_session_state": (".session_helpers", "update_session_state"),
+    "SessionHelpers": (".session_state", "SessionHelpers"),
+    "initialize_session": (".session_state", "initialize_session"),
+    "update_session_state": (".session_state", "update_session_state"),
 }
 
 

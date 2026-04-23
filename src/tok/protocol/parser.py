@@ -3,7 +3,7 @@
 import random
 import re
 import string
-from typing import Any
+from typing import Any, cast
 
 from .models import TokNode, Trust
 from .protocol import SerializationProtocol
@@ -22,17 +22,13 @@ def tok_to_dict(node: TokNode) -> dict[str, Any]:
         d["_cardinality"] = node.cardinality
     d.update(node.attrs)
     if node.headers and node.rows:
-        d["_rows"] = [
-            dict(zip(node.headers, row, strict=True)) for row in node.rows
-        ]
+        d["_rows"] = [dict(zip(node.headers, row, strict=True)) for row in node.rows]
     if node.children:
         d["_children"] = [tok_to_dict(c) for c in node.children]
     return d
 
 
-def serialize(
-    nodes: list[TokNode], _depth: int = 0, compact: bool = False
-) -> str:
+def serialize(nodes: list[TokNode], _depth: int = 0, compact: bool = False) -> str:
     """Serialize a list of TokNodes back to canonical Tok text."""
     lines = []
     pad = "" if compact else "  " * _depth
@@ -74,18 +70,13 @@ def serialize(
         if text:
             lines_raw = text.split("\n")
             needs_verbatim = False
-            if any(
-                line.strip().startswith(("@", ">", "|", "#"))
-                for line in lines_raw
+            if any(line.strip().startswith(("@", ">", "|", "#")) for line in lines_raw) or (
+                ":" in text and len(text) > 100
             ):
-                needs_verbatim = True
-            elif ":" in text and len(text) > 100:
                 needs_verbatim = True
 
             if needs_verbatim and not compact:
-                h = "".join(
-                    random.choices(string.ascii_uppercase + string.digits, k=6)
-                )
+                h = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
                 lines.append(f"{child_pad}|#{h}>")
                 lines.append(text)
                 lines.append(f"{child_pad}|#{h}")
@@ -103,12 +94,7 @@ def serialize(
 
         # Complex attributes — anything not inlined in the header
         for k, v in node.attrs.items():
-            if (
-                k.startswith("_")
-                or not isinstance(v, str | int | float | bool)
-                or len(str(v)) >= 50
-                or " " in str(v)
-            ):
+            if k.startswith("_") or not isinstance(v, str | int | float | bool) or len(str(v)) >= 50 or " " in str(v):
                 lines.append(f"{child_pad}{k}: {v}")
 
         # Children
@@ -129,9 +115,7 @@ def tok_to_tok(node: TokNode) -> str:
 
 
 class TokParser(SerializationProtocol):
-    """
-    LL(1) line-driven state machine for Tok. Supports streaming via feed()/flush().
-    """
+    """LL(1) line-driven state machine for Tok. Supports streaming via feed()/flush()."""
 
     MAX_LINE_LENGTH = 65536
 
@@ -139,9 +123,7 @@ class TokParser(SerializationProtocol):
         self._stack: list[tuple[int, TokNode]] = []
         self._buffer: str = ""
         self._active_boundary: str | None = None
-        self._active_label: str | None = None
         self._pending_header: str = ""
-        self._in_quote: str | None = None
         self._in_inverted_body: bool = False
 
     @property
@@ -155,9 +137,7 @@ class TokParser(SerializationProtocol):
         self._stack = []
         self._buffer = ""
         self._active_boundary = None
-        self._active_label = None
         self._pending_header = ""
-        self._in_quote = None
         self._in_inverted_body = False
         result = []
 
@@ -352,9 +332,7 @@ class TokParser(SerializationProtocol):
             node.text += raw_line + "\n"
             return
 
-        if (
-            stripped.startswith("|#") or stripped.startswith("#")
-        ) and stripped.endswith(">"):
+        if (stripped.startswith(("|#", "#"))) and stripped.endswith(">"):
             label = stripped.lstrip("|#")[:-1].strip()
             if label in ("SEARCH", "REPLACE", "RAW") or self._active_boundary:
                 self._active_boundary = label
@@ -382,12 +360,9 @@ class TokParser(SerializationProtocol):
             idx = raw_line.find("|>")
             content = raw_line[idx + 2 :]
             # If there's exactly one space after |>, trim it (common delimiter)
-            if content.startswith(" "):
-                content = content[1:]
+            content = content.removeprefix(" ")
             node.text += content + "\n"
-            self._in_inverted_body = (
-                True  # STICKY MODE: following lines are text
-            )
+            self._in_inverted_body = True  # STICKY MODE: following lines are text
 
         elif stripped.startswith("|") and ">" in stripped:
             marker_end = stripped.index(">")
@@ -416,33 +391,31 @@ class TokParser(SerializationProtocol):
                     curr_idx += 1
                     continue
 
-                if ":" in cell and not (
-                    cell.startswith('"') or cell.startswith("'")
-                ):
+                if ":" in cell and not (cell.startswith(('"', "'"))):
                     parts = cell.split(":", 1)
                     key, val = parts[0].strip(), parts[1].strip()
                     if key in node.headers:
                         curr_idx = node.headers.index(key)
-                        row[curr_idx] = self._cast(val)
+                        row[curr_idx] = str(self._cast(val))
                         curr_idx += 1
                         continue
 
                 if curr_idx < len(node.headers):
-                    val = self._cast(cell)
-                    if val is not None:
-                        row[curr_idx] = val
+                    cast_val = self._cast(cell)
+                    if cast_val is not None:
+                        row[curr_idx] = str(cast_val)
                     curr_idx += 1
                 else:
                     # Robustness: keep extra cells by appending to a hidden attr or last cell
                     # For now, let's just append to the row list itself if we want to be
                     # truly lossless
-                    row.append(self._cast(cell))
+                    row.append(str(self._cast(cell)))
 
             node.rows.append(row)
 
         elif (
             (":" in stripped or "=" in stripped)
-            and not (stripped.startswith('"') or stripped.startswith("'"))
+            and not (stripped.startswith(('"', "'")))
             and len(stripped) < self.MAX_LINE_LENGTH
         ):
             sep = ":" if ":" in stripped else "="
@@ -451,35 +424,24 @@ class TokParser(SerializationProtocol):
                 # Robustness: key must be preceded by space or start of line,
                 # and followed by a space. This prevents URL/time colons/equals from being
                 # keys.
-                matches = list(
-                    re.finditer(
-                        r"(?:^|\s)([a-zA-Z0-9_-]+)[:=](?=\s|$)", stripped
-                    )
-                )
+                matches = list(re.finditer(r"(?:^|\s)([a-zA-Z0-9_-]+)[:=](?=\s|$)", stripped))
                 if matches:
                     for i, m in enumerate(matches):
                         k = m.group(1).strip()
                         val_start = m.end()
-                        val_end = (
-                            matches[i + 1].start()
-                            if i + 1 < len(matches)
-                            else len(stripped)
-                        )
+                        val_end = matches[i + 1].start() if i + 1 < len(matches) else len(stripped)
                         v = stripped[val_start:val_end].strip()
                         # Robustness: if value contains :, check if it's a URL or just
                         # more attrs
                         node.attrs[k] = self._cast(v)
                 else:
-                    node.attrs[parts[0].strip()] = self._cast(
-                        ":".join(parts[1:]).strip()
-                    )
+                    node.attrs[parts[0].strip()] = self._cast(":".join(parts[1:]).strip())
             else:
                 k, v = parts[0], parts[1]
                 node.attrs[k.strip()] = self._cast(v.strip())
 
-        else:
-            if stripped:
-                node.text += stripped + "\n"
+        elif stripped:
+            node.text += stripped + "\n"
 
     def _flush_stack(self) -> list[TokNode]:
         while len(self._stack) > 1:
@@ -516,9 +478,7 @@ class TokParser(SerializationProtocol):
                         node.headers = [content]
             elif tok.startswith("*"):
                 node.ref = tok[1:]
-            elif (":" in tok or "=" in tok) and not (
-                tok.startswith(":") or tok.startswith("=")
-            ):
+            elif (":" in tok or "=" in tok) and not (tok.startswith((":", "="))):
                 sep = ":" if ":" in tok else "="
                 k, v = tok.split(sep, 1)
                 if k == "trust":
@@ -618,7 +578,7 @@ class TokParser(SerializationProtocol):
         expanded = line.replace("\t", "  ")
         return len(expanded) - len(expanded.lstrip())
 
-    def _cast(self, v: str) -> Any:
+    def _cast(self, v: str) -> str | list[Any] | int | float | bool | None:
         if not v:
             return v
         if v.startswith("\\") and len(v) > 1 and v[1] in ("!", "*"):
@@ -660,9 +620,7 @@ class TokParser(SerializationProtocol):
         for conv in (int, float):
             try:
                 val = conv(v)
-                if str(val) == v or (
-                    isinstance(val, float) and v.replace(".", "").isdigit()
-                ):
+                if str(val) == v or (isinstance(val, float) and v.replace(".", "").isdigit()):
                     return val
             except ValueError:
                 continue
@@ -682,49 +640,45 @@ class TokParser(SerializationProtocol):
 
         # Final fallback: string cleanup and escape decoding
         clean_str = v.strip()
-        if (
-            clean_str.startswith('"""')
-            and clean_str.endswith('"""')
-            and len(clean_str) >= 6
-        ):
+        if clean_str.startswith('"""') and clean_str.endswith('"""') and len(clean_str) >= 6:
             clean_str = clean_str[3:-3]
-        elif (
-            clean_str.startswith('"')
-            and clean_str.endswith('"')
-            and len(clean_str) >= 2
-        ):
+        elif clean_str.startswith('"') and clean_str.endswith('"') and len(clean_str) >= 2:
             clean_str = clean_str[1:-1]
         try:
             if "\\" in clean_str:
                 # ONLY decode specific escapes that Tok needs for its own structure
                 # Avoid aggressive unescaping (like \n) here. Favor verbatim blocks for
                 # multi-line content.
-                clean_str = clean_str.replace('\\"', '"').replace("\\\\", "\\")
-                return clean_str
+                return clean_str.replace('\\"', '"').replace("\\\\", "\\")
         except Exception:
             pass
         return clean_str
 
-    def encode(self, nodes: Any) -> str:
-        """Encode nodes to Tok text. Satisfies SerializationProtocol.
+    def encode(self, data: object) -> str:
+        """
+        Encode data to Tok text. Satisfies SerializationProtocol.
 
         Args:
-            nodes: A TokNode or list of TokNodes to encode
+            data: A TokNode or list of TokNodes to encode
 
         Returns:
             Serialized Tok text
+
         """
-        if not isinstance(nodes, list):
-            nodes = [nodes]
-        return serialize(nodes)
+        # Type assertion to handle the generic object parameter
+        if not isinstance(data, list):
+            data = [data]
+        return serialize(cast(list[TokNode], data))
 
     def decode(self, text: str) -> list[TokNode]:
-        """Decode Tok text to nodes. Satisfies SerializationProtocol.
+        """
+        Decode Tok text to nodes. Satisfies SerializationProtocol.
 
         Args:
             text: Tok text to parse
 
         Returns:
             List of parsed TokNode objects
+
         """
         return self.parse(text)

@@ -3,6 +3,8 @@
 import re
 from typing import Any
 
+from tok.utils.event_logging import log_drift_detected
+
 MEMORY_LIFT_SIGNALS = (
     "cold_start_structured_memory",
     "durable_promotions",
@@ -49,7 +51,7 @@ def calculate_semantic_regression_score(signals: dict[str, int]) -> int:
     return sum(signals.get(name, 0) for name in SEMANTIC_REGRESSION_SIGNALS)
 
 
-def pressure_score(signals: dict[str, int]) -> int:
+def semantic_pressure_score(signals: dict[str, int]) -> int:
     """Compute an aggregate protocol-pressure score for optimization gates."""
     return calculate_invisible_pressure(signals)
 
@@ -58,11 +60,9 @@ class SemanticValidator:
     """Monitors and corrects protocol drift (the 'Reflex' layer)."""
 
     def __init__(self) -> None:
-        self.drift_count = 0
+        pass
 
-    def validate_drift(
-        self, text: str, behavior_signals: dict[str, Any]
-    ) -> dict[str, Any]:
+    def validate_drift(self, text: str, behavior_signals: dict[str, Any]) -> dict[str, Any]:
         """Detect and log semantic drift patterns."""
         drift_signals = {}
 
@@ -70,28 +70,29 @@ class SemanticValidator:
             drift_signals["tok_memory_snap_triggered"] = 1
 
         # 1. Detect redundant human prose (Leakage)
-        # Case A: Common conversational keywords
+        # Case A: Multi-word conversational phrases that signal verbose filler
         if re.search(
-            r"(?i)(I have|I'll|successfully|requested|here|here is|certainly|provide|summarized|explore|understand|examine|investigate)",
+            r"(?i)\b(I have|I'll have|I'll|successfully|requested|certainly|summarized|investigate)\b",
             text,
         ):
             if len(text.split()) > 10:
                 drift_signals["semantic_drift_detected"] = 1
+                log_drift_detected("prose_leakage", f"{len(text.split())} words")
 
         # Case B: Long non-Tok responses (absence of protocol markers)
         # If the response is over 40 words and contains no >>> marker, it is a prose leak.
         # This triggers for "Victorian Poet" or overly creative / non-mechanical filler.
         if ">>>" not in text and len(text.split()) > 40:
             drift_signals["semantic_drift_detected"] = 1
+            log_drift_detected("long_prose", f"{len(text.split())} words no markers")
 
         # Case C: Bullet-list prose without Tok markers — gradual drift indicator.
         # A response with multiple "- " bullet lines but no @msg or >>> is leaking
         # narrative structure into the protocol layer.
-        bullet_lines = [
-            ln for ln in text.splitlines() if ln.lstrip().startswith("- ")
-        ]
+        bullet_lines = [ln for ln in text.splitlines() if ln.lstrip().startswith("- ")]
         if len(bullet_lines) >= 2 and "@msg" not in text and ">>>" not in text:
             drift_signals["semantic_drift_detected"] = 1
+            log_drift_detected("bullet_prose", f"{len(bullet_lines)} bullets")
 
         # Case D: @msg block with plain paragraph body instead of |> prefix.
         # Detects drift where the model starts using @msg but abandons the |> convention.
@@ -104,13 +105,7 @@ class SemanticValidator:
             drift_signals["semantic_pressure_detected"] = 1
 
         # 4. Repeated tool patterns indicating 'Cognitive Tax'
-        if (
-            behavior_signals.get("repeat_file_read", 0) > 1
-            or behavior_signals.get("repeat_search", 0) > 1
-        ):
+        if behavior_signals.get("repeat_file_read", 0) > 1 or behavior_signals.get("repeat_search", 0) > 1:
             drift_signals["semantic_pressure_detected"] = 1
-
-        if drift_signals:
-            self.drift_count += 1
 
         return drift_signals

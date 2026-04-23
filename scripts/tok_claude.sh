@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # tok_claude.sh — Shell integration for Tok + Claude Code
 #
-# SOURCE this file (do not execute it directly):
-#   source /path/to/tok/scripts/tok_claude.sh
+# This repo copy is for development. Public installs should prefer
+# `tok install --wrap-claude`,
+# which sources the packaged script from the installed tok-protocol path.
 #
-# Or add to ~/.zshrc / ~/.bashrc:
+# If you need to source this file manually during local development:
 #   source /path/to/tok/scripts/tok_claude.sh
 #
 # This defines only a `claude` function:
@@ -13,12 +14,13 @@
 #   3. Leaves the real `tok` CLI untouched
 
 # Path to the tok repo (auto-detected from this script's location)
-TOK_DIR="${TOK_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]:-${(%):-%x}}")/.." && pwd)"}"
+TOK_DIR="${TOK_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}"
 TOK_BRIDGE_PORT="${TOK_BRIDGE_PORT:-9090}"
+TOK_BRIDGE_HOST="${TOK_BRIDGE_HOST:-localhost}"
 _TOK_STARTUP_TRIES="${_TOK_STARTUP_TRIES:-15}"
 
 _tok_bridge_running() {
-    curl -s --connect-timeout 1 "http://localhost:${TOK_BRIDGE_PORT}/health" \
+    curl -s --connect-timeout 1 "http://${TOK_BRIDGE_HOST}:${TOK_BRIDGE_PORT}/health" \
         -o /dev/null 2>&1
 }
 
@@ -49,5 +51,7 @@ _tok_start_bridge() {
 
 claude() {
     _tok_start_bridge || return 1
-    ANTHROPIC_BASE_URL="http://localhost:${TOK_BRIDGE_PORT}" command claude "$@"
+    TOK_SELF_BRIDGED_SESSION=1 \
+        ANTHROPIC_BASE_URL="http://${TOK_BRIDGE_HOST}:${TOK_BRIDGE_PORT}" \
+        command claude "$@"
 }

@@ -1,49 +1,25 @@
+"""Tok Semantic Auditor for measuring efficiency and resilience of Tok payloads."""
+
 import argparse
 import sys
 from typing import Any
 
-import tiktoken
-
-from ..protocol.models import TokNode, Trust
-from ..protocol.parser import TokParser
+from tok.protocol.models import TokNode, Trust
+from tok.protocol.parser import TokParser
+from tok.utils.token_utils import count_tokens
 
 
 class SemanticAuditor:
-    RECURSION_LIMIT = 10
+    """Audit Tok payloads for Reasoning-to-Noise Ratio and Structural Debt."""
 
-    def check_recursion(self, depth: int) -> bool:
-        return depth < self.RECURSION_LIMIT
-
-    """
-    The Tok Semantic Auditor measures the efficiency and resilience of Tok payloads.
-    It focuses on Reasoning-to-Noise Ratio (RNR) and Structural Debt.
-    """
-
-    def __init__(self, model: str = "gpt-4", threshold: float = 1.0) -> None:
-        try:
-            self.encoding = tiktoken.encoding_for_model(model)
-        except Exception:
-            self.encoding = tiktoken.get_encoding("cl100k_base")
+    def __init__(self, _model: str = "gpt-4", threshold: float = 1.0) -> None:
+        """Initialize auditor with threshold for structural debt analysis."""
         self.threshold = threshold
 
-    def count_tokens(self, text: str) -> int:
-        if not text:
-            return 0
-        return len(self.encoding.encode(text))
-
-    def audit_v7(self, text: str) -> bool:
-        # Check for strict typing (key: value without indent)
-        import re
-
-        lines = text.split("\n")
-        strict_types = all(not re.search(r"^\s+\w+:", line) for line in lines)
-        v7_headers = any(
-            "@protocol version:7.0" in line or "@shard version:7.0" in line
-            for line in lines
-        )
-        return strict_types and v7_headers
+    count_tokens = staticmethod(count_tokens)
 
     def audit(self, text: str) -> dict[str, Any]:
+        """Run full audit on Tok text and return comprehensive report."""
         parser = TokParser()
         nodes = parser.parse(text)
 
@@ -67,16 +43,10 @@ class SemanticAuditor:
             "efficiency_math": self._calculate_efficiency_math(nodes),
         }
 
-    def _calculate_efficiency_math(
-        self, nodes: list[TokNode]
-    ) -> dict[str, str | int | float]:
-        """
-        Compare 'Upfront Schema' (System Prompt) vs 'On-Demand Error Injection'.
-        """
+    def _calculate_efficiency_math(self, _nodes: list[TokNode]) -> dict[str, str | int | float]:
+        """Compare 'Upfront Schema' (System Prompt) vs 'On-Demand Error Injection'."""
         # Assumptions based on typical LLM agent usage
-        SCHEMA_AVG_TOKENS = (
-            150  # Tokens for a detailed schema in system prompt
-        )
+        SCHEMA_AVG_TOKENS = 150  # Tokens for a detailed schema in system prompt
         ERROR_MSG_AVG_TOKENS = 40  # Tokens for a surgical error message
         FAILURE_RATE = 0.05  # 5% chance of the model making a schema error
 
@@ -90,8 +60,7 @@ class SemanticAuditor:
         return {
             "upfront_cost_per_turn": upfront_turn_cost,
             "on_demand_expected_cost": round(on_demand_turn_cost, 2),
-            "savings_per_turn": upfront_turn_cost
-            - round(on_demand_turn_cost, 2),
+            "savings_per_turn": upfront_turn_cost - round(on_demand_turn_cost, 2),
             "verdict": (
                 "On-Demand is significantly more efficient"
                 if on_demand_turn_cost < upfront_turn_cost
@@ -123,11 +92,7 @@ class SemanticAuditor:
 
         return {
             "score": max(0, resilience_score),
-            "status": (
-                "Resilient (Complete Partial Tok)"
-                if resilience_score > 0.8
-                else "Degraded"
-            ),
+            "status": ("Resilient (Complete Partial Tok)" if resilience_score > 0.8 else "Degraded"),
         }
 
     def _count_reasoning(self, nodes: list[TokNode]) -> int:
@@ -190,11 +155,7 @@ class SemanticAuditor:
                                 "key_tokens": key_tok,
                                 "val_tokens": val_tok,
                                 "ratio": round(
-                                    (
-                                        key_tok / val_tok
-                                        if val_tok > 0
-                                        else key_tok
-                                    ),
+                                    (key_tok / val_tok if val_tok > 0 else key_tok),
                                     2,
                                 ),
                                 "message": f"Attribute '{k}' ({key_tok} tokens) costs more than {self.threshold}x its value ({val_tok} tokens).",
@@ -204,9 +165,7 @@ class SemanticAuditor:
                 # Check for repetitive keys across children (Density opportunity)
                 if len(n.children) > 2:
                     all_keys = [set(c.attrs.keys()) for c in n.children]
-                    common_keys = (
-                        set.intersection(*all_keys) if all_keys else set()
-                    )
+                    common_keys = set.intersection(*all_keys) if all_keys else set()
                     if common_keys:
                         for k in common_keys:
                             debt.append(
@@ -223,9 +182,7 @@ class SemanticAuditor:
         walk(nodes)
         return debt
 
-    def _generate_suggestions(
-        self, nodes: list[TokNode], debt: list[dict[str, str | int | float]]
-    ) -> list[str]:
+    def _generate_suggestions(self, _nodes: list[TokNode], debt: list[dict[str, str | int | float]]) -> list[str]:
         suggestions = []
         processed_keys = set()
 
@@ -244,13 +201,10 @@ class SemanticAuditor:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Tok Semantic Auditor: Measure RNR and Structural Debt."
-    )
+    """CLI entry point for Tok Semantic Auditor."""
+    parser = argparse.ArgumentParser(description="Tok Semantic Auditor: Measure RNR and Structural Debt.")
     parser.add_argument("file", help="Path to Tok file to audit")
-    parser.add_argument(
-        "--json", action="store_true", help="Output results as JSON"
-    )
+    parser.add_argument("--json", action="store_true", help="Output results as JSON")
     parser.add_argument(
         "--threshold",
         type=float,
@@ -262,54 +216,25 @@ def main() -> None:
     try:
         with open(args.file) as f:
             content = f.read()
-    except Exception as e:
-        print(f"Error reading file: {e}")
+    except Exception:
         sys.exit(1)
 
     auditor = SemanticAuditor(threshold=args.threshold)
     report = auditor.audit(content)
 
     if args.json:
-        import json
+        pass
 
-        print(json.dumps(report, indent=2))
     else:
-        print("─" * 40)
-        print(f"TOK SEMANTIC AUDIT: {args.file}")
-        print("─" * 40)
-        print(f"Total Tokens:      {report['total_tokens']}")
-        print(f"Reasoning Tokens:   {report['reasoning_tokens']}")
-        print(f"Structural Tokens: {report['structural_tokens']}")
-        print(f"RNR (Reasoning-to-Noise): {report['rnr']}")
-        print("─" * 40)
-
         if report["debt"]:
-            print("\nDEBT DETECTED:")
-            for d in report["debt"]:
-                print(f" • [{d['type'].upper()}] {d['message']}")
+            for _d in report["debt"]:
+                pass
 
         if report["suggestions"]:
-            print("\nSUGGESTIONS:")
-            for s in report["suggestions"]:
-                print(f" → {s}")
+            for _s in report["suggestions"]:
+                pass
 
-        print(
-            f"\nRESILIENCE REPORT: {report['resilience']['status']} ({report['resilience']['score']})"
-        )
-
-        em = report["efficiency_math"]
-        print("\nEFFICIENCY MATH (Inverted Perspective):")
-        print(
-            f" • Upfront Schema Cost:   {em['upfront_cost_per_turn']} tokens/turn"
-        )
-        print(
-            f" • On-Demand Expected:    {em['on_demand_expected_cost']} tokens/turn"
-        )
-        print(
-            f" • Net Savings:           {em['savings_per_turn']} tokens/turn"
-        )
-        print(f" → Verdict: {em['verdict']}")
-        print("─" * 40)
+        report["efficiency_math"]
 
 
 if __name__ == "__main__":

@@ -1,47 +1,55 @@
+"""Tok orchestrator for managing LLM interactions and sessions."""
+
 from __future__ import annotations
+
 import atexit
 import concurrent.futures
+import logging
 import os
 import re
 import subprocess
-from typing import Any, cast, TYPE_CHECKING
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
-import tiktoken
 from dotenv import load_dotenv
 from openai import OpenAI
 
+logger = logging.getLogger(__name__)
+
+from tok.analysis.prompt import MINIMAL_PULSE_PROMPT
+from tok.monitoring.profiler import TokProfiler
+from tok.protocol import Bridge, TokParser  # noqa: F401
+from tok.stats import SavingsTracker
+from tok.utils.token_utils import count_tokens
+
 from .adapters import OrchestratorAdapter
-from ..monitoring.profiler import TokProfiler
-from ..prompt import MINIMAL_PULSE_PROMPT
-from ..protocol import Bridge, TokParser  # noqa: F401
-from ..stats import SavingsTracker
 
 if TYPE_CHECKING:
-    from ..utils.delta import (
+    from tok.runtime.types import (
+        PreparedRuntimeRequest,
+        ProcessedRuntimeResponse,
+    )
+    from tok.utils.delta import (
         TokDeltaTracker,
         delta_to_tok,
         diff_tok,
-        format_compact_delta,
     )
 else:
     try:
-        from ..utils.delta import (
+        from tok.utils.delta import (
             TokDeltaTracker,
             delta_to_tok,
             diff_tok,
-            format_compact_delta,
         )
     except ImportError:
         TokDeltaTracker = None
         diff_tok = None
         delta_to_tok = None
-        format_compact_delta = None
 
 # TokRegistry is optional - gracefully handle if missing
 TokRegistry: type[Any] | None = None
 try:
-    from ..utils.tok_registry import TokRegistry  # noqa: F401
+    from tok.utils.tok_registry import TokRegistry  # noqa: F401
 except ImportError:
     pass
 
@@ -65,7 +73,7 @@ def fetch_model_pricing(client: OpenAI, model: str) -> tuple[float, float]:
             completion_price = float(pricing_data.get("completion", 0) or 0)
             return prompt_price, completion_price
     except Exception as e:
-        print(f"[!] Could not fetch pricing for {model}: {e}")
+        logger.warning("Could not fetch pricing for %s: %s", model, e)
 
     return FALLBACK_PRICING["prompt"], FALLBACK_PRICING["completion"]
 
@@ -99,9 +107,7 @@ class TokOrchestrator:
         entropy_budget: int | None = None,
         compute_budget: int | None = None,
     ) -> None:
-        """
-        Initialize the orchestrator, loading environment variables and the OpenAI client.
-        """
+        """Initialize the orchestrator, loading environment variables and the OpenAI client."""
         load_dotenv()
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -114,7 +120,6 @@ class TokOrchestrator:
         self.max_retries = max_retries
         self.strict_mode = strict_mode
         self.app_name = app_name
-        self.enc = tiktoken.get_encoding("cl100k_base")
         self.todo_path = "todo.tok"
 
         # Delta tracking moved to runtime_tools.py
@@ -127,9 +132,7 @@ class TokOrchestrator:
             self.prompt_price,
             self.completion_price,
         ) = self._fetch_pricing_with_timeout(model)
-        print(
-            f"[*] Pricing for {model}: ${self.prompt_price}/1K prompt, ${self.completion_price}/1K completion"
-        )
+        logger.info(f"Pricing for {model}: ${self.prompt_price}/1K prompt, ${self.completion_price}/1K completion")
 
         self.system_prompt = """
         You are an autonomous coding agent using TOK-PROTOCOL v5.8 (Territory-Aware).
@@ -228,19 +231,13 @@ class TokOrchestrator:
         self.total_cost_usd = 0.0
         self.OPENROUTER_DISCOUNT = 0.01  # 1% flat discount
         self.MAX_MESSAGES = 10
-        self.MAX_CONTEXT_TOKENS = (
-            4096  # Extreme Inversion Test (forced memory reliance)
-        )
+        self.MAX_CONTEXT_TOKENS = 4096  # Extreme Inversion Test (forced memory reliance)
         # 32k hard limit for sovereign context
-        self.entropy_budget = (
-            entropy_budget if entropy_budget is not None else 40
-        )  # Max tool calls per session
-        self.compute_budget = (
-            compute_budget if compute_budget is not None else 20
-        )  # Max compute-intensive operations
+        self.entropy_budget = entropy_budget if entropy_budget is not None else 40  # Max tool calls per session
+        self.compute_budget = compute_budget if compute_budget is not None else 20  # Max compute-intensive operations
         self.MAX_PROMPT_TOKENS = 8192  # Total budget for all content
         self.workspace_root = os.getcwd()
-        self.log_path = "execution.log"
+        self.log_path = os.path.join("tmp", "execution.log")
         self.max_tokens = 4096  # Production default
         self.last_tool_sig: str | None = None
         self.consecutive_repeats = 0
@@ -248,9 +245,7 @@ class TokOrchestrator:
         self.heartbeat_interval = 50
         atexit.register(self.tracker.merge_session_to_ledger)
 
-    def _fetch_pricing_with_timeout(
-        self, model: str, timeout: float = 2.0
-    ) -> tuple[float, float]:
+    def _fetch_pricing_with_timeout(self, model: str, timeout: float = 2.0) -> tuple[float, float]:
         """Fetch model pricing with a timeout to avoid blocking __init__ on slow networks."""
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(fetch_model_pricing, self.client, model)
@@ -275,20 +270,21 @@ class TokOrchestrator:
 
     def _is_safe_path(self, path: str | Path) -> bool:
         """Delegate to runtime tools - kept for backward compatibility."""
-        from ..runtime.tools import get_default_executor
+        from tok.runtime.tools import get_default_executor
 
         return get_default_executor()._is_safe_path(str(path))
 
     def _is_safe_rm(self, cmd: str) -> bool:
         """Delegate to runtime tools - kept for backward compatibility."""
-        from ..runtime.tools import get_default_executor
+        from tok.runtime.tools import get_default_executor
 
         return get_default_executor()._is_safe_rm(cmd)
 
     def _load_system_prompt(self) -> str:
         """Load system prompt from file or use default."""
-        if os.path.exists("system_prompt.tok"):
-            with open("system_prompt.tok") as f:
+        system_prompt_path = Path("system_prompt.tok")
+        if system_prompt_path.exists():
+            with system_prompt_path.open() as f:
                 return f.read().strip()
         return """@agent mode:autonomous
 @memory memory.tok todo.tok
@@ -307,79 +303,84 @@ class TokOrchestrator:
                 return f.read().strip()
         return ""
 
-    def count_tokens(self, text: str) -> int:
-        """Calculate the number of tokens in a given text."""
-        return len(self.enc.encode(text))
+    count_tokens = staticmethod(count_tokens)
 
     def _regenerate_territory(self) -> None:
         """Regenerate the territory.tok map to stay in sync with filesystem."""
+        shadowed = False
         try:
             # Shadowing fix: ensure we don't use root tok.py if it exists
             env = os.environ.copy()
-            env["PYTHONPATH"] = (
-                f"{os.getcwd()}/src:{env.get('PYTHONPATH', '')}"
-            )
+            env["PYTHONPATH"] = f"{os.getcwd()}/src:{env.get('PYTHONPATH', '')}"
 
-            # Temporary rename if tok.py exists to avoid shadowing
             shadowed = os.path.exists("tok.py")
             if shadowed:
                 os.rename("tok.py", "tok.py.tmp")
 
-            cmd = "uv run python -c \"from tok.sifter import Sifter; s = Sifter.from_dir('src/tok', naked=False, minify=True); open('territory.tok', 'w').write(s)\""
+            cmd = (
+                'uv run python -c "from pathlib import Path; from tok.utils.sifter import Sifter; '
+                "s = Sifter.from_dir('src/tok', naked=False, minify=True); "
+                "out = Path('tmp/orchestrator/territory.tok'); out.parent.mkdir(parents=True, exist_ok=True); "
+                'out.write_text(s)"'
+            )
             proc = subprocess.run(
-                cmd, shell=True, env=env, capture_output=True, text=True
+                cmd,
+                shell=True,  # nosec B602
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
             )
             if proc.returncode != 0:
-                print(f"[!] Territory Sync Failed: {proc.stderr}")
+                logger.error(f"Territory Sync Failed: {proc.stderr}")
             else:
-                print("[!] Territory regenerated due to file changes.")
+                logger.info("Territory regenerated due to file changes.")
         except Exception as e:
-            print(f"[!] Warning: Territory regeneration failed: {e}")
+            logger.warning(f"Warning: Territory regeneration failed: {e}")
         finally:
             if shadowed:
                 os.rename("tok.py.tmp", "tok.py")
 
-    def _log_execution(
-        self, cmd: str, stdout: str, stderr: str, returncode: int
-    ) -> None:
+    def _log_execution(self, cmd: str, stdout: str, stderr: str, returncode: int) -> None:
         """Log command execution details to a file."""
         import datetime
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"\n{'=' * 20}\n[{timestamp}] COMMAND: {cmd}\nEXIT CODE: {returncode}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}\n{'=' * 20}\n"
 
+        try:
+            log_dir = os.path.dirname(self.log_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            logger.debug("Failed to ensure log directory for %s", self.log_path, exc_info=True)
+
         # Simple rotation: keep the log file under a reasonable size (e.g., 500KB)
         try:
-            if (
-                os.path.exists(self.log_path)
-                and os.path.getsize(self.log_path) > 500 * 1024
-            ):
+            if os.path.exists(self.log_path) and os.path.getsize(self.log_path) > 500 * 1024:
                 with open(self.log_path) as f:
                     lines = f.readlines()
                 # Keep last 1000 lines
                 with open(self.log_path, "w") as f:
                     f.writelines(lines[-1000:])
         except Exception:
-            pass
+            logger.debug("Log rotation failed", exc_info=True)
 
         with open(self.log_path, "a") as f:
             f.write(log_entry)
 
     def _extract_compression(self, response_text: str) -> str | None:
         """Extract memory delta from response - checks >>> lines and @state blocks."""
-
         # First, try to find >>> line (protocol format)
         try:
             for line in response_text.split("\n"):
                 if line.strip().startswith(">>>"):
                     return line.strip()
         except Exception:
-            pass
+            logger.debug("Failed to extract compression from response", exc_info=True)
 
         # Fallback: Extract @state block content
-        state_match = re.search(
-            r"@state\s*\n(.*?)(?=\n@|\n$|$)", response_text, re.DOTALL
-        )
+        state_match = re.search(r"@state\s*\n(.*?)(?=\n@|\n$|$)", response_text, re.DOTALL)
         if state_match:
             state_content = state_match.group(1).strip()
             if state_content:
@@ -389,10 +390,7 @@ class TokOrchestrator:
 
     def _extract_state_from_response(self, response_text: str) -> str | None:
         """Extract @state block content from response for memory update."""
-
-        state_match = re.search(
-            r"@state\s*\n(.*?)(?=\n@|\n>>>|\n\n|$)", response_text, re.DOTALL
-        )
+        state_match = re.search(r"@state\s*\n(.*?)(?=\n@|\n>>>|\n\n|$)", response_text, re.DOTALL)
         if state_match:
             return state_match.group(1).strip()
         return None
@@ -400,22 +398,17 @@ class TokOrchestrator:
     def _is_valid_tok(self, text: str) -> bool:
         """Return True if text contains at least one valid Tok construct (lax for Lite models)."""
         # Allow leading text as long as a valid tag or memory marker exists
-        return bool(
-            re.search(r"(@[A-Za-z_][A-Za-z0-9_]*|>>>|\s+\|>)", text, re.DOTALL)
-        )
+        return bool(re.search(r"(@[A-Za-z_][A-Za-z0-9_]*|>>>|\s+\|>)", text, re.DOTALL))
 
     def _calc_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """Calculate the USD cost based on fetched API pricing."""
-        raw_cost = (
-            prompt_tokens * self.prompt_price
-            + completion_tokens * self.completion_price
-        ) / 1_000_000
+        raw_cost = (prompt_tokens * self.prompt_price + completion_tokens * self.completion_price) / 1_000_000
         return raw_cost * (1 - self.OPENROUTER_DISCOUNT)
 
     def chat(
         self,
         user_input: str,
-        use_system_prompt: bool = True,
+        _use_system_prompt: bool = True,
         verbose: bool = True,
     ) -> str:
         """
@@ -451,10 +444,10 @@ class TokOrchestrator:
             response_text = response.choices[0].message.content or ""
             final_agent_reply = response_text
             self.pulse_count += 1
-            print(f"[*] Raw Response length: {len(response_text)} chars")
-            if verbose:
+            logger.debug(f"Raw Response length: {len(response_text)} chars")
+            if verbose and logger.isEnabledFor(logging.DEBUG):
                 preview = response_text[:200].replace("\n", " ")
-                print(f"    > {preview}...")
+                logger.debug(f"    > {preview}...")
 
             processed = self.adapter.finalize(
                 text=response_text,
@@ -464,9 +457,7 @@ class TokOrchestrator:
             response_signals = dict(processed.behavior_signals or {})
 
             usage = getattr(response, "usage", None)
-            prompt_tokens, completion_tokens = self._get_usage_tokens(
-                usage, chat_messages, response_text
-            )
+            prompt_tokens, completion_tokens = self._get_usage_tokens(usage, chat_messages, response_text)
             self._record_turn_stats(
                 prompt_tokens,
                 completion_tokens,
@@ -478,27 +469,20 @@ class TokOrchestrator:
             tool_results = self._execute_tool_blocks(processed)
             tool_feedback = "\n".join(tool_results).strip()
 
-            if (
-                hasattr(processed, "updated_memory")
-                and processed.updated_memory
-            ):
-                print(
-                    f"[*] Memory updated: {len(processed.updated_memory)} chars"
-                )
+            if hasattr(processed, "updated_memory") and processed.updated_memory:
+                logger.debug(f"Memory updated: {len(processed.updated_memory)} chars")
 
             messages.append({"role": "assistant", "content": response_text})
 
             if self._should_chain(tool_feedback):
-                self._chain_tool_feedback(
-                    messages, response_text, tool_feedback
-                )
+                self._chain_tool_feedback(messages, response_text, tool_feedback)
                 continue
             return final_agent_reply
 
     def _build_delta_block(self) -> str:
         if not self._pending_deltas:
             return ""
-        from ..utils.delta import delta_to_tok
+        from tok.utils.delta import delta_to_tok
 
         return delta_to_tok(self._pending_deltas[:10])
 
@@ -518,37 +502,31 @@ class TokOrchestrator:
             deltas=delta_block,
         )
 
-    def _call_llm_once(
-        self, chat_messages: list[dict[str, Any]]
-    ) -> tuple[Any | None, str | None]:
-        print(f"[*] Calling {self.model} (Turn {self.turn_count})...")
+    def _call_llm_once(self, chat_messages: list[dict[str, Any]]) -> tuple[Any | None, str | None]:
+        logger.debug(f"Calling {self.model} (Turn {self.turn_count})...")
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=cast(Any, chat_messages),
+                messages=cast("Any", chat_messages),
                 temperature=0.0,
                 max_tokens=2048,
             )
             return response, None
         except Exception as e:
-            print(f"[!] API Error: {e}")
+            logger.exception(f"API Error: {e}")
             return None, str(e)
 
     def _get_usage_tokens(
         self,
-        usage: Any | None,
+        usage: object | None,
         chat_messages: list[dict[str, Any]],
         response_text: str,
     ) -> tuple[int, int]:
         prompt_tokens = (
-            int(getattr(usage, "prompt_tokens", 0))
-            if usage is not None
-            else self.count_tokens(str(chat_messages))
+            int(getattr(usage, "prompt_tokens", 0)) if usage is not None else self.count_tokens(str(chat_messages))
         )
         completion_tokens = (
-            int(getattr(usage, "completion_tokens", 0))
-            if usage is not None
-            else self.count_tokens(response_text)
+            int(getattr(usage, "completion_tokens", 0)) if usage is not None else self.count_tokens(response_text)
         )
         return prompt_tokens, completion_tokens
 
@@ -556,10 +534,12 @@ class TokOrchestrator:
         self,
         prompt_tokens: int,
         completion_tokens: int,
-        prepared: Any,
-        processed: Any,
+        prepared: object,
+        processed: object,
         response_signals: dict[str, int],
     ) -> None:
+        typed_prepared = cast("PreparedRuntimeRequest", prepared)
+        typed_processed = cast("ProcessedRuntimeResponse", processed)
         turn_cost = self._calc_cost(prompt_tokens, completion_tokens)
         self.total_prompt_tokens += prompt_tokens
         self.total_completion_tokens += completion_tokens
@@ -570,24 +550,25 @@ class TokOrchestrator:
             actual_output=completion_tokens,
             cache_read=0,
             cache_write=0,
-            input_saved=prepared.input_saved_tokens,
-            output_saved=processed.output_saved_tokens,
-            type_breakdown=prepared.type_breakdown,
+            input_saved=typed_prepared.input_saved_tokens,
+            output_saved=typed_processed.output_saved_tokens,
+            type_breakdown=typed_prepared.type_breakdown,
             behavior_signals=response_signals or None,
         )
 
-    def _execute_tool_blocks(self, processed: Any) -> list[str]:
-        from ..runtime.tools import get_default_executor
-        from ..runtime.types import NormalizedToolEvent
+    def _execute_tool_blocks(self, processed: object) -> list[str]:
+        from tok.runtime.tools import get_default_executor
+        from tok.runtime.types import NormalizedToolEvent
 
+        typed_processed = cast("ProcessedRuntimeResponse", processed)
         executor = get_default_executor()
         tool_results: list[str] = []
 
-        for block in processed.content_blocks:
+        for block in typed_processed.content_blocks:
             if block.get("type") != "tool_use":
                 continue
-            name = cast(str, block.get("name"))
-            args = cast(dict[str, Any], block.get("input", {}))
+            name = cast("str", block.get("name"))
+            args = cast("dict[str, Any]", block.get("input", {}))
 
             sig = f"{name}:{sorted(args.items())}"
             if sig == self.last_tool_sig:
@@ -598,9 +579,7 @@ class TokOrchestrator:
 
             if self.consecutive_repeats >= 3:
                 tool_results.append(
-                    f"@error type:gluttony\n"
-                    f"  msg: Infinite_loop_detected_on_{name}.\n"
-                    "  fix: Move_to_next_TODO_item."
+                    f"@error type:gluttony\n  msg: Infinite_loop_detected_on_{name}.\n  fix: Move_to_next_TODO_item."
                 )
                 self.entropy_budget -= 1
                 continue
@@ -620,11 +599,11 @@ class TokOrchestrator:
             command = args.get("cmd") or args.get("command")
 
             event = NormalizedToolEvent(
-                id=cast(str, block.get("id", f"tool_{len(tool_results)}")),
+                id=cast("str", block.get("id", f"tool_{len(tool_results)}")),
                 name=name,
                 args=args,
-                path=cast(str, path) if path else None,
-                command=cast(str, command) if command else None,
+                path=cast("str", path) if path else None,
+                command=cast("str", command) if command else None,
             )
 
             result = executor.execute_normalized_tool(event)
@@ -646,7 +625,7 @@ class TokOrchestrator:
         response_text: str,
         tool_feedback: str,
     ) -> None:
-        print(f"[*] Tool Results ({len(tool_feedback)} chars), chaining...")
+        logger.debug(f"Tool Results ({len(tool_feedback)} chars), chaining...")
         messages.append({"role": "assistant", "content": response_text})
         messages.append(
             {
@@ -669,9 +648,9 @@ class TokOrchestrator:
             removed = True
         if removed:
             self.adapter.session._save_bridge_memory()
-            print(f"[*] REMOVED: {key_to_forget} from session memory.")
+            logger.debug(f"REMOVED: {key_to_forget} from session memory.")
         else:
-            print(f"[!] Key not found in session memory: {key_to_forget}")
+            logger.warning(f"Key not found in session memory: {key_to_forget}")
 
     def handshake(self) -> str:
         """Establish the Tok protocol with a cold call."""
@@ -681,7 +660,7 @@ class TokOrchestrator:
             dynamic_messages=[],
         )
         prompt_tokens = self.count_tokens(self.system_prompt)
-        print(f">>> Handshake: Sending grammar ({prompt_tokens} tokens)")
+        logger.debug(f"Handshake: Sending grammar ({prompt_tokens} tokens)")
 
         extra_headers = {}
         if self.app_name:
@@ -693,30 +672,24 @@ class TokOrchestrator:
         # Stream handshake response
         stream = self.client.chat.completions.create(
             model=self.model,
-            messages=cast(Any, messages),
+            messages=cast("Any", messages),
             stream=True,
             max_tokens=self.max_tokens,
             extra_headers=extra_headers,
         )
 
-        print("<<< ", end="", flush=True)
+        logger.debug("Handshake reply received")
         agent_reply = ""
         for chunk in stream:
-            if (
-                not isinstance(chunk, tuple)
-                and chunk.choices
-                and chunk.choices[0].delta.content
-            ):
+            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                 content = chunk.choices[0].delta.content
-                print(content, end="", flush=True)
                 agent_reply += content
-        print()
 
         if hasattr(stream, "usage") and stream.usage:
             prompt_tokens_actual = stream.usage.prompt_tokens
             completion_tokens = stream.usage.completion_tokens
         else:
-            completion_tokens = len(self.enc.encode(agent_reply))
+            completion_tokens = self.count_tokens(agent_reply)
             prompt_tokens_actual = prompt_tokens
 
         turn_cost = self._calc_cost(prompt_tokens_actual, completion_tokens)
@@ -724,9 +697,7 @@ class TokOrchestrator:
         self.total_completion_tokens += completion_tokens
         self.total_cost_usd += turn_cost
 
-        print(
-            f"<<< Handshake reply: {completion_tokens} tokens | Cost: ${turn_cost:.8f}"
-        )
+        logger.debug(f"Handshake reply: {completion_tokens} tokens | Cost: ${turn_cost:.8f}")
         processed_hs = self.adapter.finalize(
             text=agent_reply,
             model=self.model,
@@ -743,10 +714,7 @@ class TokOrchestrator:
             "turns": self.turn_count,
             "total_prompt_tokens": self.total_prompt_tokens,
             "total_completion_tokens": self.total_completion_tokens,
-            "total_tokens": self.total_prompt_tokens
-            + self.total_completion_tokens,
+            "total_tokens": self.total_prompt_tokens + self.total_completion_tokens,
             "total_cost_usd": self.total_cost_usd,
-            "compressed_history_size": self.count_tokens(
-                self.adapter.session.load_memory()
-            ),
+            "compressed_history_size": self.count_tokens(self.adapter.session.load_memory()),
         }

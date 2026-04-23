@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 mock_app = FastAPI(title="mock-anthropic")
 
 
-def _make_message_response(
-    text: str, model: str = "claude-sonnet-4-20250101"
-) -> dict:
+def _make_message_response(text: str, model: str = "claude-sonnet-4-20250101") -> dict[str, Any]:
     return {
         "id": "msg_mock_001",
         "type": "message",
@@ -29,9 +31,9 @@ def _make_message_response(
     }
 
 
-def _make_sse_stream(text: str, model: str = "claude-sonnet-4-20250101"):
+def _make_sse_stream(text: str, model: str = "claude-sonnet-4-20250101") -> AsyncGenerator[str, None]:
     """Generate SSE events mimicking Anthropic's streaming format."""
-    events = [
+    events: list[dict[str, Any]] = [
         {
             "type": "message_start",
             "message": {
@@ -62,7 +64,7 @@ def _make_sse_stream(text: str, model: str = "claude-sonnet-4-20250101"):
         {"type": "message_stop"},
     ]
 
-    async def generate():
+    async def generate() -> AsyncGenerator[str, None]:
         for event in events:
             yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
 
@@ -73,19 +75,19 @@ def _make_sse_stream(text: str, model: str = "claude-sonnet-4-20250101"):
 _response_mode = {"mode": "normal", "text": None}
 
 
-def set_response_mode(mode: str, text: str | None = None):
+def set_response_mode(mode: str, text: str | None = None) -> None:
     _response_mode["mode"] = mode
     _response_mode["text"] = text
 
 
 @mock_app.post("/v1/messages")
-async def messages(request: Request):
-    body = await request.json()
+async def messages(request: Request) -> Response | dict[str, Any]:
+    body: dict[str, Any] = await request.json()
     is_streaming = body.get("stream", False)
 
     if _response_mode["mode"] == "malformed_stream" and is_streaming:
 
-        async def malformed():
+        async def malformed() -> AsyncGenerator[bytes, None]:
             yield b"event: message_start\ndata: {invalid json\n\n"
             yield b"event: message_stop\ndata: {}\n\n"
 
@@ -104,17 +106,13 @@ async def messages(request: Request):
 
     if is_streaming:
         return StreamingResponse(
-            _make_sse_stream(
-                text, body.get("model", "claude-sonnet-4-20250101")
-            ),
+            _make_sse_stream(text, body.get("model", "claude-sonnet-4-20250101")),
             media_type="text/event-stream",
         )
 
-    return _make_message_response(
-        text, body.get("model", "claude-sonnet-4-20250101")
-    )
+    return _make_message_response(text, body.get("model", "claude-sonnet-4-20250101"))
 
 
 @mock_app.get("/{path:path}")
-async def catchall(path: str):
+async def catchall(path: str) -> dict[str, str]:
     return {"status": "ok", "path": path}

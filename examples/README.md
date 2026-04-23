@@ -1,15 +1,19 @@
 # Examples
 
-Tok ships one primary example path and one explicitly experimental path.
+Tok ships examples alongside the `0.1.0` public release, but the examples are for the
+**experimental** Python path, not the supported bridge-first CLI.
 
-## Recommended Example
+## Examples
 
-- [`tok_wrap_example.py`](./tok_wrap_example.py): minimal experimental Python wrapper flow using `RuntimeSession`, `tok.wrap(...)`, and `tok.process(...)`
+- [`tok_wrap_example.py`](./tok_wrap_example.py): minimal experimental Python flow using
+  explicit submodule imports such as `RuntimeSession` and `RuntimeRequest`
+- [`natural_first_openrouter.py`](./natural_first_openrouter.py): exercises the same
+  wrapper flow against OpenRouter with the natural-first request policy for cheap
+  iteration.
+- [`tok_universal_demo.py`](./tok_universal_demo.py): demonstrates the universal runtime
+  preparation step (no API call — shows compression setup only).
 
-## Secondary / Internal Examples
+> **Note**: These examples exercise experimental submodule APIs. The supported `0.1.0`
+> workflow is the bridge-first CLI documented in [`README.md`](../README.md).
 
-- [`final_demo.py`](./final_demo.py): broader demo script
-- [`multi_format_demo.py`](./multi_format_demo.py): format conversion demonstration
-- [`playground.py`](./playground.py): parser/playground script for Tok syntax exploration, not part of the primary bridge-first workflow
-
-If you are new to Tok, use the bridge flow in [`README.md`](../README.md) first.
+If you are new to Tok, start with the bridge flow in [`README.md`](../README.md) first.

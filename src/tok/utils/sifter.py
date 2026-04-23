@@ -1,15 +1,13 @@
+"""Code sifter utilities for extracting function signatures and generating hashes."""
+
 import ast
-import hashlib
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 
-def generate_verbatim_hash(source_code: str) -> str:
-    return hashlib.md5(source_code.encode()).hexdigest()[:6]
-
-
 def extract_args_info(args: ast.arguments) -> list[str]:
+    """Extract argument names from AST arguments node."""
     result: list[str] = []
     for arg in args.posonlyargs:
         result.append(arg.arg)
@@ -25,21 +23,16 @@ def extract_args_info(args: ast.arguments) -> list[str]:
 
 
 def extract_type_annotation(node: ast.AST) -> str | None:
+    """Extract type annotation from AST node."""
     if isinstance(node, ast.Name):
         return node.id
-    elif isinstance(node, ast.Subscript):
+    if isinstance(node, ast.Subscript):
         if isinstance(node.value, ast.Name):
             base = node.value.id
             if isinstance(node.slice, ast.Tuple):
-                subs = ", ".join(
-                    e
-                    for e in (
-                        extract_type_annotation(e) for e in node.slice.elts
-                    )
-                    if e
-                )
+                subs = ", ".join(e for e in (extract_type_annotation(e) for e in node.slice.elts) if e)
                 return f"{base}[{subs}]"
-            elif isinstance(node.slice, ast.Name):
+            if isinstance(node.slice, ast.Name):
                 return f"{base}[{node.slice.id}]"
             return base
     elif isinstance(node, ast.Constant):
@@ -50,6 +43,7 @@ def extract_type_annotation(node: ast.AST) -> str | None:
 def extract_function_signature(
     func_def: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> dict[str, Any]:
+    """Extract function signature info from function definition AST node."""
     args = extract_args_info(func_def.args)
     defaults = func_def.args.defaults
 
@@ -58,9 +52,7 @@ def extract_function_signature(
         for i, default in enumerate(defaults):
             default_idx = len(args) - len(defaults) + i
             if default:
-                arg_defaults.append(
-                    f"{args[default_idx]}={extract_type_annotation(default) or '?'}"
-                )
+                arg_defaults.append(f"{args[default_idx]}={extract_type_annotation(default) or '?'}")
 
     returns = None
     if func_def.returns:
@@ -71,13 +63,12 @@ def extract_function_signature(
         "args": args,
         "arg_defaults": arg_defaults,
         "returns": returns,
-        "decorators": [
-            d.id for d in func_def.decorator_list if isinstance(d, ast.Name)
-        ],
+        "decorators": [d.id for d in func_def.decorator_list if isinstance(d, ast.Name)],
     }
 
 
 def extract_class_info(class_def: ast.ClassDef) -> dict[str, Any]:
+    """Extract class info from class definition AST node."""
     bases = []
     for base in class_def.bases:
         if isinstance(base, ast.Name):
@@ -88,36 +79,8 @@ def extract_class_info(class_def: ast.ClassDef) -> dict[str, Any]:
     return {
         "name": class_def.name,
         "bases": bases,
-        "decorators": [
-            d.id for d in class_def.decorator_list if isinstance(d, ast.Name)
-        ],
+        "decorators": [d.id for d in class_def.decorator_list if isinstance(d, ast.Name)],
     }
-
-
-def get_source_without_docstring(tree: ast.AST, source: str) -> str:
-    """Remove docstring from function/class body."""
-    if not isinstance(
-        tree, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
-    ):
-        return source
-
-    if not tree.body:
-        return source
-
-    first_stmt = tree.body[0]
-    if isinstance(first_stmt, ast.Expr) and isinstance(
-        first_stmt.value, ast.Str | ast.Constant
-    ):
-        if isinstance(first_stmt.value, ast.Constant) and isinstance(
-            first_stmt.value.value, str
-        ):
-            lines = source.split("\n")
-            if lines:
-                docstring_end = first_stmt.end_lineno
-                if docstring_end is None:
-                    return source
-                return "\n".join(lines[docstring_end - tree.lineno :])
-    return source
 
 
 def _minify_python(source_code: str) -> str:
@@ -150,7 +113,10 @@ def _get_source_segment(source: str, node: ast.AST) -> str:
 
 
 class DirectoryWalker:
+    """Walk directory tree to find Python files, excluding patterns."""
+
     def __init__(self, exclude_patterns: list[str] | None = None) -> None:
+        """Initialize walker with exclude patterns."""
         self.exclude_patterns = exclude_patterns or [
             "__pycache__",
             ".git",
@@ -164,18 +130,19 @@ class DirectoryWalker:
         ]
 
     def should_exclude(self, path: Path) -> bool:
+        """Check if path should be excluded based on patterns."""
         name = path.name
         parts = path.parts
         for pattern in self.exclude_patterns:
             if pattern.startswith("*"):
                 if name.endswith(pattern[1:]):
                     return True
-            else:
-                if pattern in parts:
-                    return True
+            elif pattern in parts:
+                return True
         return False
 
     def walk(self, root_path: str) -> list[Path]:
+        """Walk directory and return list of Python files."""
         root = Path(root_path)
         py_files: list[Path] = []
 
@@ -197,9 +164,12 @@ class DirectoryWalker:
 
 
 class Sifter:
+    """Sift Python code into Tok format with pointer references."""
+
     _pointer_counter = 0
 
     def __init__(self) -> None:
+        """Initialize sifter with directory walker."""
         self.walker = DirectoryWalker()
         self.corpus: dict[str, str] = {}
 
@@ -215,6 +185,7 @@ class Sifter:
 
     @classmethod
     def reset_pointers(cls) -> None:
+        """Reset pointer sequence so tests and deterministic runs stay stable."""
         cls._pointer_counter = 0
 
     def _add_method_entries(
@@ -235,23 +206,17 @@ class Sifter:
             func_info = extract_function_signature(item)
             args = [a for a in func_info["args"] if a not in ("self", "cls")]
 
-            if naked and len(args) > 1:
-                args_str = args[0]
-            else:
-                args_str = ", ".join(args)
+            args_str = args[0] if naked and len(args) > 1 else ", ".join(args)
 
             if naked:
                 if args_str:
                     lines.append(f"  *{pointer_id} {item.name}({args_str})")
                 else:
                     lines.append(f"  *{pointer_id} {item.name}()")
+            elif args_str:
+                lines.append(f"  @func {item.name}({args_str}) ref:*{pointer_id}")
             else:
-                if args_str:
-                    lines.append(
-                        f"  @func {item.name}({args_str}) ref:*{pointer_id}"
-                    )
-                else:
-                    lines.append(f"  @func {item.name}() ref:*{pointer_id}")
+                lines.append(f"  @func {item.name}() ref:*{pointer_id}")
 
     def _add_func_entry(
         self,
@@ -271,23 +236,17 @@ class Sifter:
 
         args = [a for a in func_info["args"] if a not in ("self", "cls")]
 
-        if naked and len(args) > 1:
-            args_str = args[0]
-        else:
-            args_str = ", ".join(args)
+        args_str = args[0] if naked and len(args) > 1 else ", ".join(args)
 
         if naked:
             if args_str:
                 lines.append(f"  *{pointer_id} {node.name}({args_str})")
             else:
                 lines.append(f"  *{pointer_id} {node.name}()")
+        elif args_str:
+            lines.append(f"  @func {node.name}({args_str}) ref:*{pointer_id}")
         else:
-            if args_str:
-                lines.append(
-                    f"  @func {node.name}({args_str}) ref:*{pointer_id}"
-                )
-            else:
-                lines.append(f"  @func {node.name}() ref:*{pointer_id}")
+            lines.append(f"  @func {node.name}() ref:*{pointer_id}")
 
     @staticmethod
     def _collect_deps(tree: ast.Module, source: str) -> list[str]:
@@ -336,20 +295,13 @@ class Sifter:
         if naked:
             lines.append(f"  *{pointer_id} {class_info['name']}")
         else:
-            bases_str = (
-                f" bases:{','.join(class_info['bases'])}"
-                if class_info["bases"]
-                else ""
-            )
-            lines.append(
-                f"  @class {class_info['name']} ref:*{pointer_id}{bases_str}"
-            )
+            bases_str = f" bases:{','.join(class_info['bases'])}" if class_info["bases"] else ""
+            lines.append(f"  @class {class_info['name']} ref:*{pointer_id}{bases_str}")
 
         self._add_method_entries(node, pointer_id, naked, lines)
 
-    def sift_file(
-        self, filepath: str | Path, naked: bool = False, minify: bool = True
-    ) -> list[str]:
+    def sift_file(self, filepath: str | Path, naked: bool = False, minify: bool = True) -> list[str]:
+        """Sift a single Python file into Tok format."""
         filepath = Path(filepath)
         with open(filepath, encoding="utf-8") as f:
             source = f.read()
@@ -380,9 +332,8 @@ class Sifter:
 
         return lines
 
-    def sift_directory(
-        self, root_path: str, naked: bool = False, minify: bool = True
-    ) -> list[str]:
+    def sift_directory(self, root_path: str, naked: bool = False, minify: bool = True) -> list[str]:
+        """Sift a directory of Python files into Tok format."""
         py_files = self.walker.walk(root_path)
 
         if naked:
@@ -428,9 +379,7 @@ class Sifter:
         return "\n".join(lines)
 
     @staticmethod
-    def from_file(
-        filepath: str, naked: bool = False, minify: bool = True
-    ) -> dict[str, Any]:
+    def from_file(filepath: str, naked: bool = False, minify: bool = True) -> dict[str, Any]:
         sifter = Sifter()
         path = Path(filepath)
         skeleton_lines = sifter.sift_file(path, naked=naked, minify=minify)
@@ -442,8 +391,8 @@ class Sifter:
             return content
         prefix = " " * base_indent
         dedented: list[str] = []
-        for l in content.split("\n"):
-            dedented.append(l[base_indent:] if l.startswith(prefix) else l)
+        for line in content.split("\n"):
+            dedented.append(line[base_indent:] if line.startswith(prefix) else line)
         return "\n".join(dedented)
 
     @staticmethod
@@ -467,9 +416,7 @@ class Sifter:
             elif in_chunk and re.match(r"^\|#[A-Z]+\>$", stripped):
                 base_indent = len(line) - len(line.lstrip())
             elif in_chunk and stripped == f"|#{current_ref}":
-                content = Sifter._dedent_content(
-                    "\n".join(chunk_lines), base_indent
-                )
+                content = Sifter._dedent_content("\n".join(chunk_lines), base_indent)
                 if current_ref is not None:
                     chunks[current_ref] = content
                 in_chunk = False
@@ -567,7 +514,7 @@ class Sifter:
         if not data["items"] and not data["deps"]:
             return
 
-        file_name = module_name.split(".")[-1]
+        file_name = module_name.rsplit(".", maxsplit=1)[-1]
         file_path = out_dir / f"{file_name}.py"
 
         content_parts: list[str] = []
@@ -589,16 +536,3 @@ class Sifter:
 
         with open(file_path, "w", encoding="utf-8") as f:
             f.write("\n\n".join(content_parts) + "\n")
-
-    @staticmethod
-    def to_dir(tok_string: str, output_path: str) -> None:
-        """Reconstructs a Python codebase from a v1.8.1 Tok source-map."""
-        chunks = Sifter._parse_corpus_chunks(tok_string)
-        module_members = Sifter._parse_module_members(tok_string)
-
-        out_dir = Path(output_path)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "__init__.py").touch()
-
-        for module_name, data in module_members.items():
-            Sifter._write_module(module_name, data, chunks, out_dir)

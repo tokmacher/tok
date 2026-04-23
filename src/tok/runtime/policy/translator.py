@@ -29,9 +29,13 @@ class _TokReadableState:
     in_thought: bool = False
     in_msg_assistant: bool = False
     has_seen_any_at_block: bool = False
+    in_code_fence: bool = False  # True while inside a ``` ... ``` block
 
 
 def _handle_block_header(stripped: str, state: _TokReadableState) -> bool:
+    # Never treat @ lines inside a code fence as grammar block headers.
+    if state.in_code_fence:
+        return False
     if not _BLOCK_HEADER_RE.match(stripped):
         return False
     state.has_seen_any_at_block = True
@@ -47,9 +51,7 @@ def _handle_block_header(stripped: str, state: _TokReadableState) -> bool:
     return True
 
 
-def _handle_pipe_line(
-    line: str, state: _TokReadableState, output: list[str]
-) -> bool:
+def _handle_pipe_line(line: str, state: _TokReadableState, output: list[str]) -> bool:
     if not _PIPE_LINE_RE.match(line):
         return False
     if not state.in_thought and not state.in_msg_assistant:
@@ -62,9 +64,7 @@ def _handle_pipe_line(
     return True
 
 
-def _should_capture_plain_line(
-    stripped: str, state: _TokReadableState
-) -> bool:
+def _should_capture_plain_line(stripped: str, state: _TokReadableState) -> bool:
     if state.in_thought:
         return False
     if state.in_msg_assistant:
@@ -91,7 +91,8 @@ def strip_markdown_fallback(text: str) -> str:
 
 
 def tok_to_readable(text: str) -> str:
-    """Parse Tok-grammar response and extract user-visible content.
+    """
+    Parse Tok-grammar response and extract user-visible content.
 
     - >>> lines: stripped (internal state)
     - @thought blocks: stripped entirely (internal reasoning)
@@ -107,6 +108,14 @@ def tok_to_readable(text: str) -> str:
     for line in lines:
         stripped = line.strip()
 
+        # Toggle code-fence tracking so that @ lines inside fences are not
+        # misidentified as Tok block headers (e.g. @stable_result in an example).
+        if stripped.startswith("```"):
+            state.in_code_fence = not state.in_code_fence
+            if _should_capture_plain_line(stripped, state):
+                output.append(line)
+            continue
+
         if stripped.startswith(">>>"):
             state.in_thought = False
             state.in_msg_assistant = False
@@ -121,12 +130,12 @@ def tok_to_readable(text: str) -> str:
         if _should_capture_plain_line(stripped, state):
             output.append(line)
 
-    result = "\n".join(output).strip()
-    return result
+    return "\n".join(output).strip()
 
 
 def postprocess_response(text: str) -> tuple[str, str]:
-    """Process Claude's response text.
+    """
+    Process Claude's response text.
 
     Returns (processed_text, mode) where mode is 'tok-native', 'tok-empty', 'tok', or 'markdown'.
     """

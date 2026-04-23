@@ -1,4 +1,5 @@
-"""Task catalog for stress harness.
+"""
+Task catalog for stress harness.
 
 This module contains only the TASK_CATALOG tuple with no runtime logic.
 """

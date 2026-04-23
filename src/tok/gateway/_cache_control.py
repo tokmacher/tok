@@ -18,9 +18,7 @@ def _count_cache_control_entries(value: object) -> int:
     """Count cache_control occurrences anywhere in a body subtree."""
     if isinstance(value, dict):
         count = 1 if "cache_control" in value else 0
-        return count + sum(
-            _count_cache_control_entries(item) for item in value.values()
-        )
+        return count + sum(_count_cache_control_entries(item) for item in value.values())
     if isinstance(value, list):
         return sum(_count_cache_control_entries(item) for item in value)
     return 0
@@ -62,8 +60,4 @@ def _cache_control_counts_for_tools(tools: object) -> int:
     """Count cache_control markers on the top-level tools array."""
     if not isinstance(tools, list):
         return 0
-    return sum(
-        1
-        for tool in tools
-        if isinstance(tool, dict) and "cache_control" in tool
-    )
+    return sum(1 for tool in tools if isinstance(tool, dict) and "cache_control" in tool)

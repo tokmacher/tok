@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 __all__ = [
-    "SavingsTracker",
     "BASELINE_ONLY_SIGNAL",
     "FALLBACK_SIGNAL",
     "GLOBAL_LEDGER_FILENAME",
     "SESSION_STATS_FILENAME",
+    "SavingsTracker",
 ]
 
 import logging
@@ -28,10 +28,9 @@ from .utils.savings_tracker import (  # noqa: F401 — re-export for backward co
 logger = logging.getLogger("tok.stats")
 
 
-def calculate_reasoning_depth_per_token(
-    step_count: int, tool_diversity: int, token_count: int
-) -> float:
-    """Dual-axis metric: reasoning diversity per token consumed.
+def calculate_reasoning_depth_per_token(step_count: int, tool_diversity: int, token_count: int) -> float:
+    """
+    Dual-axis metric: reasoning diversity per token consumed.
 
     step_count      — number of assistant response steps in the session
     tool_diversity  — number of distinct tool names used

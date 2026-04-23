@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Bridge management commands for the Tok CLI."""
+
+from __future__ import annotations
 
 import os
 import signal
@@ -8,52 +8,82 @@ import subprocess
 import sys
 import time
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 import typer
 
-from ..stats import SavingsTracker
+from tok.stats import SavingsTracker
 
-from ._shared import (
-    TOK_DIR,
-    PID_FILE,
+from ._cli_support import (
     LOG_FILE,
-    COLLECTOR_PID_FILE,
+    PID_FILE,
+    TOK_DIR,
     console,
-    _get_running_bridge_pid,
-    _memory_root,
-    _read_collector_pid,
-    _render_stats_panel,
-    _runtime_verdict,
-    _savings_headline,
-    _savings_style,
-    _session_signals_text,
-    _session_status_rows,
-    _start_collector,
-    _status_border,
+    get_bridge_health_response,
+    get_running_bridge_pid,
+    memory_root,
+    render_stats_panel,
+    runtime_verdict,
+    savings_headline,
+    savings_style,
+    session_signals_text,
+    session_status_rows,
+    status_border,
 )
 
 bridge_app = typer.Typer(help="Bridge management commands")
 
+_LOCAL_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def _normalized_host(host: str | None) -> str | None:
+    if not host:
+        return None
+    value = host.strip().lower()
+    return value or None
+
+
+def _parsed_port(parsed_url: Any) -> int | None:
+    if parsed_url.port is not None:
+        return int(parsed_url.port)
+    if parsed_url.scheme == "http":
+        return 80
+    if parsed_url.scheme == "https":
+        return 443
+    return None
+
+
+def _is_self_bridged_invocation(port: int) -> bool:
+    marker = os.getenv("TOK_SELF_BRIDGED_SESSION", "").strip().lower()
+    if marker not in {"1", "true", "yes", "on"}:
+        return False
+
+    base_url = os.getenv("ANTHROPIC_BASE_URL", "").strip()
+    if not base_url:
+        return False
+
+    parsed = urlparse(base_url)
+    target_host = _normalized_host(parsed.hostname)
+    target_port = _parsed_port(parsed)
+    bridge_host = _normalized_host(os.getenv("TOK_BRIDGE_HOST", "localhost"))
+    if not target_host or target_port is None or not bridge_host:
+        return False
+    if target_port != port:
+        return False
+    if target_host == bridge_host:
+        return True
+    return target_host in _LOCAL_HOST_ALIASES and bridge_host in _LOCAL_HOST_ALIASES
+
 
 @bridge_app.command("start")
 def bridge_start(
-    port: Annotated[
-        int, typer.Option("--port", "-p", help="Port to listen on")
-    ] = 9090,
-    keep_turns: Annotated[
-        int, typer.Option("--keep-turns", help="Human turns to keep verbatim")
-    ] = 2,
-    debug: Annotated[
-        bool, typer.Option("--debug", help="Enable debug logging")
-    ] = False,
-    foreground: Annotated[
-        bool, typer.Option("--foreground", "-f", help="Run in foreground")
-    ] = False,
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on")] = 9090,
+    keep_turns: Annotated[int, typer.Option("--keep-turns", help="Human turns to keep verbatim")] = 2,
+    debug: Annotated[bool, typer.Option("--debug", help="Enable debug logging")] = False,
+    foreground: Annotated[bool, typer.Option("--foreground", "-f", help="Run in foreground")] = False,
     fail_open: Annotated[
         bool,
-        typer.Option(
-            "--fail-open/--no-fail-open", help="Pass through on errors"
-        ),
+        typer.Option("--fail-open/--no-fail-open", help="Pass through on errors"),
     ] = True,
     capture: Annotated[
         bool,
@@ -71,20 +101,16 @@ def bridge_start(
     ] = "https://api.anthropic.com",
 ) -> None:
     """Start the Tok bridge server."""
-    existing = _get_running_bridge_pid(port)
+    existing = get_running_bridge_pid(port)
 
     if existing:
-        console.print(
-            f"[yellow]Bridge already running on :{port} (PID {existing})[/yellow]"
-        )
+        console.print(f"[yellow]Bridge already running on :{port} (PID {existing})[/yellow]")
         raise typer.Exit(0)
 
     TOK_DIR.mkdir(parents=True, exist_ok=True)
 
-    _start_collector(debug=debug)
-
     if foreground:
-        from ..gateway import run_bridge
+        from tok.gateway import run_bridge
 
         if capture:
             os.environ["TOK_CAPTURE"] = "1"
@@ -95,7 +121,7 @@ def bridge_start(
             keep_turns=keep_turns,
             debug=debug,
             fail_open=fail_open,
-            api_base=api_base,
+            _api_base=api_base,
         )
     else:
         env = os.environ.copy()
@@ -108,58 +134,83 @@ def bridge_start(
         env["TOK_RESET_SESSION"] = "1"
 
         log_file = open(LOG_FILE, "a")
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "tok.gateway"],
-            env=env,
-            stdout=log_file,
-            stderr=log_file,
-            start_new_session=True,
-        )
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "tok.gateway"],
+                env=env,
+                stdout=log_file,
+                stderr=log_file,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            console.print("[red]Failed to start bridge: Python interpreter not found.[/red]")
+            raise typer.Exit(1) from None
+        except PermissionError:
+            console.print(f"[red]Failed to start bridge: permission denied writing to {LOG_FILE}.[/red]")
+            raise typer.Exit(1) from None
+        finally:
+            log_file.close()
         PID_FILE.write_text(str(proc.pid))
 
-        # Wait for bridge to be ready
         for _ in range(15):
             time.sleep(0.2)
             try:
-                import httpx
-
-                r = httpx.get(f"http://localhost:{port}/health", timeout=1.0)
+                r = get_bridge_health_response(port, timeout=1.0, attempts=1, backoff_seconds=0.0)
                 if r.status_code == 200:
-                    console.print(
-                        f"[green]Bridge started on :{port} (PID {proc.pid})[/green]"
-                    )
+                    console.print(f"[green]Bridge started on :{port} (PID {proc.pid})[/green]")
                     console.print(f"Logs: {LOG_FILE}")
+                    console.print(
+                        "[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:9090 claude`, then "
+                        "`tok bridge status` or `tok doctor`.[/dim]"
+                    )
                     if capture:
-                        console.print(
-                            f"Capture directory: {_memory_root() / 'sessions'}"
-                        )
+                        console.print(f"Capture directory: {memory_root() / 'sessions'}")
                     return
             except Exception:
                 pass
 
-        console.print(
-            f"[yellow]Bridge started (PID {proc.pid}) but health check pending[/yellow]"
-        )
+        if proc.poll() is not None:
+            console.print(f"[red]Bridge process exited unexpectedly (exit code {proc.returncode}).[/red]")
+            console.print(f"Check logs: {LOG_FILE}")
+            console.print("[dim]Try `tok bridge start --foreground` to see the error directly.[/dim]")
+            raise typer.Exit(1)
+
+        console.print(f"[yellow]Bridge started (PID {proc.pid}) but health check pending.[/yellow]")
         console.print(f"Logs: {LOG_FILE}")
+        console.print(
+            "[dim]Next step: wait a moment, then run `tok bridge status`; if it still fails, restart with `tok bridge start --foreground`.[/dim]"
+        )
         if capture:
-            console.print(f"Capture directory: {_memory_root() / 'sessions'}")
+            console.print(f"Capture directory: {memory_root() / 'sessions'}")
 
 
 @bridge_app.command("stop")
-def bridge_stop() -> None:
+def bridge_stop(force: bool = False) -> None:
     """Stop the Tok bridge server."""
     port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
-    pid = _get_running_bridge_pid(port)
+    pid = get_running_bridge_pid(port)
     tracker = SavingsTracker()
 
     if not pid:
         console.print("[yellow]Bridge not running[/yellow]")
         raise typer.Exit(0)
 
+    if _is_self_bridged_invocation(port) and not force:
+        try:
+            health = get_bridge_health_response(port, timeout=0.8, attempts=1, backoff_seconds=0.0)
+            health_ok = health.status_code == 200
+        except Exception:
+            health_ok = False
+        if health_ok:
+            console.print("[yellow]Refusing to stop bridge from an active bridged Claude session.[/yellow]")
+            console.print(
+                "[dim]Run `tok bridge stop --force` if intentional, or stop from a separate shell after this turn.[/dim]"
+            )
+            raise typer.Exit(2)
+
     for p in [pid]:
         try:
             os.kill(p, signal.SIGTERM)
-            # Simple wait-check for non-child processes
             for _ in range(10):
                 time.sleep(0.1)
                 try:
@@ -170,64 +221,46 @@ def bridge_stop() -> None:
                 os.kill(p, signal.SIGKILL)
             console.print(f"[green]Bridge stopped (PID {p})[/green]")
         except (ProcessLookupError, PermissionError):
-            console.print(
-                f"[yellow]Failed to stop PID {p} (gone or permission denied)[/yellow]"
-            )
+            console.print(f"[yellow]Failed to stop PID {p} (gone or permission denied)[/yellow]")
 
     PID_FILE.unlink(missing_ok=True)
 
     session_summary = tracker.session_summary()
     if session_summary:
-        headline, headline_pct, subhead = _savings_headline(session_summary)
-        verdict, verdict_style = _runtime_verdict(
+        headline, headline_pct, subhead = savings_headline(session_summary)
+        verdict, verdict_style = runtime_verdict(
             tok_active=not bool(session_summary["baseline_only"]),
             baseline_only=bool(session_summary["baseline_only"]),
             tokens_saved=int(session_summary["tokens_saved"]),
         )
         console.print(
-            _render_stats_panel(
+            render_stats_panel(
                 "Last Session",
                 headline=f"{headline} • {headline_pct}",
-                headline_style=_savings_style(
-                    float(session_summary["savings_pct"])
-                ),
+                headline_style=savings_style(float(session_summary["savings_pct"])),
                 subhead=f"{verdict} • {subhead}",
-                rows=_session_status_rows(
+                rows=session_status_rows(
                     summary=session_summary,
                     tok_active=not bool(session_summary["baseline_only"]),
                     baseline_only=bool(session_summary["baseline_only"]),
                 ),
-                border_style=_status_border(verdict_style),
+                border_style=status_border(verdict_style),
             )
         )
-
-    # Stop collector as well
-    collector_pid = _read_collector_pid()
-    if collector_pid:
-        try:
-            os.kill(collector_pid, signal.SIGTERM)
-            console.print(
-                f"[green]Collector stopped (PID {collector_pid})[/green]"
-            )
-        except (ProcessLookupError, PermissionError):
-            pass
-    COLLECTOR_PID_FILE.unlink(missing_ok=True)
 
 
 @bridge_app.command("status")
 def bridge_status() -> None:
     """Check bridge status."""
     port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
-    pid = _get_running_bridge_pid(port)
+    pid = get_running_bridge_pid(port)
     if pid is None:
         console.print("[yellow]Bridge not running[/yellow]")
+        console.print("[dim]Next step: run `tok bridge start`, then re-run `tok bridge status` or `tok doctor`.[/dim]")
         raise typer.Exit(1)
 
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
     try:
-        import httpx
-
-        r = httpx.get(f"http://localhost:{port}/health", timeout=2.0)
+        r = get_bridge_health_response(port, timeout=2.0, attempts=2, backoff_seconds=0.2)
         if r.status_code == 200:
             payload = r.json()
             session_summary: dict[str, Any] = {
@@ -236,41 +269,41 @@ def bridge_status() -> None:
                 "tokens_saved": int(payload.get("session_tokens_saved", 0)),
                 "savings_pct": float(payload.get("session_savings_pct", 0.0)),
                 "actual_cost_usd": float(payload.get("actual_cost_usd", 0.0)),
-                "baseline_cost_usd": float(
-                    payload.get("baseline_cost_usd", 0.0)
-                ),
+                "baseline_cost_usd": float(payload.get("baseline_cost_usd", 0.0)),
                 "cost_saved_usd": float(payload.get("cost_saved_usd", 0.0)),
-                "session_quality": str(
-                    payload.get("session_quality", "clean")
+                "session_quality": str(payload.get("session_quality", "clean")),
+                "last_degradation_reason": str(payload.get("last_degradation_reason", "")),
+                "request_policy": str(payload.get("request_policy", "")),
+                "preflight_block_original_payload_count": int(payload.get("preflight_block_original_payload_count", 0)),
+                "preflight_block_rewritten_payload_count": int(
+                    payload.get("preflight_block_rewritten_payload_count", 0)
                 ),
-                "last_degradation_reason": str(
-                    payload.get("last_degradation_reason", "")
-                ),
+                "stream_recovery_empty_success_count": int(payload.get("stream_recovery_empty_success_count", 0)),
+                "stream_recovery_read_error_count": int(payload.get("stream_recovery_read_error_count", 0)),
+                "request_policy_held_by_recovery_count": int(payload.get("request_policy_held_by_recovery_count", 0)),
             }
             baseline_only = bool(payload.get("baseline_only"))
             fallback_count = int(payload.get("fallback_count", 0))
             mode = str(payload.get("mode", "unknown"))
             tokens_saved = int(session_summary["tokens_saved"])
-            verdict, verdict_style = _runtime_verdict(
+            verdict, verdict_style = runtime_verdict(
                 tok_active=True,
                 baseline_only=baseline_only,
                 mode=mode,
                 tokens_saved=tokens_saved,
                 session_quality=str(payload.get("session_quality", "clean")),
             )
-            headline, headline_pct, subhead = _savings_headline(
+            headline, headline_pct, subhead = savings_headline(
                 session_summary,
                 savings_pct=float(payload.get("session_savings_pct", 0.0)),
                 tokens_saved=int(payload.get("session_tokens_saved", 0)),
             )
+            console.print(f"[green]Bridge running on :{port} (PID {pid})[/green]")
             console.print(
-                f"[green]Bridge running on :{port} (PID {pid})[/green]"
-            )
-            console.print(
-                _render_stats_panel(
+                render_stats_panel(
                     "Bridge Status",
                     headline=f"{headline} • {headline_pct}",
-                    headline_style=_savings_style(
+                    headline_style=savings_style(
                         float(session_summary["savings_pct"])
                         if isinstance(
                             session_summary.get("savings_pct"),
@@ -279,41 +312,41 @@ def bridge_status() -> None:
                         else 0.0
                     ),
                     subhead=f"{verdict} • {subhead}",
-                    rows=_session_status_rows(
+                    rows=session_status_rows(
                         summary=session_summary,
                         tok_active=True,
                         baseline_only=baseline_only,
                         mode=mode,
+                        request_policy=str(payload.get("request_policy", "")) or None,
                         fallback_count=fallback_count,
-                        session_quality=str(
-                            payload.get("session_quality", "clean")
-                        ),
-                        degradation_reason=str(
-                            payload.get("last_degradation_reason", "")
-                        ),
-                        session_signals=_session_signals_text(payload),
+                        session_quality=str(payload.get("session_quality", "clean")),
+                        degradation_reason=str(payload.get("last_degradation_reason", "")),
+                        session_signals=session_signals_text(payload),
                     ),
-                    border_style=_status_border(verdict_style),
+                    border_style=status_border(verdict_style),
                 )
             )
+            if baseline_only:
+                console.print(
+                    "[dim]Next step: run `tok doctor`, then inspect `tok bridge logs 100` for the degradation reason.[/dim]"
+                )
+            elif mode == "baseline":
+                console.print(
+                    "[dim]Next step: restart without `TOK_MODE=baseline` if you want compression enabled.[/dim]"
+                )
+            elif str(payload.get("session_quality", "clean")) == "watch":
+                console.print(
+                    "[dim]Next step: keep Tok on, but watch `Fallbacks` and rerun `tok doctor` if they rise.[/dim]"
+                )
+            elif tokens_saved <= 0:
+                console.print(
+                    "[dim]Next step: keep working for a few turns, then run `tok stats --last-session` if savings are still unclear.[/dim]"
+                )
             return
     except Exception:
         pass
 
+    console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
     console.print(
-        f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]"
+        "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
     )
-
-
-@bridge_app.command("logs")
-def bridge_logs(
-    lines: int = typer.Argument(40, help="Number of lines to show"),
-) -> None:
-    """Tail the bridge log file."""
-    if not LOG_FILE.exists():
-        console.print("[yellow]No log file found[/yellow]")
-        raise typer.Exit(1)
-
-    content = LOG_FILE.read_text().splitlines()
-    for line in content[-lines:]:
-        console.print(line)

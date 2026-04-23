@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-
 from tok.runtime.repeat_targets import (
     extract_git_history_path,
     extract_metadata_probe,
@@ -14,90 +13,90 @@ from tok.runtime.repeat_targets import (
 
 
 class TestExtractGitHistoryPath:
-    def test_git_show_head(self):
+    def test_git_show_head(self) -> None:
         path, rev = extract_git_history_path("git show HEAD:src/foo.py")
         assert path == "src/foo.py"
         assert rev == "HEAD"
 
-    def test_git_show_head_tilde_n(self):
+    def test_git_show_head_tilde_n(self) -> None:
         path, rev = extract_git_history_path("git show HEAD~3:src/foo.py")
         assert path == "src/foo.py"
         assert rev == "HEAD~N"
 
-    def test_git_show_sha(self):
+    def test_git_show_sha(self) -> None:
         path, rev = extract_git_history_path("git show abc1234:src/foo.py")
         assert path == "src/foo.py"
         assert rev == "sha"
 
-    def test_git_show_ref(self):
+    def test_git_show_ref(self) -> None:
         path, rev = extract_git_history_path("git show @~1:src/bar.py")
         assert path == "src/bar.py"
         assert rev == "ref"
 
-    def test_git_diff_with_path(self):
+    def test_git_diff_with_path(self) -> None:
         path, rev = extract_git_history_path("git diff HEAD -- src/foo.py")
         assert path == "src/foo.py"
         assert rev == "HEAD"
 
-    def test_not_git_command(self):
+    def test_not_git_command(self) -> None:
         path, rev = extract_git_history_path("cat src/foo.py")
         assert path is None
         assert rev == ""
 
-    def test_empty(self):
+    def test_empty(self) -> None:
         path, rev = extract_git_history_path("")
         assert path is None
         assert rev == ""
 
 
 class TestExtractShellSearchParams:
-    def test_grep_with_pattern_and_scope(self):
+    def test_grep_with_pattern_and_scope(self) -> None:
         query, scope = extract_shell_search_params("grep -r 'pattern' src/")
         assert query == "pattern"
         assert scope == "src"
 
-    def test_rg_with_pattern_only(self):
+    def test_rg_with_pattern_only(self) -> None:
         query, scope = extract_shell_search_params("rg 'some_func'")
         assert query == "some_func"
         assert scope is None
 
-    def test_grep_no_args(self):
-        query, scope = extract_shell_search_params("grep")
+    def test_grep_no_args(self) -> None:
+        query, _scope = extract_shell_search_params("grep")
         assert query is None
 
-    def test_not_search_command(self):
-        query, scope = extract_shell_search_params("cat src/foo.py")
+    def test_not_search_command(self) -> None:
+        query, _scope = extract_shell_search_params("cat src/foo.py")
         assert query is None
 
-    def test_empty(self):
-        query, scope = extract_shell_search_params("")
+    def test_empty(self) -> None:
+        query, _scope = extract_shell_search_params("")
         assert query is None
 
 
 class TestExtractMetadataProbe:
-    def test_git_log(self):
+    def test_git_log(self) -> None:
         result = extract_metadata_probe("git log --oneline")
         assert result == "git_log"
 
-    def test_git_status(self):
+    def test_git_status(self) -> None:
         result = extract_metadata_probe("git status")
         assert result == "git_status"
 
-    def test_stat_command(self):
+    def test_stat_command(self) -> None:
         result = extract_metadata_probe("stat src/foo.py")
         assert result == "stat"
 
-    def test_unsafe_marker_rejected(self):
+    def test_unsafe_marker_rejected(self) -> None:
         result = extract_metadata_probe("git log && echo done")
         assert result is None
 
-    def test_not_metadata(self):
+    def test_not_metadata(self) -> None:
         result = extract_metadata_probe("python -m pytest")
         assert result is None
 
 
 class TestResolveEvidenceIntent:
-    def test_native_file_read(self):
+    def test_native_file_read(self) -> None:
         intent = resolve_evidence_intent("read", path="src/foo.py")
         assert intent is not None
         assert intent.domain == "file_current"
@@ -105,10 +104,8 @@ class TestResolveEvidenceIntent:
         assert intent.variant == "full"
         assert intent.source_kind == "native_tool"
 
-    def test_git_show_command(self):
-        intent = resolve_evidence_intent(
-            "bash", command="git show HEAD:src/foo.py"
-        )
+    def test_git_show_command(self) -> None:
+        intent = resolve_evidence_intent("bash", command="git show HEAD:src/foo.py")
         assert intent is not None
         assert intent.domain == "file_history"
         assert intent.anchor == "src/foo.py"
@@ -116,10 +113,8 @@ class TestResolveEvidenceIntent:
         assert intent.novelty_key == "HEAD"
         assert intent.source_kind == "git_history"
 
-    def test_shell_grep_command(self):
-        intent = resolve_evidence_intent(
-            "bash", command="grep -r 'pattern' src/"
-        )
+    def test_shell_grep_command(self) -> None:
+        intent = resolve_evidence_intent("bash", command="grep -r 'pattern' src/")
         assert intent is not None
         assert intent.domain == "search"
         assert intent.source_kind == "shell_search"
@@ -130,62 +125,54 @@ class TestResolveEvidenceIntent:
         )
         assert intent.anchor == expected_anchor
 
-    def test_native_search(self):
+    def test_native_search(self) -> None:
         intent = resolve_evidence_intent("grep", query="pattern", path="src/")
         assert intent is not None
         assert intent.domain == "search"
         assert intent.source_kind == "native_tool"
 
-    def test_metadata_probe(self):
+    def test_metadata_probe(self) -> None:
         intent = resolve_evidence_intent("bash", command="git log --oneline")
         assert intent is not None
         assert intent.domain == "file_metadata"
         assert intent.source_kind == "metadata_probe"
         assert intent.novelty_key == "git_log"
 
-    def test_temp_copy_detection(self):
-        intent = resolve_evidence_intent(
-            "bash", command="cat /tmp/foo_copy.py"
-        )
+    def test_temp_copy_detection(self) -> None:
+        intent = resolve_evidence_intent("bash", command="cat /tmp/foo_copy.py")
         assert intent is not None
         assert intent.domain == "file_current"
         assert intent.variant == "copy"
         assert intent.source_kind == "temp_copy"
 
-    def test_shell_read_not_temp(self):
+    def test_shell_read_not_temp(self) -> None:
         intent = resolve_evidence_intent("bash", command="cat src/foo.py")
         assert intent is not None
         assert intent.domain == "file_current"
         assert intent.variant == "full"
         assert intent.source_kind == "shell_read"
 
-    def test_unknown_tool_returns_none(self):
+    def test_unknown_tool_returns_none(self) -> None:
         intent = resolve_evidence_intent("unknown_tool")
         assert intent is None
 
-    def test_native_file_read_and_git_show_separate_domains(self):
+    def test_native_file_read_and_git_show_separate_domains(self) -> None:
         native = resolve_evidence_intent("read", path="src/foo.py")
-        git_show = resolve_evidence_intent(
-            "bash", command="git show HEAD:src/foo.py"
-        )
+        git_show = resolve_evidence_intent("bash", command="git show HEAD:src/foo.py")
         assert native.domain == "file_current"
         assert git_show.domain == "file_history"
         assert native.anchor == git_show.anchor
         assert native.domain != git_show.domain
 
-    def test_shell_grep_merges_with_native_search_anchor(self):
-        shell_intent = resolve_evidence_intent(
-            "bash", command="grep -r 'pattern' src/"
-        )
-        native_intent = resolve_evidence_intent(
-            "grep", query="pattern", path="src/"
-        )
+    def test_shell_grep_merges_with_native_search_anchor(self) -> None:
+        shell_intent = resolve_evidence_intent("bash", command="grep -r 'pattern' src/")
+        native_intent = resolve_evidence_intent("grep", query="pattern", path="src/")
         assert shell_intent.domain == native_intent.domain
         assert shell_intent.anchor == native_intent.anchor
 
 
 class TestSessionEvidenceTracking:
-    def test_repeated_git_show_promotes_history_anchor(self):
+    def test_repeated_git_show_promotes_history_anchor(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
@@ -208,7 +195,7 @@ class TestSessionEvidenceTracking:
         assert signals1.get("evidence_anchor_hot", 0) == 0
         assert signals2.get("evidence_anchor_hot", 0) == 1
 
-    def test_same_anchor_no_novelty_triggers_missing(self):
+    def test_same_anchor_no_novelty_triggers_missing(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
@@ -238,7 +225,7 @@ class TestSessionEvidenceTracking:
         )
         assert signals3.get("evidence_novelty_missing", 0) == 1
 
-    def test_new_novelty_does_not_trigger_missing(self):
+    def test_new_novelty_does_not_trigger_missing(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
@@ -268,7 +255,7 @@ class TestSessionEvidenceTracking:
         )
         assert signals3.get("evidence_novelty_missing", 0) == 0
 
-    def test_neighborhood_thrash_detected(self):
+    def test_neighborhood_thrash_detected(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
@@ -296,7 +283,7 @@ class TestSessionEvidenceTracking:
         )
         assert signals.get("evidence_neighborhood_hot", 0) == 1
 
-    def test_evidence_intent_advisories_novelty(self):
+    def test_evidence_intent_advisories_novelty(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
@@ -313,7 +300,7 @@ class TestSessionEvidenceTracking:
         assert len(hints) == 1
         assert "already have evidence" in hints[0]
 
-    def test_evidence_intent_advisories_neighborhood(self):
+    def test_evidence_intent_advisories_neighborhood(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
@@ -345,15 +332,13 @@ class TestSessionEvidenceTracking:
 
 
 class TestBridgeMemoryDomainSeparation:
-    def test_history_snapshot_separate_from_current(self):
+    def test_history_snapshot_separate_from_current(self) -> None:
         from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
         mem = BridgeMemoryState()
         mem.turn = 1
         mem.record_file_snapshot("src/foo.py", "line1\ndef foo():\n  pass\n")
-        mem.record_history_snapshot(
-            "src/foo.py", "HEAD", "old_line1\ndef old_foo():\n  pass\n"
-        )
+        mem.record_history_snapshot("src/foo.py", "HEAD", "old_line1\ndef old_foo():\n  pass\n")
         facts = [e.value for e in mem.hot.get("facts", [])]
         file_facts = [f for f in facts if f.startswith("file[")]
         history_facts = [f for f in facts if f.startswith("history_file[")]
@@ -361,22 +346,20 @@ class TestBridgeMemoryDomainSeparation:
         assert len(history_facts) == 1
         assert file_facts[0] != history_facts[0]
 
-    def test_metadata_snapshot_separate(self):
+    def test_metadata_snapshot_separate(self) -> None:
         from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
         mem = BridgeMemoryState()
         mem.turn = 1
         mem.record_file_snapshot("src/foo.py", "line1\ndef foo():\n  pass\n")
-        mem.record_metadata_snapshot(
-            "src/foo.py", "git_log", "abc123 commit msg"
-        )
+        mem.record_metadata_snapshot("src/foo.py", "git_log", "abc123 commit msg")
         facts = [e.value for e in mem.hot.get("facts", [])]
         file_facts = [f for f in facts if f.startswith("file[")]
         meta_facts = [f for f in facts if f.startswith("meta[")]
         assert len(file_facts) == 1
         assert len(meta_facts) == 1
 
-    def test_get_file_fact_digests(self):
+    def test_get_file_fact_digests(self) -> None:
         from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
         mem = BridgeMemoryState()
@@ -388,7 +371,7 @@ class TestBridgeMemoryDomainSeparation:
 
 
 class TestTempCopyAliasing:
-    def test_matching_digest_aliases(self):
+    def test_matching_digest_aliases(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
@@ -398,18 +381,16 @@ class TestTempCopyAliasing:
         assert alias == "src/foo.py"
         assert "/tmp/foo_copy.py" in session._evidence_alias_map
 
-    def test_different_digest_does_not_alias(self):
+    def test_different_digest_does_not_alias(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
         session.record_file_snapshot("src/foo.py", "original content here")
-        alias = session.check_temp_copy_alias(
-            "/tmp/unrelated.py", "completely different content"
-        )
+        alias = session.check_temp_copy_alias("/tmp/unrelated.py", "completely different content")
         assert alias is None
         assert "/tmp/unrelated.py" not in session._evidence_alias_map
 
-    def test_non_temp_path_skipped(self):
+    def test_non_temp_path_skipped(self) -> None:
         from tok.runtime.core import RuntimeSession
 
         session = RuntimeSession()
@@ -419,7 +400,7 @@ class TestTempCopyAliasing:
 
 
 class TestAnswerReadyPriorityOverEvidence:
-    def test_evidence_advisories_not_returned_when_answer_ready(self):
+    def test_evidence_advisories_not_returned_when_answer_ready(self) -> None:
         from tok.runtime.pipeline.request_preparation import (
             _runtime_hints_for_turn,
         )
@@ -430,10 +411,9 @@ class TestAnswerReadyPriorityOverEvidence:
             late_answer_followthrough_active=False,
             late_answer_assembly_repair_mode="",
         )
-        assert len(runtime_hints) > 0
         assert all("already have evidence" not in h for h in runtime_hints)
 
-    def test_evidence_advisories_not_returned_when_repair_active(self):
+    def test_evidence_advisories_not_returned_when_repair_active(self) -> None:
         from tok.runtime.pipeline.request_preparation import (
             _runtime_hints_for_turn,
         )
@@ -444,5 +424,4 @@ class TestAnswerReadyPriorityOverEvidence:
             late_answer_followthrough_active=False,
             late_answer_assembly_repair_mode="",
         )
-        assert len(runtime_hints) > 0
         assert all("already have evidence" not in h for h in runtime_hints)

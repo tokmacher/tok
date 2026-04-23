@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class EpisodeEntry(BaseModel, frozen=True):
-    """A single completed reasoning episode.
+    """
+    A single completed reasoning episode.
 
     An episode spans the arc from a goal statement to a confirmed outcome
     (success, failure, or hand-off).  Entries are stored in the ledger and
@@ -18,16 +19,13 @@ class EpisodeEntry(BaseModel, frozen=True):
 
     goal: str
     outcome: Literal["success", "failure", "partial", "open"]
-    learnings: (
-        str  # one-line causal summary ("X failed because Y; fixed by Z")
-    )
-    artifacts: list[str] = Field(
-        default_factory=list
-    )  # key files/commands touched
+    learnings: str  # one-line causal summary ("X failed because Y; fixed by Z")
+    artifacts: list[str] = Field(default_factory=list)  # key files/commands touched
 
 
 class EpisodeLedger(BaseModel):
-    """Lightweight in-session episode log stored alongside bridge memory.
+    """
+    Lightweight in-session episode log stored alongside bridge memory.
 
     Keeps the last `max_entries` episodes.  Older entries are dropped to bound
     memory size while preserving the most recent learning chain.
@@ -102,20 +100,12 @@ class NormalizedToolEvent(BaseModel, frozen=True):
     name: str
     args: dict[
         str,
-        str
-        | int
-        | float
-        | bool
-        | list[str | int | float | bool]
-        | dict[str, str | int | float | bool]
-        | None,
+        str | int | float | bool | list[str | int | float | bool] | dict[str, str | int | float | bool] | None,
     ] = Field(default_factory=dict)
     path: str | None = None
     command: str | None = None
     query: str | None = None
-    compressibility_class: Literal[
-        "raw", "file_read", "search", "command", "tool_result"
-    ] = "raw"
+    compressibility_class: Literal["raw", "file_read", "search", "command", "tool_result"] = "raw"
     fidelity_requirement: str = "default"
     model_config = {"extra": "forbid"}
 
@@ -136,6 +126,9 @@ class RuntimeRequest(BaseModel, frozen=True):
     system: str | list[dict[str, Any]] | None = None
     adapter_kind: str = "unknown"
     tool_compatible: bool = False
+    request_policy: Literal["legacy_tool_compatible", "natural_first", "forced_baseline"] = "legacy_tool_compatible"
+    request_has_tools: bool = False
+    allowed_tools: tuple[str, ...] | None = None
     grammar: str | None = None
     todo: str | None = None
     deltas: str | None = None
@@ -151,9 +144,10 @@ class PreparedRuntimeRequest(BaseModel, frozen=True):
     behavior_signals: dict[str, int]
     type_breakdown: dict[str, int]
     mode: str
-    normalized_tool_events: list[NormalizedToolEvent] = Field(
-        default_factory=list
-    )
+    request_policy: Literal["legacy_tool_compatible", "natural_first", "forced_baseline"] = "legacy_tool_compatible"
+    effective_tool_compatible: bool = False
+    request_policy_escalated: bool = False
+    normalized_tool_events: list[NormalizedToolEvent] = Field(default_factory=list)
     baseline_prompt_tokens: int = 0
     prepared_prompt_tokens: int = 0
     saved_prompt_tokens: int = 0
@@ -161,9 +155,7 @@ class PreparedRuntimeRequest(BaseModel, frozen=True):
     reacquisition_tokens_avoided_estimate: int = 0
     # Bloat attribution is a complex nested dict with mixed types
     # Using precise union type instead of Any
-    bloat_attribution: dict[str, int | str | bool | dict[str, Any]] = Field(
-        default_factory=dict
-    )
+    bloat_attribution: dict[str, int | str | bool | dict[str, Any]] = Field(default_factory=dict)
     model_config = {"extra": "forbid"}
 
 
@@ -192,8 +184,8 @@ __all__ = [
     "EpisodeEntry",
     "EpisodeLedger",
     "NormalizedToolEvent",
-    "RuntimeRequest",
     "PreparedRuntimeRequest",
     "ProcessedRuntimeResponse",
     "ReplayGateResult",
+    "RuntimeRequest",
 ]

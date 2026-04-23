@@ -2,115 +2,38 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import re
-from dataclasses import dataclass, field
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any
 
-from ...compression import (
+from tok.compression import (
     CANONICAL_MEMORY_FIELDS,
     TOK_FIELD_ALIAS,
     TOK_REVERSE_ALIAS,
 )
-
-from ...memory.pointers import PointerRegistry
-from ..policy.smart_policy import (
+from tok.macros.ir import Instruction, Macro, MacroRegistry
+from tok.memory.pointers import PointerRegistry
+from tok.runtime.policy.smart_policy import (
     CANONICAL_WIRE_FIELD_ORDER,
     MemoryProjectionProfile,
 )
-from ...neuro.ir import MacroRegistry, Macro, Instruction
+from tok.utils.event_logging import log_memory_promotion, log_rolling_state
 
-# Field-specific decay rates. 0 = immortal (never decay).
-# Hot bucket uses these rates; durable uses half-rates (floored at 1 for non-zero).
-DECAY_RATES: dict[str, int] = {
-    "constraints": 0,  # user invariants — never decay
-    "goal": 0,  # core orientation — never decay
-    "facts": 0,  # file/search snapshots — never decay
-    "blockers": 1,
-    "errs": 1,
-    "files": 1,
-    "questions": 1,
-    "cmds": 2,  # ephemeral — decay faster
-    "tests": 2,
-    "next": 2,  # highly transient
-    "turns": 1,
-    "edited": 1,
-}
-
-# Per-field promotion thresholds for hot→durable.
-PROMOTION_THRESHOLDS: dict[str, int] = {
-    "goal": 2,
-    "files": 3,
-    "edited": 2,  # edited files promote faster than regular files
-    "constraints": 2,
-    "facts": 3,
-    "blockers": 3,
-    "errs": 4,
-}
-
-MULTI_VALUE_FIELDS = {
-    "files",
-    "edited",
-    "cmds",
-    "tests",
-    "errs",
-    "blockers",
-    "constraints",
-    "questions",
-    "facts",
-    "goal",
-}
-HOT_LIMITS = {
-    "turns": 1,
-    "goal": 4,
-    "files": 4,
-    "edited": 4,
-    "cmds": 16,
-    "tests": 8,
-    "errs": 8,
-    "blockers": 4,
-    "constraints": 4,
-    "questions": 4,
-    "next": 2,
-    "facts": 16,
-}
-DURABLE_LIMITS = {
-    "turns": 1,
-    "goal": 4,
-    "files": 8,
-    "edited": 8,
-    "cmds": 8,
-    "tests": 8,
-    "errs": 8,
-    "blockers": 8,
-    "constraints": 8,
-    "questions": 8,
-    "next": 4,
-    "facts": 32,
-}
-
-
-_SECTION_HEADERS: dict[str, str] = {
-    "@h": "h",
-    "@d": "d",
-    "@rolling_cmds": "rolling_cmds",
-    "@macros": "macros",
-}
-
-
-def _dispatch_section_header(
-    line: str, section: str | None, current_field: str | None
-) -> tuple[str | None, str | None, bool]:
-    """Check if line is a section header and return updated state.
-
-    Returns (new_section, new_current_field, was_handled).
-    """
-    new_section = _SECTION_HEADERS.get(line)
-    if new_section is not None:
-        return new_section, None, True
-    return section, current_field, False
+from ._bridge_memory_constants import (
+    DECAY_RATES,
+    DURABLE_LIMITS,
+    DURABLE_TOTAL_CAP,
+    HOT_LIMITS,
+    HOT_TOTAL_CAP,
+    PROMOTION_THRESHOLDS,
+)
+from ._bridge_memory_constants import (
+    dispatch_section_header as _dispatch_section_header,
+)
 
 
 def _parse_macro_instructions(body: str) -> list[Instruction]:
@@ -129,14 +52,8 @@ def _parse_macro_instructions(body: str) -> list[Instruction]:
                 cmd = cmd[eq_pos + 1 :].strip()
         if "(" in cmd and cmd.endswith(")"):
             op = cmd[: cmd.index("(")]
-            cmd_args = tuple(
-                a.strip()
-                for a in cmd[cmd.index("(") + 1 : -1].split(",")
-                if a.strip()
-            )
-            instructions.append(
-                Instruction(op=op, args=cmd_args, target=target)
-            )
+            cmd_args = tuple(a.strip() for a in cmd[cmd.index("(") + 1 : -1].split(",") if a.strip())
+            instructions.append(Instruction(op=op, args=cmd_args, target=target))
     return instructions
 
 
@@ -168,12 +85,40 @@ def _jaccard_tokens(text: str) -> set[str]:
 
 _JACCARD_THRESHOLD = 0.25
 
+_SECTION_NAV_RE = re.compile(r"^(class |def |async def )\s*(\w+)")
+_SECTION_NAV_MIN_LINES = 100  # Only annotate files large enough to benefit
+
+_GREP_LINE_RE = re.compile(r"^([^:\s][^:]*):(\d+):\s*(.*)$")
+_DEF_NAME_RE = re.compile(r"^\s*(?:class|def|async def)\s+(\w+)")
+_SYMBOL_MAX = 8  # max symbol facts extracted per grep call
+
+# Response mining: backtick-quoted paths or bare paths followed by line references
+_RESPONSE_FILE_PATH_RE = re.compile(r"`([\w./\-]+\.[a-zA-Z]{1,8})`|([\w./\-]+\.[a-zA-Z]{1,8}):(\d+)")
+_RESPONSE_AT_LINE_RE = re.compile(r"at line (\d+).*?`?([\w./\-]+\.[a-zA-Z]{1,8})`?")
+
+# Traceback frame extraction
+_TB_FRAME_RE = re.compile(r'File "([^"]+)", line (\d+)')
+_TB_JS_FRAME_RE = re.compile(r"at \w+ \(([^)]+):(\d+):\d+\)")
+
+
+def _build_section_nav(text: str, max_sections: int = 10) -> str:
+    """Return a compact 'Name:LN,...' navigation map for large files."""
+    sections: list[str] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        m = _SECTION_NAV_RE.match(line)
+        if m:
+            sections.append(f"{m.group(2)}:L{i}")
+            if len(sections) >= max_sections:
+                break
+    return ",".join(sections)
+
 
 def _match_facts_to_questions(
     questions: list[MemoryEntry],
     all_facts: list[MemoryEntry],
 ) -> tuple[int, dict[str, str]]:
-    """Find facts that answer open questions via Jaccard similarity.
+    """
+    Find facts that answer open questions via Jaccard similarity.
 
     Returns (promotion_count, {question_value: matching_fact_value}).
     """
@@ -196,11 +141,42 @@ def _match_facts_to_questions(
     return promotions, answered
 
 
+def _fact_key_and_payload(value: str) -> tuple[str, str]:
+    if ":" not in value:
+        stripped = value.strip()
+        return stripped, stripped
+    key, payload = value.split(":", 1)
+    return key.strip(), payload.strip()
+
+
+def _normalized_payload_fingerprint(payload: str) -> str:
+    normalized = " ".join(payload.split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _durable_entry_identity(field: str, value: str) -> tuple[str, str]:
+    if field == "facts":
+        key, payload = _fact_key_and_payload(value)
+        return key, _normalized_payload_fingerprint(payload)
+    stripped = value.strip()
+    return stripped, _normalized_payload_fingerprint(stripped)
+
+
+def _build_identity_index(field: str, entries: list[MemoryEntry]) -> dict[str, set[str]]:
+    index: dict[str, set[str]] = defaultdict(set)
+    for entry in entries:
+        key, fingerprint = _durable_entry_identity(field, entry.value)
+        if key and fingerprint:
+            index[key].add(fingerprint)
+    return index
+
+
 @dataclass
 class MemoryEntry:
     value: str
     score: int = 1
     last_seen_turn: int = 0
+    verified_turn: int = 0  # Turn number when this entry was last confirmed accurate
 
 
 @dataclass
@@ -211,12 +187,8 @@ class BridgeMemoryState:
     rolling_cmds: list[MemoryEntry] = field(default_factory=list)
     pointers: PointerRegistry = field(default_factory=PointerRegistry)
     macro_registry: MacroRegistry = field(default_factory=MacroRegistry)
-    _file_heat: defaultdict[str, float] = field(
-        default_factory=lambda: defaultdict(float)
-    )
-    _prev_field_hashes: dict[str, str] = field(
-        default_factory=dict, repr=False
-    )
+    _file_heat: defaultdict[str, float] = field(default_factory=lambda: defaultdict(float))
+    _prev_field_hashes: dict[str, str] = field(default_factory=dict, repr=False)
     load_global_macros: bool = field(default=True, repr=False)
 
     def __post_init__(self) -> None:
@@ -225,9 +197,11 @@ class BridgeMemoryState:
             self.macro_registry.load_global()
 
     def bump_file_heat(self, path: str, weight: float = 1.0) -> None:
+        """Increment the heat score for a file path."""
         self._file_heat[path] += weight
 
     def top_hot_files(self, n: int = 3) -> list[str]:
+        """Return the top N files by heat score."""
         return sorted(self._file_heat, key=lambda p: -self._file_heat[p])[:n]
 
     @staticmethod
@@ -258,24 +232,24 @@ class BridgeMemoryState:
         bucket: dict[str, list[MemoryEntry]],
         current_field: str,
     ) -> None:
-        """Parse an entry line (|> value|score:X|last:Y) into the bucket."""
+        """Parse an entry line (|> value|score:X|last:Y|verified:Z) into the bucket."""
         parts = line[3:].split("|")
         value = parts[0].strip()
         score = 1
         last_seen = 0
+        verified = 0
         for part in parts[1:]:
             if part.startswith("score:"):
-                try:
+                with contextlib.suppress(ValueError):
                     score = int(part.split(":", 1)[1])
-                except ValueError:
-                    pass
             elif part.startswith("last:"):
-                try:
+                with contextlib.suppress(ValueError):
                     last_seen = int(part.split(":", 1)[1])
-                except ValueError:
-                    pass
+            elif part.startswith("verified:"):
+                with contextlib.suppress(ValueError):
+                    verified = int(part.split(":", 1)[1])
         bucket.setdefault(current_field, []).append(
-            MemoryEntry(value=value, score=score, last_seen_turn=last_seen)
+            MemoryEntry(value=value, score=score, last_seen_turn=last_seen, verified_turn=verified)
         )
 
     @staticmethod
@@ -287,30 +261,26 @@ class BridgeMemoryState:
         parts = line[3:].split("|")
         value = parts[0].strip()
         last_seen = 0
+        verified = 0
         for part in parts[1:]:
             if part.startswith("last:"):
-                try:
+                with contextlib.suppress(ValueError):
                     last_seen = int(part.split(":", 1)[1])
-                except ValueError:
-                    pass
-        rolling_cmds.append(
-            MemoryEntry(value=value, score=1, last_seen_turn=last_seen)
-        )
+            elif part.startswith("verified:"):
+                with contextlib.suppress(ValueError):
+                    verified = int(part.split(":", 1)[1])
+        rolling_cmds.append(MemoryEntry(value=value, score=1, last_seen_turn=last_seen, verified_turn=verified))
 
     @classmethod
     def _parse_mem_header(cls, line: str, state: BridgeMemoryState) -> None:
         """Parse the @mem line for turn counter."""
         for token in line.split():
             if token.startswith("t:"):
-                try:
+                with contextlib.suppress(ValueError):
                     state.turn = int(token.split(":", 1)[1])
-                except ValueError:
-                    pass
 
     @classmethod
-    def from_tok(
-        cls, text: str, *, load_global_macros: bool = True
-    ) -> BridgeMemoryState:
+    def from_tok(cls, text: str, *, load_global_macros: bool = True) -> BridgeMemoryState:
         state = cls(load_global_macros=load_global_macros)
         state.pointers = PointerRegistry.from_tok(text)
         section: str | None = None
@@ -323,9 +293,7 @@ class BridgeMemoryState:
             if line.startswith("@mem"):
                 cls._parse_mem_header(line, state)
                 continue
-            section, current_field, handled = _dispatch_section_header(
-                line, section, current_field
-            )
+            section, current_field, handled = _dispatch_section_header(line, section, current_field)
             if handled:
                 continue
             if section == "macros" and line.startswith("|> "):
@@ -345,9 +313,7 @@ class BridgeMemoryState:
         return state
 
     @staticmethod
-    def _serialize_bucket(
-        bucket: dict[str, list[MemoryEntry]], lines: list[str]
-    ) -> None:
+    def _serialize_bucket(bucket: dict[str, list[MemoryEntry]], lines: list[str]) -> None:
         """Serialize canonical and extra fields from a bucket."""
         for f in CANONICAL_MEMORY_FIELDS:
             entries = bucket.get(f, [])
@@ -358,19 +324,19 @@ class BridgeMemoryState:
                 entries,
                 key=lambda e: (-e.score, -e.last_seen_turn, e.value),
             ):
-                lines.append(
-                    f"  |> {entry.value}|score:{entry.score}"
-                    f"|last:{entry.last_seen_turn}"
-                )
+                line = f"  |> {entry.value}|score:{entry.score}|last:{entry.last_seen_turn}"
+                if entry.verified_turn > 0:
+                    line += f"|verified:{entry.verified_turn}"
+                lines.append(line)
         for extra in ("questions", "facts"):
             extra_entries = bucket.get(extra, [])
             if extra_entries:
                 lines.append(f"@field {extra}")
                 for entry in extra_entries:
-                    lines.append(
-                        f"  |> {entry.value}|score:{entry.score}"
-                        f"|last:{entry.last_seen_turn}"
-                    )
+                    line = f"  |> {entry.value}|score:{entry.score}|last:{entry.last_seen_turn}"
+                    if entry.verified_turn > 0:
+                        line += f"|verified:{entry.verified_turn}"
+                    lines.append(line)
 
     @staticmethod
     def _serialize_macro_line(macro: Macro) -> str:
@@ -405,77 +371,61 @@ class BridgeMemoryState:
         return "\n".join(lines) + "\n"
 
     def replace_hot_from_wire_state(self, tok_state: str) -> dict[str, int]:
+        """Replace hot memory from a wire state string."""
         fields = _parse_wire_state(tok_state)
         if not fields:
             return {}
         turns = fields.get("turns", ["0"])
         self.turn = max(self.turn + 1, _safe_int(turns[0] if turns else "0"))
-        previous_hot_values = {
-            (field, entry.value)
-            for field, entries in self.hot.items()
-            for entry in entries
-        }
+        previous_hot_values = {(field, entry.value) for field, entries in self.hot.items() for entry in entries}
         new_hot: dict[str, list[MemoryEntry]] = {}
         touched = set()
-        for field, values in fields.items():
-            if field == "turns":
-                new_hot[field] = [
-                    MemoryEntry(
-                        value=values[0], score=1, last_seen_turn=self.turn
-                    )
-                ]
-                touched.add(field)
+        for fld_name, values in fields.items():
+            if fld_name == "turns":
+                new_hot[fld_name] = [MemoryEntry(value=values[0], score=1, last_seen_turn=self.turn)]
+                touched.add(fld_name)
                 continue
             entries = [
                 MemoryEntry(value=value, score=3, last_seen_turn=self.turn)
-                for value in values[: HOT_LIMITS.get(field, 2)]
+                for value in values[: HOT_LIMITS.get(fld_name, 2)]
                 if value
             ]
             if entries:
-                new_hot[field] = entries
-                touched.add(field)
+                new_hot[fld_name] = entries
+                touched.add(fld_name)
                 # 3B: Evict contradictions from durable
                 for entry in entries:
-                    self._drop_conflicts(self.durable, field, entry.value)
+                    self._drop_conflicts(self.durable, fld_name, entry.value)
         self.hot = new_hot
         self._trim_bucket(self.hot, HOT_LIMITS)
-        metrics = self._decay_bucket(
-            self.durable, touched=touched, prefix="durable", half_rate=True
-        )
+        metrics = self._decay_bucket(self.durable, touched=touched, prefix="durable", half_rate=True)
         metrics = _merge_metrics(metrics, self._promote_hot_to_durable())
         metrics = _merge_metrics(metrics, self._promote_facts_for_questions())
-        current_hot_values = {
-            (field, entry.value)
-            for field, entries in self.hot.items()
-            for entry in entries
-        }
+        current_hot_values = {(field, entry.value) for field, entries in self.hot.items() for entry in entries}
         promotions = len(current_hot_values - previous_hot_values)
         demotions = len(previous_hot_values - current_hot_values)
         if promotions:
             metrics["hot_promotions"] = promotions
         if demotions:
             metrics["hot_demotions"] = demotions
-        metrics["hot_entries"] = sum(
-            len(entries) for entries in self.hot.values()
-        )
-        metrics["durable_entries"] = sum(
-            len(entries) for entries in self.durable.values()
-        )
+        metrics["hot_entries"] = sum(len(entries) for entries in self.hot.values())
+        metrics["durable_entries"] = sum(len(entries) for entries in self.durable.values())
         return metrics
 
     def ingest_wire_state(self, tok_state: str) -> dict[str, int]:
+        """Ingest a wire state string into memory."""
         fields = _parse_wire_state(tok_state)
         if not fields:
             return {}
         turns = fields.get("turns", ["0"])
         self.turn = max(self.turn + 1, _safe_int(turns[0] if turns else "0"))
         touched = set()
-        for field, values in fields.items():
+        for fld_name, values in fields.items():
             for value in values:
                 if not value:
                     continue
-                self._upsert(self.hot, field, value, score_delta=2)
-                if field in {
+                self._upsert(self.hot, fld_name, value, score_delta=2)
+                if fld_name in {
                     "constraints",
                     "facts",
                     "blockers",
@@ -483,30 +433,23 @@ class BridgeMemoryState:
                     "tests",
                     "errs",
                 }:
-                    self._upsert(self.durable, field, value, score_delta=1)
-                touched.add(field)
+                    self._upsert(self.durable, fld_name, value, score_delta=1)
+                touched.add(fld_name)
         metrics = self._decay_bucket(self.hot, touched=touched, prefix="hot")
         metrics = _merge_metrics(
             metrics,
-            self._decay_bucket(
-                self.durable, touched=touched, prefix="durable", half_rate=True
-            ),
+            self._decay_bucket(self.durable, touched=touched, prefix="durable", half_rate=True),
         )
         metrics = _merge_metrics(metrics, self._promote_hot_to_durable())
         metrics = _merge_metrics(metrics, self._promote_facts_for_questions())
         trim_metrics = self._trim_all()
         metrics = _merge_metrics(metrics, trim_metrics)
-        metrics["hot_entries"] = sum(
-            len(entries) for entries in self.hot.values()
-        )
-        metrics["durable_entries"] = sum(
-            len(entries) for entries in self.durable.values()
-        )
+        metrics["hot_entries"] = sum(len(entries) for entries in self.hot.values())
+        metrics["durable_entries"] = sum(len(entries) for entries in self.durable.values())
+        log_rolling_state(self.turn, trim_metrics.get("trimmed", 0))
         return metrics
 
-    def _get_merged_entries(
-        self, field_name: str, limit: int
-    ) -> list[MemoryEntry]:
+    def _get_merged_entries(self, field_name: str, limit: int) -> list[MemoryEntry]:
         """Merge hot + durable entries for a field, deduped and sorted."""
         hot_entries = self.hot.get(field_name, [])
         durable_entries = self.durable.get(field_name, [])
@@ -537,9 +480,7 @@ class BridgeMemoryState:
     ) -> list[MemoryEntry]:
         """Resolve and augment file entries for wire_state."""
         file_limit = (
-            profile.field_limits.get("files", HOT_LIMITS.get("files", 2))
-            if profile
-            else HOT_LIMITS.get("files", 2)
+            profile.field_limits.get("files", HOT_LIMITS.get("files", 2)) if profile else HOT_LIMITS.get("files", 2)
         )
         files = self._get_merged_entries("files", file_limit)
         if self._file_heat:
@@ -562,32 +503,61 @@ class BridgeMemoryState:
     ) -> tuple[list[MemoryEntry], list[MemoryEntry]]:
         """Return (file_facts, other_facts)."""
         f_limit = profile.fact_limit if profile else HOT_LIMITS.get("facts", 4)
-        facts = self._get_merged_entries("facts", f_limit)
-        file_facts = [
-            f for f in facts if f.value.startswith("file[") and ":" in f.value
-        ]
-        other_facts = [
-            f
-            for f in facts
-            if not (f.value.startswith("file[") and ":" in f.value)
-        ]
+        all_facts = self._get_merged_entries("facts", max(f_limit, HOT_LIMITS.get("facts", 4), 16))
+
+        answer_file_facts: list[MemoryEntry] = []
+        answer_verification_facts: list[MemoryEntry] = []
+        remaining_facts: list[MemoryEntry] = []
+        for fact in all_facts:
+            value = fact.value
+            if value.startswith("answer_file:"):
+                answer_file_facts.append(fact)
+            elif value.startswith("answer_verification:"):
+                answer_verification_facts.append(fact)
+            else:
+                remaining_facts.append(fact)
+
+        prioritized: list[MemoryEntry] = []
+        if answer_file_facts:
+            prioritized.append(answer_file_facts[0])
+        prioritized.extend(answer_verification_facts[:2])
+
+        # Keep answer anchors available in tool-compatible projection even when
+        # profile.fact_limit is small, then fill any remaining budget with other facts.
+        target_limit = max(f_limit, len(prioritized))
+        prioritized_values = {entry.value for entry in prioritized}
+        for fact in remaining_facts:
+            if len(prioritized) >= target_limit:
+                break
+            # Skip file snapshots that are already older/redundant
+            if fact.value.startswith("file[") and ":" in fact.value:
+                continue
+            if fact.value in prioritized_values:
+                continue
+            prioritized.append(fact)
+            prioritized_values.add(fact.value)
+
+        facts = prioritized[:target_limit]
+        file_facts = [f for f in facts if f.value.startswith("file[") and ":" in f.value]
+        other_facts = [f for f in facts if not (f.value.startswith("file[") and ":" in f.value)]
         return file_facts, other_facts
 
     def _emit_files_field(
         self,
         files: list[MemoryEntry],
+        file_facts: list[MemoryEntry],
         state_parts: list[str],
         omit_unchanged: bool,
     ) -> None:
         """Emit the files field into state_parts."""
         if not files:
             return
+
         file_values = []
         for e in files:
-            val = e.value
-            if len(val) > 20:
-                val = self.pointers.get_pointer(val)
+            val = self.pointers.get_pointer(e.value)
             file_values.append(val)
+
         f_key = TOK_FIELD_ALIAS.get("files", "files")
         serialized = f"{f_key}:" + ",".join(file_values)
         self._emit_field("files", serialized, state_parts, omit_unchanged)
@@ -601,10 +571,15 @@ class BridgeMemoryState:
     ) -> None:
         """Emit facts directly into state_parts."""
         for fact in file_facts:
-            if not any(
-                fact.value.startswith(f"file[{p}]") for p in listed_files
-            ):
-                state_parts.append(fact.value)
+            # Extract path from fact value: file[path]:...
+            val = fact.value
+            if val.startswith("file[") and "]" in val:
+                bracket_end = val.index("]")
+                path = val[5:bracket_end]
+                if path not in listed_files:
+                    state_parts.append(val)
+            else:
+                state_parts.append(val)
         for fact in other_facts:
             state_parts.append(fact.value)
 
@@ -617,18 +592,20 @@ class BridgeMemoryState:
     ) -> None:
         """Emit facts with pointer compression (fallback path)."""
         for fact in file_facts:
-            if not any(
-                fact.value.startswith(f"file[{p}]") for p in listed_files
-            ):
-                state_parts.append(fact.value)
+            # Extract path from fact value: file[path]:...
+            val = fact.value
+            if val.startswith("file[") and "]" in val:
+                bracket_end = val.index("]")
+                path = val[5:bracket_end]
+                if path not in listed_files:
+                    state_parts.append(val)
+            else:
+                state_parts.append(val)
         for fact in other_facts:
             val = fact.value
             if ":" in val:
                 fk, fv = val.split(":", 1)
-                if (
-                    fk in {"answer_file", "answer_verification"}
-                    and len(fv) > 20
-                ):
+                if fk in {"answer_file", "answer_verification"}:
                     fv = self.pointers.get_pointer(fv)
                     val = f"{fk}:{fv}"
             state_parts.append(val)
@@ -641,11 +618,7 @@ class BridgeMemoryState:
         omit_unchanged: bool,
     ) -> None:
         """Emit a non-files, non-facts field."""
-        limit = (
-            profile.field_limits.get(field, HOT_LIMITS.get(field, 2))
-            if profile
-            else HOT_LIMITS.get(field, 2)
-        )
+        limit = profile.field_limits.get(field, HOT_LIMITS.get(field, 2)) if profile else HOT_LIMITS.get(field, 2)
         entries = self._get_merged_entries(field, limit)
         if not entries:
             return
@@ -655,10 +628,7 @@ class BridgeMemoryState:
             v = e.value
             if field == "facts" and ":" in v:
                 fk, fv = v.split(":", 1)
-                if (
-                    fk in {"answer_file", "answer_verification"}
-                    and len(fv) > 20
-                ):
+                if fk in {"answer_file", "answer_verification"}:
                     fv = self.pointers.get_pointer(fv)
                     v = f"{fk}:{fv}"
             values.append(v)
@@ -675,7 +645,7 @@ class BridgeMemoryState:
         """Append serialized field respecting omit_unchanged."""
         if omit_unchanged:
             prev_hash = self._prev_field_hashes.get(field)
-            cur_hash = hashlib.md5(serialized.encode()).hexdigest()
+            cur_hash = hashlib.md5(serialized.encode()).hexdigest()  # nosec B324
             if prev_hash == cur_hash:
                 return
             self._prev_field_hashes[field] = cur_hash
@@ -686,12 +656,7 @@ class BridgeMemoryState:
         markers: frozenset[str] | None,
     ) -> list[Macro]:
         """Filter and deduplicate macros for wire_state."""
-        active_files = {
-            e.value
-            for e in (
-                self.hot.get("files", []) + self.durable.get("files", [])
-            )
-        }
+        active_files = {e.value for e in (self.hot.get("files", []) + self.durable.get("files", []))}
         all_macros = list(self.macro_registry.macros.values())
         high_hit = sorted(all_macros, key=lambda m: -m.hit_count)[:3]
 
@@ -713,18 +678,11 @@ class BridgeMemoryState:
         self,
         markers: frozenset[str] | None,
     ) -> list[str]:
-        """Build pointer and macro blocks for wire_state."""
+        """Build pointer blocks for wire_state."""
         extra_blocks: list[str] = []
         ptr_tok = self.pointers.to_tok().strip()
         if ptr_tok:
             extra_blocks.append(ptr_tok)
-        if self.macro_registry.macros and self.load_global_macros:
-            relevant = self._collect_relevant_macros(markers)
-            if relevant:
-                macro_lines = ["@macros"]
-                for macro in relevant:
-                    macro_lines.append(self._serialize_macro_line(macro))
-                extra_blocks.append("\n".join(macro_lines))
         return extra_blocks
 
     def wire_state(
@@ -735,21 +693,17 @@ class BridgeMemoryState:
         is_fallback_context: bool = False,
     ) -> str:
         state_parts: list[str] = []
-        field_order = (
-            profile.field_order
-            if profile is not None
-            else CANONICAL_WIRE_FIELD_ORDER
-        )
+        field_order = profile.field_order if profile is not None else CANONICAL_WIRE_FIELD_ORDER
 
         files = self._resolve_wire_files(profile)
         listed_files = {e.value for e in files}
         file_facts, other_facts = self._resolve_wire_facts(profile)
 
         facts_emitted = False
-        for field in field_order:
-            if field == "files":
-                self._emit_files_field(files, state_parts, omit_unchanged)
-            elif field == "facts":
+        for fld_name in field_order:
+            if fld_name == "files":
+                self._emit_files_field(files, file_facts, state_parts, omit_unchanged)
+            elif fld_name == "facts":
                 self._emit_facts_section(
                     file_facts,
                     other_facts,
@@ -759,7 +713,7 @@ class BridgeMemoryState:
                 facts_emitted = True
             else:
                 self._emit_generic_field(
-                    field,
+                    fld_name,
                     profile,
                     state_parts,
                     omit_unchanged,
@@ -782,35 +736,28 @@ class BridgeMemoryState:
         return state_line
 
     @staticmethod
-    def _extract_file_digest(
-        text: str, path: str, was_edited: bool = False
-    ) -> str:
+    def _extract_file_digest(text: str, path: str, was_edited: bool = False) -> str:
         """Extract a semantically dense ≤160-char digest from file content."""
         lines = text.splitlines()
 
+        # Handle empty file edge case
+        if not lines or not any(line.strip() for line in lines):
+            return "(empty file)"
+
         if was_edited:
-            sigs = [
-                l.strip()
-                for l in lines
-                if re.match(r"^\s*(def |class |async def )", l)
-            ]
+            sigs = [line.strip() for line in lines if re.match(r"^\s*(def |class |async def )", line)]
             if sigs:
                 return (" ".join(sigs))[:160]
 
         if path.endswith(".py"):
-            top_level = [
-                l.strip()
-                for l in lines
-                if re.match(r"^(def |class |async def |[A-Z_]+ =)", l)
-            ]
+            top_level = [line.strip() for line in lines if re.match(r"^(def |class |async def |[A-Z_]+ =)", line)]
             if top_level:
                 return (" ".join(top_level))[:160]
 
         meaningful = [
-            l.strip()
-            for l in lines
-            if l.strip()
-            and not l.strip().startswith(("#", "//", "/*", '"""', "'''"))
+            line.strip()
+            for line in lines
+            if line.strip() and not line.strip().startswith(("#", "//", "/*", '"""', "'''"))
         ]
         return (" ".join(meaningful))[:160]
 
@@ -825,24 +772,28 @@ class BridgeMemoryState:
 
         heat = self._file_heat.get(normalized_path, 0)
         was_edited = heat >= 2.0
-        digest = self._extract_file_digest(
-            snippet, normalized_path, was_edited=was_edited
-        )
+
+        # Calculate line count for freshness visibility
+        line_count = len(snippet.splitlines())
+        estimated_tokens = line_count * 4  # Rough estimate: ~4 tokens per line
+
+        digest = self._extract_file_digest(snippet, normalized_path, was_edited=was_edited)
         if not digest:
             digest = " ".join(snippet.split())[:160]
 
+        # Enhanced fact format: includes line count, token savings, and nav map for large files
         fact_key = f"file[{normalized_path}]"
-        value = f"{fact_key}:{digest}"
+        nav = _build_section_nav(snippet) if line_count >= _SECTION_NAV_MIN_LINES else ""
+        # Format: file[path]:LINE_COUNT|digest|~TOKENS_SAVED[|nav:SECTIONS]
+        value = f"{fact_key}:{line_count}|{digest}|~{estimated_tokens}t"
+        if nav:
+            value += f"|nav:{nav}"
 
         base_score = 2
         heat_bonus = int(heat * 2)
 
-        self._upsert(
-            self.hot, "facts", value, score_delta=base_score + heat_bonus
-        )
-        self._upsert(
-            self.hot, "files", normalized_path[:96], score_delta=1 + heat_bonus
-        )
+        self._upsert(self.hot, "facts", value, score_delta=base_score + heat_bonus)
+        self._upsert(self.hot, "files", normalized_path[:96], score_delta=1 + heat_bonus)
         if was_edited:
             self._upsert(
                 self.hot,
@@ -868,9 +819,32 @@ class BridgeMemoryState:
         self._trim_all()
         return True
 
-    def record_history_snapshot(
-        self, path: str, revision: str, snippet: str
-    ) -> bool:
+    def record_symbol_locations(self, raw_grep_output: str) -> int:
+        """Extract definition lines from raw grep output and store symbol[Name]:file:LN facts."""
+        seen: set[str] = set()
+        count = 0
+        for line in raw_grep_output.splitlines():
+            m = _GREP_LINE_RE.match(line)
+            if not m:
+                continue
+            filepath, lineno, content = m.group(1), m.group(2), m.group(3)
+            dm = _DEF_NAME_RE.match(content)
+            if not dm:
+                continue
+            name = dm.group(1)
+            key = f"{name}:{filepath}"
+            if key in seen:
+                continue
+            seen.add(key)
+            self._upsert(self.hot, "facts", f"symbol[{name}]:{filepath}:L{lineno}", score_delta=2)
+            count += 1
+            if count >= _SYMBOL_MAX:
+                break
+        if count:
+            self._trim_all()
+        return count
+
+    def record_history_snapshot(self, path: str, revision: str, snippet: str) -> bool:
         normalized_path = path.strip()
         if not normalized_path:
             return False
@@ -886,9 +860,7 @@ class BridgeMemoryState:
         self._trim_all()
         return True
 
-    def record_metadata_snapshot(
-        self, path: str, subtype: str, snippet: str
-    ) -> bool:
+    def record_metadata_snapshot(self, path: str, subtype: str, snippet: str) -> bool:
         normalized_path = (path or "").strip()
         subtype = subtype.strip()
         if not subtype:
@@ -897,33 +869,51 @@ class BridgeMemoryState:
         if not snippet:
             return False
         snippet = " ".join(snippet.split())[:160]
-        fact_key = (
-            f"meta[{normalized_path}:{subtype}]"
-            if normalized_path
-            else f"meta[:{subtype}]"
-        )
+        fact_key = f"meta[{normalized_path}:{subtype}]" if normalized_path else f"meta[:{subtype}]"
         value = f"{fact_key}:{snippet}"
         self._upsert(self.hot, "facts", value, score_delta=1)
         self._trim_all()
         return True
 
     def get_file_fact_digests(self) -> dict[str, str]:
+        """
+        Extract file digests from facts, handling new format with line counts.
+        New format: file[path]:LINE_COUNT|digest|~tokens
+        Legacy format: file[path]:digest.
+        """
         result: dict[str, str] = {}
         for entry in self.hot.get("facts", []):
-            if entry.value.startswith("file["):
-                bracket_end = (
-                    entry.value.index("]", 5) if "]" in entry.value[5:] else -1
-                )
-                if bracket_end < 0:
-                    continue
-                path = entry.value[5:bracket_end]
-                colon_idx = entry.value.find(":", bracket_end)
-                digest = entry.value[colon_idx + 1 :] if colon_idx >= 0 else ""
-                result[path] = digest
+            # Defensive validation: ensure entry starts with expected prefix
+            if not entry.value.startswith("file["):
+                continue
+            bracket_end = entry.value.find("]", 5)
+            if bracket_end < 0:
+                continue
+            path = entry.value[5:bracket_end]
+            colon_idx = entry.value.find(":", bracket_end)
+            if colon_idx < 0:
+                continue
+
+            rest = entry.value[colon_idx + 1 :]
+            # Handle new format: LINE_COUNT|digest|~tokens
+            # Digest may contain |, so we take parts[1] through parts[-2] as digest
+            # or just parts[1] if only 3 parts exist
+            if "|" in rest:
+                parts = rest.split("|")
+                # Strip metadata parts (~tokens, nav:...) to isolate the digest
+                data_parts = [p for p in parts if not p.startswith("~") and not p.startswith("nav:")]
+                if len(data_parts) >= 2:
+                    digest = data_parts[1]
+                    if digest:
+                        result[path] = digest
+            else:
+                # Legacy format: just digest
+                result[path] = rest
         return result
 
     def record_hypothesis(self, text: str) -> bool:
-        """Record an open question or hypothesis in the bounded questions queue.
+        """
+        Record an open question or hypothesis in the bounded questions queue.
 
         Questions are subject to the same decay and HOT_LIMITS cap as other
         multi-value fields, so the queue is automatically bounded by the
@@ -937,6 +927,59 @@ class BridgeMemoryState:
         self._trim_all()
         return True
 
+    def record_traceback_errors(self, text: str) -> int:
+        """Extract file:line pairs from a traceback and write them as errs facts."""
+        seen: set[str] = set()
+        count = 0
+        for m in _TB_FRAME_RE.finditer(text):
+            path, lineno = m.group(1), m.group(2)
+            if "site-packages" in path or "node_modules" in path:
+                continue
+            key = f"{path}:L{lineno}"
+            if key in seen:
+                continue
+            seen.add(key)
+            self._upsert(self.hot, "errs", key, score_delta=2)
+            count += 1
+        for m in _TB_JS_FRAME_RE.finditer(text):
+            path, lineno = m.group(1), m.group(2)
+            if "node_modules" in path:
+                continue
+            key = f"{path}:L{lineno}"
+            if key in seen:
+                continue
+            seen.add(key)
+            self._upsert(self.hot, "errs", key, score_delta=2)
+            count += 1
+        if count:
+            self._trim_all()
+        return count
+
+    def mine_response_paths(self, text: str) -> int:
+        """Extract file paths and line references mentioned in assistant text and update facts."""
+        count = 0
+        for m in _RESPONSE_FILE_PATH_RE.finditer(text):
+            path = m.group(1) or m.group(2)
+            lineno = m.group(3)
+            if not path or len(path) < 4:
+                continue
+            self.bump_file_heat(path, weight=0.5)
+            if lineno:
+                self._upsert(self.hot, "facts", f"symbol[mention]:{path}:L{lineno}", score_delta=1)
+            else:
+                self._upsert(self.hot, "files", path[:96], score_delta=1)
+            count += 1
+        for m in _RESPONSE_AT_LINE_RE.finditer(text):
+            lineno, path = m.group(1), m.group(2)
+            if not path or len(path) < 4:
+                continue
+            self.bump_file_heat(path, weight=0.5)
+            self._upsert(self.hot, "facts", f"symbol[mention]:{path}:L{lineno}", score_delta=1)
+            count += 1
+        if count:
+            self._trim_all()
+        return count
+
     def _upsert(
         self,
         bucket: dict[str, list[MemoryEntry]],
@@ -944,13 +987,12 @@ class BridgeMemoryState:
         value: str,
         score_delta: int,
     ) -> None:
+        """Upsert a value into a memory bucket."""
         self._drop_conflicts(bucket, field, value)
 
         # Preservation logic for NeuroReactor: keep chronological log (BEFORE deduplication)
         if field == "cmds":
-            self.rolling_cmds.append(
-                MemoryEntry(value=value, score=1, last_seen_turn=self.turn)
-            )
+            self.rolling_cmds.append(MemoryEntry(value=value, score=1, last_seen_turn=self.turn))
             if len(self.rolling_cmds) > 100:
                 self.rolling_cmds = self.rolling_cmds[-100:]
 
@@ -959,22 +1001,14 @@ class BridgeMemoryState:
             if entry.value == value:
                 entry.score += score_delta
                 entry.last_seen_turn = self.turn
+                entry.verified_turn = self.turn  # Stamp verification on re-encounter
                 return
-        entries.append(
-            MemoryEntry(
-                value=value, score=score_delta, last_seen_turn=self.turn
-            )
-        )
+        entries.append(MemoryEntry(value=value, score=score_delta, last_seen_turn=self.turn, verified_turn=self.turn))
 
-    def _drop_conflicts(
-        self, bucket: dict[str, list[MemoryEntry]], field: str, value: str
-    ) -> None:
+    def _drop_conflicts(self, bucket: dict[str, list[MemoryEntry]], field: str, value: str) -> None:
+        """Drop conflicting entries from a bucket."""
         if field in {"turns", "goal", "next"}:
-            bucket[field] = [
-                entry
-                for entry in bucket.get(field, [])
-                if entry.value == value
-            ]
+            bucket[field] = [entry for entry in bucket.get(field, []) if entry.value == value]
             return
 
         if field != "facts" or ":" not in value:
@@ -985,11 +1019,11 @@ class BridgeMemoryState:
         raw_value = raw_value.strip()
         if not key or not raw_value:
             return
+        if key in {"answer_verification", "answer_related"}:
+            return
 
         bucket[field] = [
-            entry
-            for entry in bucket.get(field, [])
-            if not (entry.value.startswith(f"{key}:") and entry.value != value)
+            entry for entry in bucket.get(field, []) if not (entry.value.startswith(f"{key}:") and entry.value != value)
         ]
 
     def _decay_bucket(
@@ -1000,6 +1034,7 @@ class BridgeMemoryState:
         *,
         half_rate: bool = False,
     ) -> dict[str, int]:
+        """Apply score decay to a memory bucket."""
         demoted = 0
         for f, entries in list(bucket.items()):
             rate = DECAY_RATES.get(f, 1)
@@ -1026,22 +1061,41 @@ class BridgeMemoryState:
         return {f"{prefix}_decays": demoted} if demoted else {}
 
     def _promote_hot_to_durable(self) -> dict[str, int]:
+        """Promote entries from hot to durable memory based on thresholds."""
         promoted = 0
         for f, entries in list(self.hot.items()):
             threshold = PROMOTION_THRESHOLDS.get(f)
             if threshold is None:
                 continue
+            durable_entries = self.durable.get(f, [])
+            durable_index = _build_identity_index(f, durable_entries)
             for entry in entries:
-                if entry.score >= threshold:
-                    before = len(self.durable.get(f, []))
-                    self._upsert(self.durable, f, entry.value, score_delta=1)
-                    after = len(self.durable.get(f, []))
-                    if after > before:
-                        promoted += 1
+                if entry.score < threshold:
+                    continue
+                key, fingerprint = _durable_entry_identity(f, entry.value)
+                if fingerprint in durable_index.get(key, set()):
+                    continue
+                self._upsert(self.durable, f, entry.value, score_delta=1)
+                # Stamp verified_turn on the newly promoted entry
+                for e in self.durable.get(f, []):
+                    if e.value == entry.value:
+                        e.verified_turn = self.turn
+                        break
+                promoted += 1
+                log_memory_promotion(f, entry.value, bucket="durable")
+                refreshed_entries = self.durable.get(f, [])
+                refreshed_fingerprints = {
+                    fp
+                    for identity_key, fp in (_durable_entry_identity(f, e.value) for e in refreshed_entries)
+                    if identity_key == key
+                }
+                if refreshed_fingerprints:
+                    durable_index[key] = refreshed_fingerprints
         return {"durable_promotions": promoted} if promoted else {}
 
     def _promote_facts_for_questions(self) -> dict[str, int]:
-        """Promote facts that directly answer open questions to durable memory.
+        """
+        Promote facts that directly answer open questions to durable memory.
 
         Uses token-level Jaccard similarity between each fact and each open
         question.  When similarity exceeds the threshold the fact is promoted to
@@ -1057,21 +1111,24 @@ class BridgeMemoryState:
         if not all_facts:
             return {}
 
-        promotions, answered = _match_facts_to_questions(questions, all_facts)
+        _promotions, answered = _match_facts_to_questions(questions, all_facts)
+        durable_fact_index = _build_identity_index("facts", self.durable.get("facts", []))
+        new_promotions = 0
         for fact_value in answered.values():
+            key, fingerprint = _durable_entry_identity("facts", fact_value)
+            if fingerprint in durable_fact_index.get(key, set()):
+                continue
             self._upsert(self.durable, "facts", fact_value, score_delta=2)
+            new_promotions += 1
+            durable_fact_index.setdefault(key, set()).add(fingerprint)
 
         if answered:
             answered_values = set(answered.keys())
-            self.hot["questions"] = [
-                q
-                for q in self.hot.get("questions", [])
-                if q.value not in answered_values
-            ]
+            self.hot["questions"] = [q for q in self.hot.get("questions", []) if q.value not in answered_values]
             if not self.hot["questions"]:
                 del self.hot["questions"]
 
-        return {"hypothesis_promotions": promotions} if promotions else {}
+        return {"hypothesis_promotions": new_promotions} if new_promotions else {}
 
     def _trim_bucket_to_cap(
         self, bucket: dict[str, list[MemoryEntry]], cap: int
@@ -1082,56 +1139,50 @@ class BridgeMemoryState:
             return bucket, 0
 
         all_entries: list[tuple[str, MemoryEntry]] = []
-        for field, entries in bucket.items():
+        for fld_name, entries in bucket.items():
             for entry in entries:
-                all_entries.append((field, entry))
+                all_entries.append((fld_name, entry))
 
         all_entries.sort(key=lambda x: (-x[1].score, -x[1].last_seen_turn))
         kept = all_entries[:cap]
 
         new_bucket: dict[str, list[MemoryEntry]] = {}
-        for field, entry in kept:
-            if field not in new_bucket:
-                new_bucket[field] = []
-            new_bucket[field].append(entry)
+        for fld_name, entry in kept:
+            if fld_name not in new_bucket:
+                new_bucket[fld_name] = []
+            new_bucket[fld_name].append(entry)
 
         return new_bucket, total - cap
 
     def _trim_all(self) -> dict[str, int]:
+        """Trim all memory buckets to their limits."""
         trimmed_hot = 0
         trimmed_durable = 0
 
         # First apply per-field limits
-        for field, limit in HOT_LIMITS.items():
-            if field in self.hot:
-                before = len(self.hot[field])
-                self.hot[field] = sorted(
-                    self.hot[field],
+        for fld_name, limit in HOT_LIMITS.items():
+            if fld_name in self.hot:
+                before = len(self.hot[fld_name])
+                self.hot[fld_name] = sorted(
+                    self.hot[fld_name],
                     key=lambda e: (-e.score, -e.last_seen_turn, e.value),
                 )[:limit]
-                trimmed_hot += max(0, before - len(self.hot[field]))
+                trimmed_hot += max(0, before - len(self.hot[fld_name]))
 
-        for field, limit in DURABLE_LIMITS.items():
-            if field in self.durable:
-                before = len(self.durable[field])
-                self.durable[field] = sorted(
-                    self.durable[field],
+        for fld_name, limit in DURABLE_LIMITS.items():
+            if fld_name in self.durable:
+                before = len(self.durable[fld_name])
+                self.durable[fld_name] = sorted(
+                    self.durable[fld_name],
                     key=lambda e: (-e.score, -e.last_seen_turn, e.value),
                 )[:limit]
-                trimmed_durable += max(0, before - len(self.durable[field]))
+                trimmed_durable += max(0, before - len(self.durable[fld_name]))
 
         # Then apply hard caps on total entries
-        HOT_TOTAL_CAP = 60
-        DURABLE_TOTAL_CAP = 200
-
-        self.hot, hot_trimmed = self._trim_bucket_to_cap(
-            self.hot, HOT_TOTAL_CAP
-        )
+        self.hot, hot_trimmed = self._trim_bucket_to_cap(self.hot, HOT_TOTAL_CAP)
         trimmed_hot += hot_trimmed
 
-        self.durable, durable_trimmed = self._trim_bucket_to_cap(
-            self.durable, DURABLE_TOTAL_CAP
-        )
+        self.durable, durable_trimmed = self._trim_bucket_to_cap(self.durable, DURABLE_TOTAL_CAP)
         trimmed_durable += durable_trimmed
 
         metrics: dict[str, int] = {}
@@ -1141,27 +1192,26 @@ class BridgeMemoryState:
             metrics["durable_trims"] = trimmed_durable
         return metrics
 
-    def _trim_bucket(
-        self, bucket: dict[str, list[MemoryEntry]], limits: dict[str, int]
-    ) -> None:
-        for field, limit in limits.items():
-            if field in bucket:
-                bucket[field] = sorted(
-                    bucket[field],
+    def _trim_bucket(self, bucket: dict[str, list[MemoryEntry]], limits: dict[str, int]) -> None:
+        """Trim a bucket to per-field limits."""
+        for fld_name, limit in limits.items():
+            if fld_name in bucket:
+                bucket[fld_name] = sorted(
+                    bucket[fld_name],
                     key=lambda e: (-e.score, -e.last_seen_turn, e.value),
                 )[:limit]
 
 
 def _safe_int(value: str) -> int:
+    """Parse a string to int, returning 0 on failure."""
     try:
         return int(value)
     except ValueError:
         return 0
 
 
-def _merge_metrics(
-    left: dict[str, int], right: dict[str, int]
-) -> dict[str, int]:
+def _merge_metrics(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
+    """Merge two metrics dictionaries."""
     merged = dict(left)
     for key, value in right.items():
         merged[key] = merged.get(key, 0) + value
@@ -1169,6 +1219,7 @@ def _merge_metrics(
 
 
 def _parse_wire_state(tok_state: str) -> dict[str, list[str]]:
+    """Parse a wire state string into a dictionary."""
     line = tok_state.strip().splitlines()[0] if tok_state.strip() else ""
     if line.startswith(">>>"):
         line = line[3:].strip()
@@ -1192,9 +1243,7 @@ def _parse_wire_state(tok_state: str) -> dict[str, list[str]]:
             "questions",
             "goal",
         }:
-            result[key] = [
-                item.strip() for item in raw_value.split(",") if item.strip()
-            ]
+            result[key] = [item.strip() for item in raw_value.split(",") if item.strip()]
         else:
             result.setdefault("facts", []).append(f"{key}:{raw_value}")
     return result
@@ -1203,13 +1252,14 @@ def _parse_wire_state(tok_state: str) -> dict[str, list[str]]:
 def clean_system_context(
     state: BridgeMemoryState, system_prompt: str | list[dict[str, Any]]
 ) -> str | list[dict[str, Any]]:
-    """Remove verbose user prompts from active context while preserving task information.
+    """
+    Remove verbose user prompts from active context while preserving task information.
 
     Extracts core goals and constraints from the bloated prompt, ingests them into state,
     and returns a significantly smaller representation while preserving list-type
     system prompt structure when present.
     """
-    from ...compression import compress_user_prompt
+    from tok.compression import compress_user_prompt
 
     system_text = ""
     if isinstance(system_prompt, list):
@@ -1222,11 +1272,7 @@ def clean_system_context(
         system_text = str(system_prompt)
 
     if not system_text:
-        return (
-            copy.deepcopy(system_prompt)
-            if isinstance(system_prompt, list)
-            else ""
-        )
+        return copy.deepcopy(system_prompt) if isinstance(system_prompt, list) else ""
 
     # Compress the bloated prompt into Tok-style fields
     # Use a larger snippet limit for cleaning than for standard history compression
@@ -1250,11 +1296,7 @@ def clean_system_context(
         if "cache_control" in block:
             last_cached_text_index = index
 
-    target_index = (
-        last_cached_text_index
-        if last_cached_text_index is not None
-        else last_text_index
-    )
+    target_index = last_cached_text_index if last_cached_text_index is not None else last_text_index
     if target_index is None:
         rewritten_blocks.append({"type": "text", "text": optimized_text})
         return rewritten_blocks

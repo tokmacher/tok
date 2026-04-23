@@ -3,7 +3,9 @@
 import json
 from typing import Any
 
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
+
 from tok.protocol.format_bridge import Bridge
 from tok.protocol.parser import TokParser
 
@@ -22,8 +24,7 @@ def _recursive_data() -> st.SearchStrategy[Any]:
 
     return st.recursive(
         base,
-        lambda children: st.lists(children, max_size=3)
-        | st.dictionaries(letter_text, children, max_size=3),
+        lambda children: st.lists(children, max_size=3) | st.dictionaries(letter_text, children, max_size=3),
         max_leaves=30,
     )
 
@@ -34,9 +35,7 @@ def _primitive_dict_data() -> st.SearchStrategy[dict[str, Any]]:
         min_size=1,
         max_size=20,
     )
-    safe_text = letter_text.filter(
-        lambda s: s.lower() not in {"null", "none", "true", "false"}
-    )
+    safe_text = letter_text.filter(lambda s: s.lower() not in {"null", "none", "true", "false"})
     base = st.one_of(
         st.booleans(),
         st.integers(min_value=-(10**6), max_value=10**6),
@@ -72,9 +71,7 @@ def test_parser_roundtrip_nodes(sample: Any) -> None:
 
 
 def test_deep_nesting_roundtrip() -> None:
-    data = {
-        "alpha": {"beta": {"gamma": {"delta": {"epsilon": {"zeta": "end"}}}}}
-    }
+    data: dict[str, Any] = {"alpha": {"beta": {"gamma": {"delta": {"epsilon": {"zeta": "end"}}}}}}
     for _ in range(10):
         data = {"nest": data, "count": 1}
     tok_text = _encode_as_tok(data)

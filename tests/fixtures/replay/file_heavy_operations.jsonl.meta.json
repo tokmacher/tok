@@ -1,7 +1,7 @@
 {
   "model": "claude-sonnet-4",
   "provider": "anthropic",
-  "family": "claude", 
+  "family": "claude",
   "min_savings_pct": 50.0,
   "max_invisible_pressure": 5,
   "max_repeat_file_read": 5,

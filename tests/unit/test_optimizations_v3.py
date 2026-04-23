@@ -1,22 +1,20 @@
 """Tests for Local Mesh Discovery and Macro Healing."""
 
 from __future__ import annotations
+
 import os
-import pytest
+from typing import Any
 from unittest.mock import patch
 
-from tok.neuro.ir import Instruction, Macro, MacroRegistry
+import pytest
+
+from tok.macros.ir import Instruction, Macro, MacroRegistry
+from tok.runtime.memory.bridge_memory import BridgeMemoryState
 from tok.universal_runtime import (
     RuntimeRequest,
     RuntimeSession,
     UniversalTokRuntime,
 )
-from tok.bridge_memory import BridgeMemoryState
-
-
-# ---------------------------------------------------------------------------
-# Isolation
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -27,32 +25,24 @@ def mock_tok_storage():
         patch.object(
             RuntimeSession,
             "_load_bridge_memory",
-            side_effect=lambda: BridgeMemoryState(),
+            side_effect=BridgeMemoryState,
         ),
     ):
         yield
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_request(messages=None):
+def _make_request(
+    messages: list[dict[str, Any]] | None = None,
+) -> RuntimeRequest:
     return RuntimeRequest(
         model="claude-sonnet-4-6",
         messages=messages or [{"role": "user", "content": "hello"}],
     )
 
 
-# ---------------------------------------------------------------------------
-# Local Mesh Discovery
-# ---------------------------------------------------------------------------
-
-
 class TestLocalMeshDiscovery:
     @patch("tok.universal_runtime._discover_project_markers")
-    def test_speculative_hint_injected_via_marker(self, mock_discover):
+    def test_speculative_hint_injected_via_marker(self, mock_discover) -> None:
         """Speculative injection should fire if a project marker exists in the CWD."""
         mock_discover.return_value = frozenset({"package.json"})
 
@@ -61,22 +51,23 @@ class TestLocalMeshDiscovery:
         # Macro requires package.json
         macro = Macro(
             name="npm_install",
-            instructions=(Instruction(op="bash", args=("npm install",)),),
+            instructions=(Instruction(op="setup_cmd", args=()),),
             inputs=(),
             hit_count=5,
             context_requirements={"marker_file": "package.json"},
         )
         session.bridge_memory.macro_registry.macros["npm_install"] = macro
+        session.write_memory(">>> cmds:setup_cmd")
 
         runtime = UniversalTokRuntime()
-        prepared = runtime.prepare_request(_make_request(), session)
+        with patch.object(session.bridge_memory.macro_registry, "match_recent_sequence", return_value=macro):
+            prepared = runtime.prepare_request(_make_request(), session)
 
-        system = prepared.body.get("system", "")
-        assert "@npm_install" in system
-        assert "Available macros" in system
+        assert prepared.behavior_signals.get("jit_offer_available", 0) == 1
+        assert prepared.behavior_signals.get("jit_offer_npm_install", 0) == 1
 
     @patch("tok.universal_runtime._discover_project_markers")
-    def test_no_hint_when_marker_missing(self, mock_discover):
+    def test_no_hint_when_marker_missing(self, mock_discover) -> None:
         """Macro requiring a marker should NOT be injected if marker is missing."""
         session = RuntimeSession()
         session._project_markers = frozenset({"requirements.txt"})  # mismatch
@@ -97,13 +88,8 @@ class TestLocalMeshDiscovery:
         assert "@npm_install" not in system
 
 
-# ---------------------------------------------------------------------------
-# Macro Healing
-# ---------------------------------------------------------------------------
-
-
 class TestMacroHealing:
-    def test_macro_heals_when_divergence_detected(self):
+    def test_macro_heals_when_divergence_detected(self) -> None:
         """Macro should update its instructions if the agent performs a different successful sequence."""
         session = RuntimeSession()
 
@@ -137,11 +123,12 @@ class TestMacroHealing:
 
         # 3. Verify the macro was updated
         updated = session.bridge_memory.macro_registry.get("repaired_op")
+        assert updated is not None
         ops = [ins.op for ins in updated.instructions]
         assert ops == ["op1", "op2"]
         assert session._pending_macro_heal == ""
 
-    def test_no_healing_when_no_offer(self):
+    def test_no_healing_when_no_offer(self) -> None:
         """Macro should NOT update if it wasn't offered (no _pending_macro_heal)."""
         session = RuntimeSession()
         macro = Macro(
@@ -155,10 +142,11 @@ class TestMacroHealing:
         session.write_memory(">>> cmds:op1,op3|facts:done")
 
         updated = session.bridge_memory.macro_registry.get("steady_op")
+        assert updated is not None, "Macro should exist"
         assert len(updated.instructions) == 1
         assert updated.instructions[0].op == "op1"
 
-    def test_no_healing_on_identical_sequence(self):
+    def test_no_healing_on_identical_sequence(self) -> None:
         """Macro should NOT update if the agent's sequence was identical to the macro."""
         session = RuntimeSession()
         macro = Macro(
@@ -180,6 +168,5 @@ class TestMacroHealing:
         ):
             session.write_memory(">>> t:2|facts:done")
             # update_from_repair returns False if ops are identical
-            pass
 
         assert session._pending_macro_heal == ""

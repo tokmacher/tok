@@ -1,0 +1,7 @@
+interface:
+  display_name: "Tok"
+  short_description: "Bridge-first Tok operating guide"
+  default_prompt: "Use $tok to help me operate around Tok without changing my normal Claude Code workflow."
+
+policy:
+  allow_implicit_invocation: false

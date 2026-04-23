@@ -1,19 +1,20 @@
 import importlib.util
 import json
 from pathlib import Path
+from types import ModuleType
 
 
-def _load_pr_comment_module():
+def _load_pr_comment_module() -> ModuleType:
     path = Path(__file__).resolve().parents[2] / "scripts" / "pr-comment.py"
     spec = importlib.util.spec_from_file_location("pr_comment_script", path)
-    module = importlib.util.module_from_spec(spec)
     assert spec is not None
+    module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
 
 
-def test_pr_comment_load_results_accepts_structured_export(tmp_path):
+def test_pr_comment_load_results_accepts_structured_export(tmp_path) -> None:
     mod = _load_pr_comment_module()
     payload = {
         "results": [
@@ -41,7 +42,7 @@ def test_pr_comment_load_results_accepts_structured_export(tmp_path):
     assert loaded["release_summary"]["billing_delta_usd"] == 0.12
 
 
-def test_pr_comment_generate_comment_surfaces_release_summary():
+def test_pr_comment_generate_comment_surfaces_release_summary() -> None:
     mod = _load_pr_comment_module()
     payload = {
         "results": [
@@ -68,7 +69,7 @@ def test_pr_comment_generate_comment_surfaces_release_summary():
     assert "$0.6700 (3.5%)" in comment
 
 
-def test_pr_comment_accepts_structured_export_with_stability_check():
+def test_pr_comment_accepts_structured_export_with_stability_check() -> None:
     mod = _load_pr_comment_module()
     payload = {
         "results": [

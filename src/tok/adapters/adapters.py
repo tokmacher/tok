@@ -1,10 +1,11 @@
 """Thin adapter shells over the universal Tok runtime."""
 
 from __future__ import annotations
-from typing import Any, cast
-from dataclasses import dataclass, field
 
-from ..runtime.core import (
+from dataclasses import dataclass, field
+from typing import Any, cast
+
+from tok.runtime.core import (
     PreparedRuntimeRequest,
     ProcessedRuntimeResponse,
     RuntimeRequest,
@@ -16,20 +17,19 @@ from ..runtime.core import (
 def _system_to_messages(
     system: str | list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
+    """Convert system prompt to list of message dicts."""
     if not system:
         return []
     if isinstance(system, str):
         return [{"role": "system", "content": system}]
-    messages: list[dict[str, Any]] = []
-    for block in system:
-        if isinstance(block, dict):
-            messages.append(
-                {"role": "system", "content": block.get("text", "")}
-            )
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": block.get("text", "")} for block in system if isinstance(block, dict)
+    ]
     return messages
 
 
 def _render_text(content_blocks: list[dict[str, Any]]) -> str:
+    """Extract and join text from content blocks."""
     return "\n".join(
         str(block.get("text", "")).strip()
         for block in content_blocks
@@ -39,11 +39,12 @@ def _render_text(content_blocks: list[dict[str, Any]]) -> str:
 
 @dataclass
 class RuntimeAdapter:
-    """Transport-thin shell over UniversalTokRuntime.
+    """
+    Transport-thin shell over UniversalTokRuntime.
 
-    Runtime semantics such as compression, fallback behavior, memory extraction,
-    and response classification belong in the runtime. Adapters should only map
-    transport-specific inputs into RuntimeRequest fields.
+    Runtime semantics such as compression, fallback behavior,
+    memory extraction, and response classification belong in the runtime.
+    Adapters should only map transport-specific inputs into RuntimeRequest fields.
     """
 
     adapter_kind: str
@@ -61,6 +62,7 @@ class RuntimeAdapter:
         todo: str | None = None,
         deltas: str | None = None,
     ) -> PreparedRuntimeRequest:
+        """Prepare a runtime request with the given parameters."""
         return self.runtime.prepare_request(
             RuntimeRequest(
                 model=model,
@@ -82,6 +84,7 @@ class RuntimeAdapter:
         model: str,
         behavior_signals: dict[str, int] | None = None,
     ) -> ProcessedRuntimeResponse:
+        """Process and finalize the response text."""
         return self.runtime.process_response(
             text,
             model=model,
@@ -92,11 +95,15 @@ class RuntimeAdapter:
 
 @dataclass
 class ClaudeBridgeAdapter(RuntimeAdapter):
+    """Adapter for Claude Bridge integration."""
+
     adapter_kind: str = "claude-bridge"
 
 
 @dataclass
 class OpenAIChatAdapter(RuntimeAdapter):
+    """Adapter for OpenAI Chat API integration."""
+
     adapter_kind: str = "openai-chat"
 
     def build_chat_messages(
@@ -111,17 +118,20 @@ class OpenAIChatAdapter(RuntimeAdapter):
             messages=[{"role": "user", "content": user_text}],
             system=system_prompt,
         )
-        chat_messages = _system_to_messages(
-            cast(Any, prepared.body.get("system"))
-        ) + cast(list[dict[str, Any]], prepared.body.get("messages", []))
+        chat_messages = _system_to_messages(cast("Any", prepared.body.get("system"))) + cast(
+            "list[dict[str, Any]]", prepared.body.get("messages", [])
+        )
         return chat_messages, prepared
 
     def visible_text(self, processed: ProcessedRuntimeResponse) -> str:
+        """Extract visible text from processed response."""
         return _render_text(processed.content_blocks)
 
 
 @dataclass
 class TextLoopAdapter(RuntimeAdapter):
+    """Adapter for text loop integration."""
+
     adapter_kind: str = "text-loop"
 
     def prepare_messages(
@@ -131,17 +141,17 @@ class TextLoopAdapter(RuntimeAdapter):
         messages: list[dict[str, Any]],
         system_prompt: str | None = None,
     ) -> tuple[list[dict[str, Any]], PreparedRuntimeRequest]:
-        prepared = self.prepare(
-            model=model, messages=messages, system=system_prompt
+        prepared = self.prepare(model=model, messages=messages, system=system_prompt)
+        chat_messages = _system_to_messages(cast("Any", prepared.body.get("system"))) + cast(
+            "list[dict[str, Any]]", prepared.body.get("messages", [])
         )
-        chat_messages = _system_to_messages(
-            cast(Any, prepared.body.get("system"))
-        ) + cast(list[dict[str, Any]], prepared.body.get("messages", []))
         return chat_messages, prepared
 
 
 @dataclass
 class OrchestratorAdapter(RuntimeAdapter):
+    """Adapter for Tok orchestrator integration."""
+
     adapter_kind: str = "orchestrator"
 
     def prepare_turn(
@@ -163,7 +173,7 @@ class OrchestratorAdapter(RuntimeAdapter):
             todo=todo,
             deltas=deltas,
         )
-        chat_messages = _system_to_messages(
-            cast(Any, prepared.body.get("system"))
-        ) + cast(list[dict[str, Any]], prepared.body.get("messages", []))
+        chat_messages = _system_to_messages(cast("Any", prepared.body.get("system"))) + cast(
+            "list[dict[str, Any]]", prepared.body.get("messages", [])
+        )
         return chat_messages, prepared

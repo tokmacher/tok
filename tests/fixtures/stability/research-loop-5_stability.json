@@ -5,7 +5,7 @@
   "model": "deepseek/deepseek-v3.2",
   "runs": 5,
   "preferred_mode_counts": {
-    "tok-tool-compatible": 5
+    "tok-universal": 5
   },
   "mode_summaries": {
     "baseline": {
@@ -19,7 +19,7 @@
       "median_completion_tokens": 224,
       "median_latency_ms": 765.0
     },
-    "tok-tool-compatible": {
+    "tok-universal": {
       "runs": 5,
       "success_rate": 1.0,
       "success_count": 5,

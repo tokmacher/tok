@@ -4,26 +4,26 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from ...compression import TOK_FIELD_ALIAS, TOK_REVERSE_ALIAS
-from ...neuro.memory import (
-    TokMemory,
+
+from tok.compression import TOK_FIELD_ALIAS, TOK_REVERSE_ALIAS
+from tok.macros.memory import (
+    ConstraintMemory,
     EpisodeMemory,
     LessonMemory,
-    ConstraintMemory,
     RepairMemory,
+    TokMemory,
 )
-from .bridge_memory import BridgeMemoryState
-from ..config import (
-    TOOL_COMPAT_STICKY_KEYS,
-    TOOL_COMPAT_MAX_FILES,
+from tok.runtime.config import (
     TOOL_COMPAT_DELTA_KEYS,
+    TOOL_COMPAT_MAX_FILES,
+    TOOL_COMPAT_STICKY_KEYS,
 )
+
+from .bridge_memory import BridgeMemoryState
 
 
 def _tool_compatible_has_answer_facts(fields: dict[str, list[str]]) -> bool:
-    return any(
-        fact.startswith("answer_") for fact in fields.get("facts", []) if fact
-    )
+    return any(fact.startswith("answer_") for fact in fields.get("facts", []) if fact)
 
 
 def _parse_tok_state_fields(tok_state: str) -> dict[str, list[str]]:
@@ -55,17 +55,13 @@ def _parse_tok_state_fields(tok_state: str) -> dict[str, list[str]]:
         if key in {"turns", "goal", "next"}:
             result[key] = [raw_value]
         elif key in canonical_multi_keys:
-            result[key] = [
-                item.strip() for item in raw_value.split(",") if item.strip()
-            ]
+            result[key] = [item.strip() for item in raw_value.split(",") if item.strip()]
         else:
             result.setdefault("facts", []).append(f"{key}:{raw_value}")
     return result
 
 
-_COMPACT_PATH_PATTERN = re.compile(
-    r"[\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|yaml|yml|sh|txt|css|html|sql|rs|go|rb)"
-)
+_COMPACT_PATH_PATTERN = re.compile(r"[\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|yaml|yml|sh|txt|css|html|sql|rs|go|rb)")
 
 _COMPACT_SUFFIXES = (
     "_NotImplementedError",
@@ -235,9 +231,7 @@ def _tool_compat_compact_value(key: str, value: str) -> str:
     lowered, test_anchor, path_match, fix_target = _compact_common(compact)
 
     if key == "goal":
-        return _compact_goal(
-            compact, lowered, test_anchor, path_match, fix_target
-        )
+        return _compact_goal(compact, lowered, test_anchor, path_match, fix_target)
     if key == "tests":
         return _compact_tests(compact, lowered, test_anchor, path_match)
     if key == "errs":
@@ -308,9 +302,7 @@ def _rank_file_candidates(
             *previous.get("errs", []),
         ]
     ).lower()
-    goal_text = " ".join(
-        [*current.get("goal", []), *previous.get("goal", [])]
-    ).lower()
+    goal_text = " ".join([*current.get("goal", []), *previous.get("goal", [])]).lower()
     prev_files = previous.get("files") or []
 
     def _score(path: str) -> tuple[int, int]:
@@ -334,9 +326,7 @@ def _rank_file_candidates(
     return ranked[:TOOL_COMPAT_MAX_FILES]
 
 
-def _select_tool_compatible_files(
-    previous: dict[str, list[str]], current: dict[str, list[str]]
-) -> list[str]:
+def _select_tool_compatible_files(previous: dict[str, list[str]], current: dict[str, list[str]]) -> list[str]:
     candidates: list[str] = []
     seen_candidates: set[str] = set()
     for path in [
@@ -409,9 +399,7 @@ def _should_include_delta_field(
 ) -> bool:
     """Determine if a field should be included in the delta state."""
     if key == "files" and has_answer_facts:
-        return previous.get(key) != values or any(
-            f in answer_files for f in values
-        )
+        return previous.get(key) != values or any(f in answer_files for f in values)
     if key == "tests":
         return previous.get(key) != values
     if key == "facts" and has_answer_facts:
@@ -419,18 +407,13 @@ def _should_include_delta_field(
     return previous.get(key) != values
 
 
-def _delta_tok_state_fields(
-    previous: dict[str, list[str]], current: dict[str, list[str]]
-) -> str:
+def _delta_tok_state_fields(previous: dict[str, list[str]], current: dict[str, list[str]]) -> str:
     if not current:
         return ""
     delta: dict[str, list[str]] = {}
     current_facts = current.get("facts", [])
     previous_facts = previous.get("facts", [])
-    has_answer_facts = any(
-        fact.startswith("answer_")
-        for fact in [*current_facts, *previous_facts]
-    )
+    has_answer_facts = any(fact.startswith("answer_") for fact in [*current_facts, *previous_facts])
     answer_files = _extract_answer_file_paths(current_facts)
     has_answer_file_facts = bool(answer_files)
 
@@ -457,14 +440,13 @@ def _prepare_tool_compatible_state(
     raw_state: str,
     previous_fields: dict[str, list[str]],
 ) -> tuple[dict[str, list[str]], dict[str, list[str]], bool]:
-    """Parse, canonicalize, and apply sticky fields to a raw tool-compatible state string.
+    """
+    Parse, canonicalize, and apply sticky fields to a raw tool-compatible state string.
 
     Returns (parsed_fields, comparable_fields, has_answer_facts).
     comparable_fields excludes the 'turns' key (used for suppression comparison).
     """
-    parsed = _canonicalize_tool_compatible_state_fields(
-        _parse_tok_state_fields(raw_state)
-    )
+    parsed = _canonicalize_tool_compatible_state_fields(_parse_tok_state_fields(raw_state))
     parsed = _apply_tool_compatible_sticky_fields(previous_fields, parsed)
     comparable = {k: v for k, v in parsed.items() if k != "turns"}
     has_answer_facts = _tool_compatible_has_answer_facts(parsed)
@@ -476,7 +458,8 @@ def _select_resend_strategy(
     previous_comparable: dict[str, list[str]],
     has_answer_facts: bool,
 ) -> str:
-    """Return the resend strategy: 'full', 'suppress', or 'delta'.
+    """
+    Return the resend strategy: 'full', 'suppress', or 'delta'.
 
     Ordering is load-bearing:
       - unchanged state suppresses
@@ -485,9 +468,7 @@ def _select_resend_strategy(
     """
     if comparable == previous_comparable and comparable:
         return "suppress"
-    previous_has_answer_facts = _tool_compatible_has_answer_facts(
-        previous_comparable
-    )
+    previous_has_answer_facts = _tool_compatible_has_answer_facts(previous_comparable)
     if has_answer_facts and not previous_has_answer_facts:
         return "full"
     return "delta"
@@ -499,25 +480,23 @@ def _select_resend_reason(
     has_answer_facts: bool,
 ) -> str:
     if comparable == previous_comparable and comparable:
-        return "unchanged_state"
-    previous_has_answer_facts = _tool_compatible_has_answer_facts(
-        previous_comparable
-    )
+        return "verified_current_state"  # Changed from "unchanged_state" - data is verified fresh
+    previous_has_answer_facts = _tool_compatible_has_answer_facts(previous_comparable)
     if has_answer_facts and not previous_has_answer_facts:
         return "new_answer_anchor"
     return "changed_state_delta"
 
 
 __all__ = [
-    "TokMemory",
+    "BridgeMemoryState",
+    "ConstraintMemory",
     "EpisodeMemory",
     "LessonMemory",
-    "ConstraintMemory",
     "RepairMemory",
-    "BridgeMemoryState",
-    "_prepare_tool_compatible_state",
-    "_select_resend_strategy",
+    "TokMemory",
     "_build_tok_state",
     "_delta_tok_state_fields",
+    "_prepare_tool_compatible_state",
     "_select_resend_reason",
+    "_select_resend_strategy",
 ]

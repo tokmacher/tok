@@ -1,6 +1,7 @@
 # Architecture Diagrams
 
-This page is the visual companion to [architecture.md](./architecture.md). It shows the post-refactor system as it exists after the universal runtime consolidation.
+This page is the visual companion to [architecture.md](./architecture.md). It shows the
+post-refactor system as it exists after the universal runtime consolidation.
 
 ## 1. Runtime Topology
 
@@ -11,7 +12,7 @@ flowchart TB
     CB["ClaudeBridgeAdapter<br/>gateway/__init__.py"]
     OA["OpenAIChatAdapter<br/>live_runner.py"]
     TL["TextLoopAdapter<br/>agent.py"]
-    OR["OrchestratorAdapter<br/>tok_orchestrator.py boundary"]
+    OR["OrchestratorAdapter<br/>adapters/orchestrator.py"]
     PS["Protocol Substrate<br/>format_bridge.py<br/>parser.py<br/>encoder.py<br/>schema.py"]
 
     CB --> RT
@@ -86,56 +87,64 @@ flowchart LR
     SIG --> TEL["Telemetry and Replay<br/>invisible pressure<br/>family mode<br/>savings<br/>gate checks"]
 ```
 
-## 5. Runtime Surfaces and Ownership
-
-```mermaid
-flowchart TB
-    subgraph Canonical["Canonical Runtime"]
-        RT["universal_runtime.py"]
-    end
-
-    subgraph Adapters["Adapters"]
-        GW["gateway/__init__.py"]
-        AD["adapters.py"]
-        LR["live_runner.py"]
-        AG["agent.py"]
-        TO["tok_orchestrator.py"]
-    end
-
-    subgraph Protocol["Protocol Substrate"]
-        FB["format_bridge.py"]
-        PA["parser.py"]
-        EN["encoder.py"]
-        SC["schema.py"]
-    end
-
-    subgraph Shared["Shared Runtime Services"]
-        CL["cli/__init__.py replay path"]
-        ST["stats.py telemetry"]
-        BM["bridge_memory.py"]
-        CP["compression/__init__.py"]
-    end
-
-    GW --> RT
-    AD --> RT
-    LR --> AD
-    AG --> AD
-    TO --> AD
-    CL --> RT
-    ST --> RT
-    BM --> RT
-    CP --> RT
-    FB -. protocol layer .-> RT
-    PA -. protocol layer .-> RT
-    EN -. protocol layer .-> RT
-    SC -. protocol layer .-> RT
-```
-
-## 6. Deferred Orchestrator Migration Boundary
+## 5. Canonical IDL Ownership
 
 ```mermaid
 flowchart LR
-    USER["User Input"] --> LOOP["TokOrchestrator main loop<br/>sliding window<br/>retry logic<br/>tool execution<br/>strict-mode validation"]
+    subgraph Canonical["Canonical Protocol IDL"]
+        SC["protocol/schema.py<br/>schema registry"]
+        MD["protocol/models.py<br/>TokNode + AST/data model"]
+    end
+
+    subgraph Derived["Derived Runtime Contract"]
+        TS["protocol/models.py::TOOL_SCHEMAS"]
+        RTT["runtime/tools.py<br/>RuntimeToolExecutor._compiler_guard()"]
+    end
+
+    subgraph Wire["Bridge / Wire Adaptation"]
+        RP["runtime/pipeline/request_preparation.py"]
+        RV["runtime/pipeline/request_validation.py<br/>canonicalize_anthropic_bridge_body()"]
+    end
+
+    subgraph Public["Public Surface"]
+        EX["src/tok/__init__.py<br/>convenience re-exports"]
+        DOC["docs/architecture.md<br/>docs/architecture-diagrams.md"]
+    end
+
+    SC --> MD
+    MD --> TS
+    TS --> RTT
+    MD --> RP
+    RP --> RV
+    SC -. documented by .-> DOC
+    MD -. documented by .-> DOC
+    SC -. re-exported for convenience only .-> EX
+    MD -. re-exported for convenience only .-> EX
+    RTT -. derived from protocol IDL .-> DOC
+    RV -. transport translation only .-> DOC
+```
+
+## 6. Paired IDL Audit Gate
+
+```mermaid
+flowchart TB
+    START["Bounded IDL stress prompt"] --> BASE["Baseline run<br/>source of truth for IDL coherence"]
+    START --> TOK["Tok-captured run<br/>diagnose runtime interference"]
+
+    BASE --> MAP["Canonical IDL map<br/>protocol/schema.py + protocol/models.py"]
+    TOK --> SIG["Tok-only anomalies<br/>stable-result caching<br/>answer-repair churn<br/>fail-open compatibility"]
+
+    MAP --> REL["Release decision"]
+    SIG --> REL
+
+    REL --> PASS["Release can proceed only if:<br/>baseline and Tok agree on major IDL findings<br/>and Tok anomalies are resolved or isolated"]
+```
+
+## 7. Deferred Orchestrator Migration Boundary
+
+```mermaid
+flowchart LR
+    USER["User Input"] --> LOOP["Deferred orchestrator loop<br/>sliding window<br/>retry logic<br/>tool execution<br/>strict-mode validation"]
 
     LOOP --> BOUNDARY["OrchestratorAdapter<br/>runtime boundary now present"]
     BOUNDARY --> RT["UniversalTokRuntime"]
@@ -143,7 +152,10 @@ flowchart LR
     LEGACY["Legacy-owned today<br/>multi-system prompt assembly<br/>large turn loop<br/>truncation policy"] -. still deferred .-> LOOP
 ```
 
-## 7. Adoption Story
+The release-surface manifest in `src/tok/release_surface.py` defines which exports and
+commands are supported versus experimental for the first public release.
+
+## 8. Adoption Story
 
 ```mermaid
 flowchart TB
@@ -154,6 +166,6 @@ flowchart TB
     STD --> AA["Human-agent and agent-agent standardization"]
 ```
 
----
+______________________________________________________________________
 
-See [roadmap.md](../roadmap.md) for latest planning and phase status.
+See `ops/archive/roadmap_20260419_stale.md` for archived planning and phase status.

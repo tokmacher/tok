@@ -2,19 +2,29 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from ..protocol.models import TokNode
+import tiktoken
+
+from tok.protocol.models import TokNode
+
+# Constants for pointer computation
+MIN_OCCURRENCES = 2
+MIN_TOKEN_LENGTH = 2
+MIN_PROFIT = 2
+MAX_ALPHA_LENGTH = 8
+
+
+from tok.protocol.parser import TokParser
 
 
 class DocumentTransformer:
     """
     Transforms structured documents (Markdown-like) into optimized Tok nodes.
-    Supports hierarchy mapping, footnote pointers, node flattening, and TOC generation.
+    Supports hierarchy mapping, footnote pointers, node flattening, and TOC.
     """
 
     def __init__(self, flattening_threshold: int = 5) -> None:
         self.flattening_threshold = flattening_threshold
         self.citations: dict[str, TokNode] = {}
-        self.nodes_by_id: dict[str, TokNode] = {}
         self._next_id = 0
 
     def _generate_id(self, prefix: str = "node") -> str:
@@ -68,9 +78,7 @@ class DocumentTransformer:
                 if row and not row[-1]:
                     row.pop()
                 if len(row) >= len(headers):
-                    node.rows.append(
-                        [strip_fn(c) for c in row[: len(headers)]]
-                    )
+                    node.rows.append([strip_fn(c) for c in row[: len(headers)]])
             i += 1
         return node, i
 
@@ -86,9 +94,7 @@ class DocumentTransformer:
             root_nodes.append(node)
 
     @staticmethod
-    def _parse_code_block(
-        lines: list[str], i: int, lang: str
-    ) -> tuple[TokNode, int]:
+    def _parse_code_block(lines: list[str], i: int, lang: str) -> tuple[TokNode, int]:
         i += 1
         code: list[str] = []
         while i < len(lines) and not lines[i].strip().startswith("```"):
@@ -104,31 +110,18 @@ class DocumentTransformer:
         return node, i
 
     @staticmethod
-    def _is_structural_break(
-        line: str, i: int, lines: list[str], rich: bool
-    ) -> bool:
+    def _is_structural_break(line: str, i: int, lines: list[str], rich: bool) -> bool:
         if re.match(r"^(#{1,6})\s+", line):
             return True
         if re.match(r"^\s*[-*+]\s+", line):
             return True
         if re.match(r"^\s*(-{3,}|\*{3,}|_{3,})\s*$", line):
             return True
-        if (
-            i + 1 < len(lines)
-            and "|" in line
-            and re.match(r"^\s*\|?[\s:|:-]+\|?\s*$", lines[i + 1])
-        ):
+        if i + 1 < len(lines) and "|" in line and re.match(r"^\s*\|?[\s:|:-]+\|?\s*$", lines[i + 1]):
             return True
-        if (
-            not rich
-            and "|" in line
-            and i + 1 < len(lines)
-            and "|" in lines[i + 1]
-        ):
+        if not rich and "|" in line and i + 1 < len(lines) and "|" in lines[i + 1]:
             return True
-        if line.strip().startswith("```"):
-            return True
-        return False
+        return bool(line.strip().startswith("```"))
 
     def _try_parse_heading(
         self,
@@ -173,14 +166,10 @@ class DocumentTransformer:
         stack: list[tuple[int, TokNode]],
         root_nodes: list[TokNode],
     ) -> tuple[bool, int]:
-        if not (
-            "|" in lines[i] and i + 1 < len(lines) and "|" in lines[i + 1]
-        ):
+        if not ("|" in lines[i] and i + 1 < len(lines) and "|" in lines[i + 1]):
             return False, i
         headers = [h.strip() for h in lines[i].split("|") if h.strip()]
-        node, new_i = self._parse_table_rows(
-            lines, i + 1, headers, strip_decorators
-        )
+        node, new_i = self._parse_table_rows(lines, i + 1, headers, strip_decorators)
         self._attach_node(node, stack, root_nodes)
         return True, new_i
 
@@ -221,16 +210,10 @@ class DocumentTransformer:
                 i += 1
                 continue
 
-            if (
-                i + 1 < len(lines)
-                and "|" in line
-                and re.match(r"^\s*\|?([\s:|-]+)+\s*$", lines[i + 1])
-            ):
+            if i + 1 < len(lines) and "|" in line and re.match(r"^\s*\|?([\s:|-]+)+\s*$", lines[i + 1]):
                 headers = [h.strip() for h in line.split("|") if h.strip()]
                 i += 2
-                node, i = self._parse_table_rows(
-                    lines, i, headers, strip_decorators
-                )
+                node, i = self._parse_table_rows(lines, i, headers, strip_decorators)
                 self._attach_node(node, stack, root_nodes)
                 continue
 
@@ -245,9 +228,7 @@ class DocumentTransformer:
                 self._attach_node(node, stack, root_nodes)
                 continue
 
-            if self._try_parse_heading(
-                line, strip_decorators, stack, root_nodes
-            ):
+            if self._try_parse_heading(line, strip_decorators, stack, root_nodes):
                 i += 1
                 continue
 
@@ -256,16 +237,12 @@ class DocumentTransformer:
                 continue
 
             if not rich:
-                parsed, new_i = self._try_parse_naked_table(
-                    lines, i, strip_decorators, stack, root_nodes
-                )
+                parsed, new_i = self._try_parse_naked_table(lines, i, strip_decorators, stack, root_nodes)
                 if parsed:
                     i = new_i
                     continue
 
-            i = self._parse_paragraph(
-                lines, i, strip_decorators, stack, root_nodes, rich
-            )
+            i = self._parse_paragraph(lines, i, strip_decorators, stack, root_nodes, rich)
 
     @staticmethod
     def _strip_md_decorators(text: str) -> str:
@@ -273,8 +250,7 @@ class DocumentTransformer:
             return ""
         text = re.sub(r"(\*\*|__)(.*?)\1", r"\2", text)
         text = re.sub(r"(\*|_)(.*?)\1", r"\2", text)
-        text = re.sub(r"~~(.*?)~~", r"\1", text)
-        return text
+        return re.sub(r"~~(.*?)~~", r"\1", text)
 
     def _post_process_rich(
         self,
@@ -293,11 +269,7 @@ class DocumentTransformer:
         if toc_node:
             for row in toc_node.rows:
                 toc_target: TokNode | None = head_to_node.get(str(row[1]))
-                row[1] = (
-                    f"*{toc_target.label}"
-                    if toc_target and toc_target.label
-                    else ""
-                )
+                row[1] = f"*{toc_target.label}" if toc_target and toc_target.label else ""
 
         result: list[TokNode] = [toc_node] if toc_node else []
         if ptr_nodes:
@@ -308,9 +280,7 @@ class DocumentTransformer:
         result.extend(flattened_nodes)
         if self.citations:
             cites = TokNode(type="CITATIONS")
-            cites.children = sorted(
-                self.citations.values(), key=lambda x: x.label
-            )
+            cites.children = sorted(self.citations.values(), key=lambda x: x.label)
             result.append(cites)
         return result
 
@@ -318,20 +288,17 @@ class DocumentTransformer:
     def _identity(text: str) -> str:
         return text
 
-    def transform(
-        self, markdown_text: str, rich: bool = True
-    ) -> list[TokNode]:
+    def transform(self, markdown_text: str, rich: bool = True) -> list[TokNode]:
         """
         Convert markdown text to a list of TokNodes.
+
         rich=True: Preserves all symbols (v1.6).
         rich=False: Strips markdown syntax for raw semantic density (v1.7).
         """
         lines = markdown_text.split("\n")
 
         if not rich:
-            lines = [
-                l for l in lines if not re.match(r"^\s*\|?[\s:|:-]+\|?\s*$", l)
-            ]
+            lines = [line for line in lines if not re.match(r"^\s*\|?[\s:|:-]+\|?\s*$", line)]
             strip_decorators = self._strip_md_decorators
         else:
             strip_decorators = self._identity
@@ -340,59 +307,60 @@ class DocumentTransformer:
         stack: list[tuple[int, TokNode]] = []
 
         metadata, md_start = self._extract_metadata(lines)
-        footnote_defs, content_lines = self._extract_footnotes(
-            lines[md_start:]
-        )
+        footnote_defs, content_lines = self._extract_footnotes(lines[md_start:])
         lines = content_lines
 
         if metadata:
             root_nodes.append(TokNode(type="META", attrs=metadata))
 
-        self._parse_content_lines(
-            lines, strip_decorators, stack, root_nodes, rich
-        )
+        self._parse_content_lines(lines, strip_decorators, stack, root_nodes, rich)
 
         if not rich:
             return root_nodes
 
         return self._post_process_rich(root_nodes, footnote_defs)
 
-    def _extract_citations(
-        self, nodes: list[TokNode], defs: dict[str, str]
-    ) -> None:
-        """Extract footnote reflections and replaces with pointers."""
+    def _extract_citations(self, nodes: list[TokNode], defs: dict[str, str]) -> None:
+        """Extract footnote reflections and replace with pointers."""
         self.citations_by_text: dict[str, TokNode] = {}
 
-        def process_node(node: TokNode) -> None:
-            if not node.text:
-                return
-
-            matches = list(re.finditer(r"\[\^(\w+)\]", node.text))
-            for match in reversed(matches):
-                ref_id = match.group(1)
-                text = defs.get(ref_id, f"Citation {ref_id}")
-
-                if text not in self.citations_by_text:
-                    cite_node = TokNode(
-                        type="CITE",
-                        label=f"ref_{len(self.citations)}",
-                        text=text,
-                    )
-                    self.citations[ref_id] = cite_node
-                    self.citations_by_text[text] = cite_node
-
-                ptr = self.citations_by_text[text].label
-                node.text = (
-                    node.text[: match.start()]
-                    + f"*{ptr}"
-                    + node.text[match.end() :]
-                )
-
-            for child in node.children:
-                process_node(child)
-
         for node in nodes:
-            process_node(node)
+            self._process_node_citations(node, defs)
+
+    def _process_node_citations(self, node: TokNode, defs: dict[str, str]) -> None:
+        """Process citations for a single node and its children."""
+        if not node.text:
+            return
+
+        self._replace_citation_markers(node, defs)
+
+        for child in node.children:
+            self._process_node_citations(child, defs)
+
+    def _replace_citation_markers(self, node: TokNode, defs: dict[str, str]) -> None:
+        """Replace citation markers in node text with pointers."""
+        matches = list(re.finditer(r"\[\^(\w+)\]", node.text))
+        for match in reversed(matches):
+            ref_id = match.group(1)
+            text = defs.get(ref_id, f"Citation {ref_id}")
+
+            cite_node = self._get_or_create_citation_node(ref_id, text)
+            ptr = cite_node.label
+
+            node.text = node.text[: match.start()] + f"*{ptr}" + node.text[match.end() :]
+
+    def _get_or_create_citation_node(self, ref_id: str, text: str) -> TokNode:
+        """Get existing citation node or create a new one."""
+        if text not in self.citations_by_text:
+            cite_node = TokNode(
+                type="CITE",
+                label=f"ref_{len(self.citations)}",
+                text=text,
+            )
+            self.citations[ref_id] = cite_node
+            self.citations_by_text[text] = cite_node
+
+        return self.citations_by_text[text]
 
     @staticmethod
     def _collect_text_counts(nodes: list[TokNode]) -> dict[str, int]:
@@ -414,41 +382,30 @@ class DocumentTransformer:
         return text_counts
 
     @staticmethod
-    def _compute_profitable_pointers(
-        text_counts: dict[str, int], max_pointers: int = 60
-    ) -> dict[str, str]:
-        import tiktoken
-
+    def _compute_profitable_pointers(text_counts: dict[str, int], max_pointers: int = 60) -> dict[str, str]:
         enc = tiktoken.get_encoding("cl100k_base")
         profitable = []
         for text, count in text_counts.items():
-            if count < 2:
+            if count < MIN_OCCURRENCES:
                 continue
             t_toks = len(enc.encode(text))
-            if t_toks < 2:
+            if t_toks < MIN_TOKEN_LENGTH:
                 continue
-            profit = (t_toks - 2) * count - t_toks
-            if profit > 2:
+            profit = (t_toks - MIN_TOKEN_LENGTH) * count - t_toks
+            if profit > MIN_PROFIT:
                 profitable.append((text, profit))
 
         profitable.sort(key=lambda x: x[1], reverse=True)
-        return {
-            text: f"p{i}"
-            for i, (text, _) in enumerate(profitable[:max_pointers])
-        }
+        return {text: f"p{i}" for i, (text, _) in enumerate(profitable[:max_pointers])}
 
     @staticmethod
-    def _apply_pointers(
-        nodes: list[TokNode], pointers: dict[str, str]
-    ) -> None:
+    def _apply_pointers(nodes: list[TokNode], pointers: dict[str, str]) -> None:
         def apply_pointers(node: TokNode) -> None:
             if node.text:
                 for text in sorted(pointers.keys(), key=len, reverse=True):
                     ptr = pointers[text]
-                    if text.isalpha() and len(text) < 8:
-                        node.text = re.sub(
-                            rf"\b{re.escape(text)}\b", f"*{ptr}", node.text
-                        )
+                    if text.isalpha() and len(text) < MAX_ALPHA_LENGTH:
+                        node.text = re.sub(rf"\b{re.escape(text)}\b", f"*{ptr}", node.text)
                     else:
                         node.text = node.text.replace(text, f"*{ptr}")
             for child in node.children:
@@ -458,7 +415,7 @@ class DocumentTransformer:
             apply_pointers(node)
 
     def _pointerize(self, nodes: list[TokNode]) -> list[TokNode]:
-        """Find repeated long strings and semantic terms and replaces with pointers."""
+        """Find repeated long strings and replace with pointers."""
         text_counts = self._collect_text_counts(nodes)
         pointers = self._compute_profitable_pointers(text_counts)
 
@@ -467,10 +424,7 @@ class DocumentTransformer:
 
         self._apply_pointers(nodes, pointers)
 
-        return [
-            TokNode(type="PTR", label=ptr, text=text)
-            for text, ptr in pointers.items()
-        ]
+        return [TokNode(type="PTR", label=ptr, text=text) for text, ptr in pointers.items()]
 
     def _assign_labels(self, nodes: list[TokNode], needed: set[int]) -> None:
         visited: set[int] = set()
@@ -501,10 +455,7 @@ class DocumentTransformer:
 
         def patch(ns: list[TokNode]) -> None:
             for n in ns:
-                if (
-                    "parent" in n.attrs
-                    and n.attrs.get("parent") in id_to_label
-                ):
+                if "parent" in n.attrs and n.attrs.get("parent") in id_to_label:
                     n.attrs["parent"] = id_to_label[n.attrs["parent"]]
                 patch(n.children)
 
@@ -523,10 +474,7 @@ class DocumentTransformer:
             root_list = []
         retained: list[TokNode] = []
         for node in nodes:
-            if (
-                current_depth >= self.flattening_threshold
-                and current_depth > 0
-            ):
+            if current_depth >= self.flattening_threshold and current_depth > 0:
                 if parent_node:
                     needed.add(id(parent_node))
                     node.attrs["parent"] = f"NESTED_{id(parent_node)}"
@@ -536,21 +484,15 @@ class DocumentTransformer:
                 retained.append(node)
 
             if node.children:
-                node.children = self._flatten(
-                    node.children, needed, current_depth + 1, root_list, node
-                )
+                node.children = self._flatten(node.children, needed, current_depth + 1, root_list, node)
 
         if current_depth == 0:
             all_reachable = retained + root_list
-            self._patch_parent_pointers(
-                all_reachable, needed, self._generate_id
-            )
+            self._patch_parent_pointers(all_reachable, needed, self._generate_id)
             return all_reachable
         return retained
 
-    def _generate_toc(
-        self, nodes: list[TokNode], needed: set[int]
-    ) -> tuple[TokNode | None, dict[str, TokNode]]:
+    def _generate_toc(self, nodes: list[TokNode], needed: set[int]) -> tuple[TokNode | None, dict[str, TokNode]]:
         toc_headers = ["h", "lbl", "title"]
         toc_rows = []
         visited: set[int] = set()
@@ -561,10 +503,7 @@ class DocumentTransformer:
                 if id(node) in visited:
                     continue
                 visited.add(id(node))
-                if (
-                    node.type.upper().startswith("H")
-                    and node.type[1:].isdigit()
-                ):
+                if node.type.upper().startswith("H") and node.type[1:].isdigit():
                     needed.add(id(node))
                     title = node.text.split("\n")[0][:30].strip()
                     placeholder = f"PENDING_{id(node)}"
@@ -579,13 +518,8 @@ class DocumentTransformer:
         toc_node = TokNode(type="TOC", headers=toc_headers, rows=toc_rows)
         return toc_node, head_to_node
 
-    def to_markdown(self, nodes: list[TokNode]) -> str:
-        """Deterministic Reconstruction Engine (Re-hydration)."""
-        return self.detransform_nodes(nodes)
-
     def detransform(self, tok_text: str) -> str:
-        from ..protocol.parser import TokParser
-
+        """Convert Tok text back to markdown format."""
         parser = TokParser()
         nodes = parser.parse(tok_text)
         return self.detransform_nodes(nodes)
@@ -616,9 +550,7 @@ class DocumentTransformer:
 
         for lbl, node in nodes_by_label.items():
             if f"*{lbl}" not in pointer_map:
-                pointer_map[f"*{lbl}"] = (
-                    node.text.split("\n")[0] if node.text else f"#{lbl}"
-                )
+                pointer_map[f"*{lbl}"] = node.text.split("\n")[0] if node.text else f"#{lbl}"
 
         return pointer_map
 
@@ -636,11 +568,7 @@ class DocumentTransformer:
                 sep_cells.append("---")
         lines.append("| " + " | ".join(sep_cells) + " |")
         for row in n.rows:
-            lines.append(
-                "| "
-                + " | ".join(str(v) if v is not None else "" for v in row)
-                + " |"
-            )
+            lines.extend(["| " + " | ".join(str(v) if v is not None else "" for v in row) + " |"])
         lines.append("")
         return lines
 
@@ -675,11 +603,7 @@ class DocumentTransformer:
             lines.append(rehydrate(text) + "\n")
 
         for child in n.children:
-            lines.extend(
-                DocumentTransformer._node_to_md(
-                    child, depth + 1, citation_defs, rehydrate
-                )
-            )
+            lines.extend(DocumentTransformer._node_to_md(child, depth + 1, citation_defs, rehydrate))
         return lines
 
     @staticmethod
@@ -795,8 +719,9 @@ class DocumentTransformer:
         return rehydrate
 
     def detransform_nodes(self, nodes: list[TokNode]) -> str:
+        """Convert a list of TokNodes back to markdown string."""
         (
-            pool,
+            _pool,
             citation_defs,
             metadata,
             content_nodes,
@@ -807,9 +732,7 @@ class DocumentTransformer:
         pointer_map = self._build_pointer_map(nodes)
         rehydrate = self._make_rehydrator(pointer_map)
 
-        final_roots = self._resolve_parent_structure(
-            content_nodes, nodes_by_label
-        )
+        final_roots = self._resolve_parent_structure(content_nodes, nodes_by_label)
 
         md_lines: list[str] = []
         if metadata:
@@ -824,5 +747,4 @@ class DocumentTransformer:
             md_lines.extend(self._render_footnotes(citation_defs))
 
         md = "\n".join(md_lines)
-        md = re.sub(r"\n{3,}", "\n\n", md).strip()
-        return md
+        return re.sub(r"\n{3,}", "\n\n", md).strip()

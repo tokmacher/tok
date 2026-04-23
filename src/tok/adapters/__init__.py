@@ -1,44 +1,36 @@
-from typing import Any
+"""Tok adapter module for various LLM runtime integrations."""
 
 from .adapters import (
-    RuntimeAdapter,
     ClaudeBridgeAdapter,
     OpenAIChatAdapter,
     OrchestratorAdapter,
+    RuntimeAdapter,
     TextLoopAdapter,
 )
 
 
-def __getattr__(name: str) -> Any:
-    if name == "Agent":
-        from .agent import Agent
+class OrchestratorConfig:
+    """Placeholder for orchestrator configuration (not yet implemented)."""
 
-        return Agent
-    if name in ("TokOrchestrator", "OrchestratorConfig"):
+
+def __getattr__(name: str) -> object:
+    """Lazy-load TokOrchestrator to avoid circular imports."""
+    if name == "TokOrchestrator":
         from .orchestrator import TokOrchestrator
 
-        if name == "TokOrchestrator":
-            return TokOrchestrator
-        # OrchestratorConfig was never defined; return a stub dataclass
-        import dataclasses
-
-        OrchestratorConfig: Any = dataclasses.dataclass(
-            type("OrchestratorConfig", (), {})
-        )
-        return OrchestratorConfig
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        return TokOrchestrator
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
 
 
 __all__ = [
-    # Adapters
-    "RuntimeAdapter",
     "ClaudeBridgeAdapter",
     "OpenAIChatAdapter",
     "OrchestratorAdapter",
+    "OrchestratorConfig",
+    # Adapters
+    "RuntimeAdapter",
     "TextLoopAdapter",
-    # Agent (lazy — requires OPENROUTER_API_KEY at runtime)
-    "Agent",
     # Orchestrator
     "TokOrchestrator",
-    "OrchestratorConfig",
 ]

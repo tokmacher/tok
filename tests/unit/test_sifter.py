@@ -15,23 +15,20 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 import pytest
-from tok.sifter import DirectoryWalker, Sifter
+
+from tok.utils.sifter import DirectoryWalker, Sifter
 
 
 class TestSifterFunctionExtraction:
     """Test function signature extraction."""
 
-    def test_parser_function_extraction(self):
+    def test_parser_function_extraction(self) -> None:
         """Extract functions from actual parser.py."""
         Sifter.reset_pointers()
-        parser_path = (
-            Path(__file__).parent.parent / "src" / "tok" / "parser.py"
-        )
+        parser_path = Path(__file__).parent.parent / "src" / "tok" / "parser.py"
 
         if parser_path.exists():
             result = Sifter.from_file(str(parser_path))
@@ -40,12 +37,10 @@ class TestSifterFunctionExtraction:
             skeleton_text = result.get("skeleton", "")
             assert "@" in skeleton_text or "parser" in skeleton_text.lower()
 
-    def test_method_extraction(self):
+    def test_method_extraction(self) -> None:
         """Sifter should extract class methods."""
         Sifter.reset_pointers()
-        bridge_path = (
-            Path(__file__).parent.parent / "src" / "tok" / "bridge.py"
-        )
+        bridge_path = Path(__file__).parent.parent / "src" / "tok" / "bridge.py"
 
         if bridge_path.exists():
             result = Sifter.from_file(str(bridge_path))
@@ -58,12 +53,10 @@ class TestSifterFunctionExtraction:
 class TestSifterClassExtraction:
     """Test class definition extraction."""
 
-    def test_class_extraction_from_real_code(self):
+    def test_class_extraction_from_real_code(self) -> None:
         """Sifter should extract class definitions from real code."""
         Sifter.reset_pointers()
-        parser_path = (
-            Path(__file__).parent.parent / "src" / "tok" / "parser.py"
-        )
+        parser_path = Path(__file__).parent.parent / "src" / "tok" / "parser.py"
 
         if parser_path.exists():
             result = Sifter.from_file(str(parser_path))
@@ -75,7 +68,7 @@ class TestSifterClassExtraction:
 class TestSifterPointerGeneration:
     """Test pointer label generation consistency."""
 
-    def test_pointer_counter_reset(self):
+    def test_pointer_counter_reset(self) -> None:
         """Sifter.reset_pointers() should reset pointer counter."""
         # Get initial pointers
         Sifter.reset_pointers()
@@ -92,11 +85,9 @@ class TestSifterPointerGeneration:
             second_batch.append(ptr)
 
         # Should be identical after reset
-        assert (
-            first_batch == second_batch
-        ), "Pointer reset should work consistently"
+        assert first_batch == second_batch, "Pointer reset should work consistently"
 
-    def test_pointer_sequencing(self):
+    def test_pointer_sequencing(self) -> None:
         """Pointers should increment in sequence."""
         Sifter.reset_pointers()
         ptrs = [Sifter._get_next_pointer() for _ in range(30)]
@@ -110,7 +101,7 @@ class TestSifterPointerGeneration:
 class TestSifterDirectoryWalking:
     """Test directory traversal."""
 
-    def test_directory_walker_excludes_standard_patterns(self):
+    def test_directory_walker_excludes_standard_patterns(self) -> None:
         """DirectoryWalker should exclude __pycache__, .git, etc."""
         walker = DirectoryWalker()
 
@@ -120,7 +111,7 @@ class TestSifterDirectoryWalking:
         assert walker.should_exclude(Path(".venv"))
         assert walker.should_exclude(Path("node_modules"))
 
-    def test_directory_walker_includes_py_files(self):
+    def test_directory_walker_includes_py_files(self) -> None:
         """DirectoryWalker should include .py files."""
         walker = DirectoryWalker()
 
@@ -132,28 +123,24 @@ class TestSifterDirectoryWalking:
 class TestSifterFromDirectory:
     """Test sifting entire directories."""
 
-    def test_from_dir_produces_valid_tok(self):
+    def test_from_dir_produces_valid_tok(self) -> None:
         """Sifter.from_dir() should produce valid Tok output."""
         Sifter.reset_pointers()
         tok_path = Path(__file__).parent.parent / "src" / "tok"
 
         if tok_path.exists():
-            result = Sifter.from_dir(
-                str(tok_path), exclude=None, naked=False, minify=True
-            )
+            result = Sifter.from_dir(str(tok_path), exclude=None, naked=False, minify=True)
             # Should produce Tok string with @module, @chunk, etc.
             assert isinstance(result, str)
             assert len(result) > 0
 
-    def test_from_dir_with_naked_mode(self):
+    def test_from_dir_with_naked_mode(self) -> None:
         """Sifter.from_dir() naked mode should work."""
         Sifter.reset_pointers()
         tok_path = Path(__file__).parent.parent / "src" / "tok"
 
         if tok_path.exists():
-            result = Sifter.from_dir(
-                str(tok_path), exclude=None, naked=True, minify=True
-            )
+            result = Sifter.from_dir(str(tok_path), exclude=None, naked=True, minify=True)
             # Should produce Tok string
             assert isinstance(result, str)
 
@@ -161,7 +148,7 @@ class TestSifterFromDirectory:
 class TestSifterFromFile:
     """Test Sifter.from_file() static method."""
 
-    def test_from_file_returns_dict(self):
+    def test_from_file_returns_dict(self) -> None:
         """Sifter.from_file() should return dict with skeleton and corpus."""
         Sifter.reset_pointers()
         test_file = Path(__file__).parent.parent / "src" / "tok" / "parser.py"
@@ -172,7 +159,7 @@ class TestSifterFromFile:
             assert "skeleton" in result
             assert "corpus" in result
 
-    def test_from_file_skeleton_is_string(self):
+    def test_from_file_skeleton_is_string(self) -> None:
         """Skeleton should be a string."""
         Sifter.reset_pointers()
         test_file = Path(__file__).parent.parent / "src" / "tok" / "parser.py"
@@ -186,7 +173,7 @@ class TestSifterFromFile:
 class TestSifterRoundTrip:
     """Test Sifter to_dir() round-trip."""
 
-    def test_to_dir_creates_files(self):
+    def test_to_dir_creates_files(self) -> None:
         """Sifter.to_dir() should reconstruct files from skeleton."""
         Sifter.reset_pointers()
 
@@ -218,25 +205,21 @@ def simple_func(x, y):
 class TestSifterConsistency:
     """Test Sifter behavior consistency."""
 
-    def test_multiple_sifts_same_file(self):
+    def test_multiple_sifts_same_file(self) -> None:
         """Sifting same file multiple times with reset pointers should be consistent."""
         test_file = Path(__file__).parent.parent / "src" / "tok" / "parser.py"
 
         if test_file.exists():
             Sifter.reset_pointers()
-            result1 = Sifter.from_file(
-                str(test_file), naked=False, minify=True
-            )
+            result1 = Sifter.from_file(str(test_file), naked=False, minify=True)
 
             Sifter.reset_pointers()
-            result2 = Sifter.from_file(
-                str(test_file), naked=False, minify=True
-            )
+            result2 = Sifter.from_file(str(test_file), naked=False, minify=True)
 
             # Should produce same skeleton (modulo pointer reset)
             assert len(result1["skeleton"]) == len(result2["skeleton"])
 
-    def test_sifter_pointer_isolation(self):
+    def test_sifter_pointer_isolation(self) -> None:
         """Pointer counter should be global across instances."""
         Sifter.reset_pointers()
         ptr1 = Sifter._get_next_pointer()
@@ -250,7 +233,7 @@ class TestSifterConsistency:
 class TestSifterEdgeCases:
     """Test edge cases in Sifter."""
 
-    def test_real_file_sifting(self):
+    def test_real_file_sifting(self) -> None:
         """Sifting a real Python file should work."""
         Sifter.reset_pointers()
         test_file = Path(__file__).parent.parent / "src" / "tok" / "sifter.py"
@@ -265,7 +248,7 @@ class TestSifterEdgeCases:
 class TestSifterNakedMode:
     """Test Sifter naked (minimal) mode."""
 
-    def test_naked_mode_with_real_file(self):
+    def test_naked_mode_with_real_file(self) -> None:
         """Naked mode should work with real files."""
         test_file = Path(__file__).parent.parent / "src" / "tok" / "parser.py"
 

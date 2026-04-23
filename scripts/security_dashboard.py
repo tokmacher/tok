@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+
+"""
+Security monitoring dashboard for Tok dependency security.
+Provides real-time security metrics and alerts.
+"""
+
+import json
+import logging
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+# Security configuration
+SECURITY_CONFIG = {
+    "request_timeout": 30,
+    "max_retries": 3,
+    "rate_limit_delay": 0.1,  # 100ms between requests
+    "user_agent": "tok-security-dashboard/0.1.0",
+    "vulnerability_db_url": "https://pypi.org/pypi",
+    "safety_db_url": "https://pyup.io/safety/api/v1/advisories/",
+}
+
+# Package name validation regex based on PyPI requirements
+# PyPI allows: letters, numbers, hyphens, underscores, and dots
+# Must start and end with letter or number, no consecutive special chars
+PACKAGE_NAME_REGEX = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|(?:[._-](?=[a-zA-Z0-9])))*$")
+VERSION_REGEX = re.compile(r"^[a-zA-Z0-9._+-]+$")
+
+
+def validate_package_name(package_name: str) -> bool:
+    """Validate package name for security."""
+    if not package_name or len(package_name) > 100:
+        return False
+    return bool(PACKAGE_NAME_REGEX.fullmatch(package_name))
+
+
+def validate_version(version: str) -> bool:
+    """Validate version string for security."""
+    if not version or len(version) > 50:
+        return False
+    return bool(VERSION_REGEX.fullmatch(version))
+
+
+def create_secure_session() -> requests.Session:
+    """Create a secure HTTP session with proper configuration."""
+    session = requests.Session()
+
+    # Configure retry strategy
+    retry_strategy = Retry(
+        total=SECURITY_CONFIG["max_retries"],
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS"],
+        backoff_factor=1,
+        raise_on_status=False,
+    )
+
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
+    # Set secure headers
+    session.headers.update(
+        {
+            "User-Agent": SECURITY_CONFIG["user_agent"],
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "close",
+        }
+    )
+
+    return session
+
+
+class SecurityMonitor:
+    def __init__(self) -> None:
+        self.vulnerability_db_url = SECURITY_CONFIG["vulnerability_db_url"]
+        self.safety_db_url = SECURITY_CONFIG["safety_db_url"]
+
+    def load_dependency_analysis(self) -> dict:
+        """Load dependency analysis data."""
+        analysis_file = Path("dependency-analysis.json")
+        if not analysis_file.exists():
+            logger.error("Dependency analysis file not found. Run SBOM generation first.")
+            return {}
+
+        try:
+            with open(analysis_file, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.exception(f"Failed to load dependency analysis: {e}")
+            return {}
+
+    def check_vulnerabilities(self, packages: list[dict]) -> list[dict]:
+        """Check for known vulnerabilities in packages."""
+        vulnerabilities = []
+        session = create_secure_session()
+
+        try:
+            for package in packages:
+                name = package.get("name", "")
+                version = package.get("version", "")
+
+                # Input validation
+                if not validate_package_name(name) or not validate_version(version):
+                    logger.warning(f"Invalid package info: {name}@{version}")
+                    continue
+
+                # Rate limiting
+                time.sleep(SECURITY_CONFIG["rate_limit_delay"])
+
+                try:
+                    # Check PyPI for security advisories
+                    url = f"{self.vulnerability_db_url}/{name}/{version}/json"
+                    logger.debug(f"Checking vulnerabilities: {name}@{version}")
+
+                    response = session.get(
+                        url,
+                        timeout=SECURITY_CONFIG["request_timeout"],
+                        verify=True,  # SSL verification enabled
+                    )
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Check for vulnerabilities in PyPI data
+                        # This is a simplified check - in production, you'd use a proper vulnerability database
+                        if not isinstance(data, dict):
+                            logger.warning(f"Invalid response structure for {name}@{version}")
+                            continue
+
+                        # Add vulnerability checking logic here
+                        # For now, we just log that we checked the package
+                        logger.debug(f"Checked {name}@{version} for vulnerabilities")
+                    elif response.status_code == 404:
+                        logger.debug(f"Package {name}@{version} not found in PyPI")
+                    else:
+                        logger.warning(f"Unexpected status {response.status_code} for {name}@{version}")
+
+                except requests.exceptions.SSLError as e:
+                    logger.exception(f"SSL error checking {name}@{version}: {e}")
+                except requests.exceptions.Timeout as e:
+                    logger.exception(f"Timeout checking {name}@{version}: {e}")
+                except requests.exceptions.RequestException as e:
+                    logger.exception(f"Network error checking {name}@{version}: {e}")
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.exception(f"Invalid JSON response for {name}@{version}: {e}")
+                except Exception as e:
+                    logger.exception(f"Unexpected error checking {name}@{version}: {e}")
+
+        except Exception as e:
+            logger.exception(f"Vulnerability check failed: {e}")
+        finally:
+            session.close()
+
+        return vulnerabilities
+
+    def calculate_security_score(self, analysis: dict) -> dict:
+        """Calculate overall security score based on various metrics."""
+        if not analysis:
+            return {"score": 0, "issues": ["No analysis data available"]}
+
+        score = 100
+        issues = []
+
+        summary = analysis.get("summary", {})
+        security_metrics = analysis.get("security_metrics", {})
+        dependency_analysis = analysis.get("dependency_analysis", {})
+
+        # Check hash coverage
+        hash_coverage = security_metrics.get("packages_with_integrity_checks", 0) / max(
+            summary.get("total_packages", 1), 1
+        )
+        if hash_coverage < 0.9:
+            score -= 20
+            issues.append(f"Only {hash_coverage:.1%} packages have integrity checks")
+
+        # Check recent packages
+        recent_packages = security_metrics.get("recent_packages", 0)
+        if recent_packages > 0:
+            score -= 10 * min(recent_packages, 5)  # Penalty up to 50 points
+            issues.append(f"{recent_packages} packages are less than 90 days old")
+
+        # Check dependency depth
+        max_depth = dependency_analysis.get("max_dependency_depth", 0)
+        if max_depth > 10:
+            score -= 10
+            issues.append(f"High dependency depth: {max_depth}")
+
+        # Check for cycles
+        cycles = dependency_analysis.get("dependency_cycles", [])
+        if cycles:
+            score -= 15
+            issues.append(f"{len(cycles)} dependency cycles detected")
+
+        # Check trusted sources
+        trusted_sources = security_metrics.get("packages_from_trusted_sources", 0)
+        total_packages = summary.get("total_packages", 1)
+        if trusted_sources < total_packages:
+            score -= 25
+            issues.append(f"{total_packages - trusted_sources} packages from untrusted sources")
+
+        score = max(0, score)
+
+        return {
+            "score": score,
+            "grade": self.get_security_grade(score),
+            "issues": issues,
+            "recommendations": self.get_recommendations(score, issues),
+        }
+
+    def get_security_grade(self, score: int) -> str:
+        """Get security grade based on score."""
+        if score >= 90:
+            return "A"
+        if score >= 80:
+            return "B"
+        if score >= 70:
+            return "C"
+        if score >= 60:
+            return "D"
+        return "F"
+
+    def get_recommendations(self, score: int, issues: list[str]) -> list[str]:
+        """Get security recommendations based on score and issues."""
+        recommendations = []
+
+        if score < 70:
+            recommendations.append("🚨 CRITICAL: Immediate security review required")
+
+        if "integrity checks" in " ".join(issues):
+            recommendations.append("🔐 Enable hash verification for all packages")
+
+        if "90 days old" in " ".join(issues):
+            recommendations.append("⏰ Review recent packages and consider waiting for 90-day period")
+
+        if "dependency cycles" in " ".join(issues):
+            recommendations.append("🔄 Resolve dependency cycles to improve security")
+
+        if "untrusted sources" in " ".join(issues):
+            recommendations.append("🔒 Review package sources and remove untrusted dependencies")
+
+        if score >= 80:
+            recommendations.append("✅ Security posture is good - continue monitoring")
+
+        return recommendations
+
+    def generate_dashboard(self) -> dict:
+        """Generate security dashboard data."""
+        analysis = self.load_dependency_analysis()
+
+        if not analysis:
+            return self.get_empty_dashboard()
+
+        security_score = self.calculate_security_score(analysis)
+        vulnerabilities = self.check_vulnerabilities(analysis.get("packages", []))
+
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "security_score": security_score,
+            "summary": analysis.get("summary", {}),
+            "security_metrics": analysis.get("security_metrics", {}),
+            "dependency_analysis": analysis.get("dependency_analysis", {}),
+            "vulnerabilities": vulnerabilities,
+            "alerts": self.generate_alerts(security_score, analysis),
+            "trends": self.calculate_trends(analysis),
+        }
+
+    def get_empty_dashboard(self) -> dict:
+        """Get empty dashboard when no data is available."""
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "security_score": {
+                "score": 0,
+                "grade": "F",
+                "issues": ["No security data available"],
+                "recommendations": ["Run dependency analysis first"],
+            },
+            "summary": {},
+            "security_metrics": {},
+            "dependency_analysis": {},
+            "vulnerabilities": [],
+            "alerts": ["🚨 No security monitoring data available"],
+            "trends": {},
+        }
+
+    def generate_alerts(self, security_score: dict, analysis: dict) -> list[str]:
+        """Generate security alerts."""
+        alerts = []
+
+        score = security_score.get("score", 0)
+
+        if score < 50:
+            alerts.append("🚨 CRITICAL: Security score below 50")
+        elif score < 70:
+            alerts.append("⚠️  WARNING: Security score below 70")
+
+        recent_packages = analysis.get("security_metrics", {}).get("recent_packages", 0)
+        if recent_packages > 5:
+            alerts.append(f"⏰ {recent_packages} recent packages detected")
+
+        cycles = analysis.get("dependency_analysis", {}).get("dependency_cycles", [])
+        if cycles:
+            alerts.append(f"🔄 {len(cycles)} dependency cycles found")
+
+        if not alerts:
+            alerts.append("✅ No immediate security concerns")
+
+        return alerts
+
+    def calculate_trends(self, analysis: dict) -> dict:
+        """Calculate security trends (placeholder for future implementation)."""
+        # This would compare with historical data
+        return {
+            "score_trend": "stable",  # improving, declining, stable
+            "vulnerability_trend": "stable",
+            "dependency_trend": "stable",
+        }
+
+    def print_dashboard(self) -> dict:
+        """Build the dashboard once and return it for persistence."""
+        dashboard = self.generate_dashboard()
+
+        score_data = dashboard["security_score"]
+
+        if score_data["issues"]:
+            for _issue in score_data["issues"]:
+                pass
+
+        if score_data["recommendations"]:
+            for _rec in score_data["recommendations"]:
+                pass
+
+        for _alert in dashboard["alerts"]:
+            pass
+
+        summary = dashboard.get("summary", {})
+        if summary:
+            pass
+
+        security_metrics = dashboard.get("security_metrics", {})
+        if security_metrics:
+            pass
+
+        return dashboard
+
+
+def main() -> None:
+    """Main function."""
+    monitor = SecurityMonitor()
+    dashboard = monitor.print_dashboard()
+
+    # Save dashboard data
+    output_file = Path("security-dashboard.json")
+    with open(output_file, "w") as f:
+        json.dump(dashboard, f, indent=2)
+
+
+if __name__ == "__main__":
+    main()

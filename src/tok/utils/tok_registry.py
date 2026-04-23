@@ -7,9 +7,6 @@ from typing import Any, Optional
 
 
 class TokRegistry:
-    v7_type_store: dict[str, str] = {}
-    """Optional registry for tracking Tok operations."""
-
     _instance: Optional["TokRegistry"] = None
     _initialized: bool = False
 
@@ -60,8 +57,8 @@ class TokRegistry:
         tool: str,
         path: str,
         status: str,
-        metadata: Any = None,
-        **kwargs: Any,
+        metadata: object = None,
+        **kwargs: object,
     ) -> None:
         """Register an operation."""
         record = {
@@ -75,7 +72,3 @@ class TokRegistry:
         cls._get_records().append(record)
         if path and status == "SUCCESS":
             cls._get_files()[path] = status
-
-
-# Module-level convenience
-tok_registry = TokRegistry()

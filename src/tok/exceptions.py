@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-
 __all__ = [
-    "TokError",
-    "CompressionError",
-    "SessionError",
     "BridgeUnavailableError",
-    "ReplayGateError",
+    "CompressionError",
     "InvalidSessionStateError",
+    "ReplayGateError",
+    "SessionError",
+    "TokError",
+    "TokSafetyError",
 ]
 
 
@@ -35,3 +35,7 @@ class ReplayGateError(TokError):
 
 class InvalidSessionStateError(SessionError):
     """Raised when the session is not in a valid state for the requested action."""
+
+
+class TokSafetyError(TokError):
+    """Raised when a safety check fails and prevents an unsafe operation."""

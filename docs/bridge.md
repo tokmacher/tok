@@ -5,15 +5,15 @@ This is the full bridge-first walkthrough for Tok.
 If you are new to Tok, start with the quickstart in [`README.md`](../README.md), then
 use this page when you want the complete operating flow.
 
-Tok's first open-source release is intentionally narrow:
+Tok's first open-source release is intentionally narrow and Claude-first:
 
 - install the Python package
-- add the `claude()` shell wrapper
 - start the bridge
-- use Claude normally
+- route Claude through the bridge explicitly
 - diagnose with `status`, `doctor`, `stats`, and logs
 
-The bridge is the supported product path. Broader platform and SDK work come later.
+The bridge is the supported product path. Broader platform and SDK work come later. The
+default CLI help intentionally centers that bridge-first path for `0.1.0`.
 
 ## What The Bridge Does
 
@@ -35,7 +35,7 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 
 ## Prerequisites
 
-- Python `3.9+`
+- Python `3.10`-`3.12` (tested for `0.1.0`)
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - provider/API configuration that already works with Claude Code
@@ -45,16 +45,16 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 ```bash
 pip install tok-protocol
 tok install
-source ~/.zshrc  # or source ~/.bashrc
 tok bridge start
-claude
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok bridge status
 tok doctor
 tok bridge stop
 tok stats
 ```
 
-`tok install` adds a `claude()` shell wrapper. It does **not** replace the real `tok` CLI.
+`tok install` is a setup/migration helper and does not wrap `claude` by default. If you
+want legacy auto-routing behavior, use `tok install --wrap-claude`.
 
 ## What Success Looks Like
 
@@ -141,8 +141,8 @@ tok bridge start --port 8080
 tok bridge start --no-fail-open
 ```
 
-Use `--foreground` for the fastest debugging loop when setup is not behaving the way
-you expect.
+Use `--foreground` for the fastest debugging loop when setup is not behaving the way you
+expect.
 
 ### Status
 
@@ -156,8 +156,8 @@ you expect.
 
 ### Doctor
 
-`tok doctor` is the fastest “is Tok helping right now?” command.
-It now ends with a concrete recommendation:
+`tok doctor` is the fastest “is Tok helping right now?” command. It now ends with a
+concrete recommendation:
 
 - `Recommendation: keep Tok on`
 - `Recommendation: keep Tok on, but watch this session`
@@ -165,7 +165,10 @@ It now ends with a concrete recommendation:
 
 ### Stop
 
-`tok bridge stop` prints a compact session summary, which makes it the easiest end-of-session checkpoint.
+`tok bridge stop` prints a compact session summary, which makes it the easiest
+end-of-session checkpoint. If you call it from an active bridged Claude turn, it now
+refuses by default to avoid self-cutoff; use `tok bridge stop --force` only when
+intentional.
 
 ### Logs
 
@@ -179,15 +182,24 @@ non-responsive session.
 
 ## Runtime Defaults
 
-- default compressed path: `tok-tool-compatible`
+- default compressed path: `tool-compatible` (`natural_first` request policy)
+- legacy rollback path: `legacy_tool_compatible`
+- default posture: compress aggressively, shape behavior conservatively
 - conservative fallback: `baseline`
 - non-default: `tok-minimal`
 - non-default: `tok-native`
+- OpenRouter/frontier runs are advisory validation, not the source of the public default
 
 To force baseline:
 
 ```bash
 TOK_MODE=baseline tok bridge start
+```
+
+To force the older compatibility path:
+
+```bash
+TOK_REQUEST_POLICY=legacy_tool_compatible tok bridge start
 ```
 
 ## Troubleshooting Basics
@@ -227,6 +239,10 @@ tok evidence-gap ~/.tok/sessions --stress-dir tmp/stress_language/<timestamp>
 
 This usually gives a cleaner picture than lifetime totals alone.
 
+These capture files are maintainer diagnostics. Tok redacts obvious bearer/API-key
+material before writing them, but captures can still contain session content and should
+be reviewed before sharing.
+
 ### `Session quality: watch`
 
 Tok is still saving tokens, but the session shows some friction such as fallback,
@@ -237,7 +253,10 @@ Keep Tok on, but inspect the degradation reason before deciding the bridge is at
 ## Next Docs
 
 - [`docs/cli-reference.md`](./cli-reference.md) for the command surface
-- [`docs/troubleshooting.md`](./troubleshooting.md) for fallback and degraded-session diagnosis
-- [`docs/production-readiness.md`](./production-readiness.md) for advanced runtime defaults and release posture
-- [`docs/release-checklist.md`](./release-checklist.md) for maintainer packaging and smoke checks
+- [`docs/diagnostics.md`](./diagnostics.md) for interpreting `status`, `doctor`, and
+  common recovery signals like `compat-fallback` and `answer_ready_*`
+- [`docs/troubleshooting.md`](./troubleshooting.md) for fallback and degraded-session
+  diagnosis
+- [`docs/production-readiness.md`](./production-readiness.md) for advanced runtime
+  defaults and release posture
 - [`docs/architecture.md`](./architecture.md) for deep runtime details

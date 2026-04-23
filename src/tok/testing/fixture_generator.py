@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 class FixtureGenerator:
@@ -14,7 +14,7 @@ class FixtureGenerator:
     def __init__(
         self,
         templates_file: str = "tests/fixtures/replay/metadata_templates.json",
-    ):
+    ) -> None:
         self.templates_file = Path(templates_file)
         self.templates = self._load_templates()
 
@@ -25,7 +25,7 @@ class FixtureGenerator:
         try:
             with open(self.templates_file) as f:
                 data = json.load(f)
-                return data.get("templates", {})
+                return cast("dict[str, Any]", data.get("templates", {}))
         except Exception:
             return {}
 
@@ -37,7 +37,6 @@ class FixtureGenerator:
         complexity: str = "medium",
     ) -> tuple[str, str]:
         """Generate a coding session fixture."""
-
         # Generate session messages
         messages = []
 
@@ -86,9 +85,7 @@ class FixtureGenerator:
                             "type": "tool_use",
                             "id": f"t{i}2",
                             "name": "bash",
-                            "input": {
-                                "command": "python -m pytest tests/test_module{i}.py"
-                            },
+                            "input": {"command": "python -m pytest tests/test_module{i}.py"},
                         },
                     ]
                 )
@@ -133,9 +130,7 @@ class FixtureGenerator:
         fixture_content = "\n".join(fixture_lines)
 
         # Get metadata
-        metadata = self.templates.get(
-            template, self.templates.get("standard_claude", {})
-        )
+        metadata = self.templates.get(template, self.templates.get("standard_claude", {}))
         metadata = metadata.copy()
         metadata["name"] = name
         metadata["turns"] = turns
@@ -147,7 +142,6 @@ class FixtureGenerator:
         self, name: str, searches: int = 8, template: str = "standard_claude"
     ) -> tuple[str, str]:
         """Generate a search-intensive session fixture."""
-
         search_terms = [
             "compression",
             "memory",
@@ -210,9 +204,7 @@ class FixtureGenerator:
         fixture_content = "\n".join(fixture_lines)
 
         # Get metadata
-        metadata = self.templates.get(
-            template, self.templates.get("standard_claude", {})
-        )
+        metadata = self.templates.get(template, self.templates.get("standard_claude", {}))
         metadata = metadata.copy()
         metadata["name"] = name
         metadata["searches"] = searches
@@ -224,14 +216,11 @@ class FixtureGenerator:
         self, name: str, repeats: int = 6, template: str = "high_pressure"
     ) -> tuple[str, str]:
         """Generate a high-pressure session with repeats and errors."""
-
         messages = []
 
         for i in range(repeats):
             # User message - repeat same request
-            messages.append(
-                {"role": "user", "content": "Read the main configuration file"}
-            )
+            messages.append({"role": "user", "content": "Read the main configuration file"})
 
             # Assistant response with repeated file reads
             tools: list[dict[str, Any]] = [
@@ -290,9 +279,7 @@ class FixtureGenerator:
         fixture_content = "\n".join(fixture_lines)
 
         # Get metadata
-        metadata = self.templates.get(
-            template, self.templates.get("high_pressure", {})
-        )
+        metadata = self.templates.get(template, self.templates.get("high_pressure", {}))
         metadata = metadata.copy()
         metadata["name"] = name
         metadata["repeats"] = repeats
@@ -319,18 +306,13 @@ class FixtureGenerator:
         meta_file = output_path / f"{name}.jsonl.meta.json"
         meta_file.write_text(metadata)
 
-        print(f"Created fixture: {fixture_file}")
-        print(f"Created metadata: {meta_file}")
-
 
 def main() -> None:
     """CLI for fixture generation."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Generate replay fixtures")
-    parser.add_argument(
-        "--type", choices=["coding", "search", "pressure"], required=True
-    )
+    parser.add_argument("--type", choices=["coding", "search", "pressure"], required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument("--template", default="standard_claude")
     parser.add_argument("--turns", type=int, default=5)
@@ -348,17 +330,11 @@ def main() -> None:
     generator = FixtureGenerator()
 
     if args.type == "coding":
-        fixture, metadata = generator.generate_coding_session(
-            args.name, args.turns, args.template, args.complexity
-        )
+        fixture, metadata = generator.generate_coding_session(args.name, args.turns, args.template, args.complexity)
     elif args.type == "search":
-        fixture, metadata = generator.generate_search_session(
-            args.name, args.searches, args.template
-        )
+        fixture, metadata = generator.generate_search_session(args.name, args.searches, args.template)
     elif args.type == "pressure":
-        fixture, metadata = generator.generate_high_pressure_session(
-            args.name, args.repeats, args.template
-        )
+        fixture, metadata = generator.generate_high_pressure_session(args.name, args.repeats, args.template)
 
     generator.save_fixture(args.name, fixture, metadata, args.output)
 

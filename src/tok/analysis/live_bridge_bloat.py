@@ -7,17 +7,21 @@ import json
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
-from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any, cast
 
-from ..compression import (
+from tok.compression import (
     TOK_OUTPUT_DIRECTIVE_MINIMAL,
     TOK_OUTPUT_DIRECTIVE_REINFORCED,
     TOK_PROTOCOL_LAW,
     TOK_TOOL_COMPAT_DIRECTIVE,
 )
-from ..runtime.config import ANSWER_READY_RUNTIME_HINT
-from ..runtime.pipeline.tool_processing import count_tokens
+from tok.runtime.config import ANSWER_READY_RUNTIME_HINT
+from tok.runtime.pipeline.tool_processing import count_tokens
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from tok.runtime.types import PreparedRuntimeRequest
 
 _HEALING_BLOCK = (
     "\n\n[PROTOCOL HEALING] Your previous response drifted from Tok grammar."
@@ -25,7 +29,7 @@ _HEALING_BLOCK = (
 )
 
 
-def _system_text(value: Any) -> str:
+def _system_text(value: str | list[Any] | None) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, list):
@@ -41,7 +45,7 @@ def _system_text(value: Any) -> str:
     return str(value)
 
 
-def _token_size(value: Any) -> int:
+def _token_size(value: str | dict[str, Any] | list[Any] | None) -> int:
     if value is None:
         return 0
     if isinstance(value, str):
@@ -49,7 +53,7 @@ def _token_size(value: Any) -> int:
     return count_tokens(json.dumps(value, sort_keys=True))
 
 
-def _char_size(value: Any) -> int:
+def _char_size(value: str | dict[str, Any] | list[Any] | None) -> int:
     if value is None:
         return 0
     if isinstance(value, str):
@@ -68,11 +72,7 @@ def _tool_result_retention(messages: list[dict[str, str]]) -> dict[str, int]:
         if message.get("role") == "tool_result":
             tool_messages += 1
             content = message.get("content", "")
-            text = (
-                content
-                if isinstance(content, str)
-                else json.dumps(content, sort_keys=True)
-            )
+            text = content if isinstance(content, str) else json.dumps(content, sort_keys=True)
             tok = count_tokens(text)
             tokens += tok
             chars += len(text)
@@ -84,18 +84,11 @@ def _tool_result_retention(messages: list[dict[str, str]]) -> dict[str, int]:
         if not isinstance(content_val, list):
             continue
         for block in content_val:
-            if (
-                not isinstance(block, dict)
-                or block.get("type") != "tool_result"
-            ):
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
             blocks += 1
             raw = block.get("content", "")
-            text = (
-                raw
-                if isinstance(raw, str)
-                else json.dumps(raw, sort_keys=True)
-            )
+            text = raw if isinstance(raw, str) else json.dumps(raw, sort_keys=True)
             tok = count_tokens(text)
             tokens += tok
             chars += len(text)
@@ -135,10 +128,7 @@ def build_prepared_request_bloat_attribution(
     healing_applied: bool = False,
 ) -> dict[str, Any]:
     """Summarize bloat-relevant request details at the prepared-request boundary."""
-
-    runtime_hints = [
-        hint.strip() for hint in (runtime_hints or []) if str(hint).strip()
-    ]
+    runtime_hints = [hint.strip() for hint in (runtime_hints or []) if str(hint).strip()]
     resend_signals = resend_signals or {}
 
     original_system = _system_text(original_body.get("system", ""))
@@ -156,47 +146,27 @@ def build_prepared_request_bloat_attribution(
         directive_text = TOK_TOOL_COMPAT_DIRECTIVE
     elif pressure > 50 or behavior_signals.get("semantic_drift_detected"):
         directive_variant = "reinforced"
-        directive_text = "\n\n".join(
-            [
-                "=== MODE: TOK-NATIVE ===",
-                TOK_PROTOCOL_LAW,
-                TOK_OUTPUT_DIRECTIVE_REINFORCED,
-            ]
-        )
+        directive_text = f"=== MODE: TOK-NATIVE ===\n\n{TOK_PROTOCOL_LAW}\n\n{TOK_OUTPUT_DIRECTIVE_REINFORCED}"
     elif pressure > 1:
         directive_variant = "minimal+law"
-        directive_text = "\n\n".join(
-            [
-                "=== MODE: TOK-NATIVE ===",
-                TOK_PROTOCOL_LAW,
-                TOK_OUTPUT_DIRECTIVE_MINIMAL,
-            ]
-        )
+        directive_text = f"=== MODE: TOK-NATIVE ===\n\n{TOK_PROTOCOL_LAW}\n\n{TOK_OUTPUT_DIRECTIVE_MINIMAL}"
     else:
         directive_variant = "minimal"
-        directive_text = "\n\n".join(
-            ["=== MODE: TOK-NATIVE ===", TOK_OUTPUT_DIRECTIVE_MINIMAL]
-        )
+        directive_text = f"=== MODE: TOK-NATIVE ===\n\n{TOK_OUTPUT_DIRECTIVE_MINIMAL}"
 
     runtime_hint_text = "\n".join(runtime_hints)
     state_block_text = f">>>\n{state_payload}" if state_payload else ""
     healing_block_text = _HEALING_BLOCK if healing_applied else ""
 
-    system_addition_tokens = max(
-        0, _token_size(prepared_system) - _token_size(original_system)
-    )
-    system_addition_chars = max(
-        0, _char_size(prepared_system) - _char_size(original_system)
-    )
+    system_addition_tokens = max(0, _token_size(prepared_system) - _token_size(original_system))
+    system_addition_chars = max(0, _char_size(prepared_system) - _char_size(original_system))
 
     minimal_equivalent_body = {
         "model": original_body.get("model"),
         "messages": copy.deepcopy(prepared_messages),
     }
     if "system" in original_body:
-        minimal_equivalent_body["system"] = copy.deepcopy(
-            original_body.get("system")
-        )
+        minimal_equivalent_body["system"] = copy.deepcopy(original_body.get("system"))
     minimal_equivalent_tokens = _token_size(minimal_equivalent_body)
 
     return {
@@ -213,11 +183,8 @@ def build_prepared_request_bloat_attribution(
                 "total_tokens": prepared_total_tokens,
                 "message_count": len(prepared_messages),
             },
-            "delta_tokens_vs_original": prepared_total_tokens
-            - original_total_tokens,
-            "delta_tokens_vs_minimal_equivalent": (
-                prepared_total_tokens - minimal_equivalent_tokens
-            ),
+            "delta_tokens_vs_original": prepared_total_tokens - original_total_tokens,
+            "delta_tokens_vs_minimal_equivalent": (prepared_total_tokens - minimal_equivalent_tokens),
             "minimal_equivalent_tokens": minimal_equivalent_tokens,
         },
         "system_additions": {
@@ -226,11 +193,7 @@ def build_prepared_request_bloat_attribution(
             "directive_variant": directive_variant,
             "directive_tokens": _token_size(directive_text),
             "directive_chars": _char_size(directive_text),
-            "protocol_law_tokens": (
-                _token_size(TOK_PROTOCOL_LAW)
-                if (not tool_compatible and pressure > 1)
-                else 0
-            ),
+            "protocol_law_tokens": (_token_size(TOK_PROTOCOL_LAW) if (not tool_compatible and pressure > 1) else 0),
             "tok_state_tokens": _token_size(state_block_text),
             "tok_state_chars": _char_size(state_block_text),
             "runtime_hint_tokens": _token_size(runtime_hint_text),
@@ -243,22 +206,16 @@ def build_prepared_request_bloat_attribution(
             "mode": _resend_mode(resend_signals),
             "payload_tokens": _token_size(state_payload),
             "payload_chars": _char_size(state_payload),
-            "answer_anchor_present": bool(
-                behavior_signals.get("answer_anchor_present", 0)
-            ),
+            "answer_anchor_present": bool(behavior_signals.get("answer_anchor_present", 0)),
         },
         "history_retention": {
-            "skipped": bool(
-                behavior_signals.get("tok_history_compression_skipped", 0)
-            ),
+            "skipped": bool(behavior_signals.get("tok_history_compression_skipped", 0)),
             "skip_reason": history_skip_reason,
             "original_message_tokens": original_messages_tokens,
             "prepared_message_tokens": prepared_messages_tokens,
             "retained_tokens": prepared_messages_tokens,
             "retained_message_count": len(prepared_messages),
-            "dropped_tokens": max(
-                0, original_messages_tokens - prepared_messages_tokens
-            ),
+            "dropped_tokens": max(0, original_messages_tokens - prepared_messages_tokens),
         },
         "tool_result_retention": _tool_result_retention(prepared_messages),
         "runtime_hints": {
@@ -271,14 +228,10 @@ def build_prepared_request_bloat_attribution(
     }
 
 
-def _make_tool_use(
-    tool_id: str, name: str, payload: dict[str, Any]
-) -> dict[str, Any]:
+def _make_tool_use(tool_id: str, name: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "role": "assistant",
-        "content": [
-            {"type": "tool_use", "id": tool_id, "name": name, "input": payload}
-        ],
+        "content": [{"type": "tool_use", "id": tool_id, "name": name, "input": payload}],
     }
 
 
@@ -287,16 +240,17 @@ def _make_tool_result(tool_id: str, content: str) -> dict[str, Any]:
 
 
 def _snapshot(
-    prepared: Any,
+    prepared: object,
     *,
     description: str,
     counterfactual: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    attribution = prepared.bloat_attribution
+    typed_prepared = cast("PreparedRuntimeRequest", prepared)
+    attribution = typed_prepared.bloat_attribution
     return {
         "description": description,
-        "behavior_signals": dict(prepared.behavior_signals),
-        "type_breakdown": dict(prepared.type_breakdown),
+        "behavior_signals": dict(typed_prepared.behavior_signals),
+        "type_breakdown": dict(typed_prepared.type_breakdown),
         "request_footprint": attribution.get("request_footprint", {}),
         "system_additions": attribution.get("system_additions", {}),
         "state_resend": attribution.get("state_resend", {}),
@@ -309,14 +263,12 @@ def _snapshot(
 
 @contextmanager
 def _patched_history_skip() -> Iterator[None]:
-    from ..runtime import core as core_module
+    from tok.runtime import core as core_module
 
     original = core_module._should_skip_history_rewrite
-    core_module._should_skip_history_rewrite = (
-        lambda messages, normalized_tool_events, *, tool_compatible: (
-            False,
-            "",
-        )
+    core_module._should_skip_history_rewrite = lambda _messages, _normalized_tool_events, *, tool_compatible: (  # type: ignore[assignment]
+        False,
+        "",
     )
     try:
         yield
@@ -326,14 +278,12 @@ def _patched_history_skip() -> Iterator[None]:
 
 @contextmanager
 def _forced_history_skip(reason: str) -> Iterator[None]:
-    from ..runtime import core as core_module
+    from tok.runtime import core as core_module
 
     original = core_module._should_skip_history_rewrite
-    core_module._should_skip_history_rewrite = (
-        lambda messages, normalized_tool_events, *, tool_compatible: (
-            True,
-            reason,
-        )
+    core_module._should_skip_history_rewrite = lambda _messages, _normalized_tool_events, *, tool_compatible: (  # type: ignore[assignment]
+        True,
+        reason,
     )
     try:
         yield
@@ -342,7 +292,7 @@ def _forced_history_skip(reason: str) -> Iterator[None]:
 
 
 def _new_runtime(tmp_path: Path) -> tuple[Any, Any, Any]:
-    from ..runtime.core import RuntimeSession, UniversalTokRuntime
+    from tok.runtime.core import RuntimeSession, UniversalTokRuntime
 
     memory_dir = tmp_path / ".tok"
     return (
@@ -354,8 +304,7 @@ def _new_runtime(tmp_path: Path) -> tuple[Any, Any, Any]:
 
 def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
     """Run a fixed live-bridge scenario suite against the actual runtime path."""
-
-    from ..runtime.core import RuntimeRequest
+    from tok.runtime.core import RuntimeRequest
 
     scenarios: dict[str, Any] = {}
 
@@ -366,9 +315,7 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
         cold_request = RuntimeRequest(
             model="claude-sonnet-4",
             tool_compatible=True,
-            messages=[
-                {"role": "user", "content": "Confirm the gateway entry point."}
-            ],
+            messages=[{"role": "user", "content": "Confirm the gateway entry point."}],
         )
         cold_prepared = runtime.prepare_request(cold_request, session)
         scenarios["cold_start"] = _snapshot(
@@ -382,9 +329,7 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
             tool_compatible=True,
             messages=[
                 {"role": "user", "content": "Help me inspect these files"},
-                _make_tool_use(
-                    "t0", "view_file", {"path": "src/tok/file_0.py"}
-                ),
+                _make_tool_use("t0", "view_file", {"path": "src/tok/file_0.py"}),
                 _make_tool_result("t0", "file 0 content " * 100),
                 {"role": "user", "content": "What changed?"},
             ],
@@ -416,9 +361,7 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
         answer_request = RuntimeRequest(
             model="claude-sonnet-4",
             tool_compatible=True,
-            messages=[
-                {"role": "user", "content": "confirm the gateway entry point"}
-            ],
+            messages=[{"role": "user", "content": "confirm the gateway entry point"}],
         )
         answer_first = runtime.prepare_request(answer_request, session)
         answer_second = runtime.prepare_request(answer_request, session)
@@ -432,9 +375,7 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
         )
 
         runtime, session, _ = _new_runtime(tmp_path / "coding")
-        coding_messages: list[dict[str, Any]] = [
-            {"role": "user", "content": "Help me with these files"}
-        ]
+        coding_messages: list[dict[str, Any]] = [{"role": "user", "content": "Help me with these files"}]
         for idx in range(4):
             code_lines = []
             for line_idx in range(60):
@@ -442,21 +383,11 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
                 code_lines.append("    x = 1\n")
                 code_lines.append("    y = 2\n")
                 code_lines.append("    return x + y\n")
-            coding_messages.append(
-                _make_tool_use(
-                    f"c{idx}", "view_file", {"path": f"src/tok/file_{idx}.py"}
-                )
-            )
-            coding_messages.append(
-                _make_tool_result(f"c{idx}", "".join(code_lines))
-            )
+            coding_messages.append(_make_tool_use(f"c{idx}", "view_file", {"path": f"src/tok/file_{idx}.py"}))
+            coding_messages.append(_make_tool_result(f"c{idx}", "".join(code_lines)))
             if idx < 3:
-                coding_messages.append(
-                    {"role": "user", "content": f"Continue with step {idx}"}
-                )
-        coding_messages.append(
-            {"role": "assistant", "content": "I'll help with more files."}
-        )
+                coding_messages.append({"role": "user", "content": f"Continue with step {idx}"})
+        coding_messages.append({"role": "assistant", "content": "I'll help with more files."})
         coding_request = RuntimeRequest(
             model="claude-sonnet-4",
             tool_compatible=True,
@@ -469,18 +400,10 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
         )
 
         runtime, session, _ = _new_runtime(tmp_path / "skip")
-        skip_messages: list[dict[str, Any]] = [
-            {"role": "user", "content": "Audit the recent file reads."}
-        ]
+        skip_messages: list[dict[str, Any]] = [{"role": "user", "content": "Audit the recent file reads."}]
         for idx in range(10):
-            skip_messages.append(
-                _make_tool_use(
-                    f"s{idx}", "view_file", {"path": f"src/tok/file_{idx}.py"}
-                )
-            )
-            skip_messages.append(
-                _make_tool_result(f"s{idx}", f"skip file {idx} content " * 90)
-            )
+            skip_messages.append(_make_tool_use(f"s{idx}", "view_file", {"path": f"src/tok/file_{idx}.py"}))
+            skip_messages.append(_make_tool_result(f"s{idx}", f"skip file {idx} content " * 90))
             if idx < 9:
                 skip_messages.append(
                     {
@@ -488,9 +411,7 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
                         "content": f"Continue reviewing file batch {idx}.",
                     }
                 )
-        skip_messages.append(
-            {"role": "user", "content": "Summarize the state."}
-        )
+        skip_messages.append({"role": "user", "content": "Summarize the state."})
         skip_request = RuntimeRequest(
             model="claude-sonnet-4",
             tool_compatible=True,
@@ -500,23 +421,17 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
 
         runtime_cf, session_cf, _ = _new_runtime(tmp_path / "skip_cf")
         with _forced_history_skip("tool_use_count_high"):
-            skip_counterfactual = runtime_cf.prepare_request(
-                skip_request, session_cf
-            )
+            skip_counterfactual = runtime_cf.prepare_request(skip_request, session_cf)
         scenarios["history_skip"] = _snapshot(
             skip_actual,
             description="Tool-heavy bridge turn that used to skip rewrite under the legacy tool-use threshold.",
             counterfactual={
-                "prepared_total_tokens": skip_counterfactual.bloat_attribution[
-                    "request_footprint"
-                ]["prepared"]["total_tokens"],
+                "prepared_total_tokens": skip_counterfactual.bloat_attribution["request_footprint"]["prepared"][
+                    "total_tokens"
+                ],
                 "savings_tokens_vs_legacy_skip": (
-                    skip_counterfactual.bloat_attribution["request_footprint"][
-                        "prepared"
-                    ]["total_tokens"]
-                    - skip_actual.bloat_attribution["request_footprint"][
-                        "prepared"
-                    ]["total_tokens"]
+                    skip_counterfactual.bloat_attribution["request_footprint"]["prepared"]["total_tokens"]
+                    - skip_actual.bloat_attribution["request_footprint"]["prepared"]["total_tokens"]
                 ),
             },
         )
@@ -537,13 +452,9 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
         answer_ready_request = RuntimeRequest(
             model="claude-sonnet-4",
             tool_compatible=True,
-            messages=[
-                {"role": "user", "content": "confirm the gateway entry point"}
-            ],
+            messages=[{"role": "user", "content": "confirm the gateway entry point"}],
         )
-        answer_ready_prepared = runtime.prepare_request(
-            answer_ready_request, session
-        )
+        answer_ready_prepared = runtime.prepare_request(answer_ready_request, session)
         scenarios["answer_ready_hint"] = _snapshot(
             answer_ready_prepared,
             description="Answer-ready turn that injects the no-tools answer hint.",
@@ -555,9 +466,7 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
             model="claude-sonnet-4",
             tool_compatible=True,
             messages=[
-                _make_tool_use(
-                    "r1", "view_file", {"path": "src/tok/gateway.py"}
-                ),
+                _make_tool_use("r1", "view_file", {"path": "src/tok/gateway.py"}),
                 _make_tool_result("r1", large_output),
             ],
         )
@@ -573,12 +482,8 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
             model="claude-sonnet-4",
             tool_compatible=False,
             messages=[
-                _make_tool_use(
-                    "f1", "view_file", {"path": "src/tok/gateway.py"}
-                ),
-                _make_tool_use(
-                    "f2", "view_file", {"path": "src/tok/gateway.py"}
-                ),
+                _make_tool_use("f1", "view_file", {"path": "src/tok/gateway.py"}),
+                _make_tool_use("f2", "view_file", {"path": "src/tok/gateway.py"}),
                 _make_tool_use(
                     "g1",
                     "grep_search",
@@ -599,9 +504,7 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
             model="claude-sonnet-4",
             tool_compatible=False,
             messages=[
-                _make_tool_use(
-                    "f1", "view_file", {"path": "src/tok/gateway.py"}
-                ),
+                _make_tool_use("f1", "view_file", {"path": "src/tok/gateway.py"}),
                 _make_tool_use(
                     "g1",
                     "grep_search",
@@ -619,20 +522,12 @@ def measure_live_bridge_bloat_scenarios() -> dict[str, Any]:
             strict_high,
             description="Bridge opt-out path in strict mode with enough repeat pressure to trigger the protocol law.",
             counterfactual={
-                "prepared_total_tokens_without_pressure": strict_low.bloat_attribution[
-                    "request_footprint"
-                ][
-                    "prepared"
-                ][
+                "prepared_total_tokens_without_pressure": strict_low.bloat_attribution["request_footprint"]["prepared"][
                     "total_tokens"
                 ],
                 "protocol_law_delta_tokens": (
-                    strict_high.bloat_attribution["request_footprint"][
-                        "prepared"
-                    ]["total_tokens"]
-                    - strict_low.bloat_attribution["request_footprint"][
-                        "prepared"
-                    ]["total_tokens"]
+                    strict_high.bloat_attribution["request_footprint"]["prepared"]["total_tokens"]
+                    - strict_low.bloat_attribution["request_footprint"]["prepared"]["total_tokens"]
                 ),
             },
         )
@@ -644,7 +539,6 @@ def rank_live_bridge_bloat_suspects(
     scenarios: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Create a ranked suspect list from the fixed scenario suite."""
-
     cold = scenarios["cold_start"]
     answer_first = scenarios["answer_anchor_first"]
     moderate = scenarios["moderate_coding"]
@@ -659,9 +553,7 @@ def rank_live_bridge_bloat_suspects(
             "trigger": "Moderate coding turns keep recent tool_result payloads in the final message window.",
             "code_path": "src/tok/compression/__init__.py::compress_recent_window and compress_tool_results",
             "request_area": "tool-result retention",
-            "estimated_overhead_tokens": moderate["tool_result_retention"][
-                "tokens"
-            ],
+            "estimated_overhead_tokens": moderate["tool_result_retention"]["tokens"],
             "frequency": "common on coding turns with file reads",
             "why": "Even after history compression, retained tool payloads still dominate the live request footprint.",
             "fix_direction": "Further compress or summarize recent tool_result payloads when answer anchors or cached/stable results already preserve the needed evidence.",
@@ -672,9 +564,7 @@ def rank_live_bridge_bloat_suspects(
             "trigger": "Turns where Tok believes Claude already has enough File=/Verification= evidence and should answer.",
             "code_path": "src/tok/runtime/pipeline/request_preparation.py::_runtime_hints_for_turn",
             "request_area": "system additions",
-            "estimated_overhead_tokens": answer_ready["runtime_hints"][
-                "tokens"
-            ],
+            "estimated_overhead_tokens": answer_ready["runtime_hints"]["tokens"],
             "frequency": "conditional; answer-ready turns only",
             "why": "Small, intentional guidance to stop further tool use. Not a primary bloat driver by itself.",
             "fix_direction": "Leave as-is unless multiple overlapping runtime hints begin stacking on the same turn.",
@@ -685,9 +575,7 @@ def rank_live_bridge_bloat_suspects(
             "trigger": "First warm turn where answer/file verification facts are present.",
             "code_path": "src/tok/runtime/core.py::maybe_suppress_tool_compatible_state",
             "request_area": "state resend",
-            "estimated_overhead_tokens": answer_first["state_resend"][
-                "payload_tokens"
-            ],
+            "estimated_overhead_tokens": answer_first["state_resend"]["payload_tokens"],
             "frequency": "one-time per new answer anchor",
             "why": "Intentional one-time resend so Claude sees new File=/Verification= facts before later suppression kicks in.",
             "fix_direction": "Keep behavior, but guard against repeated full resends when the comparable state is unchanged.",
@@ -720,23 +608,15 @@ def rank_live_bridge_bloat_suspects(
             "trigger": "Live bridge is forced out of tool-compatible mode and repeat-read pressure exceeds the law threshold.",
             "code_path": "src/tok/compression/__init__.py::inject_system_additions",
             "request_area": "system additions",
-            "estimated_overhead_tokens": strict_pressure["counterfactual"][
-                "protocol_law_delta_tokens"
-            ],
+            "estimated_overhead_tokens": strict_pressure["counterfactual"]["protocol_law_delta_tokens"],
             "frequency": "rare; strict opt-out only",
             "why": "Not on the default bridge path, but it is the largest strict-mode prompt spike this audit observed.",
             "fix_direction": "Keep out of the default bridge path and compress the law block further if strict mode becomes more common.",
         },
     ]
 
-    suspects = [
-        suspect
-        for suspect in suspects
-        if suspect["estimated_overhead_tokens"] > 0
-    ]
-    suspects.sort(
-        key=lambda item: item["estimated_overhead_tokens"], reverse=True
-    )
+    suspects = [suspect for suspect in suspects if suspect["estimated_overhead_tokens"] > 0]
+    suspects.sort(key=lambda item: item["estimated_overhead_tokens"], reverse=True)
     for index, suspect in enumerate(suspects, start=1):
         suspect["rank"] = index
     return suspects
@@ -748,8 +628,7 @@ def generate_live_bridge_bloat_report() -> dict[str, Any]:
     avoidable = [
         suspect
         for suspect in suspects
-        if suspect["classification"]
-        in {"likely accidental / too eager", "regression risk"}
+        if suspect["classification"] in {"likely accidental / too eager", "regression risk"}
     ]
     return {
         "scenarios": scenarios,
@@ -809,15 +688,9 @@ def render_live_bridge_bloat_markdown(report: dict[str, Any]) -> str:
     ]
     for name, scenario in scenarios.items():
         footprint = scenario["request_footprint"]["prepared"]
-        delta = scenario["request_footprint"].get(
-            "delta_tokens_vs_minimal_equivalent", 0
-        )
+        delta = scenario["request_footprint"].get("delta_tokens_vs_minimal_equivalent", 0)
         signal = next(
-            (
-                key
-                for key, value in scenario["behavior_signals"].items()
-                if value
-            ),
+            (key for key, value in scenario["behavior_signals"].items() if value),
             "none",
         )
         lines.append(

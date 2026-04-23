@@ -1,0 +1,30 @@
+---
+name: Bug Report
+about: Report a reproducible bug in Tok
+title: "[bug] "
+labels: bug
+---
+
+**Describe the bug**
+A clear description of what went wrong.
+
+**To reproduce**
+Steps:
+1. ...
+2. ...
+
+**Expected behavior**
+What you expected to happen.
+
+**Environment**
+- OS:
+- Python version:
+- Tok version (`tok --version`):
+- Claude Code version:
+- Model/provider:
+
+**Diagnostics**
+Output of `tok doctor` (run while bridge is active, if applicable):
+
+**Additional context**
+Logs, screenshots, or any other relevant information.

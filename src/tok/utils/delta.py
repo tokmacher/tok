@@ -30,9 +30,7 @@ class TokDelta:
             if k in old_keys and k in new_keys:
                 if self.old_attrs[k] != self.new_attrs[k]:
                     changed.append(k)
-            elif k in new_keys and k not in old_keys:
-                changed.append(k)
-            elif k in old_keys and k not in new_keys:
+            elif (k in new_keys and k not in old_keys) or (k in old_keys and k not in new_keys):
                 changed.append(k)
         return changed
 
@@ -88,29 +86,24 @@ _SKIP_PREFIXES = ("@chunk", "@corpus", "@deps", "@func", "@class")
 
 
 def _is_module_directive(stripped: str) -> bool:
-    return stripped.startswith("@") and not any(
-        stripped.startswith(p) for p in _SKIP_PREFIXES
-    )
+    return stripped.startswith("@") and not any(stripped.startswith(p) for p in _SKIP_PREFIXES)
 
 
-def _extract_module_name(
-    stripped: str, current_module: str | None
-) -> str | None:
+def _extract_module_name(stripped: str, current_module: str | None) -> str | None:
     if current_module:
         return current_module
     potential = stripped.lstrip("@")
     return potential.split()[0] if potential else None
 
 
-def parse_skeleton(
-    skeleton_tok: str, include_refs: bool = True
-) -> dict[tuple[str, str, str], dict[str, Any]]:
+def parse_skeleton(skeleton_tok: str, include_refs: bool = True) -> dict[tuple[str, str, str], dict[str, Any]]:
     """
     Parse a Tok skeleton into an index.
 
     Args:
         skeleton_tok: The Tok skeleton string
         include_refs: If False, ignore ref pointers in comparison (useful when refs are non-deterministic)
+
     """
     index: dict[tuple[str, str, str], dict[str, Any]] = {}
     current_file = None
@@ -129,25 +122,19 @@ def parse_skeleton(
             current_module = _extract_module_name(stripped, current_module)
 
         elif stripped.startswith("@func"):
-            result = _parse_func_entry(
-                stripped, current_module, current_file, include_refs
-            )
+            result = _parse_func_entry(stripped, current_module, current_file, include_refs)
             if result:
                 index[result[0]] = result[1]
 
         elif stripped.startswith("@class"):
-            result = _parse_class_entry(
-                stripped, current_module, current_file, include_refs
-            )
+            result = _parse_class_entry(stripped, current_module, current_file, include_refs)
             if result:
                 index[result[0]] = result[1]
 
     return index
 
 
-def compute_attr_diff(
-    old_attrs: dict[str, Any], new_attrs: dict[str, Any]
-) -> dict[str, dict[str, Any]]:
+def compute_attr_diff(old_attrs: dict[str, Any], new_attrs: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Compute meaningful attribute differences."""
     diff = {}
 
@@ -165,9 +152,7 @@ def compute_attr_diff(
     return diff
 
 
-def diff_tok(
-    old_tok: str, new_tok: str, include_refs: bool = False
-) -> list[TokDelta]:
+def diff_tok(old_tok: str, new_tok: str, include_refs: bool = False) -> list[TokDelta]:
     """
     Compute semantic diff between two Tok skeleton representations.
 
@@ -178,6 +163,7 @@ def diff_tok(
 
     Returns:
         List of TokDelta objects representing changes
+
     """
     old_index = parse_skeleton(old_tok, include_refs=include_refs)
     new_index = parse_skeleton(new_tok, include_refs=include_refs)
@@ -278,32 +264,6 @@ def delta_to_tok(deltas: list[TokDelta]) -> str:
     return "\n".join(lines).strip()
 
 
-def format_compact_delta(deltas: list[TokDelta]) -> str:
-    """Format as compact single-line changes for minimal token usage."""
-    lines = []
-
-    for delta in deltas:
-        if delta.op == "update":
-            changes = []
-            for field in delta.changed_fields():
-                old_val = delta.old_attrs.get(field, "")
-                new_val = delta.new_attrs.get(field, "")
-                changes.append(f"{field}: {old_val} -> {new_val}")
-            lines.append(
-                f"@delta {delta.op} {delta.target_type}:{delta.target_label} | {'; '.join(changes)}"
-            )
-        elif delta.op == "add":
-            lines.append(
-                f"@delta add {delta.target_type}:{delta.target_label}"
-            )
-        elif delta.op == "remove":
-            lines.append(
-                f"@delta remove {delta.target_type}:{delta.target_label}"
-            )
-
-    return "\n".join(lines)
-
-
 class TokDeltaTracker:
     """Track before/after snapshots for explicit delta computation."""
 
@@ -320,10 +280,6 @@ class TokDeltaTracker:
         after = self.snapshots.get(after_name, "")
         return diff_tok(before, after)
 
-    def diff_to_tok(self, before_name: str, after_name: str) -> str:
-        """Compute delta and return as Tok string."""
-        return delta_to_tok(self.diff(before_name, after_name))
-
 
 def _apply_single_delta(
     index: dict[tuple[str, str, str], dict[str, Any]],
@@ -333,8 +289,7 @@ def _apply_single_delta(
     if delta.op == "add":
         index[key] = delta.new_attrs
     elif delta.op == "remove":
-        if key in index:
-            del index[key]
+        index.pop(key, None)
     elif delta.op == "update":
         if key in index:
             index[key].update(delta.new_attrs)
@@ -350,15 +305,13 @@ def _reconstruct_skeleton(
     sorted_keys = sorted(index.keys(), key=lambda x: (x[2], x[0], x[1]))
     for key in sorted_keys:
         t, label, file = key
-        if file != current_file and file != "unknown":
+        if file not in (current_file, "unknown"):
             lines.append(f"@{file}")
             current_file = file
         attrs = index[key]
         attr_str = " ".join(f"{k}:{v}" for k, v in attrs.items())
         if t == "func":
-            lines.append(
-                f"  @func {label}({attrs.get('params', '')}) {attr_str}"
-            )
+            lines.append(f"  @func {label}({attrs.get('params', '')}) {attr_str}")
         elif t == "class":
             lines.append(f"  @class {label} {attr_str}")
     return "\n".join(lines)

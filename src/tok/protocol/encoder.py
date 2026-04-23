@@ -1,17 +1,28 @@
+"""
+Tok encoding utilities.
+
+Provides encoding functionality for Tok nodes with optional compact
+serialization.
+"""
+
 from .models import TokNode
 from .parser import serialize
 
 
-# Stub out missing neural module
-class NeuralCompressor:
-    def compress(self, text: str) -> str:
-        return text
-
-
 class TokEncoder:
+    """Encoder for Tok nodes with optional compact serialization."""
+
     @staticmethod
     def encode(nodes: list[TokNode], compact: bool = False) -> str:
-        raw_tok = serialize(nodes, compact=compact)
-        if compact:
-            return NeuralCompressor().compress(raw_tok)
-        return raw_tok
+        """
+        Encode Tok nodes to string format.
+
+        Args:
+            nodes: List of Tok nodes to encode.
+            compact: Whether to use compact serialization.
+
+        Returns:
+            Encoded string representation of the nodes.
+
+        """
+        return serialize(nodes, compact=compact)

@@ -1,12 +1,16 @@
+"""Batch transform markdown files to Tok format and back."""
+
 from pathlib import Path
 
 import tiktoken
 
-from ..protocol import TokEncoder
+from tok.protocol import TokEncoder
+
 from .transformer import DocumentTransformer
 
 
 def batch_transform() -> None:
+    """Transform markdown files to Tok format and generate summary report."""
     input_dir = Path("research_prompts")
     output_dir = Path("research_tok_output")
     output_dir.mkdir(exist_ok=True)
@@ -16,12 +20,8 @@ def batch_transform() -> None:
 
     results = []
 
-    print("--- Batch Processing Research Papers ---")
-
     files = list(input_dir.glob("*.md"))
     for md_file in files:
-        print(f"Processing: {md_file.name}")
-
         with open(md_file) as f:
             content = f.read()
 
@@ -53,22 +53,15 @@ def batch_transform() -> None:
             }
         )
 
-        print(f"  - MD Tokens: {md_tokens}")
-        print(f"  - Tok Tokens: {tok_tokens}")
-        print(f"  - Savings: {savings:.2f}%")
-
     # Generate Summary Report
     report_path = output_dir / "summary_report.md"
     with open(report_path, "w") as f:
         f.write("# Batch Transformation Summary Report\n\n")
         f.write("| Document | MD Tokens | Tok Tokens | Savings |\n")
         f.write("| :--- | :--- | :--- | :--- |\n")
-        for res in results:
-            f.write(
-                f"| {res['name']} | {res['md_tokens']} | {res['tok_tokens']} | {res['savings']:.2f}% |\n"
-            )
-
-    print(f"\nReport generated at {report_path}")
+        f.writelines(
+            f"| {res['name']} | {res['md_tokens']} | {res['tok_tokens']} | {res['savings']:.2f}% |\n" for res in results
+        )
 
 
 if __name__ == "__main__":

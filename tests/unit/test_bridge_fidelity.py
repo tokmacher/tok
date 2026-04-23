@@ -6,9 +6,7 @@ from typing import Any
 
 from tok.protocol.format_bridge import Bridge
 
-DATASET_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "validation_dataset.json"
-)
+DATASET_PATH = Path(__file__).resolve().parents[2] / "data" / "validation_dataset.json"
 
 
 def _load_dataset() -> list[dict[str, Any]]:
@@ -37,6 +35,4 @@ def test_bridge_round_trip_fidelity() -> None:
         total += _key_coverage(sample, decoded)
 
     fidelity = total / len(samples)
-    assert (
-        fidelity >= 0.95
-    ), f"Fidelity was {fidelity:.2%}, expected ≥95% key coverage"
+    assert fidelity >= 0.95, f"Fidelity was {fidelity:.2%}, expected ≥95% key coverage"

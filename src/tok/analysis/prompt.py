@@ -28,6 +28,17 @@ You use Tok: token-efficient agent markup.
 - NO raw markdown headers or JSON tool blocks.
 - Always provide @thought before @Tool.
 
+## Tok Bridge Usage
+
+- Bridge caching OPTIMIZES, doesn't interfere.
+- Use `grep_search` for targeted searches.
+- Use a read budget: keep file-open bursts small, read one file chunk at a time, and summarize before continuing.
+- Do not issue parallel read tool calls on the first pass.
+- If you need more than 2 files, emit a compact ReadPlan first and wait for that plan to be established before reading any of them.
+- Use `tok.explorer` tools: explore_file(), get_file_overview(), list_large_files() for >500 lines.
+- Work WITH compression system.
+- WHEN @stable_result appears: content unchanged from previous turn. Do NOT re-read with different offsets — synthesize from context or @hot_recent_file summaries.
+
 ## Primitives
 
 @meta (envelope), @thought (reasoning), @Tool (call), @msg (turn), @result (output), @Delegate (handoff).
@@ -59,9 +70,14 @@ TOK_EXPLORE_PROMPT = """\
 Goal: Trace call chains and locate definitions with MINIMAL tokens.
 - DO NOT read large files (>500 lines) fully.
 - Use `grep_search` to find function/class definitions.
-- Use `view_file` with precise `StartLine`/`EndLine` to read only the implementation.
-- Summarize your findings; do not repeat code in @thought blocks.
-- If a chain is deep, verify one link at a time.
+- Use `read_file` with precise `offset`/`limit` to read only one section at a time.
+- Prefer one supported read tool call per turn. Do not fan out parallel reads on the first pass.
+- If a task needs multiple file reads, do them serially and keep the first pass to a single file or chunk before expanding.
+- Use `tok.explorer` tools: explore_file(), get_file_overview(), list_large_files() for >500 line files.
+- WORK WITH Tok bridge caching - it optimizes, doesn't interfere.
+- WHEN you see @stable_result(hash:...): content unchanged. Do NOT re-read — synthesize from context, @hot_recent_file summaries, or ask the user for key facts.
+- AVOID repeating identical operations - use unique queries to get fresh content.
+- Summarize findings; do not repeat code in @thought blocks.
 - Priority: Speed and token savings.
 """
 
@@ -70,6 +86,9 @@ MINIMAL_PULSE_PROMPT = """\
 @protocol mode:pulse
 Maintain Tok syntax: @Tool, |> inversion, >>> delta.
 STRIP all Markdown/Styling (NAKED MODE).
+Tok bridge caching HELPS - use grep_search, read_file, explore_file().
+If a task spans many files, emit a compact ReadPlan first and wait for it before opening more than 2 files. Do not open multiple files in parallel on the first pass.
+If @stable_result appears: do NOT re-read. Use what is in context or @hot_recent_file summaries.
 """
 
 
@@ -109,7 +128,8 @@ def get_grammar_snippet(level: str = "essentials") -> str:
 1. Use Tok @Tool syntax.
 2. Invert all multi-line content (|>).
 3. End with >>> DELTA.
-4. NAKED MODE: STRIP ALL MARKDOWN/STYLE.""",
+4. NAKED MODE: STRIP ALL MARKDOWN/STYLE.
+5. Bridge caching HELPS - use grep_search, read_file, explore_file().""",
         "explore": TOK_EXPLORE_PROMPT,
     }
 
@@ -120,4 +140,7 @@ MINIMAL_PULSE_PROMPT = """\
 @protocol mode:pulse
 Maintain Tok syntax: @Tool, |> inversion, >>> delta.
 STRIP all Markdown/Styling (NAKED MODE).
+Tok bridge caching HELPS - use grep_search, read_file, explore_file().
+If a task spans many files, emit a compact ReadPlan first and wait for it before opening more than 2 files. Do not open multiple files in parallel on the first pass.
+If @stable_result appears: do NOT re-read. Use what is in context or @hot_recent_file summaries.
 """

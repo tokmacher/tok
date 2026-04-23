@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shlex
 import subprocess
+import threading
 from datetime import datetime
 from typing import Any
 
-from ..protocol.models import Trust, TOOL_SCHEMAS, TokNode, build_tok_traceback
-from ..protocol.parser import serialize
+from tok.protocol.models import (
+    TOOL_SCHEMAS,
+    TokNode,
+    Trust,
+    build_tok_traceback,
+)
+from tok.protocol.parser import serialize
+
+logger = logging.getLogger("tok.runtime.tools")
 
 
 # Import NormalizedToolEvent locally to avoid circular imports
-def _get_normalized_tool_event() -> Any:
+def _get_normalized_tool_event() -> type[Any]:
     """Lazy import to avoid circular dependency."""
     from .core import NormalizedToolEvent
 
@@ -30,19 +39,17 @@ diff_tok: Any = None
 Sifter: type[Any] | None = None
 
 try:
-    from ..utils.delta import (
+    from tok.utils.delta import (
         TokDelta,
         TokDeltaTracker,
         apply_delta,
-        delta_to_tok,
         diff_tok,
     )
-    from ..utils.sifter import Sifter
+    from tok.utils.sifter import Sifter
 except ImportError:
     TokDelta = None
     apply_delta = None
     diff_tok = None
-    delta_to_tok = None
     TokDeltaTracker = None
     Sifter = None
 
@@ -52,32 +59,68 @@ class RuntimeToolExecutor:
 
     def __init__(
         self,
-        log_path: str = "execution.log",
+        log_path: str = os.path.join("tmp", "execution.log"),
         workspace_root: str | None = None,
-    ):
+    ) -> None:
         self.log_path = log_path
         self.workspace_root = workspace_root or os.getcwd()
 
         # Delta tracking for semantic diffs
-        self.delta_tracker = (
-            TokDeltaTracker() if TokDeltaTracker is not None else None
-        )
+        self.delta_tracker = TokDeltaTracker() if TokDeltaTracker is not None else None
         self._pre_state: dict[str, str] = {}
         self._pending_deltas: list[Any] = []
         self.track_file_changes = True
         self._sifter_cache: dict[str, str] = {}
 
     def _is_safe_path(self, path: str) -> bool:
-        """Restrictions disabled: Returns True for all paths."""
-        return True
+        """
+        Validate that a path stays within the workspace root.
+
+        Resolves symlinks and normalises ``..`` components.  Relative paths
+        are resolved against the workspace root.  The empty path and paths
+        that escape the workspace root are rejected.
+        """
+        if not path or not path.strip():
+            return False
+        try:
+            resolved = os.path.realpath(path)
+        except (OSError, ValueError):
+            return False
+        workspace = os.path.realpath(self.workspace_root)
+        return resolved == workspace or resolved.startswith(workspace + os.sep)
 
     def _is_safe_rm(self, cmd: str) -> bool:
-        """Restrictions disabled: Returns True for all rm commands."""
-        return True
+        """Validate that an rm command does not target the workspace root or system paths."""
+        import re as _re
 
-    def _compiler_guard(
-        self, tool_name: str, attrs: dict[str, Any], node: Any
-    ) -> str | None:
+        target = _re.sub(r"^rm\s+(?:-[rfRF]+\s+)*", "", cmd).strip().strip("'\"")
+        if not target:
+            return False
+        try:
+            resolved = os.path.realpath(target)
+        except (OSError, ValueError):
+            return False
+        workspace = os.path.realpath(self.workspace_root)
+        if resolved == workspace:
+            return False
+        if resolved.startswith(workspace + os.sep):
+            protected_children = (".git",)
+            rel = os.path.relpath(resolved, workspace)
+            if any(rel == p or rel.startswith(p + os.sep) for p in protected_children):
+                return False
+        blocked_roots = (
+            "/",
+            "/etc",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/System",
+            "/Library",
+            "/var",
+        )
+        return not any(resolved == r or resolved.startswith(r + "/") for r in blocked_roots)
+
+    def _compiler_guard(self, tool_name: str, attrs: dict[str, Any], node: TokNode) -> str | None:
         """Validate a parsed tool node before execution. Returns Tok Traceback or None."""
         node_text = node.text
         from pydantic import ValidationError
@@ -97,16 +140,12 @@ class RuntimeToolExecutor:
 
             drift_field = self._detect_attr_drift(tool_name, attrs, node_text)
             if drift_field:
-                return self._build_drift_error(
-                    tool_name, attrs, node_text, drift_field
-                )
+                return self._build_drift_error(tool_name, attrs, node_text, drift_field)
             return None
         except ValidationError as exc:
             return build_tok_traceback(tool_name, repr(input_data)[:80], exc)
 
-    def _apply_cli_style_attrs(
-        self, tool_name: str, node_text: str, input_data: dict[str, Any]
-    ) -> None:
+    def _apply_cli_style_attrs(self, tool_name: str, node_text: str, input_data: dict[str, Any]) -> None:
         if "--" not in node_text or tool_name not in (
             "read",
             "write",
@@ -125,11 +164,9 @@ class RuntimeToolExecutor:
                     if input_data.get("text") == node_text.strip():
                         del input_data["text"]
         except Exception:
-            pass
+            logger.debug("Failed to parse CLI-style attributes for %s", tool_name)
 
-    def _fill_missing_attributes(
-        self, tool_name: str, input_data: dict[str, Any], node_text: str
-    ) -> None:
+    def _fill_missing_attributes(self, tool_name: str, input_data: dict[str, Any], node_text: str) -> None:
         stripped = node_text.strip()
         if tool_name in ("read", "write") and not input_data.get("path"):
             input_data["path"] = stripped.split("\n")[0]
@@ -149,9 +186,7 @@ class RuntimeToolExecutor:
             return ["search", "replace"]
         return []
 
-    def _detect_attr_drift(
-        self, tool_name: str, attrs: dict[str, Any], node_text: str
-    ) -> str:
+    def _detect_attr_drift(self, tool_name: str, attrs: dict[str, Any], node_text: str) -> str:
         fields = self._drift_fields(tool_name)
         for field_name in fields:
             val = attrs.get(field_name, "")
@@ -159,7 +194,6 @@ class RuntimeToolExecutor:
                 continue
             if (
                 "\n" in val
-                or "\n" in val
                 or val.strip().startswith("|>")
                 or val.strip().startswith(">")
                 or ("def " in val and ":" in val)
@@ -173,9 +207,7 @@ class RuntimeToolExecutor:
     def _format_payload(self, payload: str) -> str:
         payload = re.sub(r"^\|>\s*", "", payload, flags=re.MULTILINE)
         payload = re.sub(r"^>\s*", "", payload, flags=re.MULTILINE)
-        return (
-            payload.replace("\n", "\n").replace("\r", "").replace("\t", "    ")
-        )
+        return payload.replace("\r", "").replace("\t", "    ")
 
     def _build_drift_error(
         self,
@@ -184,17 +216,11 @@ class RuntimeToolExecutor:
         node_text: str,
         field_name: str,
     ) -> str:
-        payload = self._format_payload(
-            attrs.get("text") or attrs.get("replace") or node_text
-        )
+        payload = self._format_payload(attrs.get("text") or attrs.get("replace") or node_text)
         corrected_node = TokNode(
             type="tool",
             label=tool_name,
-            attrs={
-                k: v
-                for k, v in attrs.items()
-                if k not in self._drift_fields(tool_name)
-            },
+            attrs={k: v for k, v in attrs.items() if k not in self._drift_fields(tool_name)},
             text=payload,
             trust=Trust.UNTRUSTED,
         )
@@ -209,17 +235,14 @@ class RuntimeToolExecutor:
 
     def _capture_snapshot(self, path: str) -> str | None:
         """Capture a Tok skeleton snapshot of a file for delta tracking."""
-        if (
-            not self.track_file_changes
-            or not self.delta_tracker
-            or Sifter is None
-        ):
+        if not self.track_file_changes or not self.delta_tracker or Sifter is None:
             return None
         try:
             if path not in self._sifter_cache:
                 self._sifter_cache[path] = Sifter.from_file(path)["skeleton"]
             return self._sifter_cache[path]
         except Exception:
+            logger.debug("Failed to capture snapshot for %s", path)
             return None
 
     def _compute_delta(self, path: str, post_state: str) -> list[Any]:
@@ -232,31 +255,33 @@ class RuntimeToolExecutor:
             return deltas
         return []
 
-    def _log_execution(
-        self, cmd: str, stdout: str, stderr: str, returncode: int
-    ) -> None:
+    def _log_execution(self, cmd: str, stdout: str, stderr: str, returncode: int) -> None:
         """Log command execution details to a file."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"\n{'=' * 20}\n[{timestamp}] COMMAND: {cmd}\nEXIT CODE: {returncode}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}\n{'=' * 20}\n"
 
+        try:
+            log_dir = os.path.dirname(self.log_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+        except Exception:
+            logger.debug("Failed to ensure log directory for %s", self.log_path)
+
         # Simple rotation: keep the log file under a reasonable size (e.g., 500KB)
         try:
-            if (
-                os.path.exists(self.log_path)
-                and os.path.getsize(self.log_path) > 500 * 1024
-            ):
+            if os.path.exists(self.log_path) and os.path.getsize(self.log_path) > 500 * 1024:
                 with open(self.log_path) as f:
                     lines = f.readlines()
                 # Keep last 1000 lines
                 with open(self.log_path, "w") as f:
                     f.writelines(lines[-1000:])
         except Exception:
-            pass
+            logger.debug("Failed to rotate log file %s", self.log_path)
 
         with open(self.log_path, "a") as f:
             f.write(log_entry)
 
-    def execute_normalized_tool(self, event: Any) -> dict[str, Any]:
+    def execute_normalized_tool(self, event: object) -> dict[str, Any]:
         """Execute a normalized tool event and return results."""
         # Lazy import to avoid circular dependency
         NormalizedToolEvent = _get_normalized_tool_event()
@@ -272,26 +297,27 @@ class RuntimeToolExecutor:
                     "message": f"Invalid event type: {type(event)}",
                 }
 
+        # Use Any to avoid mypy issues with dynamically fetched class
+        typed_event: Any = event
         try:
-            if event.name == "read":
-                return self._execute_read(event)
-            elif event.name == "write":
-                return self._execute_write(event)
-            elif event.name == "edit":
-                return self._execute_edit(event)
-            elif event.name == "run":
-                return self._execute_run(event)
-            elif event.name == "delta":
-                return self._execute_delta(event)
-            else:
-                return {
-                    "status": "ERROR",
-                    "message": f"Unknown tool: {event.name}",
-                }
+            if typed_event.name == "read":
+                return self._execute_read(typed_event)
+            if typed_event.name == "write":
+                return self._execute_write(typed_event)
+            if typed_event.name == "edit":
+                return self._execute_edit(typed_event)
+            if typed_event.name == "run":
+                return self._execute_run(typed_event)
+            if typed_event.name == "delta":
+                return self._execute_delta(typed_event)
+            return {
+                "status": "ERROR",
+                "message": f"Unknown tool: {typed_event.name}",
+            }
         except Exception as e:
             return {
                 "status": "ERROR",
-                "message": f"Tool execution failed: {str(e)}",
+                "message": f"Tool execution failed: {e!s}",
             }
 
     def _execute_read(self, event: Any) -> dict[str, Any]:
@@ -326,20 +352,18 @@ class RuntimeToolExecutor:
                 if start and end:
                     start, end = int(start), int(end)
                     lines = f.readlines()
-                    content = "".join(
-                        lines[max(0, start - 1) : min(len(lines), end)]
-                    )
+                    content = "".join(lines[max(0, start - 1) : min(len(lines), end)])
                     result = f"Read {path} [L{start}-L{end}]:\n{content}"
                 else:
                     content = f.read()
                     result = f"Read {path}:\n{content}"
 
-            print(f"[!] Tool Executed: Read {path}")
+            logger.info("Tool Executed: Read %s", path)
             return {"status": "SUCCESS", "message": result}
         except Exception as e:
             return {
                 "status": "ERROR",
-                "message": f"Failed to read {path}: {str(e)}",
+                "message": f"Failed to read {path}: {e!s}",
             }
 
     def _execute_write(self, event: Any) -> dict[str, Any]:
@@ -384,12 +408,12 @@ class RuntimeToolExecutor:
                     if deltas:
                         self._pending_deltas.extend(deltas)
 
-            print(f"[!] Tool Executed: Wrote to {path}")
+            logger.info("Tool Executed: Wrote to %s", path)
             return {"status": "SUCCESS", "message": f"Wrote to {path}"}
         except Exception as e:
             return {
                 "status": "ERROR",
-                "message": f"Failed to write to {path}: {str(e)}",
+                "message": f"Failed to write to {path}: {e!s}",
             }
 
     def _execute_edit(self, event: Any) -> dict[str, Any]:
@@ -440,12 +464,12 @@ class RuntimeToolExecutor:
                     if deltas:
                         self._pending_deltas.extend(deltas)
 
-            print(f"[!] Tool Executed: Edited {path}")
+            logger.info("Tool Executed: Edited %s", path)
             return {"status": "SUCCESS", "message": f"Edited {path}"}
         except Exception as e:
             return {
                 "status": "ERROR",
-                "message": f"Failed to edit {path}: {str(e)}",
+                "message": f"Failed to edit {path}: {e!s}",
             }
 
     def _execute_run(self, event: Any) -> dict[str, Any]:
@@ -458,47 +482,28 @@ class RuntimeToolExecutor:
             }
 
         try:
-            # Detect shell metacharacters or builtins that require shell=True
-            shell_metachars = [
-                "|",
-                "&&",
-                "||",
-                ";",
-                ">",
-                "<",
-                "*",
-                "?",
-                "[",
-                "]",
-                "(",
-                ")",
-                "$",
-                "`",
-                "\n",
-            ]
-            shell_builtins = ["cd ", "export ", "source ", "alias "]
-            use_shell = any(c in cmd for c in shell_metachars) or any(
-                b in cmd for b in shell_builtins
+            args = shlex.split(cmd)
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=int(os.getenv("TOK_TOOL_TIMEOUT", "120")),
+                cwd=self.workspace_root,
+                check=False,
             )
-
-            if use_shell:
-                proc = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True
-                )
-            else:
-                args = shlex.split(cmd)
-                proc = subprocess.run(args, capture_output=True, text=True)
 
             self._log_execution(cmd, proc.stdout, proc.stderr, proc.returncode)
 
-            output = proc.stdout if proc.stdout else proc.stderr
+            output = proc.stdout or proc.stderr or ""
             if output:
                 lines = output.strip().split("\n")
                 snippet = "\n".join(lines[:5])
-                print(f"[*] Output Snippet:\n{snippet}")
+                logger.debug("Output Snippet:\n%s", snippet)
                 if len(lines) > 5:
-                    print(
-                        f"[...] ({len(lines) - 5} more lines in execution.log)"
+                    logger.debug(
+                        "... (%d more lines in %s)",
+                        len(lines) - 5,
+                        self.log_path,
                     )
 
             res_msg = f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
@@ -511,7 +516,7 @@ class RuntimeToolExecutor:
         except Exception as e:
             return {
                 "status": "ERROR",
-                "message": f"Failed to run command: {str(e)}",
+                "message": f"Failed to run command: {e!s}",
             }
 
     def _execute_delta(self, event: Any) -> dict[str, Any]:
@@ -603,9 +608,7 @@ class RuntimeToolExecutor:
                     file=path,
                 )
                 deltas.append(current_delta)
-            elif (
-                stripped.startswith("+") and ":" in stripped and current_delta
-            ):
+            elif stripped.startswith("+") and ":" in stripped and current_delta:
                 k, v = stripped[1:].split(":", 1)
                 current_delta.new_attrs[k.strip()] = v.strip()
         return deltas
@@ -621,17 +624,20 @@ class RuntimeToolExecutor:
 
 # Global executor instance for backward compatibility
 _default_executor = None
+_executor_lock = threading.Lock()
 
 
 def get_default_executor() -> RuntimeToolExecutor:
     """Get or create the default tool executor."""
     global _default_executor
     if _default_executor is None:
-        _default_executor = RuntimeToolExecutor()
+        with _executor_lock:
+            if _default_executor is None:
+                _default_executor = RuntimeToolExecutor()
     return _default_executor
 
 
-def execute_normalized_tool(event: Any) -> dict[str, Any]:
+def execute_normalized_tool(event: object) -> dict[str, Any]:
     """Convenience function to execute a normalized tool event."""
     executor = get_default_executor()
     return executor.execute_normalized_tool(event)

@@ -5,22 +5,22 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from tok.runtime import RuntimeSession
 from .classification import required_class_coverage
 from .models import (
-    StressBreakpoint,
-    StressRunResult,
     _PATH_PATTERN,
     EXCLUDED_GROUNDED_PATH_FRAGMENTS,
+    StressBreakpoint,
+    StressRunResult,
 )
 from .utils import _extract_labeled_fields, _normalize_extracted_path
 
+if TYPE_CHECKING:
+    from tok.runtime import RuntimeSession
 
-def render_stress_report(
-    result: StressRunResult, session: RuntimeSession | None = None
-) -> str:
+
+def render_stress_report(result: StressRunResult, session: RuntimeSession | None = None) -> str:
     coverage = required_class_coverage(
         {item.breakpoint_class for item in result.breakpoints},
         result.required_classes,
@@ -133,14 +133,11 @@ def render_stress_report(
         f"tool_dense=`{getattr(turn, 'tool_dense_session', False)}` "
         f"answer_facts=`{getattr(turn, 'answer_fact_projection_present', False)}`"
         for turn in getattr(result, "turns", [])
-        if getattr(result, "compaction_eligible", False)
-        and getattr(turn, "resend_mode", "") == "full"
+        if getattr(result, "compaction_eligible", False) and getattr(turn, "resend_mode", "") == "full"
     ]
     lines.extend(resend_analysis or ["- none"])
     if getattr(result, "compaction_eligible", False):
-        first_compaction_turn = getattr(
-            result, "first_compaction_eligible_turn", None
-        )
+        first_compaction_turn = getattr(result, "first_compaction_eligible_turn", None)
         if first_compaction_turn is not None:
             timing = (
                 "after"
@@ -163,9 +160,7 @@ def render_stress_report(
     missing_classes = set(coverage["missing"])
     if "reacquisition_loop" in missing_classes:
         if getattr(result, "reuse_probe_attempts", 0) == 0:
-            lines.append(
-                "- Reacquisition loop missing because reuse probes were not fairly exercised yet."
-            )
+            lines.append("- Reacquisition loop missing because reuse probes were not fairly exercised yet.")
         else:
             lines.append(
                 "- Reacquisition loop missing despite reuse probes running; treat this as provisional resistance, not a harness gap."
@@ -185,9 +180,7 @@ def render_stress_report(
             )
     if "retention_loss" in missing_classes:
         if getattr(result, "retention_probe_attempts", 0) == 0:
-            lines.append(
-                "- Retention loss missing because retention probes were not fairly exercised yet."
-            )
+            lines.append("- Retention loss missing because retention probes were not fairly exercised yet.")
         elif (
             getattr(result, "late_retention_probe_attempts", 0) == 0
             and getattr(result, "retention_probe_successes", 0) > 0
@@ -215,15 +208,11 @@ def render_stress_report(
     if not result.breakpoints:
         lines.append("- none")
         lines.append("")
-    implicated = summarize_implicated_files(
-        result.breakpoints, session=session
-    )
+    implicated = summarize_implicated_files(result.breakpoints, session=session)
     if implicated:
         lines.extend(["## Implicated Files", ""])
         for imp_item in implicated:
-            lines.append(
-                f"- `{imp_item['path']}` (`{imp_item['count']}` mentions)"
-            )
+            lines.append(f"- `{imp_item['path']}` (`{imp_item['count']}` mentions)")
         lines.append("")
 
     grouped: dict[str, list[StressBreakpoint]] = {}
@@ -258,17 +247,13 @@ def render_language_refactor_plan(result: StressRunResult) -> str:
 
     themes: dict[str, list[str]] = {}
     for item in result.breakpoints:
-        themes.setdefault(item.refactor_target, []).append(
-            item.breakpoint_class
-        )
+        themes.setdefault(item.refactor_target, []).append(item.breakpoint_class)
 
     for target, classes in themes.items():
         lines.append(f"### {target}")
         lines.append("")
         unique_classes = sorted(set(classes))
-        lines.append(
-            f"- Driven by breakpoint classes: `{', '.join(unique_classes)}`"
-        )
+        lines.append(f"- Driven by breakpoint classes: `{', '.join(unique_classes)}`")
         if target == "anchor persistence":
             lines.append(
                 "- Strengthen checkpoint-era answer anchor carry rules so late turns can restate grounded file and verification facts."
@@ -295,9 +280,7 @@ def render_language_refactor_plan(result: StressRunResult) -> str:
             )
         lines.append("")
 
-    if str(getattr(result, "run_diagnosis", "")).startswith(
-        "early_contract_collapse:"
-    ):
+    if str(getattr(result, "run_diagnosis", "")).startswith("early_contract_collapse:"):
         lines.extend(
             [
                 "## First Anchor Hardening",
@@ -317,10 +300,7 @@ def render_language_refactor_plan(result: StressRunResult) -> str:
                 "",
             ]
         )
-    if (
-        getattr(result, "run_diagnosis", "")
-        == "memory_surface_reached_but_not_broken"
-    ):
+    if getattr(result, "run_diagnosis", "") == "memory_surface_reached_but_not_broken":
         lines.extend(
             [
                 "## Memory Probe Follow-Up",
@@ -330,10 +310,7 @@ def render_language_refactor_plan(result: StressRunResult) -> str:
                 "",
             ]
         )
-    if (
-        getattr(result, "run_diagnosis", "")
-        == "retention_surface_held_early_only"
-    ):
+    if getattr(result, "run_diagnosis", "") == "retention_surface_held_early_only":
         lines.extend(
             [
                 "## Retention Follow-Up",
@@ -368,9 +345,7 @@ def summarize_implicated_files(
     return [{"path": path, "count": count} for path, count in ranked]
 
 
-def extract_breakpoint_paths(
-    item: StressBreakpoint | Any, session: RuntimeSession | None = None
-) -> list[str]:
+def extract_breakpoint_paths(item: StressBreakpoint | Any, session: RuntimeSession | None = None) -> list[str]:
     paths: set[str] = set()
     for source in (
         getattr(item, "prompt", ""),
@@ -383,9 +358,7 @@ def extract_breakpoint_paths(
                 continue
             paths.add(normalized)
 
-    observed = _extract_labeled_fields(
-        getattr(item, "visible_response", ""), session=session
-    )
+    observed = _extract_labeled_fields(getattr(item, "visible_response", ""), session=session)
     file_value = observed.get("file", "")
     for match in _PATH_PATTERN.findall(file_value):
         normalized = _normalize_extracted_path(match)
@@ -406,9 +379,7 @@ def write_stress_artifacts(
     report_path = output_dir / "stress_report.md"
     plan_path = output_dir / "language_refactor_plan.md"
     stress_run_path.write_text(json.dumps(result.to_dict(), indent=2))
-    breakpoints_path.write_text(
-        json.dumps([item.to_dict() for item in result.breakpoints], indent=2)
-    )
+    breakpoints_path.write_text(json.dumps([item.to_dict() for item in result.breakpoints], indent=2))
     report_path.write_text(render_stress_report(result, session=session))
     plan_path.write_text(render_language_refactor_plan(result))
     return {
@@ -426,6 +397,4 @@ def default_output_dir(base: Path | None = None) -> Path:
 
 def _is_excluded_grounded_path(path: str) -> bool:
     normalized = path.strip()
-    return any(
-        fragment in normalized for fragment in EXCLUDED_GROUNDED_PATH_FRAGMENTS
-    )
+    return any(fragment in normalized for fragment in EXCLUDED_GROUNDED_PATH_FRAGMENTS)

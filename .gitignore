@@ -48,8 +48,13 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Databases
+*.db
+
+# Pre-commit cache
+.pre-commit-cache/
+
 # Local runtime state
-telemetry.db
 execution.log
 memory.tok
 gate-config.json
@@ -63,6 +68,17 @@ tmp/
 .claude/
 CLAUDE.md
 
+# Campaign artifacts
+campaign_ledger.md
+ops/
+
+# Benchmark results
+Benchmark/assets/
+docs/images/tok_metrics.json
+
+# IDE
+.windsurf/
+
 # Visualization
 viz/
 
@@ -72,5 +88,9 @@ research/
 results/
 human_checklist.txt
 refactoring_plan.txt
+release-plan.txt
 release_ready.txt
-roadmap.md
+.markdownlint.yaml
+
+# Benchmark results
+Benchmark/assets/

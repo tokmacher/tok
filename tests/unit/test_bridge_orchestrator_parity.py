@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tok.adapters import OrchestratorAdapter
 from tok.stats import SavingsTracker
@@ -10,6 +10,8 @@ from tok.universal_runtime import (
     UniversalTokRuntime,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 MODEL = "google/gemini-2.0-flash-lite-001"
 
@@ -122,7 +124,7 @@ def _record_summary(
 
 def test_bridge_and_orchestrator_prepare_and_finalize_share_happy_path_semantics(
     tmp_path,
-):
+) -> None:
     messages = [
         {"role": "assistant", "content": "Earlier context"},
         {"role": "user", "content": "Audit the codebase"},
@@ -155,13 +157,8 @@ def test_bridge_and_orchestrator_prepare_and_finalize_share_happy_path_semantics
     )
 
     assert bridge_prepared.body == orchestrator_prepared.body
-    assert (
-        bridge_prepared.behavior_signals
-        == orchestrator_prepared.behavior_signals
-    )
-    assert (
-        bridge_prepared.type_breakdown == orchestrator_prepared.type_breakdown
-    )
+    assert bridge_prepared.behavior_signals == orchestrator_prepared.behavior_signals
+    assert bridge_prepared.type_breakdown == orchestrator_prepared.type_breakdown
 
     bridge_processed = _bridge_finalize(
         session=bridge_session,
@@ -175,21 +172,14 @@ def test_bridge_and_orchestrator_prepare_and_finalize_share_happy_path_semantics
     )
 
     assert bridge_processed.mode == orchestrator_processed.mode == "tok-native"
-    assert (
-        bridge_processed.content_blocks
-        == orchestrator_processed.content_blocks
-    )
-    assert (
-        bridge_processed.updated_memory
-        == orchestrator_processed.updated_memory
-    )
-    assert (
-        bridge_processed.behavior_signals
-        == orchestrator_processed.behavior_signals
-    )
+    assert bridge_processed.content_blocks == orchestrator_processed.content_blocks
+    assert bridge_processed.updated_memory == orchestrator_processed.updated_memory
+    assert bridge_processed.behavior_signals == orchestrator_processed.behavior_signals
 
 
-def test_bridge_and_orchestrator_preserve_memory_carry_contract(tmp_path):
+def test_bridge_and_orchestrator_preserve_memory_carry_contract(
+    tmp_path,
+) -> None:
     payload = (
         ">>> turns:1|goal:audit\n"
         "@msg role:assistant\n"
@@ -211,20 +201,16 @@ def test_bridge_and_orchestrator_preserve_memory_carry_contract(tmp_path):
     _bridge_finalize(session=bridge_session, text=payload)
     _orchestrator_finalize(session=orchestrator_session, text=payload)
 
-    assert bridge_session.bridge_memory.wire_state() == (
-        orchestrator_session.bridge_memory.wire_state()
-    )
-    assert [
-        entry.value
-        for entry in bridge_session.bridge_memory.hot.get("files", [])
-    ] == ["src/tok/compression.py"]
-    assert [
-        entry.value
-        for entry in orchestrator_session.bridge_memory.hot.get("files", [])
-    ] == ["src/tok/compression.py"]
+    assert bridge_session.bridge_memory.wire_state() == (orchestrator_session.bridge_memory.wire_state())
+    assert [entry.value for entry in bridge_session.bridge_memory.hot.get("files", [])] == ["src/tok/compression.py"]
+    assert [entry.value for entry in orchestrator_session.bridge_memory.hot.get("files", [])] == [
+        "src/tok/compression.py"
+    ]
 
 
-def test_bridge_and_orchestrator_record_equivalent_savings_totals(tmp_path):
+def test_bridge_and_orchestrator_record_equivalent_savings_totals(
+    tmp_path,
+) -> None:
     messages = [{"role": "user", "content": "Audit the codebase"}]
     system = "orchestrator system"
     payload = ">>> turns:1|goal:audit\n@msg role:assistant\n  |> ok"
@@ -270,13 +256,12 @@ def test_bridge_and_orchestrator_record_equivalent_savings_totals(tmp_path):
     assert bridge_summary is not None
     assert int(bridge_summary["actual_tokens"]) == 200
     assert int(bridge_summary["baseline_tokens"]) >= 200
-    assert (
-        int(bridge_summary["tokens_saved"])
-        == int(bridge_summary["baseline_tokens"]) - 200
-    )
+    assert int(bridge_summary["tokens_saved"]) == int(bridge_summary["baseline_tokens"]) - 200
 
 
-def test_bridge_and_orchestrator_keep_fallback_signals_visible(tmp_path):
+def test_bridge_and_orchestrator_keep_fallback_signals_visible(
+    tmp_path,
+) -> None:
     payload = "Plain assistant reply"
     fallback_signals = {
         "tok_fallback_activated": 1,
@@ -298,10 +283,7 @@ def test_bridge_and_orchestrator_keep_fallback_signals_visible(tmp_path):
     )
 
     assert bridge_processed.mode == orchestrator_processed.mode
-    assert (
-        bridge_processed.behavior_signals
-        == orchestrator_processed.behavior_signals
-    )
+    assert bridge_processed.behavior_signals == orchestrator_processed.behavior_signals
     assert bridge_processed.behavior_signals["tok_fallback_activated"] == 1
     assert bridge_processed.behavior_signals["processing_error"] == 1
     assert bridge_processed.behavior_signals["fail_open_compat_response"] == 1

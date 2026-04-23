@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -12,14 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tok.stats import SavingsTracker
 
-
 LOG_PATH = Path(os.getenv("TOK_PROXY_LOG", "/tmp/tok_proxy.log"))
 TAIL_LINES = int(os.getenv("TOK_TAIL_LINES", "50"))
 REFRESH_SECONDS = float(os.getenv("TOK_TAIL_REFRESH", "1.5"))
 
 
 def _clear_screen() -> None:
-    os.system("clear" if os.name == "posix" else "cls")
+    subprocess.run(["clear"], check=False) if os.name == "posix" else subprocess.run(["cls"], check=False)  # nosec: B605
 
 
 def _tail_lines(path: Path, num_lines: int) -> list[str]:
@@ -44,26 +44,15 @@ def _savings_summary() -> tuple[int, int, float]:
         saved_tokens += int(model_stats.get("input_saved_tokens", 0))
         saved_tokens += int(model_stats.get("output_saved_tokens", 0))
     baseline_tokens = actual_tokens + saved_tokens
-    saved_pct = (
-        (saved_tokens / baseline_tokens * 100) if baseline_tokens else 0.0
-    )
+    saved_pct = (saved_tokens / baseline_tokens * 100) if baseline_tokens else 0.0
     return (saved_tokens, baseline_tokens, saved_pct)
 
 
 def render() -> None:
-    saved, baseline, pct = _savings_summary()
+    _saved, _baseline, _pct = _savings_summary()
     _clear_screen()
-    print("╔════════════════════════════════════════════════════════════╗")
-    print("║                Tok Proxy Log Tail + Savings               ║")
-    print("╚════════════════════════════════════════════════════════════╝")
-    print(f"Log file: {LOG_PATH}")
-    print(f"Tokens saved: {saved:,} / {baseline:,} ({pct:.1f}%)")
-    print(
-        f"Showing last {TAIL_LINES} log lines – refresh {REFRESH_SECONDS:.1f}s"
-    )
-    print("─" * 62)
-    for line in _tail_lines(LOG_PATH, TAIL_LINES):
-        print(line.rstrip())
+    for _line in _tail_lines(LOG_PATH, TAIL_LINES):
+        pass
 
 
 def main() -> None:
@@ -72,7 +61,7 @@ def main() -> None:
             render()
             time.sleep(REFRESH_SECONDS)
     except KeyboardInterrupt:
-        print("\nStopped.")
+        pass
 
 
 if __name__ == "__main__":

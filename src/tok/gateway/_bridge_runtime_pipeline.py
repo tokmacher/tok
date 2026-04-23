@@ -1,0 +1,263 @@
+"""Shared bridge preparation pipeline used by gateway and benchmark harnesses."""
+
+from __future__ import annotations
+
+import copy
+from dataclasses import dataclass, field
+from typing import Any, Literal, cast
+
+from fastapi import Response
+
+from tok.universal_runtime import RuntimeRequest
+
+from . import _RUNTIME, BridgeSession, logger
+from ._bridge_preflight import _run_bridge_preflight
+
+
+@dataclass
+class BridgePreparedPayload:
+    body: dict[str, Any]
+    behavior_signals: dict[str, int]
+    request_policy: str
+    request_tool_compatible: bool
+    compressed: bool
+    saved_toks: int
+    tool_breakdown: dict[str, int]
+    prompt_metrics: dict[str, int]
+    retry_forbidden: bool
+    provider_safe_original_body: dict[str, Any] = field(default_factory=dict)
+    request_model: str = ""
+    request_messages: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _empty_prompt_metrics() -> dict[str, int]:
+    return {
+        "baseline_prompt_tokens": 0,
+        "prepared_prompt_tokens": 0,
+        "saved_prompt_tokens": 0,
+        "hot_hint_tokens_added": 0,
+        "reacquisition_tokens_avoided_estimate": 0,
+    }
+
+
+def _extract_allowed_tools_from_body(body: dict[str, Any]) -> tuple[str, ...]:
+    tools = body.get("tools")
+    if not isinstance(tools, list):
+        return ()
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in tools:
+        if not isinstance(item, dict):
+            continue
+        raw_name = item.get("name")
+        if raw_name is None and isinstance(item.get("function"), dict):
+            raw_name = item["function"].get("name")
+        name = str(raw_name or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return tuple(names)
+
+
+def prepare_bridge_payload(
+    *,
+    session: BridgeSession,
+    body: dict[str, Any],
+    headers: dict[str, str],
+    path: str,
+    tok_tool_header: str = "",
+    allowed_tools: tuple[str, ...] | None = None,
+    request_state: dict[str, bool] | None = None,
+) -> tuple[BridgePreparedPayload, Response | None]:
+    active_request_state = request_state if request_state is not None else {"fallback_recorded": False}
+
+    compressed = False
+    saved_toks = 0
+    tool_breakdown: dict[str, int] = {}
+    behavior_signals: dict[str, int] = {}
+    prompt_metrics = _empty_prompt_metrics()
+    request_tool_compatible = False
+    request_policy = "forced_baseline"
+    retry_forbidden = False
+
+    original_body = copy.deepcopy(body)
+    (
+        provider_safe_original_body,
+        behavior_signals,
+        source_retry_forbidden,
+        preflight_response,
+    ) = _run_bridge_preflight(
+        session,
+        body=copy.deepcopy(body),
+        original_body=original_body,
+        headers=headers,
+        behavior_signals=behavior_signals,
+        compressed=False,
+        request_state=active_request_state,
+        path=path,
+        emit_ready_log=(path == "v1/messages/count_tokens"),
+        emit_repair_logs=(path == "v1/messages/count_tokens"),
+        reset_recovery_state=(path == "v1/messages/count_tokens"),
+    )
+    retry_forbidden = source_retry_forbidden
+
+    request_model = str(provider_safe_original_body.get("model", ""))
+    request_messages = provider_safe_original_body.get("messages", [])
+    if not isinstance(request_messages, list):
+        request_messages = []
+
+    payload = BridgePreparedPayload(
+        body=copy.deepcopy(provider_safe_original_body),
+        behavior_signals=dict(behavior_signals),
+        request_policy=request_policy,
+        request_tool_compatible=request_tool_compatible,
+        compressed=compressed,
+        saved_toks=saved_toks,
+        tool_breakdown=tool_breakdown,
+        prompt_metrics=prompt_metrics,
+        retry_forbidden=retry_forbidden,
+        provider_safe_original_body=copy.deepcopy(provider_safe_original_body),
+        request_model=request_model,
+        request_messages=copy.deepcopy(request_messages),
+    )
+    if preflight_response is not None:
+        return payload, preflight_response
+
+    if path != "v1/messages":
+        return payload, None
+
+    source_behavior_signals = dict(behavior_signals)
+    if tok_tool_header.lower() in {"0", "false", "off", "no"}:
+        request_tool_compatible = False
+        request_policy = "forced_baseline" if session.request_policy_default == "forced_baseline" else "natural_first"
+    elif session.runtime_session._baseline_only:
+        request_tool_compatible = False
+        request_policy = "forced_baseline"
+        behavior_signals["baseline_only_session"] = 1
+        behavior_signals["tok_fallback_activated"] = 1
+        logger.warning("tok_fallback_activated: session is in baseline-only mode, serving without compression")
+    else:
+        request_tool_compatible = True
+        request_policy = session.request_policy_default
+
+    logger.info(
+        "Request mode: model=%s, request_policy=%s, tool_compatible_allowed=%s (tools present: %s, header=%s)",
+        request_model,
+        request_policy,
+        request_tool_compatible,
+        bool(provider_safe_original_body.get("tools")),
+        tok_tool_header or "<unset>",
+    )
+    requested_request_policy = request_policy
+    requested_tool_compatible = request_tool_compatible
+
+    prepared = _RUNTIME.prepare_request(
+        RuntimeRequest(
+            model=request_model,
+            messages=request_messages,
+            system=provider_safe_original_body.get("system", ""),
+            adapter_kind="claude-bridge",
+            tool_compatible=request_tool_compatible,
+            request_policy=cast(
+                Literal["legacy_tool_compatible", "natural_first", "forced_baseline"],
+                request_policy,
+            ),
+            request_has_tools=bool(provider_safe_original_body.get("tools")),
+            allowed_tools=allowed_tools
+            if allowed_tools
+            else _extract_allowed_tools_from_body(provider_safe_original_body),
+        ),
+        session.runtime_session,
+        result_cache=session.result_cache,
+    )
+    request_policy = prepared.request_policy
+    request_tool_compatible = prepared.effective_tool_compatible
+    compressed = prepared.compressed
+    saved_toks = prepared.input_saved_tokens
+    tool_breakdown = dict(prepared.type_breakdown)
+    behavior_signals = dict(prepared.behavior_signals)
+    for key, value in source_behavior_signals.items():
+        behavior_signals[key] = behavior_signals.get(key, 0) + value
+    behavior_signals[f"request_policy_requested_{requested_request_policy}"] = (
+        behavior_signals.get(f"request_policy_requested_{requested_request_policy}", 0) + 1
+    )
+    if requested_tool_compatible:
+        behavior_signals["request_policy_requested_tool_compatible"] = (
+            behavior_signals.get("request_policy_requested_tool_compatible", 0) + 1
+        )
+    else:
+        behavior_signals["request_policy_requested_non_tool_compatible"] = (
+            behavior_signals.get("request_policy_requested_non_tool_compatible", 0) + 1
+        )
+    if request_tool_compatible:
+        behavior_signals["request_policy_effective_tool_compatible"] = (
+            behavior_signals.get("request_policy_effective_tool_compatible", 0) + 1
+        )
+    else:
+        behavior_signals["request_policy_effective_natural_first"] = (
+            behavior_signals.get("request_policy_effective_natural_first", 0) + 1
+        )
+    prompt_metrics = {
+        "baseline_prompt_tokens": prepared.baseline_prompt_tokens,
+        "prepared_prompt_tokens": prepared.prepared_prompt_tokens,
+        "saved_prompt_tokens": prepared.saved_prompt_tokens,
+        "hot_hint_tokens_added": prepared.hot_hint_tokens_added,
+        "reacquisition_tokens_avoided_estimate": prepared.reacquisition_tokens_avoided_estimate,
+    }
+    policy_reasons = sorted(
+        key.removeprefix("request_policy_reason_")
+        for key, value in behavior_signals.items()
+        if key.startswith("request_policy_reason_") and value
+    )
+    logger.info(
+        "Prepared request policy: requested_policy=%s, requested_tool_compatible=%s, effective_policy=%s, effective_tool_compatible=%s, reasons=%s, escalated=%s",
+        requested_request_policy,
+        requested_tool_compatible,
+        request_policy,
+        request_tool_compatible,
+        ",".join(policy_reasons) if policy_reasons else "<none>",
+        prepared.request_policy_escalated,
+    )
+
+    prepared_body = copy.deepcopy(provider_safe_original_body)
+    prepared_body["messages"] = prepared.body.get("messages", [])
+    prepared_body["system"] = prepared.body.get("system", prepared_body.get("system", ""))
+
+    (
+        prepared_body,
+        behavior_signals,
+        prepared_retry_forbidden,
+        preflight_response,
+    ) = _run_bridge_preflight(
+        session,
+        body=prepared_body,
+        original_body=provider_safe_original_body,
+        headers=headers,
+        behavior_signals=behavior_signals,
+        compressed=compressed,
+        request_state=active_request_state,
+        path=path,
+    )
+    retry_forbidden = retry_forbidden or prepared_retry_forbidden
+    if behavior_signals.get("tok_bridge_pairing_degraded_to_provider_safe", 0):
+        compressed = False
+        saved_toks = 0
+        tool_breakdown = {}
+        prompt_metrics = _empty_prompt_metrics()
+
+    payload = BridgePreparedPayload(
+        body=prepared_body,
+        behavior_signals=dict(behavior_signals),
+        request_policy=request_policy,
+        request_tool_compatible=request_tool_compatible,
+        compressed=compressed,
+        saved_toks=saved_toks,
+        tool_breakdown=tool_breakdown,
+        prompt_metrics=prompt_metrics,
+        retry_forbidden=retry_forbidden,
+        provider_safe_original_body=copy.deepcopy(provider_safe_original_body),
+        request_model=request_model,
+        request_messages=copy.deepcopy(request_messages),
+    )
+    return payload, preflight_response

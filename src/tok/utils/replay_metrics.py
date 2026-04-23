@@ -7,28 +7,28 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
-from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-from ..compression import compress_history, compress_tool_results
-from ..runtime.memory.session_helpers import get_adaptive_keep_turns
-from ..runtime.policy.smart_policy import (
+from tok.compression import compress_history, compress_tool_results
+from tok.runtime.memory.session_state import get_adaptive_keep_turns
+from tok.runtime.pipeline.response_processing import response_contract_for_mode
+from tok.runtime.pipeline.tool_processing import (
+    build_tool_use_id_to_context,
+    collect_behavior_signals,
+)
+from tok.runtime.policy.smart_policy import (
     advance_state,
     initial_state,
     policy_for_model,
 )
-from ..runtime.pipeline.response_processing import response_contract_for_mode
-from ..runtime.pipeline.tool_processing import (
-    build_tool_use_id_to_context,
-    collect_behavior_signals,
-)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 try:  # Token counting when tiktoken is available
     import tiktoken
-except (
-    Exception
-):  # pragma: no cover - fallback path is covered via tests when missing
-    tiktoken = None  # type: ignore[assignment]
+except Exception:  # pragma: no cover - fallback path is covered via tests when missing
+    tiktoken = None
 
 __all__ = ["ReplayFixtureMetrics", "analyze_replay_fixture"]
 
@@ -72,11 +72,11 @@ def _process_replay_turn(
     token_counter: Callable[[str], int],
     replay_policy: Any,
     replay_state: Any,
-    file_cache: dict[str, tuple[str, str]],
     tool_compatible: bool,
     cumulative_user_turns: int,
     behavior_totals: dict[str, int],
     type_savings_tokens: dict[str, int],
+    file_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] | None = None,
 ) -> tuple[int, int, int, dict[str, int], dict[str, int], int, Any]:
     messages = _record_messages(record)
     if not messages:
@@ -117,45 +117,30 @@ def _process_replay_turn(
         compression_level=compression_level,
     )
 
-    for key, value in collect_behavior_signals(
-        messages, id_to_context, result_cache=file_cache
-    ).items():
+    for key, value in collect_behavior_signals(messages, id_to_context, result_cache=file_cache).items():
         behavior_totals[key] = behavior_totals.get(key, 0) + value
 
     turn_output_saved = 0
-    from ..runtime.policy.semantic_validation import SemanticValidator
+    from tok.runtime.policy.semantic_validation import SemanticValidator
 
     validator = SemanticValidator()
     for assistant_text in _assistant_texts(messages):
-        processed = response_contract_for_mode(
-            assistant_text, tool_compatible=tool_compatible
-        )
-        drift_signals = validator.validate_drift(
-            assistant_text, processed.behavior_signals
-        )
+        processed = response_contract_for_mode(assistant_text, tool_compatible=tool_compatible)
+        drift_signals = validator.validate_drift(assistant_text, processed.behavior_signals)
         for key, value in {
             **processed.behavior_signals,
             **drift_signals,
         }.items():
             behavior_totals[key] = behavior_totals.get(key, 0) + value
 
-        visible_text = "\n".join(
-            b.get("text", "")
-            for b in processed.content_blocks
-            if b.get("type") == "text"
-        ).strip()
-        if (
-            visible_text
-            and "tok_native_response" in processed.behavior_signals
-        ):
+        visible_text = "\n".join(b.get("text", "") for b in processed.content_blocks if b.get("type") == "text").strip()
+        if visible_text and "tok_native_response" in processed.behavior_signals:
             prose_baseline = token_counter(visible_text) + 22
             tok_actual = token_counter(assistant_text)
             turn_output_saved += max(0, prose_baseline - tok_actual)
 
     for kind, chars in breakdown_chars.items():
-        type_savings_tokens[kind] = type_savings_tokens.get(kind, 0) + max(
-            0, chars // 4
-        )
+        type_savings_tokens[kind] = type_savings_tokens.get(kind, 0) + max(0, chars // 4)
 
     after_tool_tokens = sum(token_counter(_msg_text(m)) for m in msgs_copy)
     recent_msgs, tok_state = compress_history(
@@ -166,21 +151,15 @@ def _process_replay_turn(
     )
 
     if tok_state:
-        after_tokens = sum(
-            token_counter(_msg_text(m)) for m in recent_msgs
-        ) + token_counter(tok_state)
+        after_tokens = sum(token_counter(_msg_text(m)) for m in recent_msgs) + token_counter(tok_state)
     else:
         after_tokens = after_tool_tokens
 
-    type_savings_tokens["output_minimalist"] = (
-        type_savings_tokens.get("output_minimalist", 0) + turn_output_saved
-    )
+    type_savings_tokens["output_minimalist"] = type_savings_tokens.get("output_minimalist", 0) + turn_output_saved
     after_tokens -= turn_output_saved
 
     if replay_policy is not None and replay_state is not None:
-        replay_state = advance_state(
-            replay_policy, replay_state, behavior_totals
-        )
+        replay_state = advance_state(replay_policy, replay_state, behavior_totals)
 
     return (
         before_tokens,
@@ -195,15 +174,13 @@ def _process_replay_turn(
 
 def analyze_replay_fixture(session_file: str | Path) -> ReplayFixtureMetrics:
     """Produce deterministic metrics for a replay capture."""
-
     path = Path(session_file)
     if not path.exists():
-        raise FileNotFoundError(f"Replay capture not found: {path}")
+        msg = f"Replay capture not found: {path}"
+        raise FileNotFoundError(msg)
 
     meta_path = path.with_suffix(path.suffix + ".meta.json")
-    replay_meta = (
-        json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    )
+    replay_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     replay_model = str(replay_meta.get("model", ""))
     response_mode = str(replay_meta.get("response_mode", "tok-native")).strip()
     tool_compatible = response_mode == "tool-compatible"
@@ -213,7 +190,7 @@ def analyze_replay_fixture(session_file: str | Path) -> ReplayFixtureMetrics:
     token_counter = _token_counter()
     behavior_totals: dict[str, int] = defaultdict(int)
     type_savings_tokens: dict[str, int] = defaultdict(int)
-    file_cache: dict[str, tuple[str, str]] = {}
+    file_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
 
     total_before_tokens = 0
     total_after_tokens = 0
@@ -231,7 +208,7 @@ def analyze_replay_fixture(session_file: str | Path) -> ReplayFixtureMetrics:
             (
                 before_tokens,
                 after_tokens,
-                turn_output_saved,
+                _turn_output_saved,
                 behavior_totals,
                 type_savings_tokens,
                 cumulative_user_turns,
@@ -241,11 +218,11 @@ def analyze_replay_fixture(session_file: str | Path) -> ReplayFixtureMetrics:
                 token_counter,
                 replay_policy,
                 replay_state,
-                file_cache,
                 tool_compatible,
                 cumulative_user_turns,
                 behavior_totals,
                 type_savings_tokens,
+                file_cache,
             )
 
             total_before_tokens += before_tokens
@@ -263,7 +240,6 @@ def analyze_replay_fixture(session_file: str | Path) -> ReplayFixtureMetrics:
 
 def _msg_text(msg: dict[str, Any]) -> str:
     """Extract normalized text content from a message."""
-
     content = msg.get("content", "")
     if isinstance(content, str):
         return content

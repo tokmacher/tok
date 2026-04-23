@@ -8,31 +8,49 @@ from pathlib import Path
 import pytest
 
 import tok
-from tok.universal_runtime import ProcessedRuntimeResponse, RuntimeSession
+from tok.runtime.core import RuntimeSession, UniversalTokRuntime
+from tok.runtime.types import ProcessedRuntimeResponse, RuntimeRequest
 
 
-def test_public_wrap_routes_through_runtime(tmp_path):
+def test_public_bridge_import_succeeds() -> None:
+    assert hasattr(tok, "Bridge")
+    bridge_cls = tok.Bridge
+    assert bridge_cls is not None
+
+
+def test_experimental_root_imports_raise_attribute_error() -> None:
+    for name in ("wrap", "process", "RuntimeSession"):
+        with pytest.raises(AttributeError):
+            getattr(tok, name)
+
+
+def test_wrap_via_submodule(tmp_path) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    runtime = UniversalTokRuntime()
 
-    prepared = tok.wrap(
-        [{"role": "user", "content": "Summarize the task"}],
+    request = RuntimeRequest(
         model="claude-sonnet-4",
-        session=session,
+        messages=[{"role": "user", "content": "Summarize the task"}],
         system="Existing system prompt",
+        adapter_kind="wrap",
+        tool_compatible=True,
     )
+    prepared = runtime.prepare_request(request, session)
 
     assert prepared.body["messages"][0]["role"] == "user"
     assert prepared.body["system"].startswith("Existing system prompt")
     assert isinstance(prepared.behavior_signals, dict)
 
 
-def test_public_process_routes_through_runtime(tmp_path):
+def test_process_via_submodule(tmp_path) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    runtime = UniversalTokRuntime()
 
-    result = tok.process(
+    result = runtime.process_response(
         ">>> turns:1|goal:ship\n@msg role:assistant\n  |> done",
         model="claude-sonnet-4",
         session=session,
+        tool_compatible=True,
     )
 
     assert isinstance(result, ProcessedRuntimeResponse)
@@ -41,7 +59,7 @@ def test_public_process_routes_through_runtime(tmp_path):
     assert isinstance(result.updated_memory, str)
 
 
-def test_python_m_tok_invokes_cli_help(monkeypatch, capsys):
+def test_python_m_tok_invokes_cli_help(monkeypatch, capsys) -> None:
     monkeypatch.setattr("sys.argv", ["python", "--help"])
 
     with pytest.raises(SystemExit) as excinfo:
@@ -54,10 +72,6 @@ def test_python_m_tok_invokes_cli_help(monkeypatch, capsys):
     assert "install" in out
 
 
-def test_tok_wrap_example_is_syntax_valid():
-    example = (
-        Path(__file__).resolve().parents[2]
-        / "examples"
-        / "tok_wrap_example.py"
-    )
+def test_tok_wrap_example_is_syntax_valid() -> None:
+    example = Path(__file__).resolve().parents[2] / "examples" / "tok_wrap_example.py"
     compile(example.read_text(), str(example), "exec")

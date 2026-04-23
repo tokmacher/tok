@@ -16,16 +16,26 @@ tok doctor
 - Re-activate the environment, then run `pip install tok-protocol` or `pip install .`.
 - Verify with `tok --help`.
 
-### `claude: command not found` after `tok install`
+### `claude: command not found` after `tok install --wrap-claude`
 
-- `tok install` updated your shell rc file, but the current shell has not reloaded it.
+- `tok install --wrap-claude` updated your shell rc file, but the current shell has not
+  reloaded it.
 - Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.
+- Then run `tok doctor` again before assuming the bridge is at fault.
 
 ### `Bridge not running`
 
 - Start it again with `tok bridge start`.
-- If it still fails, use `tok bridge start --foreground` so errors stay in the current terminal.
+- Re-run `tok bridge status` or `tok doctor` immediately after startup.
+- If it still fails, use `tok bridge start --foreground` so errors stay in the current
+  terminal.
 - Inspect recent bridge logs with `tok bridge logs 100`.
+
+### `tok bridge stop` refused with a self-bridged warning
+
+- Tok now protects against in-band self-cutoff.
+- Exit Claude first, then run `tok bridge stop` from your shell.
+- If you intentionally need in-band shutdown, run `tok bridge stop --force`.
 
 ## Runtime Diagnosis
 
@@ -59,7 +69,18 @@ Recommended next steps:
 
 ### Savings are not obvious yet
 
-Very short sessions may not show clear savings immediately.
+Very short sessions (under 10-15 turns) may not show clear savings. Tok's compression
+benefits accumulate over longer conversations where repeated file reads, tool outputs,
+and context build up.
+
+For release verification, use the maintained benchmark and claims matrix flow rather
+than a single ad-hoc run. Savings vary significantly by session: long sessions with
+heavy tool usage (file reads, search, repeated operations) tend to show the strongest
+results. Shorter sessions may show lower savings due to:
+
+- Less opportunity for semantic deduplication
+- Fewer repeated tool calls to cache
+- Overhead from initial memory setup
 
 Check:
 
@@ -78,6 +99,14 @@ tok capture-review ~/.tok/sessions --candidates
 tok evidence-gap ~/.tok/sessions --stress-dir tmp/stress_language/<timestamp>
 ```
 
+These capture files are for maintainer diagnosis. They redact obvious credential
+material, but they can still contain session content, so review them before sharing.
+
+For reproducible release claims, refer to:
+
+- [`docs/claims_matrix.md`](./claims_matrix.md)
+- [`docs/live_smoke_matrix.md`](./live_smoke_matrix.md)
+
 ## Clean-Room Install Check
 
 When validating setup from scratch:
@@ -91,7 +120,18 @@ tok install
 tok bridge start --help
 ```
 
-If this sequence fails, fix install and shell integration before debugging the runtime.
+If this sequence fails, fix install and bridge startup before debugging the runtime.
+
+## Repo Checkout Smoke
+
+When validating a release candidate from a repo checkout, run:
+
+```bash
+python scripts/run_release_smoke.py
+```
+
+This bounded sweep checks the public CLI help surfaces, public import shims, one focused
+bridge/runtime/compression path, and a packaging build smoke.
 
 ## When To Use Baseline
 
@@ -99,7 +139,7 @@ To compare behavior with compression disabled:
 
 ```bash
 TOK_MODE=baseline tok bridge start
-claude
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok stats
 ```
 

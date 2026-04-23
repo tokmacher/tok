@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tok.utils.event_logging import log_pointer_created
+
 
 class PointerRegistry:
     """Registry for relational memory pointers (*A, *B, etc.)."""
@@ -20,9 +22,14 @@ class PointerRegistry:
         if self._next_idx >= 26:
             ptr += str(self._next_idx // 26)
 
+        # Only intern if it actually saves space
+        if len(value) <= len(ptr):
+            return value  # Interning saves nothing; return verbatim.
+
         self._next_idx += 1
         self.map[ptr] = value
         self.reverse_map[value] = ptr
+        log_pointer_created(ptr, value)
         return ptr
 
     def resolve(self, ptr: str) -> str | None:

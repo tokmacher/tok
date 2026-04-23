@@ -4,34 +4,80 @@ import json
 import signal
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, NoReturn
+
+from typer.testing import CliRunner
 
 from tok.cli import app
 from tok.stats import SavingsTracker
-from typer.testing import CliRunner
 
 runner = CliRunner()
 
 
 class TestCLI:
-    def test_help(self):
+    def test_help(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "bridge" in result.output
-        assert "metrics" in result.output
-        assert "dev" in result.output
         assert "stats" in result.output
         assert "savings" in result.output
         assert "install" in result.output
         assert "doctor" in result.output
+        assert "metrics" not in result.output
+        assert "dev" not in result.output
+        assert "memory-snap" not in result.output
+        assert "capture-review" not in result.output
+        assert "gate-check" not in result.output
+        assert "convert" not in result.output
+        assert "parse" not in result.output
 
-    def test_bridge_help(self):
+    def test_version(self) -> None:
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert "0.1.0" in result.output
+
+    def test_version_shows_program_name(self) -> None:
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert result.output.strip().startswith("tok ")
+
+    def test_bridge_help(self) -> None:
         result = runner.invoke(app, ["bridge", "--help"])
         assert result.exit_code == 0
         assert "start" in result.output
         assert "stop" in result.output
         assert "status" in result.output
 
-    def test_metrics_help(self):
+    def test_bridge_stop_help_shows_force_flag(self) -> None:
+        result = runner.invoke(app, ["bridge", "stop", "--help"])
+        assert result.exit_code == 0
+        assert "--force" in result.output
+
+    def test_bridge_stop_force_flag_forwards_to_backend(self, monkeypatch) -> None:
+        calls: dict[str, bool] = {}
+
+        monkeypatch.setattr("tok.cli._bridge.bridge_stop", lambda force=False: calls.setdefault("force", force))
+        result = runner.invoke(app, ["bridge", "stop", "--force"])
+
+        assert result.exit_code == 0
+        assert calls["force"] is True
+
+    def test_doctor_help(self) -> None:
+        result = runner.invoke(app, ["doctor", "--help"])
+        assert result.exit_code == 0
+        assert "Check bridge health and runtime contract conformance" in (result.output)
+        assert "--report" in result.output
+        assert "--verbose" in result.output
+
+    def test_stats_help(self) -> None:
+        result = runner.invoke(app, ["stats", "--help"])
+        assert result.exit_code == 0
+        assert "Show token savings and fallback state" in result.output
+        assert "--last-session" in result.output
+        assert "--recent" in result.output
+        assert "--since" in result.output
+
+    def test_metrics_help(self) -> None:
         result = runner.invoke(app, ["metrics", "--help"])
         assert result.exit_code == 0
         assert "pressure" in result.output
@@ -40,55 +86,41 @@ class TestCLI:
         assert "fallback" in result.output
         assert "health" in result.output
 
-    def test_dev_help(self):
+    def test_dev_help(self) -> None:
         result = runner.invoke(app, ["dev", "--help"])
         assert result.exit_code == 0
         assert "generate-fixture" in result.output
         assert "live-benchmark" in result.output
         assert "stress-language" in result.output
 
-    def test_hidden_legacy_command_aliases_still_work(
-        self, monkeypatch, tmp_path
-    ):
+    def test_hidden_legacy_command_aliases_still_work(self, monkeypatch, tmp_path) -> None:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.pressure_trends",
-            lambda window, export: calls.update(
-                {"window": window, "export": export}
-            ),
+            "tok.utils.metrics.pressure_trends",
+            lambda window, export: calls.update({"window": window, "export": export}),
         )
 
         export_path = tmp_path / "pressure.json"
-        result = runner.invoke(
-            app, ["pressure", "--window", "3", "--export", str(export_path)]
-        )
+        result = runner.invoke(app, ["pressure", "--window", "3", "--export", str(export_path)])
 
         assert result.exit_code == 0
         assert calls == {"window": 3, "export": str(export_path)}
 
-    def test_hidden_legacy_generate_fixture_alias_still_works(
-        self, monkeypatch
-    ):
+    def test_hidden_legacy_generate_fixture_alias_still_works(self, monkeypatch) -> None:
         calls = {}
 
         class FakeGenerator:
-            def generate_coding_session(
-                self, name, turns, template, complexity
-            ):
+            def generate_coding_session(self, name, turns, template, complexity):
                 calls["generate"] = (name, turns, template, complexity)
                 return "fixture-data", '{"name": "demo"}'
 
-            def save_fixture(self, name, fixture, metadata, output):
+            def save_fixture(self, name, fixture, metadata, output) -> None:
                 calls["save"] = (name, fixture, metadata, output)
 
-        monkeypatch.setattr(
-            "tok.fixture_generator.FixtureGenerator", FakeGenerator
-        )
+        monkeypatch.setattr("tok.testing.fixture_generator.FixtureGenerator", FakeGenerator)
 
-        result = runner.invoke(
-            app, ["generate-fixture", "coding", "legacy-demo"]
-        )
+        result = runner.invoke(app, ["generate-fixture", "coding", "legacy-demo"])
 
         assert result.exit_code == 0
         assert calls["generate"] == (
@@ -98,26 +130,63 @@ class TestCLI:
             "medium",
         )
 
-    def test_install_uses_shell_integration_backend(
-        self, monkeypatch, tmp_path
-    ):
+    def test_install_default_mode_does_not_write_shell_wrapper(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.utils.shell_integration.uninstall", lambda: [])
         monkeypatch.setattr(
-            "tok.shell_integration.install", lambda: tmp_path / ".zshrc"
+            "tok.utils.shell_integration.install",
+            lambda: (_ for _ in ()).throw(AssertionError("install() should not be called in default mode")),
         )
 
         result = runner.invoke(app, ["install"])
 
         assert result.exit_code == 0
+        assert "Tok install complete." in result.output
+        assert "Default mode is explicit" in result.output
+        assert "ANTHROPIC_BASE_URL=http://localhost:9090 claude" in result.output
+        assert "tok install --wrap-claude" in result.output
+
+    def test_install_default_mode_removes_legacy_wrapper_when_present(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr("tok.utils.shell_integration.uninstall", lambda: [tmp_path / ".zshrc"])
+        monkeypatch.setattr(
+            "tok.utils.shell_integration.install",
+            lambda: (_ for _ in ()).throw(AssertionError("install() should not be called in default mode")),
+        )
+
+        result = runner.invoke(app, ["install"])
+
+        assert result.exit_code == 0
+        assert "Removed legacy `claude()` Tok wrapper from:" in result.output
+        assert ".zshrc" in result.output
+        assert "Default mode is explicit" in result.output
+
+    def test_install_wrap_claude_uses_shell_integration_backend(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr("tok.utils.shell_integration.install", lambda: tmp_path / ".zshrc")
+
+        result = runner.invoke(app, ["install", "--wrap-claude"])
+
+        assert result.exit_code == 0
         assert "Tok shell integration installed in" in result.output
         assert ".zshrc" in result.output
+        assert "Reload your shell:" in result.output
+        assert "Wrapper mode enabled" in result.output
 
-    def test_bridge_status_shows_mode_and_session_summary(self, monkeypatch):
-        monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: 321
-        )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", "/tmp/test-empty-savings-status.tok"
-        )
+    def test_install_uninstall_removes_existing_shell_integration(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr("tok.utils.shell_integration.uninstall", lambda: [tmp_path / ".zshrc"])
+
+        result = runner.invoke(app, ["install", "--uninstall"])
+
+        assert result.exit_code == 0
+        assert "Tok shell integration removed from:" in result.output
+        assert ".zshrc" in result.output
+
+    def test_install_rejects_wrap_claude_and_uninstall_combination(self) -> None:
+        result = runner.invoke(app, ["install", "--wrap-claude", "--uninstall"])
+        assert result.exit_code == 2
+        assert "Cannot combine `--wrap-claude` with `--uninstall`." in result.output
+
+    def test_bridge_status_shows_mode_and_session_summary(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setenv("TOK_SAVINGS_FILE", "/tmp/test-empty-savings-status.tok")
         Path("/tmp/test-empty-savings-status.tok").unlink(missing_ok=True)
 
         class FakeResponse:
@@ -130,6 +199,7 @@ class TestCLI:
                     "bridge": "tok",
                     "port": 9090,
                     "mode": "tool-compatible",
+                    "request_policy": "natural_first",
                     "baseline_only": True,
                     "fallback_count": 2,
                     "session_tokens_saved": 140,
@@ -147,9 +217,7 @@ class TestCLI:
                     "state_resend_suppressed_count": 0,
                 }
 
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
 
         result = runner.invoke(app, ["bridge", "status"])
         assert result.exit_code == 0
@@ -162,18 +230,18 @@ class TestCLI:
         assert "Tok active" in result.output
         assert "Degraded to baseline" in result.output
         assert "Mode" in result.output
+        assert "Request policy" in result.output
+        assert "natural_first" in result.output
         assert "Fallbacks" in result.output
         assert "Session quality" in result.output
         assert "Degradation reason" in result.output
         assert "Session signals" in result.output
+        assert "tok doctor" in result.output
+        assert "tok bridge logs 100" in result.output
 
-    def test_bridge_status_shows_watch_session_verdict(self, monkeypatch):
-        monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: 321
-        )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", "/tmp/test-empty-watch-status.tok"
-        )
+    def test_bridge_status_shows_watch_session_verdict(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setenv("TOK_SAVINGS_FILE", "/tmp/test-empty-watch-status.tok")
         Path("/tmp/test-empty-watch-status.tok").unlink(missing_ok=True)
 
         class FakeResponse:
@@ -186,6 +254,7 @@ class TestCLI:
                     "bridge": "tok",
                     "port": 9090,
                     "mode": "tool-compatible",
+                    "request_policy": "natural_first",
                     "baseline_only": False,
                     "fallback_count": 1,
                     "session_tokens_saved": 140,
@@ -203,9 +272,7 @@ class TestCLI:
                     "state_resend_suppressed_count": 0,
                 }
 
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
 
         result = runner.invoke(app, ["bridge", "status"])
 
@@ -213,9 +280,98 @@ class TestCLI:
         assert "Tok active, watch session" in result.output
         assert "context reacquisition" in result.output
 
-    def test_bridge_status_prefers_live_payload_over_stale_local_summary(
-        self, monkeypatch, tmp_path
-    ):
+    def test_bridge_status_recovers_when_localhost_probe_fails(self, monkeypatch) -> None:
+        import httpx
+
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setenv("TOK_BRIDGE_HOST", "localhost")
+
+        attempted_urls: list[str] = []
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "tool-compatible",
+                    "request_policy": "natural_first",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "session_tokens_saved": 20,
+                    "session_savings_pct": 10.0,
+                    "session_quality": "clean",
+                    "last_degradation_reason": "",
+                }
+
+        def fake_get(url: str, timeout: float):
+            attempted_urls.append(url)
+            if "localhost" in url:
+                return FakeResponse()
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr("httpx.get", fake_get)
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 0
+        assert "Bridge running on :9090 (PID 321)" in result.output
+        assert any("127.0.0.1" in url for url in attempted_urls)
+        assert any("localhost" in url for url in attempted_urls)
+
+    def test_bridge_status_surfaces_attribution_signals(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "natural-first",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "session_tokens_saved": 120,
+                    "session_savings_pct": 41.4,
+                    "actual_tokens": 100,
+                    "baseline_tokens": 200,
+                    "actual_cost_usd": 0.01,
+                    "baseline_cost_usd": 0.02,
+                    "cost_saved_usd": 0.01,
+                    "session_quality": "watch",
+                    "last_degradation_reason": "request-shape incompatibility",
+                    "semantic_drift_count": 0,
+                    "fail_open_count": 0,
+                    "non_tok_count": 0,
+                    "answer_anchor_miss_count": 0,
+                    "repeat_search_count": 0,
+                    "repeat_file_read_count": 0,
+                    "preflight_block_original_payload_count": 1,
+                    "preflight_block_rewritten_payload_count": 2,
+                    "stream_recovery_empty_success_count": 3,
+                    "stream_recovery_read_error_count": 4,
+                    "request_policy_held_by_recovery_count": 1,
+                }
+
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 0
+        assert "request-shape incompatibility" in result.output
+        assert "shape-orig=1" in result.output
+        assert "shape-rewrite=2" in result.output
+        assert "stream-empty=3" in result.output
+        assert "stream-read=4" in result.output
+        assert "held=1" in result.output
+
+    def test_bridge_status_prefers_live_payload_over_stale_local_summary(self, monkeypatch, tmp_path) -> None:
         tracker = SavingsTracker(
             savings_file=str(tmp_path / "tok_savings.tok"),
             ledger_path=tmp_path / "global_savings.tok",
@@ -233,12 +389,8 @@ class TestCLI:
                 "baseline_only_session": 1,
             },
         )
-        monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: 321
-        )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
-        )
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
 
         class FakeResponse:
             status_code = 200
@@ -270,9 +422,7 @@ class TestCLI:
                     "state_resend_suppressed_count": 0,
                 }
 
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
 
         result = runner.invoke(app, ["bridge", "status"])
 
@@ -282,37 +432,42 @@ class TestCLI:
         assert "Tok active and helping" in result.output
         assert "Session degraded to baseline" not in result.output
 
-    def test_bridge_status_ignores_unremovable_stale_pid(
-        self, monkeypatch, tmp_path
-    ):
-        import tok.cli as cli
+    def test_bridge_status_ignores_unremovable_stale_pid(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _bridge, _cli_support
 
         pid_file = tmp_path / "bridge.pid"
         pid_file.write_text("not-a-pid")
-        monkeypatch.setattr(cli, "PID_FILE", pid_file)
-        monkeypatch.setattr(cli, "_find_pids_on_port", lambda port: [])
+        monkeypatch.setattr(_cli_support, "PID_FILE", pid_file)
+        monkeypatch.setattr(_bridge, "PID_FILE", pid_file)
+        monkeypatch.setattr(_cli_support, "find_pids_on_port", lambda port: [])
 
-        def deny_unlink(*args, **kwargs):
-            raise PermissionError("sandbox")
+        from pathlib import Path as _Path
 
-        monkeypatch.setattr(cli.Path, "unlink", deny_unlink, raising=False)
+        def deny_unlink(*args, **kwargs) -> NoReturn:
+            msg = "sandbox"
+            raise PermissionError(msg)
+
+        monkeypatch.setattr(_Path, "unlink", deny_unlink)
 
         result = runner.invoke(app, ["bridge", "status"])
-        assert result.exit_code == 1
+        assert result.exit_code == 1, f"exit={result.exit_code} output={result.output!r}"
         assert "Bridge not running" in result.output
+        assert "tok bridge start" in result.output
 
-    def test_bridge_start_with_capture_prints_capture_directory(
-        self, monkeypatch, tmp_path
-    ):
-        monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: None
-        )
-        monkeypatch.setattr(
-            "tok.cli._start_collector", lambda debug=False: None
-        )
-        monkeypatch.setattr("tok.cli.LOG_FILE", tmp_path / "bridge.log")
-        monkeypatch.setattr("tok.cli.PID_FILE", tmp_path / "bridge.pid")
-        monkeypatch.setattr("tok.cli._memory_root", lambda: tmp_path / ".tok")
+    def test_bridge_start_with_capture_prints_capture_directory(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _cli_support
+
+        def no_bridge(port) -> None:
+            return None
+
+        def fake_memory_root():
+            return tmp_path / ".tok"
+
+        for mod in (_cli_support,):
+            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+            monkeypatch.setattr(mod, "memory_root", fake_memory_root)
 
         class FakeProcess:
             pid = 4321
@@ -320,12 +475,8 @@ class TestCLI:
         class FakeResponse:
             status_code = 200
 
-        monkeypatch.setattr(
-            "subprocess.Popen", lambda *args, **kwargs: FakeProcess()
-        )
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
 
         result = runner.invoke(app, ["bridge", "start", "--capture"])
 
@@ -333,16 +484,18 @@ class TestCLI:
         assert "Bridge started on :9090 (PID 4321)" in result.output
         assert "Capture directory:" in result.output
         assert ".tok/sessions" in result.output
+        assert "ANTHROPIC_BASE_URL=http://localhost:9090 claude" in result.output
 
-    def test_bridge_start_enables_session_reset(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: None
-        )
-        monkeypatch.setattr(
-            "tok.cli._start_collector", lambda debug=False: None
-        )
-        monkeypatch.setattr("tok.cli.LOG_FILE", tmp_path / "bridge.log")
-        monkeypatch.setattr("tok.cli.PID_FILE", tmp_path / "bridge.pid")
+    def test_bridge_start_enables_session_reset(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _cli_support
+
+        def no_bridge(port) -> None:
+            return None
+
+        for mod in (_cli_support,):
+            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
 
         captured = {}
 
@@ -357,22 +510,94 @@ class TestCLI:
             return FakeProcess()
 
         monkeypatch.setattr("subprocess.Popen", _fake_popen)
-        monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
 
         result = runner.invoke(app, ["bridge", "start"])
 
         assert result.exit_code == 0
         assert captured["env"]["TOK_RESET_SESSION"] == "1"
 
-    def test_savings_no_data(self):
+    def test_bridge_start_foreground_forwards_api_base(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _cli_support
+
+        def no_bridge(port) -> None:
+            return None
+
+        for mod in (_cli_support,):
+            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+
+        captured = {}
+
+        def _fake_run_bridge(**kwargs) -> None:
+            captured.update(kwargs)
+
+        monkeypatch.setattr("tok.gateway.run_bridge", _fake_run_bridge)
+
+        result = runner.invoke(
+            app,
+            [
+                "bridge",
+                "start",
+                "--foreground",
+                "--api-base",
+                "https://example.test/custom",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert captured["_api_base"] == "https://example.test/custom"
+
+    def test_bridge_start_subprocess_exports_custom_api_base(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _cli_support
+
+        def no_bridge(port) -> None:
+            return None
+
+        def fake_memory_root():
+            return tmp_path / ".tok"
+
+        for mod in (_cli_support,):
+            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+            monkeypatch.setattr(mod, "memory_root", fake_memory_root)
+
+        captured = {}
+
+        class FakeProcess:
+            pid = 4321
+
+        class FakeResponse:
+            status_code = 200
+
+        def _fake_popen(*args, **kwargs):
+            captured["env"] = kwargs["env"]
+            return FakeProcess()
+
+        monkeypatch.setattr("subprocess.Popen", _fake_popen)
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(
+            app,
+            [
+                "bridge",
+                "start",
+                "--api-base",
+                "https://example.test/custom",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert captured["env"]["TOK_API_BASE"] == "https://example.test/custom"
+        assert captured["env"]["TOK_RESET_SESSION"] == "1"
+
+    def test_savings_no_data(self) -> None:
         result = runner.invoke(app, ["savings"])
         assert result.exit_code == 0
 
-    def test_stats_alias_shows_fallback_and_baseline_state(
-        self, tmp_path, monkeypatch
-    ):
+    def test_stats_alias_shows_fallback_and_baseline_state(self, tmp_path, monkeypatch) -> None:
         tracker = SavingsTracker(
             savings_file=str(tmp_path / "tok_savings.tok"),
             ledger_path=tmp_path / "global_savings.tok",
@@ -390,9 +615,7 @@ class TestCLI:
                 "baseline_only_session": 1,
             },
         )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
-        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
 
         result = runner.invoke(app, ["stats"])
@@ -408,34 +631,14 @@ class TestCLI:
         assert "Session quality" in result.output
         assert "Degradation reason" in result.output
 
-    def test_stats_total_shows_lifetime_fallback_counts(
-        self, tmp_path, monkeypatch
-    ):
+    def test_stats_total_shows_lifetime_fallback_counts(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"
         ledger.write_text(
-            "\n".join(
-                [
-                    "@lifetime_savings",
-                    "  sessions: 2",
-                    "  total_turns: 10",
-                    "  total_tokens: 2000",
-                    "  total_cost_usd: 0.020000",
-                    "  estimated_baseline_cost_usd: 0.030000",
-                    "  tokens_saved: 1000",
-                    "  cost_saved_usd: 0.010000",
-                    "  savings_pct: 33.3",
-                    "  tok_fallback_activated: 3",
-                    "  baseline_only_session: 1",
-                    "",
-                    "@per_session_log",
-                ]
-            )
-            + "\n"
+            "@lifetime_savings\n  sessions: 2\n  total_turns: 10\n  total_tokens: 2000\n  total_cost_usd: 0.020000\n  estimated_baseline_cost_usd: 0.030000\n  tokens_saved: 1000\n  cost_saved_usd: 0.010000\n  savings_pct: 33.3\n  tok_fallback_activated: 3\n  baseline_only_session: 1\n\n@per_session_log"
+            "\n"
         )
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
-        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
 
         result = runner.invoke(app, ["stats", "--total"])
         assert result.exit_code == 0
@@ -446,35 +649,14 @@ class TestCLI:
         assert "Fallbacks" in result.output
         assert "Baseline-only requests" in result.output
 
-    def test_stats_last_session_reads_latest_completed_session(
-        self, tmp_path, monkeypatch
-    ):
+    def test_stats_last_session_reads_latest_completed_session(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"
         ledger.write_text(
-            "\n".join(
-                [
-                    "@lifetime_savings",
-                    "  sessions: 2",
-                    "  total_turns: 10",
-                    "  total_tokens: 2000",
-                    "  total_cost_usd: 0.020000",
-                    "  estimated_baseline_cost_usd: 0.045000",
-                    "  tokens_saved: 1200",
-                    "  cost_saved_usd: 0.025000",
-                    "  savings_pct: 55.0",
-                    "",
-                    "@per_session_log",
-                    "  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response",
-                    "  2026-03-17T10:00:00Z;aaa11111;5;1000;0.010000;0.020000;0.010000;500;3;1",
-                    "  2026-03-18T10:00:00Z;bbb22222;5;1000;0.010000;0.025000;0.015000;700;1;0",
-                ]
-            )
-            + "\n"
+            "@lifetime_savings\n  sessions: 2\n  total_turns: 10\n  total_tokens: 2000\n  total_cost_usd: 0.020000\n  estimated_baseline_cost_usd: 0.045000\n  tokens_saved: 1200\n  cost_saved_usd: 0.025000\n  savings_pct: 55.0\n\n@per_session_log\n  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response\n  2026-03-17T10:00:00Z;aaa11111;5;1000;0.010000;0.020000;0.010000;500;3;1\n  2026-03-18T10:00:00Z;bbb22222;5;1000;0.010000;0.025000;0.015000;700;1;0"
+            "\n"
         )
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
-        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
 
         result = runner.invoke(app, ["stats", "--last-session"])
         assert result.exit_code == 0
@@ -486,35 +668,14 @@ class TestCLI:
         assert "Session quality" in result.output
         assert "Degradation reason" in result.output
 
-    def test_stats_recent_shows_recent_window_summary(
-        self, tmp_path, monkeypatch
-    ):
+    def test_stats_recent_shows_recent_window_summary(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"
         ledger.write_text(
-            "\n".join(
-                [
-                    "@lifetime_savings",
-                    "  sessions: 3",
-                    "  total_turns: 12",
-                    "  total_tokens: 2400",
-                    "  total_cost_usd: 0.024000",
-                    "  estimated_baseline_cost_usd: 0.042000",
-                    "  tokens_saved: 1200",
-                    "  cost_saved_usd: 0.018000",
-                    "  savings_pct: 42.9",
-                    "",
-                    "@per_session_log",
-                    "  2026-03-17T10:00:00Z;aaa11111;4;800;0.008000;0.014000;0.006000;400;1;0",
-                    "  2026-03-18T10:00:00Z;bbb22222;4;800;0.008000;0.016000;0.008000;500;1;0",
-                    "  2026-03-19T10:00:00Z;ccc33333;4;800;0.008000;0.012000;0.004000;300;1;0",
-                ]
-            )
-            + "\n"
+            "@lifetime_savings\n  sessions: 3\n  total_turns: 12\n  total_tokens: 2400\n  total_cost_usd: 0.024000\n  estimated_baseline_cost_usd: 0.042000\n  tokens_saved: 1200\n  cost_saved_usd: 0.018000\n  savings_pct: 42.9\n\n@per_session_log\n  2026-03-17T10:00:00Z;aaa11111;4;800;0.008000;0.014000;0.006000;400;1;0\n  2026-03-18T10:00:00Z;bbb22222;4;800;0.008000;0.016000;0.008000;500;1;0\n  2026-03-19T10:00:00Z;ccc33333;4;800;0.008000;0.012000;0.004000;300;1;0"
+            "\n"
         )
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
-        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
 
         result = runner.invoke(app, ["stats", "--recent", "2", "--total"])
         assert result.exit_code == 0
@@ -525,49 +686,24 @@ class TestCLI:
         assert "800 tokens" in result.output
         assert "2026-03-18T10:00:00Z" in result.output
 
-    def test_stats_since_shows_filtered_window_summary(
-        self, tmp_path, monkeypatch
-    ):
+    def test_stats_since_shows_filtered_window_summary(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"
         ledger.write_text(
-            "\n".join(
-                [
-                    "@lifetime_savings",
-                    "  sessions: 3",
-                    "  total_turns: 12",
-                    "  total_tokens: 2400",
-                    "  total_cost_usd: 0.024000",
-                    "  estimated_baseline_cost_usd: 0.042000",
-                    "  tokens_saved: 1200",
-                    "  cost_saved_usd: 0.018000",
-                    "  savings_pct: 42.9",
-                    "",
-                    "@per_session_log",
-                    "  2026-03-17T10:00:00Z;aaa11111;4;800;0.008000;0.014000;0.006000;400;1;0",
-                    "  2026-03-18T10:00:00Z;bbb22222;4;800;0.008000;0.016000;0.008000;500;1;0",
-                    "  2026-03-19T10:00:00Z;ccc33333;4;800;0.008000;0.012000;0.004000;300;1;0",
-                ]
-            )
-            + "\n"
+            "@lifetime_savings\n  sessions: 3\n  total_turns: 12\n  total_tokens: 2400\n  total_cost_usd: 0.024000\n  estimated_baseline_cost_usd: 0.042000\n  tokens_saved: 1200\n  cost_saved_usd: 0.018000\n  savings_pct: 42.9\n\n@per_session_log\n  2026-03-17T10:00:00Z;aaa11111;4;800;0.008000;0.014000;0.006000;400;1;0\n  2026-03-18T10:00:00Z;bbb22222;4;800;0.008000;0.016000;0.008000;500;1;0\n  2026-03-19T10:00:00Z;ccc33333;4;800;0.008000;0.012000;0.004000;300;1;0"
+            "\n"
         )
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
-        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
 
-        result = runner.invoke(
-            app, ["stats", "--since", "2026-03-18", "--total"]
-        )
+        result = runner.invoke(app, ["stats", "--since", "2026-03-18", "--total"])
         assert result.exit_code == 0
         assert "Since 2026-03-18" in result.output
         assert "Saved $0.0120" in result.output
         assert "42.9% saved" in result.output
         assert "Sessions" in result.output
 
-    def test_bridge_stop_prints_compact_session_summary(
-        self, tmp_path, monkeypatch, capsys
-    ):
-        import tok.cli as cli
+    def test_bridge_stop_prints_compact_session_summary(self, tmp_path, monkeypatch, capsys) -> None:
+        from tok.cli import _bridge
 
         tracker = SavingsTracker(
             savings_file=str(tmp_path / "tok_savings.tok"),
@@ -583,41 +719,109 @@ class TestCLI:
             output_saved=20,
             behavior_signals={"tok_fallback_activated": 1},
         )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
-        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setattr(cli, "_get_running_bridge_pid", lambda port: 123)
-        monkeypatch.setattr(cli, "_read_collector_pid", lambda: None)
-        monkeypatch.setattr(cli, "PID_FILE", tmp_path / "bridge.pid")
-        monkeypatch.setattr(
-            cli, "COLLECTOR_PID_FILE", tmp_path / "collector.pid"
-        )
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
 
         calls = {"checked": False}
 
-        def fake_kill(pid, sig):
+        def fake_kill(pid, sig) -> None:
             assert pid == 123
             if sig == signal.SIGTERM:
-                return None
-            if sig == 0:
-                if not calls["checked"]:
-                    calls["checked"] = True
-                    raise ProcessLookupError
-            return None
+                return
+            if sig == 0 and not calls["checked"]:
+                calls["checked"] = True
+                raise ProcessLookupError
+            return
 
-        monkeypatch.setattr(cli.os, "kill", fake_kill)
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
 
-        cli.bridge_stop()
+        _bridge.bridge_stop()
         output = capsys.readouterr().out
         assert "Bridge stopped" in output
         assert "Last Session" in output
         assert "Saved $" in output
         assert "Verdict" in output
 
-    def test_savings_breakdown_shows_behavior_signals(
-        self, tmp_path, monkeypatch
-    ):
+    def test_bridge_stop_refuses_in_self_bridged_context_without_force(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
+        monkeypatch.setenv("TOK_SELF_BRIDGED_SESSION", "1")
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+        monkeypatch.setattr(
+            _bridge,
+            "get_bridge_health_response",
+            lambda *args, **kwargs: SimpleNamespace(status_code=200),
+        )
+        monkeypatch.setattr(
+            _bridge.os,
+            "kill",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("os.kill should not be called")),
+        )
+
+        result = runner.invoke(app, ["bridge", "stop"])
+
+        assert result.exit_code == 2
+        assert "Refusing to stop bridge from an active bridged Claude session." in result.output
+        assert "tok bridge stop --force" in result.output
+
+    def test_bridge_stop_force_allows_stop_in_self_bridged_context(self, monkeypatch, tmp_path, capsys) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
+        monkeypatch.setenv("TOK_SELF_BRIDGED_SESSION", "1")
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+
+        calls = {"checked": False}
+
+        def fake_kill(pid, sig) -> None:
+            assert pid == 123
+            if sig == signal.SIGTERM:
+                return
+            if sig == 0 and not calls["checked"]:
+                calls["checked"] = True
+                raise ProcessLookupError
+            return
+
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+
+        _bridge.bridge_stop(force=True)
+        output = capsys.readouterr().out
+
+        assert "Bridge stopped" in output
+
+    def test_bridge_stop_does_not_refuse_without_self_bridged_marker(self, monkeypatch, tmp_path, capsys) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
+        monkeypatch.delenv("TOK_SELF_BRIDGED_SESSION", raising=False)
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+
+        calls = {"checked": False}
+
+        def fake_kill(pid, sig) -> None:
+            assert pid == 123
+            if sig == signal.SIGTERM:
+                return
+            if sig == 0 and not calls["checked"]:
+                calls["checked"] = True
+                raise ProcessLookupError
+            return
+
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+
+        _bridge.bridge_stop()
+        output = capsys.readouterr().out
+
+        assert "Bridge stopped" in output
+
+    def test_savings_breakdown_shows_behavior_signals(self, tmp_path, monkeypatch) -> None:
         tracker = SavingsTracker(
             savings_file=str(tmp_path / "tok_savings.tok"),
             ledger_path=tmp_path / "global_savings.tok",
@@ -632,9 +836,7 @@ class TestCLI:
             output_saved=5,
             behavior_signals={"repeat_file_read": 2, "python_c_workaround": 1},
         )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok")
-        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
 
         result = runner.invoke(app, ["savings", "--breakdown"])
@@ -645,29 +847,11 @@ class TestCLI:
         assert "Behavior signals" in result.output
         assert "repeat_file_read" in result.output
 
-    def test_savings_trends_shows_recent_trend_summary(
-        self, tmp_path, monkeypatch
-    ):
+    def test_savings_trends_shows_recent_trend_summary(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"
         ledger.write_text(
-            "\n".join(
-                [
-                    "@lifetime_savings",
-                    "  sessions: 2",
-                    "  total_turns: 10",
-                    "  total_tokens: 2000",
-                    "  tokens_saved: 1200",
-                    "  total_cost_usd: 0.020000",
-                    "  cost_saved_usd: 0.025000",
-                    "  savings_pct: 55.0",
-                    "",
-                    "@per_session_log",
-                    "  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response",
-                    "  2026-03-17T10:00:00Z;aaa11111;5;1000;0.010000;0.020000;0.010000;500;3;1",
-                    "  2026-03-18T10:00:00Z;bbb22222;5;1000;0.010000;0.025000;0.015000;700;1;0",
-                ]
-            )
-            + "\n"
+            "@lifetime_savings\n  sessions: 2\n  total_turns: 10\n  total_tokens: 2000\n  tokens_saved: 1200\n  total_cost_usd: 0.020000\n  cost_saved_usd: 0.025000\n  savings_pct: 55.0\n\n@per_session_log\n  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response\n  2026-03-17T10:00:00Z;aaa11111;5;1000;0.010000;0.020000;0.010000;500;3;1\n  2026-03-18T10:00:00Z;bbb22222;5;1000;0.010000;0.025000;0.015000;700;1;0"
+            "\n"
         )
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
         monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "savings.tok"))
@@ -677,34 +861,26 @@ class TestCLI:
         assert "Trend:" in result.output
         assert "direction=improving" in result.output
 
-    def test_convert_json_to_tok(self):
-        result = runner.invoke(
-            app, ["convert", '{"key": "value"}', "--to", "tok"]
-        )
+    def test_convert_json_to_tok(self) -> None:
+        result = runner.invoke(app, ["convert", '{"key": "value"}', "--to", "tok"])
         assert result.exit_code == 0
 
-    def test_parse_tok(self):
+    def test_parse_tok(self) -> None:
         result = runner.invoke(app, ["parse", "@block\n  |> content"])
         assert result.exit_code == 0
 
-    def test_generate_fixture_uses_fixture_generator_backend(
-        self, monkeypatch
-    ):
+    def test_generate_fixture_uses_fixture_generator_backend(self, monkeypatch) -> None:
         calls = {}
 
         class FakeGenerator:
-            def generate_coding_session(
-                self, name, turns, template, complexity
-            ):
+            def generate_coding_session(self, name, turns, template, complexity):
                 calls["generate"] = (name, turns, template, complexity)
                 return "fixture-data", '{"name": "demo"}'
 
-            def save_fixture(self, name, fixture, metadata, output):
+            def save_fixture(self, name, fixture, metadata, output) -> None:
                 calls["save"] = (name, fixture, metadata, output)
 
-        monkeypatch.setattr(
-            "tok.fixture_generator.FixtureGenerator", FakeGenerator
-        )
+        monkeypatch.setattr("tok.testing.fixture_generator.FixtureGenerator", FakeGenerator)
 
         result = runner.invoke(
             app,
@@ -739,16 +915,12 @@ class TestCLI:
         )
         assert "Generated coding fixture: demo-fixture" in result.output
 
-    def test_pressure_command_invokes_metrics_backend(
-        self, monkeypatch, tmp_path
-    ):
+    def test_pressure_command_invokes_metrics_backend(self, monkeypatch, tmp_path) -> None:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.pressure_trends",
-            lambda window, export: calls.update(
-                {"window": window, "export": export}
-            ),
+            "tok.utils.metrics.pressure_trends",
+            lambda window, export: calls.update({"window": window, "export": export}),
         )
 
         export_path = tmp_path / "pressure.json"
@@ -767,11 +939,11 @@ class TestCLI:
         assert result.exit_code == 0
         assert calls == {"window": 7, "export": str(export_path)}
 
-    def test_memory_command_invokes_metrics_backend(self, monkeypatch):
+    def test_memory_command_invokes_metrics_backend(self, monkeypatch) -> None:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.memory_trends",
+            "tok.utils.metrics.memory_trends",
             lambda window: calls.update({"window": window}),
         )
 
@@ -780,26 +952,24 @@ class TestCLI:
         assert result.exit_code == 0
         assert calls == {"window": 6}
 
-    def test_savings_trend_command_invokes_metrics_backend(self, monkeypatch):
+    def test_savings_trend_command_invokes_metrics_backend(self, monkeypatch) -> None:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.savings_trends",
+            "tok.utils.metrics.savings_trends",
             lambda window: calls.update({"window": window}),
         )
 
-        result = runner.invoke(
-            app, ["metrics", "savings-trend", "--window", "8"]
-        )
+        result = runner.invoke(app, ["metrics", "savings-trend", "--window", "8"])
 
         assert result.exit_code == 0
         assert calls == {"window": 8}
 
-    def test_fallback_command_invokes_metrics_backend(self, monkeypatch):
+    def test_fallback_command_invokes_metrics_backend(self, monkeypatch) -> None:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.fallback_trends",
+            "tok.utils.metrics.fallback_trends",
             lambda window: calls.update({"window": window}),
         )
 
@@ -808,16 +978,12 @@ class TestCLI:
         assert result.exit_code == 0
         assert calls == {"window": 4}
 
-    def test_health_command_invokes_metrics_backend(
-        self, monkeypatch, tmp_path
-    ):
+    def test_health_command_invokes_metrics_backend(self, monkeypatch, tmp_path) -> None:
         calls = {}
 
         monkeypatch.setattr(
-            "tok.metrics.health_summary",
-            lambda window, export: calls.update(
-                {"window": window, "export": export}
-            ),
+            "tok.utils.metrics.health_summary",
+            lambda window, export: calls.update({"window": window, "export": export}),
         )
 
         export_path = tmp_path / "health.json"
@@ -836,7 +1002,7 @@ class TestCLI:
         assert result.exit_code == 0
         assert calls == {"window": 9, "export": str(export_path)}
 
-    def test_replay_shows_behavior_signals(self, tmp_path):
+    def test_replay_shows_behavior_signals(self, tmp_path) -> None:
         session_file = tmp_path / "capture.jsonl"
         record = {
             "messages": [
@@ -872,7 +1038,7 @@ class TestCLI:
         assert "Behavior replay:" in result.output
         assert "repeat_file_read" in result.output
 
-    def test_replay_gate_fails_on_high_pressure(self, tmp_path):
+    def test_replay_gate_fails_on_high_pressure(self, tmp_path) -> None:
         session_file = tmp_path / "capture.jsonl"
         record = {
             "messages": [
@@ -935,14 +1101,14 @@ class TestCLI:
         result = runner.invoke(app, ["replay", str(session_file), "--gate"])
         assert result.exit_code == 1
 
-    def test_replay_gate_requires_metadata(self, tmp_path):
+    def test_replay_gate_requires_metadata(self, tmp_path) -> None:
         session_file = tmp_path / "capture.jsonl"
         session_file.write_text(json.dumps({"messages": []}) + "\n")
 
         result = runner.invoke(app, ["replay", str(session_file), "--gate"])
         assert result.exit_code == 1
 
-    def test_capture_summary_reports_verdict_and_reacquisition(self, tmp_path):
+    def test_capture_summary_reports_verdict_and_reacquisition(self, tmp_path) -> None:
         session_file = tmp_path / "capture.jsonl"
         session_file.write_text(
             "\n".join(
@@ -959,17 +1125,13 @@ class TestCLI:
                                             "type": "tool_use",
                                             "id": "a1",
                                             "name": "view_file",
-                                            "input": {
-                                                "path": "src/tok/gateway.py"
-                                            },
+                                            "input": {"path": "src/tok/gateway.py"},
                                         },
                                         {
                                             "type": "tool_use",
                                             "id": "a2",
                                             "name": "view_file",
-                                            "input": {
-                                                "path": "src/tok/gateway.py"
-                                            },
+                                            "input": {"path": "src/tok/gateway.py"},
                                         },
                                     ],
                                 }
@@ -1001,9 +1163,7 @@ class TestCLI:
         assert "watch" in result.output
         assert "context reacquisition" in result.output
 
-    def test_capture_review_aggregates_sessions_and_exports_json(
-        self, tmp_path
-    ):
+    def test_capture_review_aggregates_sessions_and_exports_json(self, tmp_path) -> None:
         capture_dir = tmp_path / "captures"
         capture_dir.mkdir()
         (capture_dir / "a.jsonl").write_text(
@@ -1057,9 +1217,7 @@ class TestCLI:
         assert "candidates" in data
         assert data["aggregate"]["total_sessions"] == 2
 
-    def test_capture_review_supports_coverage_with_stress_evidence(
-        self, tmp_path
-    ):
+    def test_capture_review_supports_coverage_with_stress_evidence(self, tmp_path) -> None:
         capture_dir = tmp_path / "captures"
         capture_dir.mkdir()
         (capture_dir / "a.jsonl").write_text(
@@ -1077,9 +1235,7 @@ class TestCLI:
         )
         stress_dir = tmp_path / "stress"
         stress_dir.mkdir()
-        (stress_dir / "breakpoints.json").write_text(
-            json.dumps([{"breakpoint_class": "protocol_drift"}])
-        )
+        (stress_dir / "breakpoints.json").write_text(json.dumps([{"breakpoint_class": "protocol_drift"}]))
         replay_dir = tmp_path / "replay"
         replay_dir.mkdir()
         (replay_dir / "release_reacquisition.jsonl.meta.json").write_text("{}")
@@ -1117,7 +1273,7 @@ class TestCLI:
         assert "context reacquisition" in result.output
         assert "response contract drift" in result.output
 
-    def test_evidence_gap_writes_json(self, tmp_path):
+    def test_evidence_gap_writes_json(self, tmp_path) -> None:
         capture_dir = tmp_path / "captures"
         capture_dir.mkdir()
         (capture_dir / "a.jsonl").write_text(
@@ -1159,9 +1315,7 @@ class TestCLI:
         assert "coverage" in data
         assert data["coverage"][0]["candidate"] == "baseline fallback"
 
-    def test_gate_check_reports_trend_as_warning_not_fixture_failure(
-        self, tmp_path, monkeypatch
-    ):
+    def test_gate_check_reports_trend_as_warning_not_fixture_failure(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
         fixtures_dir.mkdir()
@@ -1200,24 +1354,8 @@ class TestCLI:
 
         ledger = tmp_path / "global_savings.tok"
         ledger.write_text(
-            "\n".join(
-                [
-                    "@lifetime_savings",
-                    "  sessions: 2",
-                    "  total_turns: 10",
-                    "  total_tokens: 2000",
-                    "  tokens_saved: 1000",
-                    "  total_cost_usd: 0.020000",
-                    "  cost_saved_usd: 0.005000",
-                    "  savings_pct: 20.0",
-                    "",
-                    "@per_session_log",
-                    "  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response",
-                    "  2026-03-17T10:00:00Z;aaa11111;5;1000;0.010000;0.030000;0.020000;800;1;0",
-                    "  2026-03-18T10:00:00Z;bbb22222;5;1000;0.010000;0.015000;0.005000;200;9;0",
-                ]
-            )
-            + "\n"
+            "@lifetime_savings\n  sessions: 2\n  total_turns: 10\n  total_tokens: 2000\n  tokens_saved: 1000\n  total_cost_usd: 0.020000\n  cost_saved_usd: 0.005000\n  savings_pct: 20.0\n\n@per_session_log\n  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response\n  2026-03-17T10:00:00Z;aaa11111;5;1000;0.010000;0.030000;0.020000;800;1;0\n  2026-03-18T10:00:00Z;bbb22222;5;1000;0.010000;0.015000;0.005000;200;9;0"
+            "\n"
         )
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
         monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "savings.tok"))
@@ -1230,13 +1368,10 @@ class TestCLI:
         assert "Set Trend:" in result.output
         assert "status=clean" in result.output
 
-    def test_doctor_shows_runtime_mode_and_session_savings(self, monkeypatch):
-        monkeypatch.setattr(
-            "tok.cli._get_running_bridge_pid", lambda port: 321
-        )
-        monkeypatch.setenv(
-            "TOK_SAVINGS_FILE", "/tmp/test-empty-savings-doctor.tok"
-        )
+    def test_doctor_shows_runtime_mode_and_session_savings(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
+        monkeypatch.setenv("TOK_SAVINGS_FILE", "/tmp/test-empty-savings-doctor.tok")
         Path("/tmp/test-empty-savings-doctor.tok").unlink(missing_ok=True)
 
         class FakeResponse:
@@ -1266,11 +1401,10 @@ class TestCLI:
                     "state_resend_suppressed_count": 0,
                 }
 
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
         monkeypatch.setattr(
-            "httpx.get", lambda *args, **kwargs: FakeResponse()
-        )
-        monkeypatch.setattr(
-            "tok.cli._memory_root", lambda: Path("/tmp/nonexistent_tok")
+            "tok.cli._release.memory_root",
+            lambda: Path("/tmp/nonexistent_tok"),
         )
 
         result = runner.invoke(app, ["doctor"])
@@ -1283,14 +1417,119 @@ class TestCLI:
         assert "Tok verdict:" in result.output
         assert "baseline" in result.output
         assert "Recommendation:" in result.output
-        assert (
-            "investigate degradation before trusting this session"
-            in result.output
+        assert "investigate degradation before trusting this session" in result.output
+
+    def test_doctor_surfaces_request_shape_and_stream_attribution(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "natural-first",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "session_tokens_saved": 120,
+                    "session_savings_pct": 41.4,
+                    "actual_tokens": 100,
+                    "baseline_tokens": 200,
+                    "actual_cost_usd": 0.01,
+                    "baseline_cost_usd": 0.02,
+                    "cost_saved_usd": 0.01,
+                    "session_quality": "watch",
+                    "last_degradation_reason": "stream transport instability",
+                    "semantic_drift_count": 0,
+                    "fail_open_count": 0,
+                    "non_tok_count": 0,
+                    "answer_anchor_miss_count": 0,
+                    "repeat_search_count": 0,
+                    "repeat_file_read_count": 0,
+                    "preflight_block_original_payload_count": 1,
+                    "preflight_block_rewritten_payload_count": 0,
+                    "stream_recovery_empty_success_count": 2,
+                    "stream_recovery_read_error_count": 3,
+                    "request_policy_held_by_recovery_count": 1,
+                }
+
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
+        monkeypatch.setattr(
+            "tok.cli._release.memory_root",
+            lambda: Path("/tmp/nonexistent_tok"),
         )
 
-    def test_gate_check_export_includes_behavior_signals_and_fixture_metadata(
-        self, tmp_path, monkeypatch
-    ):
+        result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 1
+        assert "stream transport instability" in result.output
+        assert "shape-orig=1" in result.output
+        assert "stream-empty=2" in result.output
+        assert "stream-read=3" in result.output
+        assert "held=1" in result.output
+
+    def test_doctor_report_redacts_secret_env_values(self, monkeypatch, tmp_path) -> None:
+        memory_dir = tmp_path / ".tok"
+        memory_dir.mkdir()
+        (memory_dir / "bridge_memory.tok").write_text("state:present\n")
+
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
+        monkeypatch.setattr("tok.cli._release.memory_root", lambda: memory_dir)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-123")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret-456")
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path / "project"))
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "tool-compatible",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "session_tokens_saved": 0,
+                    "session_savings_pct": 0.0,
+                    "session_quality": "clean",
+                    "last_degradation_reason": "",
+                    "semantic_drift_count": 0,
+                    "fail_open_count": 0,
+                    "non_tok_count": 0,
+                    "answer_anchor_miss_count": 0,
+                    "repeat_search_count": 0,
+                    "repeat_file_read_count": 0,
+                    "state_resend_full_count": 0,
+                    "state_resend_delta_count": 0,
+                    "state_resend_suppressed_count": 0,
+                    "smoothness_score": 100,
+                    "labour_index": 0,
+                    "current_mode": "FULL_TOK",
+                    "stream_instability_events": 0,
+                    "thinking_mutation_events": 0,
+                    "task_score": 100,
+                    "repeated_active_file_reads": 0,
+                }
+
+        monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["doctor", "--report"])
+
+        assert result.exit_code == 0
+        assert "Tok Doctor report (safe to share)" in result.output
+        assert "env_OPENAI_API_KEY=set" in result.output
+        assert "env_OPENROUTER_API_KEY=set" in result.output
+        assert "env_TOK_PROJECT_DIR=set" in result.output
+        assert "sk-secret-123" not in result.output
+        assert "or-secret-456" not in result.output
+
+    def test_gate_check_export_includes_behavior_signals_and_fixture_metadata(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
         fixtures_dir.mkdir()
@@ -1349,9 +1588,7 @@ class TestCLI:
         assert exported["fixture_kind"] == "conformance"
         assert exported["provenance"] == "synthetic"
 
-    def test_gate_check_export_includes_common_path_summary(
-        self, tmp_path, monkeypatch
-    ):
+    def test_gate_check_export_includes_common_path_summary(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
         fixtures_dir.mkdir()
@@ -1403,9 +1640,7 @@ class TestCLI:
         assert data["common_path_summary"]["fixtures"] == 1
         assert data["common_path_summary"]["total_weight"] == 2.5
 
-    def test_gate_check_export_includes_release_summary(
-        self, tmp_path, monkeypatch
-    ):
+    def test_gate_check_export_includes_release_summary(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
         fixtures_dir.mkdir()
@@ -1464,11 +1699,9 @@ class TestCLI:
         assert isinstance(data["release_summary"]["billing_delta_usd"], float)
         assert data["release_summary"]["billing_delta_usd"] >= 0.0
 
-    def test_stress_language_reports_breakpoint_classes(
-        self, tmp_path, monkeypatch
-    ):
+    def test_stress_language_reports_breakpoint_classes(self, tmp_path, monkeypatch) -> None:
         class FakeHarness:
-            def __init__(self, config):
+            def __init__(self, config) -> None:
                 self.config = config
 
             def run(self):
@@ -1504,9 +1737,7 @@ class TestCLI:
                             task_id="retention_probe_early",
                             phase_name="retention-probe",
                         ),
-                        SimpleNamespace(
-                            task_id="other", phase_name="fresh-grounding"
-                        ),
+                        SimpleNamespace(task_id="other", phase_name="fresh-grounding"),
                     ],
                     resend_modes_seen=["full", "delta"],
                     payload_pressure_reached=True,
@@ -1520,9 +1751,9 @@ class TestCLI:
                     baseline_only=True,
                 )
 
-        monkeypatch.setattr("tok.stress_harness.StressHarness", FakeHarness)
+        monkeypatch.setattr("tok.testing.stress.StressHarness", FakeHarness)
         monkeypatch.setattr(
-            "tok.stress_harness.write_stress_artifacts",
+            "tok.testing.stress.write_stress_artifacts",
             lambda output_dir, result: {
                 "stress_run": output_dir / "run.json",
                 "breakpoints": output_dir / "breakpoints.json",
@@ -1531,13 +1762,11 @@ class TestCLI:
             },
         )
         monkeypatch.setattr(
-            "tok.stress_harness.summarize_implicated_files",
+            "tok.testing.stress.summarize_implicated_files",
             lambda breakpoints: [{"path": "src/tok/cli.py", "count": 2}],
         )
 
-        result = runner.invoke(
-            app, ["dev", "stress-language", "--output", str(tmp_path)]
-        )
+        result = runner.invoke(app, ["dev", "stress-language", "--output", str(tmp_path)])
 
         assert result.exit_code == 0
         assert "breakpoints=2" in result.output
@@ -1561,23 +1790,18 @@ class TestCLI:
         assert "protocol_drift" in result.output
         assert "report.md" in result.output
 
-    def test_live_benchmark_compare_writes_artifacts(
-        self, tmp_path, monkeypatch
-    ):
+    def test_live_benchmark_compare_writes_artifacts(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
 
         class FakeRunner:
-            def __init__(self, **kwargs):
+            def __init__(self, **kwargs) -> None:
                 self.kwargs = kwargs
 
             def run(self, definition, *, mode, turns):
                 del definition
                 totals = {
                     "baseline": 120,
-                    "tok-minimal": 85,
-                    "tok-native": 80,
-                    "tok-tool-compatible": 90,
-                    "tok-neuro": 88,
+                    "tok-universal": 85,
                 }
                 total = totals[mode]
                 return SimpleNamespace(
@@ -1645,9 +1869,7 @@ class TestCLI:
                                 "turn": 1,
                                 "outbound_payload": {
                                     "system": "s",
-                                    "messages": [
-                                        {"role": "user", "content": "x"}
-                                    ],
+                                    "messages": [{"role": "user", "content": "x"}],
                                 },
                             }
                         ],
@@ -1658,34 +1880,37 @@ class TestCLI:
                 )
 
         class FakeComparison:
-            def __init__(self, mode):
+            def __init__(self, mode: str) -> None:
                 self.mode = mode
+                self.total_token_delta = -35
+                self.task_success_equal_or_better = True
+                self.cost_delta_usd = None
+                self.fairness_diagnostics: dict[str, Any] = {}
+                self.token_savings_without_cost_savings = False
 
-            def to_dict(self):
+            def to_dict(self) -> dict[str, Any]:
                 return {
                     "benchmark": "coding-loop",
                     "candidate_mode": self.mode,
                     "tok_improved": True,
                 }
 
+        monkeypatch.setattr("tok.testing.live_benchmark.LiveBenchmarkRunner", FakeRunner)
         monkeypatch.setattr(
-            "tok.live_benchmark.LiveBenchmarkRunner", FakeRunner
-        )
-        monkeypatch.setattr(
-            "tok.live_benchmark.load_benchmark_definition",
+            "tok.testing.live_benchmark.load_benchmark_definition",
             lambda name: SimpleNamespace(name=name, default_turns=5),
         )
         monkeypatch.setattr(
-            "tok.live_benchmark.compare_results",
+            "tok.testing.live_benchmark.compare_results",
             lambda baseline, tok: FakeComparison(tok.mode),
         )
         monkeypatch.setattr(
-            "tok.live_benchmark.render_comparison_markdown",
-            lambda baseline, comparisons: "# compare\n",
+            "tok.testing.live_benchmark.render_comparison_markdown",
+            lambda baseline, _comparisons: "# compare\n",
         )
         monkeypatch.setattr(
-            "tok.live_benchmark.select_preferred_mode",
-            lambda baseline, comparisons: "tok-minimal",
+            "tok.testing.live_benchmark.select_preferred_mode",
+            lambda _baseline, _comparisons: "tok-universal",
         )
 
         output_dir = tmp_path / "artifacts"
@@ -1707,22 +1932,19 @@ class TestCLI:
 
         assert result.exit_code == 0
         assert (output_dir / "coding-loop_baseline.json").exists()
-        assert (output_dir / "coding-loop_tok-minimal.json").exists()
-        assert (output_dir / "coding-loop_tok-native.json").exists()
-        assert (output_dir / "coding-loop_tok-tool-compatible.json").exists()
-        assert (output_dir / "coding-loop_compare_tok-minimal.json").exists()
-        assert (output_dir / "coding-loop_compare_tok-native.json").exists()
-        assert (
-            output_dir / "coding-loop_compare_tok-tool-compatible.json"
-        ).exists()
+        assert (output_dir / "coding-loop_tok-universal.json").exists()
+        assert (output_dir / "coding-loop_compare_tok-universal.json").exists()
+        for run_index in range(1, 4):
+            assert (output_dir / f"coding-loop_run{run_index}_baseline.json").exists()
+            assert (output_dir / f"coding-loop_run{run_index}_tok-universal.json").exists()
+            assert (output_dir / f"coding-loop_run{run_index}_compare_tok-universal.json").exists()
         assert (output_dir / "coding-loop_compare.md").exists()
+        assert (output_dir / "coding-loop_triage.json").exists()
         assert (output_dir / "coding-loop_stability.json").exists()
         assert (output_dir / "coding-loop_stability.md").exists()
         assert "Best mode:" in result.output
 
-    def test_gate_check_expected_failure_fixture_passes_when_signal_detected(
-        self, tmp_path, monkeypatch
-    ):
+    def test_gate_check_expected_failure_fixture_passes_when_signal_detected(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
         fixtures_dir.mkdir()
@@ -1782,8 +2004,13 @@ class TestStabilityGate:
     """Tests for the --stability-dir gate in gate-check."""
 
     def _make_stability_json(
-        self, tmp_path, benchmark, success_rate, preferred_ttc, runs=5
-    ):
+        self,
+        tmp_path: Path,
+        benchmark: str,
+        success_rate: float,
+        preferred_ttc: int,
+        runs: int = 5,
+    ) -> None:
         """Write a minimal stability JSON file for a benchmark."""
         data = {
             "runs": runs,
@@ -1815,9 +2042,8 @@ class TestStabilityGate:
         }
         f = tmp_path / f"{benchmark}_stability.json"
         f.write_text(json.dumps(data))
-        return f
 
-    def _make_passing_fixture(self, fixtures_dir):
+    def _make_passing_fixture(self, fixtures_dir: Path) -> None:
         """Write a minimal passing fixture + meta that won't fail the replay gate."""
         f = fixtures_dir / "dummy.jsonl"
         f.write_text(
@@ -1852,7 +2078,46 @@ class TestStabilityGate:
             )
         )
 
-    def test_stability_gate_pass(self, tmp_path, monkeypatch):
+    def _make_frontier_json(
+        self,
+        tmp_path: Path,
+        *,
+        release_profile: str = "balanced",
+        benchmark_verdict: str = "stable",
+        probe_verdict: str | None = None,
+    ) -> Path:
+        data: dict[str, object] = {
+            "checkpoints": [
+                {
+                    "checkpoint": {
+                        "label": "current-head",
+                        "ref": "CURRENT",
+                    },
+                    "benchmark_profiles": [
+                        {
+                            "profile": {"name": release_profile},
+                            "verdict": benchmark_verdict,
+                        }
+                    ],
+                    "openrouter_profiles": [],
+                    "default_release_profile": release_profile,
+                    "experimental_profiles": ["extreme"],
+                }
+            ]
+        }
+        if probe_verdict is not None:
+            checkpoint = data["checkpoints"][0]
+            checkpoint["openrouter_profiles"] = [
+                {
+                    "profile": release_profile,
+                    "verdict": probe_verdict,
+                }
+            ]
+        path = tmp_path / "frontier.json"
+        path.write_text(json.dumps(data))
+        return path
+
+    def test_stability_gate_pass(self, tmp_path, monkeypatch) -> None:
         """Both required benchmarks present and passing → exit 0, PASS output."""
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
@@ -1879,9 +2144,7 @@ class TestStabilityGate:
         assert "STABILITY PASS" in result.output
         assert "Stability gate: PASS" in result.output
 
-    def test_stability_gate_export_includes_benchmark_results(
-        self, tmp_path, monkeypatch
-    ):
+    def test_stability_gate_export_includes_benchmark_results(self, tmp_path, monkeypatch) -> None:
         """Export includes benchmark-level stability status when a stability dir is used."""
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
@@ -1913,7 +2176,7 @@ class TestStabilityGate:
         assert data["stability_check"]["coding-loop-5"]["passed"] is True
         assert data["stability_check"]["research-loop-5"]["passed"] is True
 
-    def test_stability_gate_fail_low_success_rate(self, tmp_path, monkeypatch):
+    def test_stability_gate_fail_low_success_rate(self, tmp_path, monkeypatch) -> None:
         """A benchmark with success_rate < 1.0 → exit 1, FAIL output."""
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
@@ -1921,9 +2184,7 @@ class TestStabilityGate:
         stab_dir = tmp_path / "stability"
         stab_dir.mkdir()
         self._make_stability_json(stab_dir, "coding-loop-5", 1.0, 5)
-        self._make_stability_json(
-            stab_dir, "research-loop-5", 0.8, 5
-        )  # failing
+        self._make_stability_json(stab_dir, "research-loop-5", 0.8, 5)  # failing
         self._make_passing_fixture(fixtures_dir)
 
         result = runner.invoke(
@@ -1943,7 +2204,7 @@ class TestStabilityGate:
         assert "research-loop-5" in result.output
         assert "Stability gate: FAIL" in result.output
 
-    def test_stability_gate_fail_missing_file(self, tmp_path, monkeypatch):
+    def test_stability_gate_fail_missing_file(self, tmp_path, monkeypatch) -> None:
         """A required benchmark file missing → exit 1, file-not-found message."""
         monkeypatch.chdir(tmp_path)
         fixtures_dir = tmp_path / "fixtures"
@@ -1970,3 +2231,74 @@ class TestStabilityGate:
         assert "STABILITY FAIL" in result.output
         assert "research-loop-5" in result.output
         assert "file not found" in result.output
+
+    def test_frontier_gate_pass(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        fixtures_dir = tmp_path / "fixtures"
+        fixtures_dir.mkdir()
+        self._make_passing_fixture(fixtures_dir)
+        frontier_path = self._make_frontier_json(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "gate-check",
+                str(fixtures_dir),
+                "--frontier-report",
+                str(frontier_path),
+                "--continue-on-error",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "FRONTIER PASS" in result.output
+        assert "Compression frontier gate: PASS" in result.output
+
+    def test_frontier_gate_export_includes_frontier_check(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        fixtures_dir = tmp_path / "fixtures"
+        fixtures_dir.mkdir()
+        self._make_passing_fixture(fixtures_dir)
+        frontier_path = self._make_frontier_json(tmp_path)
+        export_path = tmp_path / "results.json"
+
+        result = runner.invoke(
+            app,
+            [
+                "gate-check",
+                str(fixtures_dir),
+                "--frontier-report",
+                str(frontier_path),
+                "--export",
+                str(export_path),
+                "--continue-on-error",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(export_path.read_text())
+        assert data["frontier_check"]["passed"] is True
+        assert data["release_summary"]["frontier_release_profile"] == "balanced"
+        assert data["release_summary"]["frontier_status"] == "pass"
+
+    def test_frontier_gate_fails_for_baseline_release_lane(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        fixtures_dir = tmp_path / "fixtures"
+        fixtures_dir.mkdir()
+        self._make_passing_fixture(fixtures_dir)
+        frontier_path = self._make_frontier_json(tmp_path, release_profile="baseline")
+
+        result = runner.invoke(
+            app,
+            [
+                "gate-check",
+                str(fixtures_dir),
+                "--frontier-report",
+                str(frontier_path),
+                "--continue-on-error",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "FRONTIER FAIL" in result.output
+        assert "Compression frontier gate: FAIL" in result.output

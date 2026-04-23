@@ -37,8 +37,6 @@ def get_feature_fixtures() -> list[str]:
         "tool_density_micro",
         "episodes_multi_phase",
         "release_reacquisition",
-        "orchestrator_parity",
-        "bridge_vs_orchestrator",
         "cache_sensitivity",
     ]
 
@@ -75,8 +73,6 @@ def get_full_fixtures() -> list[str]:
         "tool_density_micro",
         "episodes_multi_phase",
         "release_reacquisition",
-        "orchestrator_parity",
-        "bridge_vs_orchestrator",
         "cache_sensitivity",
     ]
 
@@ -100,23 +96,20 @@ def select_fixtures(fixture_set: str) -> list[str]:
         return get_full_fixtures()
     if fixture_set == "redteam":
         return get_redteam_fixtures()
-    raise ValueError(f"Unknown fixture set: {fixture_set}")
+    msg = f"Unknown fixture set: {fixture_set}"
+    raise ValueError(msg)
 
 
 def main() -> None:
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Select fixtures for Tok gate checks"
-    )
+    parser = argparse.ArgumentParser(description="Select fixtures for Tok gate checks")
     parser.add_argument(
         "--set",
         choices=["feature", "full", "redteam"],
         required=True,
         help="Fixture set to use",
     )
-    parser.add_argument(
-        "--output", default="fixtures.json", help="Output JSON file path"
-    )
+    parser.add_argument("--output", default="fixtures.json", help="Output JSON file path")
 
     args = parser.parse_args()
 
@@ -134,11 +127,7 @@ def main() -> None:
         output_path = Path(args.output)
         output_path.write_text(json.dumps(output_data, indent=2))
 
-        print(f"Selected {len(fixtures)} fixtures for '{args.set}' set")
-        print(f"Output written to: {output_path}")
-
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+    except Exception:
         sys.exit(1)
 
 

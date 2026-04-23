@@ -25,9 +25,10 @@ This applies to project spaces and project-related communication.
 
 ## Enforcement
 
-Project maintainers may remove comments, commits, issues, or contributors whose
-behavior makes the project unsafe or unproductive.
+Project maintainers may remove comments, commits, issues, or contributors whose behavior
+makes the project unsafe or unproductive.
 
 ## Contact
 
-If you experience or witness unacceptable behavior, contact the maintainers at `security@tok-protocol.dev`.
+If you experience or witness unacceptable behavior, contact the maintainers at
+`tokmacher@protonmail.com`.

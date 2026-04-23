@@ -28,19 +28,17 @@ def _collect_import_statements(
 
 def test_orchestrator_depends_on_parser_and_bridge() -> None:
     from_imports, _ = _collect_import_statements(SOURCES["orchestrator"])
-    assert any(
-        "protocol" in module and "TokParser" in names
-        for module, names in from_imports
-    ), "Orchestrator must import the parser"
-    assert any(
-        "protocol" in module and "Bridge" in names
-        for module, names in from_imports
-    ), "Orchestrator must import the bridge"
+    assert any("protocol" in module and "TokParser" in names for module, names in from_imports), (
+        "Orchestrator must import the parser"
+    )
+    assert any("protocol" in module and "Bridge" in names for module, names in from_imports), (
+        "Orchestrator must import the bridge"
+    )
 
 
 def test_protocol_components_do_not_import_orchestrator() -> None:
     for name in ("parser", "bridge"):
         _, modules = _collect_import_statements(SOURCES[name])
-        assert all(
-            "adapters.orchestrator" not in mod for mod in modules
-        ), f"{name} must not import adapters.orchestrator"
+        assert all("adapters.orchestrator" not in mod for mod in modules), (
+            f"{name} must not import adapters.orchestrator"
+        )

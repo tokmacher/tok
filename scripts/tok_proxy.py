@@ -1,4 +1,5 @@
-"""Tok Bridge — backwards-compatible entry point.
+"""
+Tok Bridge — backwards-compatible entry point.
 
 Delegates to tok.gateway. Use `tok bridge start` instead.
 """
