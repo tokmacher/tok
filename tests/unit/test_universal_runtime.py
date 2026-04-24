@@ -312,14 +312,9 @@ def test_runtime_prepare_request_preserves_prompt_cached_system_list(
 
     assert isinstance(prepared.body["system"], list)
     assert prepared.body["system"][0]["cache_control"]["type"] == "ephemeral"
-    assert "### Optimized Task Context" in prepared.body["system"][0]["text"]
-    assert not any(
-        isinstance(block, dict)
-        and block.get("type") == "text"
-        and "Plain text. Tool calls only. Omit all headers." in block.get("text", "")
-        for block in prepared.body["system"][1:]
-    )
-    assert prepared.behavior_signals.get("tok_prompt_optimized", 0) == 1
+    assert "### Optimized Task Context" not in prepared.body["system"][0]["text"]
+    assert prepared.behavior_signals.get("tok_prompt_optimization_skipped_bridge", 0) == 1
+    assert prepared.behavior_signals.get("tok_prompt_optimized", 0) == 0
 
 
 def test_runtime_prepare_request_blocks_prompt_optimization_when_required_context_would_be_lost(
@@ -355,8 +350,9 @@ def test_runtime_prepare_request_blocks_prompt_optimization_when_required_contex
 
     prepared = runtime.prepare_request(request, session)
 
-    assert prepared.behavior_signals.get("tok_prompt_optimization_blocked", 0) == 1
+    assert prepared.behavior_signals.get("tok_prompt_optimization_skipped_bridge", 0) == 1
     assert prepared.behavior_signals.get("tok_prompt_optimized", 0) == 0
+    assert prepared.behavior_signals.get("tok_prompt_optimization_blocked", 0) == 0
     assert "src/tok/runtime/_request_preparation.py" in str(prepared.body.get("system", ""))
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "tok-protocol"
-version = "0.1.1"
+version = "0.1.2"
 description = "Bridge-first CLI and runtime for Claude Code that compresses conversations and exposes savings and fallback health"
 authors = [
     { name = "tokmacher", email = "tokmacher@protonmail.com" }
