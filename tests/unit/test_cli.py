@@ -8,6 +8,7 @@ from typing import Any, NoReturn
 
 from typer.testing import CliRunner
 
+from tok import __version__
 from tok.cli import app
 from tok.stats import SavingsTracker
 
@@ -34,7 +35,7 @@ class TestCLI:
     def test_version(self) -> None:
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert __version__ in result.output
 
     def test_version_shows_program_name(self) -> None:
         result = runner.invoke(app, ["--version"])
