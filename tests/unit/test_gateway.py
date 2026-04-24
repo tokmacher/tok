@@ -2963,7 +2963,7 @@ def test_gateway_prompt_cached_runtime_request_preserves_system_shape_and_prefli
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
-    caplog.set_level(logging.INFO, logger="tok.gateway")
+    caplog.set_level(logging.INFO, logger="tok")
 
     app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
     client = TestClient(app)
@@ -2981,8 +2981,9 @@ def test_gateway_prompt_cached_runtime_request_preserves_system_shape_and_prefli
     assert len(sent_bodies) == 1
     assert isinstance(sent_bodies[0]["system"], list)
     assert sent_bodies[0]["system"][0]["cache_control"]["type"] == "ephemeral"
-    assert "### Optimized Task Context" in sent_bodies[0]["system"][0]["text"]
-    assert "bridge_preflight_ready" in caplog.text
+    assert "### Optimized Task Context" not in sent_bodies[0]["system"][0]["text"]
+    assert original_system_text in sent_bodies[0]["system"][0]["text"]
+    assert "tok_prompt_optimization_skipped_bridge" in caplog.text
     assert "prompt_caching_request_mutated" not in caplog.text
 
 

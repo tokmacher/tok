@@ -31,6 +31,9 @@ from ._history_slicing import (
     _stream_recovery_winnowing_floor_messages,
 )
 from ._history_slicing import (
+    _bridge_recent_suffix_has_safe_pairing as _bridge_recent_suffix_has_safe_pairing,
+)
+from ._history_slicing import (
     _tool_result_only_suffix_has_safe_pairing as _tool_result_only_suffix_has_safe_pairing_impl,
 )
 from .config import (
@@ -560,36 +563,44 @@ def prepare_request_impl(
                 last_user_msg = text_of(cast("Any", m.get("content", "")))
                 break
 
+    is_bridge_adapter = request.adapter_kind in ("claude-bridge", "orchestrator")
     if detect_prompt_bloat(body.get("system"), last_user_msg):
         session.pending_behavior_signals["tok_prompt_bloat_detected"] = 1
-        current_sys = cast("Any", body.get("system", ""))
-        cleaned_sys = clean_system_context(session.bridge_memory, current_sys)
-        if cleaned_sys and cleaned_sys != current_sys:
-            degraded, degrade_reason = prompt_optimization_materially_degrades_context(
-                current_sys,
-                cleaned_sys,
-                last_user_msg,
+        if is_bridge_adapter:
+            session.pending_behavior_signals["tok_prompt_optimization_skipped_bridge"] = 1
+            logger.info(
+                "tok_prompt_optimization_skipped_bridge: adapter_kind=%s, skipping clean_system_context",
+                request.adapter_kind,
             )
-            if degraded:
-                session.pending_behavior_signals["tok_prompt_optimization_blocked"] = 1
-                session.pending_behavior_signals[f"tok_prompt_optimization_blocked_{degrade_reason}"] = 1
-                logger.info(
-                    "tok_prompt_optimization_blocked: reason=%s original_chars=%d optimized_chars=%d",
-                    degrade_reason,
-                    len(text_of(current_sys) if isinstance(current_sys, list) else str(current_sys)),
-                    len(text_of(cleaned_sys) if isinstance(cleaned_sys, list) else str(cleaned_sys)),
+        else:
+            current_sys = cast("Any", body.get("system", ""))
+            cleaned_sys = clean_system_context(session.bridge_memory, current_sys)
+            if cleaned_sys and cleaned_sys != current_sys:
+                degraded, degrade_reason = prompt_optimization_materially_degrades_context(
+                    current_sys,
+                    cleaned_sys,
+                    last_user_msg,
                 )
-            else:
-                body["system"] = cleaned_sys
-                session.pending_behavior_signals["tok_prompt_optimized"] = 1
-                if session.bridge_memory.top_hot_files(1):
-                    session.pending_behavior_signals["smoothness_prompt_optimization_active_task"] = 1
-                compressed = True
-                logger.warning(
-                    "tok_prompt_optimized: system prompt reduced from %d to %d chars",
-                    len(text_of(current_sys) if isinstance(current_sys, list) else str(current_sys)),
-                    len(text_of(cleaned_sys) if isinstance(cleaned_sys, list) else str(cleaned_sys)),
-                )
+                if degraded:
+                    session.pending_behavior_signals["tok_prompt_optimization_blocked"] = 1
+                    session.pending_behavior_signals[f"tok_prompt_optimization_blocked_{degrade_reason}"] = 1
+                    logger.info(
+                        "tok_prompt_optimization_blocked: reason=%s original_chars=%d optimized_chars=%d",
+                        degrade_reason,
+                        len(text_of(current_sys) if isinstance(current_sys, list) else str(current_sys)),
+                        len(text_of(cleaned_sys) if isinstance(cleaned_sys, list) else str(cleaned_sys)),
+                    )
+                else:
+                    body["system"] = cleaned_sys
+                    session.pending_behavior_signals["tok_prompt_optimized"] = 1
+                    if session.bridge_memory.top_hot_files(1):
+                        session.pending_behavior_signals["smoothness_prompt_optimization_active_task"] = 1
+                    compressed = True
+                    logger.warning(
+                        "tok_prompt_optimized: system prompt reduced from %d to %d chars",
+                        len(text_of(current_sys) if isinstance(current_sys, list) else str(current_sys)),
+                        len(text_of(cleaned_sys) if isinstance(cleaned_sys, list) else str(cleaned_sys)),
+                    )
 
     translated_messages = translate_request_results(body.get("messages", []))
     body["messages"] = translated_messages
