@@ -106,6 +106,11 @@ def prompt_optimization_materially_degrades_context(
         return False, ""
     labels, paths = _collect_required_context_anchors(user_prompt)
     has_explicit_requirements = bool(labels or paths or (user_prompt and len(user_prompt) > 160))
+    if len(original_text) >= 2000 and len(optimized_text) < max(
+        500,
+        int(len(original_text) * 0.25),
+    ):
+        return True, "overcompressed"
     if (
         has_explicit_requirements
         and len(original_text) >= 1200
