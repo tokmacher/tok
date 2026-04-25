@@ -75,7 +75,7 @@ without a Tok-specific interruption; worst case is higher token cost for that re
 
 ### Canonical IDL Ownership
 
-For `0.1.0`, Tok should be described as having one canonical protocol IDL and two
+For `0.1.x`, Tok should be described as having one canonical protocol IDL and two
 derived translation layers:
 
 - Canonical protocol IDL: `src/tok/protocol/schema.py` and `src/tok/protocol/models.py`
@@ -178,7 +178,7 @@ src/tok/
 - Experimental / legacy: deeper orchestrator internals, monitoring/dashboard code, and
   analysis tooling
 
-The release surface for `0.1.0` is intentionally narrower than the repository layout:
+The release surface for `0.1.x` is intentionally narrower than the repository layout:
 see `src/tok/release_surface.py` for the supported-versus-experimental split that
 governs the public story.
 

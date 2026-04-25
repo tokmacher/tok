@@ -26,7 +26,7 @@ Steps for cutting a Tok release.
 - [ ] Verify `tok --version` reports the tagged release version from the installed
   artifact
 - [ ] Run the clean-room install verification from the README
-- [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.0`
+- [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.x`
 - [ ] Run live Claude bridge validation on the supported path: `tok install`,
   `tok bridge start`, `ANTHROPIC_BASE_URL=http://localhost:9090 claude`,
   `tok bridge status`, `tok doctor`, `tok stats`, then exit Claude and run
@@ -38,7 +38,7 @@ Steps for cutting a Tok release.
 - [ ] Update `__version__` in `src/tok/__init__.py`
 - [ ] Update version in `pyproject.toml`
 - [ ] Confirm README badges and repository URLs resolve publicly
-- [ ] Confirm the deferred `0.1.0` follow-ups are documented: CLI decomposition and
+- [ ] Confirm the deferred `0.1.x` follow-ups are documented: CLI decomposition and
   dependency upper-bound policy
 
 Recommended local gate sequence for the exact release candidate:

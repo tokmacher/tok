@@ -63,7 +63,7 @@ Use:
 - `tok savings` only as a compatibility alias for `tok stats`
 
 Advanced maintainer utilities remain available, but they are intentionally hidden from
-the default help surface in `0.1.0` so new users land on one clear workflow. Hidden
+the default help surface in `0.1.x` so new users land on one clear workflow. Hidden
 commands such as capture review, release gating, conversion helpers, and developer tools
 are maintainer-only for this release and may change without compatibility guarantees.
 

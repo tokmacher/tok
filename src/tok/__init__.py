@@ -1,7 +1,7 @@
 """
 Tok — bridge-first CLI and runtime for Claude Code.
 
-The only supported root export for 0.1.0 is `Bridge`. All other symbols are
+The only supported root export for 0.1.x is `Bridge`. All other symbols are
 accessible via their submodules (e.g. `tok.runtime.core.RuntimeSession`) but
 are not part of the defended public release surface.
 """
@@ -33,4 +33,4 @@ def __getattr__(name: str) -> object:
 
 __all__: list[str] = ["Bridge"]
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"

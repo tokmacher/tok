@@ -530,11 +530,20 @@ def _safe_env_flag(name: str) -> str:
 
 def _tok_version() -> str:
     try:
+        from tok import __version__ as _src_version
+    except Exception:
+        _src_version = None
+    try:
         from importlib import metadata
 
-        return metadata.version("tok-protocol")
+        v = metadata.version("tok-protocol")
+        if v:
+            if _src_version and _src_version != v:
+                return _src_version
+            return v
     except Exception:
-        return "unknown"
+        pass
+    return _src_version or "unknown"
 
 
 def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
