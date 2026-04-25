@@ -113,6 +113,41 @@ def _is_tool_result_only_user_message(message: dict[str, Any]) -> bool:
     return all(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
+def _cut_splits_tool_pair(messages: list[dict[str, Any]], cut_index: int) -> bool:
+    prefix_use_ids: set[str] = set()
+    for idx in range(cut_index):
+        msg = messages[idx]
+        if not isinstance(msg, dict) or str(msg.get("role", "")).strip() != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tid = str(block.get("id", "")).strip()
+                if tid:
+                    prefix_use_ids.add(tid)
+    if not prefix_use_ids:
+        return False
+    suffix_result_ids: set[str] = set()
+    for idx in range(cut_index, len(messages)):
+        msg = messages[idx]
+        if not isinstance(msg, dict):
+            continue
+        if str(msg.get("role", "")).strip() == "tool_result":
+            tid = str(msg.get("tool_use_id", "")).strip()
+            if tid:
+                suffix_result_ids.add(tid)
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    tid = str(block.get("tool_use_id", "")).strip()
+                    if tid:
+                        suffix_result_ids.add(tid)
+    return bool(prefix_use_ids & suffix_result_ids)
+
+
 def _advance_cut_index_past_tool_result_only_users(
     messages: list[dict[str, Any]],
     cut_index: int,
@@ -128,6 +163,12 @@ def _advance_cut_index_past_tool_result_only_users(
     if cut_index >= len(messages) or not isinstance(messages[cut_index], dict):
         return None
     if not _is_tool_result_only_user_message(messages[cut_index]):
+        if _cut_splits_tool_pair(messages, cut_index):
+            logger.info(
+                "compress_history: cut at index %d rejected to prevent tool_use/tool_result split",
+                cut_index,
+            )
+            return None
         return cut_index
 
     for next_index in range(cut_index + 1, len(messages)):
@@ -170,6 +211,13 @@ def compress_history_impl(
         for i in reversed(eligible_indices):
             adjusted_cut_index = i if bridge_cut_search else _advance_cut_index_past_tool_result_only_users(messages, i)
             if adjusted_cut_index is None:
+                continue
+            if _cut_splits_tool_pair(messages, adjusted_cut_index):
+                rejection_counts["tool_pair_split_prevented"] = rejection_counts.get("tool_pair_split_prevented", 0) + 1
+                logger.info(
+                    "compress_history: cut candidate at index %d rejected to prevent tool_use/tool_result split",
+                    adjusted_cut_index,
+                )
                 continue
             turns_seen += 1
             if turns_seen == keep_turns:

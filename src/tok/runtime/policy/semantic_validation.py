@@ -3,6 +3,7 @@
 import re
 from typing import Any
 
+from tok.runtime.policy.translator import IS_TOK
 from tok.utils.event_logging import log_drift_detected
 
 MEMORY_LIFT_SIGNALS = (
@@ -69,28 +70,30 @@ class SemanticValidator:
         if "|> SNAP" in text:
             drift_signals["tok_memory_snap_triggered"] = 1
 
+        has_tok_markers = bool(IS_TOK.search(text))
+
         # 1. Detect redundant human prose (Leakage)
-        # Case A: Multi-word conversational phrases that signal verbose filler
-        if re.search(
-            r"(?i)\b(I have|I'll have|I'll|successfully|requested|certainly|summarized|investigate)\b",
+        # Case A: Unambiguous filler phrases with no Tok markers in the response.
+        # Narrowed from the original broad list to avoid false positives on
+        # legitimate natural-language content (e.g. "successfully", "investigate").
+        if not has_tok_markers and re.search(
+            r"(?i)\b(certainly|of course|sure thing|no problem|I'll be happy|absolutely)\b",
             text,
         ):
             if len(text.split()) > 10:
                 drift_signals["semantic_drift_detected"] = 1
                 log_drift_detected("prose_leakage", f"{len(text.split())} words")
 
-        # Case B: Long non-Tok responses (absence of protocol markers)
-        # If the response is over 40 words and contains no >>> marker, it is a prose leak.
-        # This triggers for "Victorian Poet" or overly creative / non-mechanical filler.
-        if ">>>" not in text and len(text.split()) > 40:
+        # Case B: Long response with zero Tok markers — genuine prose leak.
+        # Gated on IS_TOK so that well-formed natural-language responses (health
+        # checks, clarifications) don't inflate semantic_drift_count.
+        if not has_tok_markers and len(text.split()) > 40:
             drift_signals["semantic_drift_detected"] = 1
             log_drift_detected("long_prose", f"{len(text.split())} words no markers")
 
-        # Case C: Bullet-list prose without Tok markers — gradual drift indicator.
-        # A response with multiple "- " bullet lines but no @msg or >>> is leaking
-        # narrative structure into the protocol layer.
+        # Case C: Bullet-list prose — only a drift signal when no Tok markers present.
         bullet_lines = [ln for ln in text.splitlines() if ln.lstrip().startswith("- ")]
-        if len(bullet_lines) >= 2 and "@msg" not in text and ">>>" not in text:
+        if len(bullet_lines) >= 2 and not has_tok_markers:
             drift_signals["semantic_drift_detected"] = 1
             log_drift_detected("bullet_prose", f"{len(bullet_lines)} bullets")
 

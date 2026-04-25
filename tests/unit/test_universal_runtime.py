@@ -2635,10 +2635,8 @@ def test_process_response_no_drift_in_tool_compatible_mode() -> None:
 def test_process_response_still_detects_drift_in_tok_native_mode() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
-    prose = (
-        "Here is the updated implementation. I have examined the codebase "
-        "and explored the relevant modules to understand the architecture."
-    )
+    # Long prose (>40 words) with no Tok markers — triggers Case B drift detection.
+    prose = " ".join(["word"] * 50)
     result = runtime.process_response(
         prose,
         model="claude-sonnet-4",
