@@ -1201,6 +1201,47 @@ class TestFileCache:
         assert bd1 == {}
         assert sum(bd2.values()) > 0, f"Expected savings on second read; got {bd2}"
 
+    def test_parallel_reads_of_same_file_deduplicated_within_turn(self) -> None:
+        """Two tool_results for the same file in a single turn: second must be @stable_result."""
+        raw = self._big_file(20)
+        id_to_context = {
+            "t1": {"name": "view_file", "path": "src/foo.py", "args": {"path": "src/foo.py"}},
+            "t2": {"name": "view_file", "path": "src/foo.py", "args": {"path": "src/foo.py"}},
+        }
+        # Both results in the same user message (same turn, parallel reads)
+        msgs = [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "view_file", "input": {"path": "src/foo.py"}},
+                    {"type": "tool_use", "id": "t2", "name": "view_file", "input": {"path": "src/foo.py"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": raw},
+                    {"type": "tool_result", "tool_use_id": "t2", "content": raw},
+                ],
+            },
+        ]
+        semantic_cache: dict[str, str] = {}
+        session_files: set[str] = set()
+        out, breakdown = compress_tool_results(
+            msgs,
+            tool_use_id_to_context=id_to_context,
+            semantic_hash_cache=semantic_cache,
+            session_files_read=session_files,
+        )
+        results = [b for b in out[1]["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
+        first_content = results[0]["content"]
+        second_content = results[1]["content"]
+        assert first_content == raw, "First parallel read must be preserved verbatim"
+        assert "@stable_result" in second_content or "unchanged" in second_content, (
+            f"Second parallel read must be deduplicated; got: {second_content!r}"
+        )
+        assert sum(breakdown.values()) > 0, f"Expected savings for same-turn dedup; got {breakdown}"
+
     def test_file_tools_are_preserved_verbatim(self) -> None:
         cache: dict[str, ResultCacheEntry] = {}
         raw = self._big_file(20)
