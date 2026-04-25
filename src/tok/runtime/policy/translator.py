@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("tok.translator")
 
-IS_TOK = re.compile(r"(^>>>|^@[A-Za-z_]|\s+\|>)", re.MULTILINE)
+IS_TOK = re.compile(r"(^>>>|^@[A-Za-z_]|\s+\|>|^\|>)", re.MULTILINE)
 
 _MD_STRIP = [
     (re.compile(r"^#{1,6}\s+", re.MULTILINE), ""),
