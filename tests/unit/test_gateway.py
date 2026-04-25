@@ -267,7 +267,7 @@ def test_health_endpoint(monkeypatch) -> None:
         "bridge": "tok",
         "port": 9191,
         "api_base": "https://api.anthropic.com",
-        "mode": "tool-compatible",
+        "mode": "natural-first",
         "request_policy": "natural_first",
         "baseline_only": False,
         "fallback_count": 0,

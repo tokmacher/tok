@@ -44,4 +44,6 @@ def default_request_policy(
 def request_policy_mode_label(policy: str) -> str:
     if policy == "forced_baseline":
         return "baseline"
+    if policy == "natural_first":
+        return "natural-first"
     return "tool-compatible"

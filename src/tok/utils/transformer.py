@@ -210,7 +210,7 @@ class DocumentTransformer:
                 i += 1
                 continue
 
-            if i + 1 < len(lines) and "|" in line and re.match(r"^\s*\|?([\s:|-]+)+\s*$", lines[i + 1]):
+            if i + 1 < len(lines) and "|" in line and re.match(r"^\s*\|?[\s:|-]+\s*$", lines[i + 1]):
                 headers = [h.strip() for h in line.split("|") if h.strip()]
                 i += 2
                 node, i = self._parse_table_rows(lines, i, headers, strip_decorators)

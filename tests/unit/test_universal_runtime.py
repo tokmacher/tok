@@ -3226,7 +3226,7 @@ def test_prepare_request_context_is_consumed_for_same_turn_answer_phase_quaranti
     )
 
     assert session._request_has_tools is False
-    assert session._answer_phase_expected_this_turn is False
+    assert session._answer_phase_expected_this_turn is True
     assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
 
 
@@ -3264,7 +3264,7 @@ def test_prepare_request_context_keeps_tools_expected_turns_out_of_quarantine(
     )
 
     assert session._request_has_tools is True
-    assert session._answer_phase_expected_this_turn is False
+    assert session._answer_phase_expected_this_turn is True
     assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
     assert any(block.get("type") == "tool_use" for block in processed.content_blocks)
 

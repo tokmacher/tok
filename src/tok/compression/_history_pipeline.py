@@ -282,19 +282,15 @@ def compress_history_impl(
         test_file = re.search(r"\b(tests?/[\w./-]+\.(?:py|ts|tsx|js|jsx|go|rb|rs))\b", text, re.IGNORECASE)
         if test_file:
             return test_file.group(1).lower()
-        source_file = re.search(r"\b(src/[\w./-]+\.(?:py|ts|tsx|js|jsx|go|rb|rs))\b", text, re.IGNORECASE)
-        if source_file:
-            return source_file.group(1).lower()
         return ""
 
     def _line_outcome_type(line: str) -> str:
         lowered_line = line.lower()
-        if re.search(r"\b\d+\s+passed\b", lowered_line) or " passed" in lowered_line or "passed " in lowered_line:
+        if re.search(r"\b\d+\s+passed\b", lowered_line) or re.search(r"\b\w+(?:::\w+)*\s+passed\s*$", lowered_line):
             return "pass"
         if (
             re.search(r"\b\d+\s+failed\b", lowered_line)
-            or " failed" in lowered_line
-            or "failed " in lowered_line
+            or re.search(r"\b\w+(?:::\w+)*\s+failed\s*$", lowered_line)
             or "error:" in lowered_line
             or "assertionerror" in lowered_line
             or "exception" in lowered_line

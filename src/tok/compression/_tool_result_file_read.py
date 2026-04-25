@@ -425,7 +425,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
         if any(k in args for k in ("offset", "limit", "start", "end")) or args.get("verbatim"):
             return text
         file_heat = tool_context.get("file_heat") if isinstance(tool_context, dict) else None
-        if file_heat:
+        if file_heat is not None:
             path = str(
                 args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
             )
