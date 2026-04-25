@@ -2002,3 +2002,97 @@ class TestLargeFileExactAccess:
         # They should be the same because offset/limit are excluded from identity
         assert full_key == offset_key
         assert full_key == "file_read|/tmp/module.py"
+
+
+class TestHarnessInjectionStripping:
+    """_strip_harness_injections removes <system-reminder> blocks before hashing."""
+
+    def _make_ctx(self, path: str = "/tmp/test.py") -> dict:
+        return {"name": "read_file", "args": {"file_path": path}}
+
+    def _make_cache(self) -> dict:
+        return {}
+
+    def test_strip_helper_removes_system_reminder(self) -> None:
+        from tok.compression import _strip_harness_injections
+
+        # Reminder appended after file content — surrounding \n? consumed, content preserved
+        raw = "file content\n<system-reminder>some injected text</system-reminder>\n"
+        assert _strip_harness_injections(raw) == "file content"
+
+    def test_strip_helper_no_reminder_is_identity(self) -> None:
+        from tok.compression import _strip_harness_injections
+
+        # Content with no reminder must come back byte-for-byte identical
+        raw = "clean content\n"
+        assert _strip_harness_injections(raw) is raw
+
+    def test_strip_helper_multiline_reminder(self) -> None:
+        from tok.compression import _strip_harness_injections
+
+        # Reminder at end; preceding and trailing \n consumed, no stray blank line
+        raw = "content\n<system-reminder>\nline one\nline two\n</system-reminder>\nmore"
+        assert _strip_harness_injections(raw) == "contentmore"
+
+    def test_strip_helper_stable_across_reminder_variants(self) -> None:
+        """Two texts that differ only in reminder content produce the same stripped form."""
+        from tok.compression import _strip_harness_injections
+
+        base = "def foo():\n    return 1\n"
+        v1 = _strip_harness_injections(base + "\n<system-reminder>v1</system-reminder>\n")
+        v2 = _strip_harness_injections(base + "\n<system-reminder>v2</system-reminder>\n")
+        # All three normalise to the same bytes (base without trailing \n from the separator)
+        assert v1 == v2
+        # plain returns the original unchanged; v1 strips the extra \n separator too
+        assert "<system-reminder>" not in v1
+
+    def _large_file_content(self) -> str:
+        # Must be large enough that the cache stub is shorter than the raw content
+        lines = [f"    # line {i}\n    x_{i} = {i}" for i in range(60)]
+        return "class Fixture:\n" + "\n".join(lines) + "\n"
+
+    def test_cache_hit_despite_different_reminder(self) -> None:
+        """A file read cached with a reminder appended must still hit when re-read without it."""
+        from tok.compression import _apply_result_cache
+
+        cache: dict = {}
+        ctx = self._make_ctx()
+        file_content = self._large_file_content()
+
+        # First call: reminder appended to raw result
+        raw_with_reminder = file_content + "\n<system-reminder>reminder v1</system-reminder>\n"
+        _apply_result_cache(raw_with_reminder, ctx, cache)
+
+        # Second call: different reminder — must still be a cache hit
+        raw_with_different_reminder = file_content + "\n<system-reminder>reminder v2</system-reminder>\n"
+        result2, _ = _apply_result_cache(raw_with_different_reminder, ctx, cache)
+        assert "|unchanged|" in result2, f"Expected cache hit stub, got: {result2!r}"
+
+    def test_cache_hit_reminder_then_clean(self) -> None:
+        """A file read cached with a reminder must hit when re-read with no reminder."""
+        from tok.compression import _apply_result_cache
+
+        cache: dict = {}
+        ctx = self._make_ctx("/tmp/other.py")
+        file_content = self._large_file_content()
+
+        raw_with_reminder = file_content + "\n<system-reminder>injected</system-reminder>"
+        _apply_result_cache(raw_with_reminder, ctx, cache)
+
+        result, _ = _apply_result_cache(file_content, ctx, cache)
+        assert "|unchanged|" in result, f"Expected cache hit stub, got: {result!r}"
+
+    def test_cached_raw_does_not_contain_reminder(self) -> None:
+        """Raw stored in cache must be the clean content, not the reminder-polluted version."""
+        from tok.compression import _apply_result_cache
+
+        cache: dict = {}
+        ctx = self._make_ctx("/tmp/clean.py")
+        file_content = "y = 2\n"
+        raw_with_reminder = file_content + "<system-reminder>noise</system-reminder>"
+
+        _apply_result_cache(raw_with_reminder, ctx, cache)
+
+        entry = next(iter(cache.values()))
+        stored_raw = entry.get("raw", "") if isinstance(entry, dict) else entry[1]
+        assert "<system-reminder>" not in stored_raw

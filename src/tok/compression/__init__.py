@@ -29,6 +29,19 @@ TOOL_COMPRESS_THRESHOLD = 0
 
 logger = logging.getLogger("tok.compression")
 
+_HARNESS_INJECTION_RE = re.compile(r"\n?<system-reminder>.*?</system-reminder>\n?", re.DOTALL)
+
+
+def _strip_harness_injections(text: str) -> str:
+    """Remove harness-injected <system-reminder> blocks before hashing or caching.
+
+    Consumes the optional newline immediately before and after the tag so removal
+    doesn't leave stray blank lines.  If no reminder is present the text is
+    returned unchanged so callers that pass clean content see no side effects.
+    """
+    cleaned = _HARNESS_INJECTION_RE.sub("", text)
+    return text if cleaned == text else cleaned
+
 
 @dataclass(frozen=True)
 class CutEligibility:
@@ -659,7 +672,8 @@ def _apply_result_cache(
         return compressed, len(raw) - len(compressed)
 
     cache_key = _build_cache_key(tool_name, context)
-    raw_text = str(raw or "")
+    raw_text = _strip_harness_injections(str(raw or ""))
+    raw = raw_text  # use stripped content for both hashing and storage
     cached_entry = result_cache.get(cache_key)
 
     if cached_entry is None:
@@ -990,17 +1004,19 @@ def _update_cache_after_hit(
 ) -> None:
     """Update the cache entry after a cache hit."""
     if host_stub_replayed and entry_length == 3:
-        result_cache[cache_key] = (
-            cached_hash,
-            cached_raw,
-            time_module.time(),
-        )
+        result_cache[cache_key] = {
+            "hash": cached_hash,
+            "raw": cached_raw,
+            "timestamp": time_module.time(),
+            "first_read_complete": True,
+        }
     else:
-        result_cache[cache_key] = (
-            content_hash,
-            raw,
-            time_module.time(),
-        )
+        result_cache[cache_key] = {
+            "hash": content_hash,
+            "raw": raw,
+            "timestamp": time_module.time(),
+            "first_read_complete": True,
+        }
 
 
 def _count_changed_lines(diff_lines: list[str]) -> int:
