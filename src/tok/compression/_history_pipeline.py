@@ -667,6 +667,9 @@ def compress_tool_results_impl(
     feature_telemetry: dict[str, dict[str, int]] = {}
     _skip_stable_result = model_profile is not None and not getattr(model_profile, "stable_result_enabled", True)
     _skip_file_skeleton = model_profile is not None and not getattr(model_profile, "skeletonize_files", True)
+    # Tracks paths first seen in this compress pass — used to dedup parallel reads
+    # of the same file within a single turn regardless of session heat.
+    _same_turn_seen_paths: set[str] = set()
 
     def _record_feature_telemetry(
         feature: str,
@@ -958,6 +961,7 @@ def compress_tool_results_impl(
                 _cache_semantic_hash(context, raw, semantic_hash_cache)
         if norm_path:
             _mark_file_fully_delivered(norm_path)
+            _same_turn_seen_paths.add(norm_path)
         return True
 
     def _should_preserve_exact_search_observation(
@@ -1263,6 +1267,8 @@ def compress_tool_results_impl(
                     if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                         _cache_semantic_hash(ctx, raw, semantic_hash_cache)
                 _mark_file_fully_delivered(norm_path)
+                if norm_path:
+                    _same_turn_seen_paths.add(norm_path)
                 continue
 
             # Only apply semantic dedup if this is a repeat read in the current session
@@ -1276,8 +1282,10 @@ def compress_tool_results_impl(
                 and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
                 and tool_use_id_to_context is not None
             ):
-                # Zero-heat check: never compress files that haven't been read before
-                if tool_name in FILE_LIKE_TOOLS and _is_zero_heat(ctx):
+                # Zero-heat check: never compress files that haven't been read before —
+                # unless they appeared earlier in this same pass (parallel reads in one turn).
+                is_same_turn_dup = norm_path in _same_turn_seen_paths
+                if tool_name in FILE_LIKE_TOOLS and _is_zero_heat(ctx) and not is_same_turn_dup:
                     block["content"] = raw
                     continue
                 cache_key = _make_semantic_cache_key(ctx, raw)
