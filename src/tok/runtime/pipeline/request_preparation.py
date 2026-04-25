@@ -772,23 +772,12 @@ def _inject_system(
             markers=behavior_signals.get("_project_markers_proxy"),
         )
 
-    # Append context pressure and verbosity signals to the >>> state line.
-    # These are informational-only hints injected after the main state fields.
-    if isinstance(tok_state, str) and tok_state.startswith(">>>"):
-        extra: list[str] = []
-        turn = current_turn if current_turn is not None else 0
-        if turn >= 30:
-            extra.append("ctx:critical")
-        elif turn >= 15:
-            extra.append("ctx:tight")
-        if session is not None:
-            samples = getattr(session, "_response_word_samples", [])
-            if len(samples) >= 3:
-                avg = sum(samples) / len(samples)
-                if avg >= 120:
-                    extra.append("verbose:high")
-        if extra:
-            tok_state = tok_state + "|" + "|".join(extra)
+    # Append verbosity signal to the >>> state line when the rolling average of
+    # visible response word counts is elevated (≥120 words over last 5 turns).
+    if isinstance(tok_state, str) and tok_state.startswith(">>>") and session is not None:
+        samples = getattr(session, "_response_word_samples", [])
+        if len(samples) >= 3 and sum(samples) / len(samples) >= 120:
+            tok_state = tok_state + "|verbose:high"
 
     kwargs: dict[str, Any] = {
         "body": current_body,
