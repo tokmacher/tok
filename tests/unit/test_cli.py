@@ -464,8 +464,8 @@ class TestCLI:
         def fake_memory_root():
             return tmp_path / ".tok"
 
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", no_bridge)
         for mod in (_cli_support,):
-            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
             monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
             monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
             monkeypatch.setattr(mod, "memory_root", fake_memory_root)
@@ -493,8 +493,8 @@ class TestCLI:
         def no_bridge(port) -> None:
             return None
 
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", no_bridge)
         for mod in (_cli_support,):
-            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
             monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
             monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
 
@@ -524,8 +524,8 @@ class TestCLI:
         def no_bridge(port) -> None:
             return None
 
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", no_bridge)
         for mod in (_cli_support,):
-            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
             monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
             monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
 
@@ -559,8 +559,8 @@ class TestCLI:
         def fake_memory_root():
             return tmp_path / ".tok"
 
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", no_bridge)
         for mod in (_cli_support,):
-            monkeypatch.setattr(mod, "get_running_bridge_pid", no_bridge)
             monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
             monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
             monkeypatch.setattr(mod, "memory_root", fake_memory_root)
