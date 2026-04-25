@@ -227,6 +227,7 @@ def build_tool_compatible_resend(
             pressure=current_pressure,
             behavior_signals=behavior_signals,
             current_turn=session.bridge_memory.turn,
+            session=session,
         )
 
         return (
@@ -312,6 +313,13 @@ def process_response_impl(
     ).strip()
     has_tool = any(block.get("type") == "tool_use" for block in contract.content_blocks)
     has_answer_text = _is_answer_like_visible_text(visible_text)
+
+    # Track visible response word count for verbosity signal (capped at 5 samples)
+    if visible_text and not tool_compatible:
+        samples = session._response_word_samples
+        samples.append(len(visible_text.split()))
+        if len(samples) > 5:
+            samples.pop(0)
 
     # Feature: response mining — extract file paths / line refs from assistant text
     if visible_text:

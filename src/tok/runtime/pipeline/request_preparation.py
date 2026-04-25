@@ -744,6 +744,7 @@ def _inject_system(
     pressure: int,
     behavior_signals: dict[str, int],
     current_turn: int | None = None,
+    session: Any | None = None,
 ) -> dict[str, Any]:
     """Inject Tok state and hints into the system prompt."""
     from tok.runtime.config import (
@@ -770,6 +771,13 @@ def _inject_system(
             profile=profile,
             markers=behavior_signals.get("_project_markers_proxy"),
         )
+
+    # Append verbosity signal to the >>> state line when the rolling average of
+    # visible response word counts is elevated (≥120 words over last 5 turns).
+    if isinstance(tok_state, str) and tok_state.startswith(">>>") and session is not None:
+        samples = getattr(session, "_response_word_samples", [])
+        if len(samples) >= 3 and sum(samples) / len(samples) >= 120:
+            tok_state = tok_state + "|verbose:high"
 
     kwargs: dict[str, Any] = {
         "body": current_body,
