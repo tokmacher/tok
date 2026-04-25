@@ -744,6 +744,7 @@ def _inject_system(
     pressure: int,
     behavior_signals: dict[str, int],
     current_turn: int | None = None,
+    session: Any | None = None,
 ) -> dict[str, Any]:
     """Inject Tok state and hints into the system prompt."""
     from tok.runtime.config import (
@@ -770,6 +771,24 @@ def _inject_system(
             profile=profile,
             markers=behavior_signals.get("_project_markers_proxy"),
         )
+
+    # Append context pressure and verbosity signals to the >>> state line.
+    # These are informational-only hints injected after the main state fields.
+    if isinstance(tok_state, str) and tok_state.startswith(">>>"):
+        extra: list[str] = []
+        turn = current_turn if current_turn is not None else 0
+        if turn >= 30:
+            extra.append("ctx:critical")
+        elif turn >= 15:
+            extra.append("ctx:tight")
+        if session is not None:
+            samples = getattr(session, "_response_word_samples", [])
+            if len(samples) >= 3:
+                avg = sum(samples) / len(samples)
+                if avg >= 120:
+                    extra.append("verbose:high")
+        if extra:
+            tok_state = tok_state + "|" + "|".join(extra)
 
     kwargs: dict[str, Any] = {
         "body": current_body,

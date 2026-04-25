@@ -1265,6 +1265,7 @@ def prepare_request_impl(
                     pressure=current_pressure,
                     behavior_signals=behavior_signals,
                     current_turn=session.bridge_memory.turn,
+                    session=session,
                 )
             has_answer_anchor = bool(behavior_signals.get("answer_anchor_present", 0))
         elif skip_reason == "short_session":
