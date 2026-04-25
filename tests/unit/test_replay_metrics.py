@@ -52,7 +52,8 @@ def test_analyze_replay_fixture_supports_message_per_line_format(
                 json.dumps(
                     {
                         "role": "assistant",
-                        "content": "I have carefully reviewed the codebase and here is a summarized overview.",
+                        # >40 words with no Tok markers triggers Case B drift detection.
+                        "content": " ".join(["word"] * 50),
                     }
                 ),
             ]

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 
 def _message_has_tool_result(message: dict[str, Any]) -> bool:
@@ -167,6 +170,19 @@ def _bridge_recent_suffix_has_safe_pairing(messages: list[dict[str, Any]]) -> bo
         result_ids = _message_tool_result_ids(next_message)
         if not tool_ids.issubset(result_ids):
             return False
+    all_result_ids: set[str] = set()
+    all_use_ids: set[str] = set()
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        all_use_ids |= _assistant_tool_use_ids(msg)
+        all_result_ids |= _message_tool_result_ids(msg)
+    if all_result_ids and not all_result_ids.issubset(all_use_ids):
+        _logger.info(
+            "bridge_preflight: suffix rejected — tool_result IDs %s have no matching tool_use in suffix",
+            all_result_ids - all_use_ids,
+        )
+        return False
     return True
 
 

@@ -38,7 +38,8 @@ class TestPointerRegistry:
 class TestSemanticValidator:
     def test_redundant_prose_detection(self) -> None:
         validator = SemanticValidator()
-        text = "I have successfully read the file. Here is the content of the file you requested."
+        # Unambiguous filler phrase with no Tok markers — should flag drift.
+        text = "Certainly! I'll be happy to help you with that right away."
         signals = validator.validate_drift(text, {})
         assert signals.get("semantic_drift_detected")
 
@@ -47,6 +48,41 @@ class TestSemanticValidator:
         text = "### Analysis\nThe code looks good."  # Raw markdown header
         signals = validator.validate_drift(text, {})
         assert signals.get("semantic_pressure_detected")
+
+    def test_no_false_positive_on_tok_response_with_bullets(self) -> None:
+        validator = SemanticValidator()
+        # Well-formed Tok response: has >>> marker and bullet lines — not drift.
+        text = ">>> turns:3|goal:fix bug\n@msg role:assistant\n|> Here are the results:\n- file.py fixed\n- tests pass"
+        signals = validator.validate_drift(text, {})
+        assert not signals.get("semantic_drift_detected")
+
+    def test_no_false_positive_on_long_tok_response(self) -> None:
+        validator = SemanticValidator()
+        # Long response with @msg block — should not trigger Case B.
+        text = ">>> turns:5|goal:refactor\n@msg role:assistant\n|> " + " ".join(["word"] * 50)
+        signals = validator.validate_drift(text, {})
+        assert not signals.get("semantic_drift_detected")
+
+    def test_no_false_positive_on_prose_with_legitimate_words(self) -> None:
+        validator = SemanticValidator()
+        # "successfully" and "investigate" appeared in old phrase list but are
+        # legitimate in Tok-formatted responses. Verify they no longer trigger drift.
+        text = ">>> turns:2\n@msg role:assistant\n|> The tests ran successfully. Please investigate the logs."
+        signals = validator.validate_drift(text, {})
+        assert not signals.get("semantic_drift_detected")
+
+    def test_long_prose_without_tok_markers_is_drift(self) -> None:
+        validator = SemanticValidator()
+        # >40 words, no Tok markers — genuine prose leak.
+        text = " ".join(["word"] * 50)
+        signals = validator.validate_drift(text, {})
+        assert signals.get("semantic_drift_detected")
+
+    def test_bullets_without_tok_markers_is_drift(self) -> None:
+        validator = SemanticValidator()
+        text = "Here is my analysis:\n- first point about the code\n- second point about tests"
+        signals = validator.validate_drift(text, {})
+        assert signals.get("semantic_drift_detected")
 
 
 class TestBridgeMemoryPointers:

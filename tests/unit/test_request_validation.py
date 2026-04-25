@@ -2279,3 +2279,63 @@ def test_parallel_agent_bridge_compression_does_not_degrade(tmp_path) -> None:
     if prepared.compressed:
         assert validate_anthropic_bridge_body(canonical) == []
         assert len(prepared.body["messages"]) < len(messages)
+
+
+def test_bridge_recent_suffix_rejects_orphaned_tool_result_no_assistant() -> None:
+    """Suffix with tool_result but no matching tool_use assistant must be rejected."""
+    from tok.runtime._request_preparation import _bridge_recent_suffix_has_safe_pairing
+
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "orphan"},
+            ],
+        },
+    ]
+    assert _bridge_recent_suffix_has_safe_pairing(messages) is False
+
+
+def test_bridge_recent_suffix_allows_paired_tool_result_in_suffix() -> None:
+    """Suffix where tool_result has matching tool_use in the suffix should pass."""
+    from tok.runtime._request_preparation import _bridge_recent_suffix_has_safe_pairing
+
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "t1", "name": "bash", "input": {}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+            ],
+        },
+    ]
+    assert _bridge_recent_suffix_has_safe_pairing(messages) is True
+
+
+def test_bridge_preflight_safe_recent_suffix_rejects_assistant_tool_use_in_prefix() -> None:
+    """When assistant with tool_use is before all user messages, no safe suffix exists."""
+    from tok.runtime._request_preparation import _bridge_preflight_safe_recent_suffix
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "t1", "name": "bash", "input": {}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+            ],
+        },
+    ]
+    result = _bridge_preflight_safe_recent_suffix(messages)
+    assert result is None

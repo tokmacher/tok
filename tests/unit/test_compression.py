@@ -308,6 +308,46 @@ class TestCompressHistory:
                         idx = recent.index(msg)
                         assert idx > 0
 
+    def test_does_not_orphan_tool_use_result_pair(self) -> None:
+        msgs: list[dict[str, Any]] = [
+            {"role": "user", "content": "start"},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "t1", "name": "bash", "input": {"command": "ls"}}],
+            },
+            {"role": "user", "content": "hello"},
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "file.txt"}],
+            },
+            {"role": "user", "content": "final question"},
+        ]
+        recent, _state = compress_history(msgs, keep_turns=2)
+
+        def _has_tool_use(msgs_in: list[dict[str, Any]], tool_id: str) -> bool:
+            for m in msgs_in:
+                content = m.get("content")
+                if isinstance(content, list):
+                    for b in content:
+                        if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id") == tool_id:
+                            return True
+            return False
+
+        def _has_tool_result(msgs_in: list[dict[str, Any]], tool_id: str) -> bool:
+            for m in msgs_in:
+                content = m.get("content")
+                if isinstance(content, list):
+                    for b in content:
+                        if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") == tool_id:
+                            return True
+            return False
+
+        recent_has_use = _has_tool_use(recent, "t1")
+        recent_has_result = _has_tool_result(recent, "t1")
+        assert recent_has_use == recent_has_result, (
+            f"tool_use t1 and tool_result t1 must be on same side: use={recent_has_use} result={recent_has_result}"
+        )
+
     def test_boosts_edited_files_from_tool_use(self) -> None:
         msgs: list[dict[str, Any]] = [
             {"role": "user", "content": "please continue"},
