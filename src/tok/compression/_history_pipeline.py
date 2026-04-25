@@ -113,6 +113,41 @@ def _is_tool_result_only_user_message(message: dict[str, Any]) -> bool:
     return all(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
+def _cut_splits_tool_pair(messages: list[dict[str, Any]], cut_index: int) -> bool:
+    prefix_use_ids: set[str] = set()
+    for idx in range(cut_index):
+        msg = messages[idx]
+        if not isinstance(msg, dict) or str(msg.get("role", "")).strip() != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tid = str(block.get("id", "")).strip()
+                if tid:
+                    prefix_use_ids.add(tid)
+    if not prefix_use_ids:
+        return False
+    suffix_result_ids: set[str] = set()
+    for idx in range(cut_index, len(messages)):
+        msg = messages[idx]
+        if not isinstance(msg, dict):
+            continue
+        if str(msg.get("role", "")).strip() == "tool_result":
+            tid = str(msg.get("tool_use_id", "")).strip()
+            if tid:
+                suffix_result_ids.add(tid)
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    tid = str(block.get("tool_use_id", "")).strip()
+                    if tid:
+                        suffix_result_ids.add(tid)
+    return bool(prefix_use_ids & suffix_result_ids)
+
+
 def _advance_cut_index_past_tool_result_only_users(
     messages: list[dict[str, Any]],
     cut_index: int,
@@ -128,6 +163,12 @@ def _advance_cut_index_past_tool_result_only_users(
     if cut_index >= len(messages) or not isinstance(messages[cut_index], dict):
         return None
     if not _is_tool_result_only_user_message(messages[cut_index]):
+        if _cut_splits_tool_pair(messages, cut_index):
+            logger.info(
+                "compress_history: cut at index %d rejected to prevent tool_use/tool_result split",
+                cut_index,
+            )
+            return None
         return cut_index
 
     for next_index in range(cut_index + 1, len(messages)):
@@ -170,6 +211,13 @@ def compress_history_impl(
         for i in reversed(eligible_indices):
             adjusted_cut_index = i if bridge_cut_search else _advance_cut_index_past_tool_result_only_users(messages, i)
             if adjusted_cut_index is None:
+                continue
+            if _cut_splits_tool_pair(messages, adjusted_cut_index):
+                rejection_counts["tool_pair_split_prevented"] = rejection_counts.get("tool_pair_split_prevented", 0) + 1
+                logger.info(
+                    "compress_history: cut candidate at index %d rejected to prevent tool_use/tool_result split",
+                    adjusted_cut_index,
+                )
                 continue
             turns_seen += 1
             if turns_seen == keep_turns:
@@ -234,19 +282,15 @@ def compress_history_impl(
         test_file = re.search(r"\b(tests?/[\w./-]+\.(?:py|ts|tsx|js|jsx|go|rb|rs))\b", text, re.IGNORECASE)
         if test_file:
             return test_file.group(1).lower()
-        source_file = re.search(r"\b(src/[\w./-]+\.(?:py|ts|tsx|js|jsx|go|rb|rs))\b", text, re.IGNORECASE)
-        if source_file:
-            return source_file.group(1).lower()
         return ""
 
     def _line_outcome_type(line: str) -> str:
         lowered_line = line.lower()
-        if re.search(r"\b\d+\s+passed\b", lowered_line) or " passed" in lowered_line or "passed " in lowered_line:
+        if re.search(r"\b\d+\s+passed\b", lowered_line) or re.search(r"\b\w+(?:::\w+)*\s+passed\s*$", lowered_line):
             return "pass"
         if (
             re.search(r"\b\d+\s+failed\b", lowered_line)
-            or " failed" in lowered_line
-            or "failed " in lowered_line
+            or re.search(r"\b\w+(?:::\w+)*\s+failed\s*$", lowered_line)
             or "error:" in lowered_line
             or "assertionerror" in lowered_line
             or "exception" in lowered_line
@@ -619,6 +663,9 @@ def compress_tool_results_impl(
     feature_telemetry: dict[str, dict[str, int]] = {}
     _skip_stable_result = model_profile is not None and not getattr(model_profile, "stable_result_enabled", True)
     _skip_file_skeleton = model_profile is not None and not getattr(model_profile, "skeletonize_files", True)
+    # Tracks paths first seen in this compress pass — used to dedup parallel reads
+    # of the same file within a single turn regardless of session heat.
+    _same_turn_seen_paths: set[str] = set()
 
     def _record_feature_telemetry(
         feature: str,
@@ -910,6 +957,7 @@ def compress_tool_results_impl(
                 _cache_semantic_hash(context, raw, semantic_hash_cache)
         if norm_path:
             _mark_file_fully_delivered(norm_path)
+            _same_turn_seen_paths.add(norm_path)
         return True
 
     def _should_preserve_exact_search_observation(
@@ -1215,6 +1263,8 @@ def compress_tool_results_impl(
                     if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
                         _cache_semantic_hash(ctx, raw, semantic_hash_cache)
                 _mark_file_fully_delivered(norm_path)
+                if norm_path:
+                    _same_turn_seen_paths.add(norm_path)
                 continue
 
             # Only apply semantic dedup if this is a repeat read in the current session
@@ -1228,8 +1278,10 @@ def compress_tool_results_impl(
                 and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
                 and tool_use_id_to_context is not None
             ):
-                # Zero-heat check: never compress files that haven't been read before
-                if tool_name in FILE_LIKE_TOOLS and _is_zero_heat(ctx):
+                # Zero-heat check: never compress files that haven't been read before —
+                # unless they appeared earlier in this same pass (parallel reads in one turn).
+                is_same_turn_dup = norm_path in _same_turn_seen_paths
+                if tool_name in FILE_LIKE_TOOLS and _is_zero_heat(ctx) and not is_same_turn_dup:
                     block["content"] = raw
                     continue
                 cache_key = _make_semantic_cache_key(ctx, raw)

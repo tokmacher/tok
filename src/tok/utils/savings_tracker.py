@@ -324,7 +324,7 @@ class SavingsTracker:
             signals,
             baseline_only=baseline_only,
         )
-        stream_recovery_attempt_count = int(signals.get("stream_recovery_started", 0)) or int(
+        stream_recovery_attempt_count = int(signals.get("stream_recovery_started", 0)) + int(
             signals.get("stream_recovery_retry", 0)
         )
         stream_recovery_success_text_count = int(signals.get("stream_recovery_success_text", 0))
@@ -886,12 +886,12 @@ class SavingsTracker:
         memory_lifts = [
             float(entry.get("memory_lift", 0))
             for entry in recent
-            if isinstance(entry.get("memory_lift"), int | float | str) or True
+            if isinstance(entry.get("memory_lift"), int | float | str)
         ]
         sem_regressions = [
             float(entry.get("semantic_regression", 0))
             for entry in recent
-            if isinstance(entry.get("semantic_regression"), int | float | str) or True
+            if isinstance(entry.get("semantic_regression"), int | float | str)
         ]
 
         # Calculate trend direction

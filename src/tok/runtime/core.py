@@ -267,6 +267,8 @@ class RuntimeSession:
     _natural_response_acceptable_this_turn: bool = field(default=False, init=False, repr=False)
     # Track files that have been delivered as skeletons to prevent unsafe edits
     _skeleton_delivered_paths: set[str] = field(default_factory=set, init=False, repr=False)
+    # Rolling sample of visible response word counts (last 5 turns) for verbosity signal
+    _response_word_samples: list[int] = field(default_factory=list, init=False, repr=False)
 
     def record_fallback_event(self) -> None:
         """Increment the consecutive fail-open counter and degrade to baseline when threshold is reached."""

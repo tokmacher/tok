@@ -13,7 +13,7 @@ Tok's first open-source release is intentionally narrow and Claude-first:
 - diagnose with `status`, `doctor`, `stats`, and logs
 
 The bridge is the supported product path. Broader platform and SDK work come later. The
-default CLI help intentionally centers that bridge-first path for `0.1.0`.
+default CLI help intentionally centers that bridge-first path for `0.1.x`.
 
 ## What The Bridge Does
 
@@ -35,7 +35,7 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 
 ## Prerequisites
 
-- Python `3.10`-`3.12` (tested for `0.1.0`)
+- Python `3.10`-`3.12` (tested for `0.1.x`)
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - provider/API configuration that already works with Claude Code

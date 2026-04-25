@@ -5,7 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
+import random
+import time
 from typing import TYPE_CHECKING, Any
+
+import httpx
 
 from tok.runtime.pipeline.request_validation import (
     has_blocking_outgoing_failures,
@@ -155,27 +160,66 @@ async def send_with_tok_fail_open_retry(
 ) -> tuple[httpx.Response, bool, dict[str, int]]:
     if sleep_fn is None:
         sleep_fn = asyncio.sleep
-    request_obj = client.build_request(method, url, headers=headers, content=content)
-    response = await client.send(request_obj, stream=stream)
     retried_without_tok = False
     retry_signals: dict[str, int] = {}
+
+    if session._rate_limit_throttle_until > time.time():
+        remaining = session._rate_limit_throttle_until - time.time()
+        logger.info(
+            "rate_limit_cooldown_skip: deferring request, cooldown active (%.2fs remaining)",
+            remaining,
+        )
+        retry_signals["rate_limit_cooldown_skipped"] = 1
+        return (
+            httpx.Response(
+                429,
+                json={"error": {"type": "rate_limit_error", "message": "Tok cooldown active"}},
+                headers={"Retry-After": str(max(1, int(math.ceil(remaining))))},
+            ),
+            False,
+            retry_signals,
+        )
+
+    request_obj = client.build_request(method, url, headers=headers, content=content)
+    response = await client.send(request_obj, stream=stream)
     retry_attempts = 0
 
     while response.status_code == 429 and retry_attempts < max(0, session.rate_limit_retry_max_attempts):
-        retry_after = response.headers.get("retry-after")
-        delay = _rate_limit_retry_delay_seconds(session, attempt_index=retry_attempts, retry_after=retry_after)
-        logger.warning(
-            "rate_limit_retry_attempt: attempt=%d delay=%.2f retry_after=%s",
-            retry_attempts + 1,
-            delay,
-            retry_after or "unknown",
-        )
-        retry_signals["rate_limit_retry_attempt"] = retry_signals.get("rate_limit_retry_attempt", 0) + 1
-        await response.aclose()
-        await sleep_fn(delay)
-        request_obj = client.build_request(method, url, headers=headers, content=content)
-        response = await client.send(request_obj, stream=stream)
-        retry_attempts += 1
+        async with session._rate_limit_lock:
+            if session._rate_limit_retry_owner:
+                logger.info("rate_limit_retry_yield: another request already retrying, returning 429 to client")
+                retry_signals["rate_limit_retry_yielded"] = 1
+                break
+
+            session._rate_limit_retry_owner = True
+
+        try:
+            retry_after = response.headers.get("retry-after")
+            delay = _rate_limit_retry_delay_seconds(session, attempt_index=retry_attempts, retry_after=retry_after)
+            logger.warning(
+                "rate_limit_retry_attempt: attempt=%d delay=%.2f retry_after=%s",
+                retry_attempts + 1,
+                delay,
+                retry_after or "unknown",
+            )
+            retry_signals["rate_limit_retry_attempt"] = retry_signals.get("rate_limit_retry_attempt", 0) + 1
+            await response.aclose()
+
+            async with session._rate_limit_lock:
+                session._rate_limit_throttle_until = time.time() + delay
+
+            await sleep_fn(delay)
+            jitter = random.uniform(0.05, 0.2)
+            await sleep_fn(jitter)
+
+            request_obj = client.build_request(method, url, headers=headers, content=content)
+            response = await client.send(request_obj, stream=stream)
+            retry_attempts += 1
+        finally:
+            async with session._rate_limit_lock:
+                if response.status_code == 200:
+                    session._rate_limit_throttle_until = 0.0
+                session._rate_limit_retry_owner = False
 
     if response.status_code == 429:
         retry_after = response.headers.get("retry-after", "unknown")

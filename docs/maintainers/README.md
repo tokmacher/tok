@@ -14,7 +14,7 @@ Internal planning and release documents live here.
 
 Local testing for the draft skill is manual: copy or symlink `skills/public/tok` to
 `$CODEX_HOME/skills/tok` (or `~/.codex/skills/tok` when `CODEX_HOME` is unset). This
-skill is internal collateral and is not part of the `0.1.0` release bar.
+skill is internal collateral and is not part of the `0.1.x` release bar.
 
 ## Contributing
 

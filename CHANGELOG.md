@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.3 (2026-04-25)
+
+### Fixes
+
+- Rate limit thundering herd: concurrent 429 retries are now serialized via a shared
+  lock and cooldown flag, preventing burst requests from exhausting the rate limit
+  allocation on window reset.
+- Semantic drift false positives prevented in tool use/result pairing.
+- IS_TOK gate now correctly detects line-start `|>` to prevent Tok grammar leaking to
+  the user.
+
+### Added
+
+- Harness injection stripping removes injected content from cached results.
+- Parallel read deduplication within a single turn for repeated file reads.
+- Verbosity tracking and session context in request preparation.
+
 ## 0.1.0 (2026-03-31)
 
 ### Added

@@ -331,7 +331,7 @@ class BridgeMemoryState:
         for extra in ("questions", "facts"):
             extra_entries = bucket.get(extra, [])
             if extra_entries:
-                lines.append(f"@field {extra}")
+                lines.append(f"@f {extra}")
                 for entry in extra_entries:
                     line = f"  |> {entry.value}|score:{entry.score}|last:{entry.last_seen_turn}"
                     if entry.verified_turn > 0:

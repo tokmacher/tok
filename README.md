@@ -16,7 +16,7 @@ provider's pricing structure and session length.
 
 Tok is an invisible bridge that sits between Claude Code and the model API. It
 compresses conversations on the way out and re-hydrates them on the way back. The
-focused 0.1.0 public release story is Claude Code first: you keep using Claude exactly
+focused 0.1.x public release story is Claude Code first: you keep using Claude exactly
 as before while Tok runs underneath and saves tokens automatically.
 
 ## Who Is Tok For?
@@ -79,12 +79,12 @@ tok stats                 # view savings
 Default behavior is explicit. Tok does not override `claude` unless you opt in with
 `tok install --wrap-claude`.
 
-The main CLI commands for `0.1.0` are: `tok init`, `tok install`,
+The main CLI commands for `0.1.x` are: `tok init`, `tok install`,
 `tok bridge start|status|logs|stop`, `tok doctor`, and `tok stats`.
 
 ## Validation-Only Provider Paths
 
-Tok can be pointed at OpenAI-compatible APIs, but for the focused `0.1.0` release those
+Tok can be pointed at OpenAI-compatible APIs, but for the focused `0.1.x` release those
 paths are validation-only and explicitly outside the supported default story. The public
 contract is still the Claude Code bridge workflow.
 
@@ -94,7 +94,7 @@ Experimental validation may be useful for:
 - DeepSeek or Qwen endpoints you already operate
 - local inference servers that mimic the Anthropic/OpenAI-style request shape
 
-These paths are not part of the supported `0.1.0` onboarding flow, are not surfaced in
+These paths are not part of the supported `0.1.x` onboarding flow, are not surfaced in
 the default CLI help, and may change without compatibility guarantees.
 
 ## What Tok Is / Is Not
@@ -160,7 +160,7 @@ Tok achieves its compression through several deterministic techniques:
 - **ROI tracking**: Macros with lifetime savings above a threshold are preserved
 
 > **Note**: The macro system is active in the runtime pipeline but not part of the
-> supported 0.1.0 surface. Its behavior may change.
+> supported 0.1.x surface. Its behavior may change.
 
 ### Wire Protocol
 
@@ -180,12 +180,12 @@ Tok achieves its compression through several deterministic techniques:
 ### Pointer System (Experimental)
 
 Internal cross-reference tracking for files, functions, and concepts. Not part of the
-supported 0.1.0 surface.
+supported 0.1.x surface.
 
 ### Code Analysis (Sifter)
 
 Internal AST-based extraction for Python code structure. Used by the compression engine
-but not part of the supported 0.1.0 public API.
+but not part of the supported 0.1.x public API.
 
 ## Tok Syntax Examples
 
@@ -226,7 +226,7 @@ directly — the bridge handles all encoding and decoding transparently.
 
 ## Prerequisites
 
-- Python `3.10`-`3.12` (tested for `0.1.0`)
+- Python `3.10`-`3.12` (tested for `0.1.x`)
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - An Anthropic API key (`ANTHROPIC_API_KEY`) already configured for Claude Code
@@ -236,7 +236,7 @@ Code already uses. If `claude` works without Tok, it will work with Tok.
 
 ## Provider Posture
 
-The supported `0.1.0` product path is Claude Code routed through the local Tok bridge.
+The supported `0.1.x` product path is Claude Code routed through the local Tok bridge.
 
 Validation-only evidence also exists for some OpenAI-compatible providers, but those
 paths are not the public contract for this release. Treat them as experimental unless a
@@ -338,7 +338,7 @@ wheel from `dist/`:
 python -m build
 python -m venv .venv
 source .venv/bin/activate
-pip install dist/tok_protocol-0.1.0-py3-none-any.whl
+pip install dist/tok_protocol-0.1.3-py3-none-any.whl
 tok --version
 tok --help
 tok install
@@ -380,7 +380,7 @@ Baseline prices are calculated using current Openrouter USD rates.
 Tok supports two modes via the `TOK_MODE` environment variable:
 
 - **`tool-compatible`** (default): Applies compression with a `natural_first` request
-  policy. This is the recommended mode and the only supported mode for 0.1.0.
+  policy. This is the recommended mode and the only supported mode for 0.1.x.
 - **`baseline`**: No compression. All requests pass through unchanged. Use for
   debugging, measuring Tok's impact, or short sessions where compression overhead
   exceeds savings.
@@ -411,7 +411,7 @@ The new mode applies to subsequent requests. Existing session state is preserved
 
 ## Experimental: Python Submodule APIs
 
-> **Note**: These APIs are experimental. They are not part of the supported `0.1.0`
+> **Note**: These APIs are experimental. They are not part of the supported `0.1.x`
 > contract, are intentionally absent from the root `tok` namespace, and may change
 > without compatibility guarantees.
 

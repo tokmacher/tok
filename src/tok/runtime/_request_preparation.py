@@ -832,7 +832,6 @@ def prepare_request_impl(
         )
 
         runtime_hints = []
-        answer_phase_expected = False
         if session.consume_loop_detected():
             runtime_hints.append(
                 "@tok_terminate_loop You appear to be in a loop of repeated actions. "
@@ -894,6 +893,7 @@ def prepare_request_impl(
             for key, value in repeat_snapshot_signals.items():
                 behavior_signals[key] = behavior_signals.get(key, 0) + value
 
+        answer_ready_turn = False
         if effective_tool_compatible:
             has_answer_facts = initial_answer_facts_present or any(
                 entry.value.startswith("answer_")
@@ -912,10 +912,8 @@ def prepare_request_impl(
             )
             if tool_required_latch_active:
                 answer_ready_turn = False
-            if answer_ready_turn:
-                pass
             preserve_exact_search_evidence = bool(answer_ready_turn and has_answer_anchor)
-        session._answer_phase_expected_this_turn = bool(answer_phase_expected)
+        session._answer_phase_expected_this_turn = bool(answer_ready_turn)
 
         session._save_bridge_memory()
         fidelity_overrides, current_path = compute_fidelity_overrides(
@@ -1154,9 +1152,7 @@ def prepare_request_impl(
                                 behavior_signals["request_policy_escalations"] = 1
                                 behavior_signals["request_policy_escalation_source_tool_recovery"] = 1
                             behavior_signals["request_policy_reason_tool_recovery"] = 1
-                            behavior_signals["request_policy_tool_compatible"] = (
-                                behavior_signals.get("request_policy_natural_first", 0) + 1
-                            )
+                            behavior_signals["request_policy_tool_compatible"] = 1
                             behavior_signals["request_policy_natural_first"] = 0
                             # Set recovery watch for sticky continuation
                             session._request_policy_tool_recovery_watch_turns = max(
@@ -1247,9 +1243,7 @@ def prepare_request_impl(
                     _recent_messages=recent,
                     has_answer_anchor_param=has_answer_anchor,
                 )
-                answer_phase_now = False
-                session._answer_phase_expected_this_turn = answer_phase_now
-                if answer_phase_now and runtime_hints:
+                if session._answer_phase_expected_this_turn and runtime_hints:
                     runtime_hints = []
                 max_runtime_hints = RUNTIME_HINTS_MAX_PER_TURN
                 if len(runtime_hints) > max_runtime_hints:
@@ -1265,6 +1259,7 @@ def prepare_request_impl(
                     pressure=current_pressure,
                     behavior_signals=behavior_signals,
                     current_turn=session.bridge_memory.turn,
+                    session=session,
                 )
             has_answer_anchor = bool(behavior_signals.get("answer_anchor_present", 0))
         elif skip_reason == "short_session":

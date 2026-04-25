@@ -267,7 +267,7 @@ def test_health_endpoint(monkeypatch) -> None:
         "bridge": "tok",
         "port": 9191,
         "api_base": "https://api.anthropic.com",
-        "mode": "tool-compatible",
+        "mode": "natural-first",
         "request_policy": "natural_first",
         "baseline_only": False,
         "fallback_count": 0,
@@ -4592,6 +4592,7 @@ def test_gateway_retries_upstream_429_then_succeeds(tmp_path, monkeypatch, caplo
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
     monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda _x, _y: 1.0)
+    monkeypatch.setattr("tok.gateway._bridge_request_handler.random.uniform", lambda _x, _y: 0.0)
     caplog.set_level(logging.INFO, logger="tok.gateway")
 
     session = BridgeSession(
@@ -4617,7 +4618,8 @@ def test_gateway_retries_upstream_429_then_succeeds(tmp_path, monkeypatch, caplo
 
     assert response.status_code == 200
     assert len(sent_bodies) == 2
-    assert sleep_calls == [0.15]
+    assert sleep_calls[0] == 0.15
+    assert sleep_calls[1] == 0.0
     assert "rate_limit_retry_attempt" in caplog.text
 
 
@@ -4671,6 +4673,7 @@ def test_gateway_429_retry_honors_retry_after_floor(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
     monkeypatch.setattr("tok.gateway._app_factory.asyncio.sleep", _fake_sleep)
     monkeypatch.setattr("tok.gateway._app_factory.random.uniform", lambda _x, _y: 1.0)
+    monkeypatch.setattr("tok.gateway._bridge_request_handler.random.uniform", lambda _x, _y: 0.0)
 
     app = create_app(
         BridgeSession(
@@ -4695,7 +4698,8 @@ def test_gateway_429_retry_honors_retry_after_floor(tmp_path, monkeypatch) -> No
 
     assert response.status_code == 200
     assert sent_count == 2
-    assert sleep_calls == [2.0]
+    assert sleep_calls[0] == 2.0
+    assert sleep_calls[1] == 0.0
 
 
 def test_gateway_persistent_429_retries_then_exhausts(tmp_path, monkeypatch, caplog) -> None:
@@ -6039,3 +6043,171 @@ def test_gateway_fail_open_false_propagates_request_processing_error(tmp_path, m
                 "stream": False,
             },
         )
+
+
+class TestRateLimitThunderingHerd:
+    """Tests for concurrent 429 retry serialization via the shared lock."""
+
+    def test_concurrent_429_only_one_retries(self, tmp_path, monkeypatch) -> None:
+        """When 3 requests all hit 429, only one retries — others are blocked by cooldown."""
+        memory_dir = tmp_path / ".tok"
+        memory_dir.mkdir()
+        session = BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=1,
+            rate_limit_backoff_base_ms=100,
+            rate_limit_backoff_cap_ms=1000,
+        )
+
+        upstream_send_count = 0
+
+        async def _fake_send(self, request, stream=False):
+            del self, request, stream
+            nonlocal upstream_send_count
+            upstream_send_count += 1
+            if upstream_send_count == 1:
+                return httpx.Response(
+                    429,
+                    json={"error": {"message": "rate limited"}},
+                    headers={"Retry-After": "0.01"},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "model": "claude-sonnet-4",
+                    "max_tokens": 8,
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                    "content": [{"type": "text", "text": "ok"}],
+                },
+            )
+
+        monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+        monkeypatch.setattr("tok.gateway._bridge_request_handler.random.uniform", lambda _x, _y: 0.0)
+
+        async def _run():
+            tasks = []
+            for _ in range(3):
+                c = httpx.AsyncClient()
+                tasks.append(
+                    send_with_tok_fail_open_retry(
+                        session,
+                        c,
+                        method="POST",
+                        url="https://example.invalid/v1/messages",
+                        headers={"x-api-key": "test"},
+                        content=b'{"model":"claude-sonnet-4","messages":[]}',
+                        original_content=None,
+                        stream=False,
+                        compressed_request=False,
+                        sleep_fn=asyncio.sleep,
+                    )
+                )
+            return await asyncio.gather(*tasks)
+
+        results = asyncio.run(_run())
+
+        # Only 2 upstream sends: 1 initial + 1 retry. Other 2 requests hit cooldown.
+        assert upstream_send_count == 2
+        cooldown_skipped = [r for r in results if r[2].get("rate_limit_cooldown_skipped")]
+        succeeded = [r for r in results if r[0].status_code == 200]
+        assert len(cooldown_skipped) == 2
+        assert len(succeeded) == 1
+
+    def test_successful_retry_clears_cooldown(self, tmp_path, monkeypatch) -> None:
+        memory_dir = tmp_path / ".tok"
+        memory_dir.mkdir()
+        session = BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=2,
+            rate_limit_backoff_base_ms=100,
+            rate_limit_backoff_cap_ms=1000,
+        )
+
+        send_count = 0
+
+        async def _fake_send(self, request, stream=False):
+            del self, request, stream
+            nonlocal send_count
+            send_count += 1
+            if send_count == 1:
+                return httpx.Response(
+                    429,
+                    json={"error": {"message": "slow down"}},
+                    headers={"Retry-After": "0.01"},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "model": "claude-sonnet-4",
+                    "max_tokens": 8,
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                    "content": [{"type": "text", "text": "ok"}],
+                },
+            )
+
+        monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+        monkeypatch.setattr("tok.gateway._bridge_request_handler.random.uniform", lambda _x, _y: 0.0)
+
+        async def _run():
+            async with httpx.AsyncClient() as client:
+                response, retried, signals = await send_with_tok_fail_open_retry(
+                    session,
+                    client,
+                    method="POST",
+                    url="https://example.invalid/v1/messages",
+                    headers={"x-api-key": "test"},
+                    content=b'{"model":"claude-sonnet-4","messages":[]}',
+                    original_content=None,
+                    stream=False,
+                    compressed_request=False,
+                    sleep_fn=asyncio.sleep,
+                )
+            assert response.status_code == 200
+            assert send_count == 2
+            assert session._rate_limit_throttle_until == 0.0
+
+        asyncio.run(_run())
+
+    def test_cooldown_returns_429_immediately(self, tmp_path, monkeypatch) -> None:
+        """When cooldown is active, request returns synthetic 429 without hitting upstream."""
+        memory_dir = tmp_path / ".tok"
+        memory_dir.mkdir()
+        session = BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=0,
+            rate_limit_backoff_base_ms=100,
+            rate_limit_backoff_cap_ms=1000,
+        )
+        session._rate_limit_throttle_until = time.time() + 60
+
+        upstream_called = False
+
+        async def _fake_send(self, request, stream=False):
+            del self, request, stream
+            nonlocal upstream_called
+            upstream_called = True
+            return httpx.Response(200, json={})
+
+        monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+        async def _run():
+            async with httpx.AsyncClient() as client:
+                response, _, signals = await send_with_tok_fail_open_retry(
+                    session,
+                    client,
+                    method="POST",
+                    url="https://example.invalid/v1/messages",
+                    headers={"x-api-key": "test"},
+                    content=b'{"model":"claude-sonnet-4","messages":[]}',
+                    original_content=None,
+                    stream=False,
+                    compressed_request=False,
+                    sleep_fn=asyncio.sleep,
+                )
+            assert response.status_code == 429
+            assert "Retry-After" in response.headers
+            assert signals.get("rate_limit_cooldown_skipped") == 1
+
+        asyncio.run(_run())
+
+        assert not upstream_called

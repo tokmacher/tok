@@ -29,7 +29,7 @@ The default CLI help surface should reinforce that path by centering:
 
 The only supported product path in this release is the bridge-first workflow above.
 
-The root `tok` namespace is intentionally narrow for `0.1.0`. Experimental Python APIs
+The root `tok` namespace is intentionally narrow for `0.1.x`. Experimental Python APIs
 may still be reachable through explicit submodules, but they are not part of the
 supported public contract and should not be documented as canonical.
 
@@ -62,8 +62,8 @@ The following are explicitly out of scope for the first release:
 - Frontier and OpenRouter probes are experimental validation, not release drivers
 - `src/tok/cli/__init__.py` remains larger than we want for the long term; the extracted
   helper modules are now the canonical implementation, and further decomposition is
-  deferred until after `0.1.0`
-- Dependency policy for `0.1.0` is lockfile-backed validation plus CI coverage, not
+  deferred until after `0.1.x`
+- Dependency policy for `0.1.x` is lockfile-backed validation plus CI coverage, not
   blanket upper bounds on every published requirement
 
 ## Release Bar
@@ -125,7 +125,7 @@ These items are intentionally deferred after the first public release:
 - Further decomposition of `src/tok/cli/__init__.py`. This is a maintainability
   improvement, not a release blocker, and further movement right before release would
   add churn around Typer registration and CLI test seams.
-- Dependency upper bounds across the published requirements. For `0.1.0`, Tok relies on
+- Dependency upper bounds across the published requirements. For `0.1.x`, Tok relies on
   `uv.lock`, CI, and clean-room install checks to validate the tested dependency set. If
   live-release experience shows resolver churn or upstream breakage, we can add
   selective upper bounds in a follow-up release.

@@ -2635,10 +2635,8 @@ def test_process_response_no_drift_in_tool_compatible_mode() -> None:
 def test_process_response_still_detects_drift_in_tok_native_mode() -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession()
-    prose = (
-        "Here is the updated implementation. I have examined the codebase "
-        "and explored the relevant modules to understand the architecture."
-    )
+    # Long prose (>40 words) with no Tok markers — triggers Case B drift detection.
+    prose = " ".join(["word"] * 50)
     result = runtime.process_response(
         prose,
         model="claude-sonnet-4",
@@ -3228,7 +3226,7 @@ def test_prepare_request_context_is_consumed_for_same_turn_answer_phase_quaranti
     )
 
     assert session._request_has_tools is False
-    assert session._answer_phase_expected_this_turn is False
+    assert session._answer_phase_expected_this_turn is True
     assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
 
 
@@ -3266,7 +3264,7 @@ def test_prepare_request_context_keeps_tools_expected_turns_out_of_quarantine(
     )
 
     assert session._request_has_tools is True
-    assert session._answer_phase_expected_this_turn is False
+    assert session._answer_phase_expected_this_turn is True
     assert processed.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 0
     assert any(block.get("type") == "tool_use" for block in processed.content_blocks)
 

@@ -148,14 +148,27 @@ def save_result_cache(session: RuntimeSession) -> None:
     try:
         assert session.memory_dir is not None
         session.memory_dir.mkdir(parents=True, exist_ok=True)
-        trimmed = {
-            key: (value[0], value[1][:10240], value[2])
-            if isinstance(value, tuple) and len(value) == 3
-            else (value[0], value[1][:10240])
-            if isinstance(value, tuple) and len(value) == 2
-            else value
-            for key, value in session.result_cache.items()
-        }
+
+        def _trim_raw(raw_val: str) -> str:
+            return raw_val[:10240] if isinstance(raw_val, str) and len(raw_val) > 10240 else raw_val
+
+        trimmed: dict[str, Any] = {}
+        for key, value in session.result_cache.items():
+            if isinstance(value, dict):
+                trimmed[key] = {
+                    "hash": value.get("hash", ""),
+                    "raw": _trim_raw(value.get("raw", "")),
+                    "timestamp": value.get("timestamp"),
+                    "first_read_complete": value.get("first_read_complete", True),
+                }
+            elif isinstance(value, tuple | list) and len(value) >= 2:
+                trimmed[key] = [
+                    value[0],
+                    _trim_raw(value[1]),
+                    *value[2:],
+                ]
+            else:
+                trimmed[key] = value
         result_cache_file(session).write_text(json.dumps(trimmed))
     except Exception as exc:
         session_logger_for(session).warning(

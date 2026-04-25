@@ -1,4 +1,4 @@
-# Tok Diagnostics (0.1.0)
+# Tok Diagnostics (0.1.3)
 
 This document explains the key health and recovery signals you may see in:
 
@@ -9,9 +9,9 @@ This document explains the key health and recovery signals you may see in:
 The goal is to help you distinguish normal, self-contained recovery (expected under
 stress) from a real degradation that should be reported as a bug.
 
-## What Is "Supported" For 0.1.0
+## What Is "Supported" For 0.1.x
 
-The supported product path for `0.1.0` is Claude Code routed through the local Tok
+The supported product path for `0.1.x` is Claude Code routed through the local Tok
 bridge:
 
 ```bash
@@ -122,10 +122,10 @@ Meaning (plain English):
 - `answer_ready_repair_failed=1` means that specific repair attempt could not establish
   a clean answer-ready anchor for that turn.
 
-How to interpret it for `0.1.0`:
+How to interpret it for `0.1.x`:
 
 - If `Fallbacks` stays `0` and `Degraded to baseline` stays `no`, this is a
-  self-contained recovery path. It's acceptable for `0.1.0` under stress, but is useful
+  self-contained recovery path. It's acceptable for `0.1.x` under stress, but is useful
   evidence for hardening future versions.
 - If you see repeated `answer_ready_repair_failed` on normal usage (not a synthetic
   parallel-tool stress test), file an issue with the filtered log bundle.
