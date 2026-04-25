@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from tok.compression import text_of
+from tok.compression import _strip_harness_injections, text_of
 from tok.runtime.config import TOOL_DENSITY_THRESHOLD, TOOL_VOLUME_HEAVY_BYTES
 from tok.runtime.repeat_targets import (
     SEARCH_LIKE_TOOLS,
@@ -261,8 +261,13 @@ def _is_cached_hit(
     if cache_key not in result_cache:
         return False
     cached_entry = result_cache[cache_key]
-    cached_hash = cached_entry[0] if cached_entry else ""
-    current_hash = hashlib.sha256(raw_content.encode()).hexdigest()[:8]
+    if isinstance(cached_entry, dict):
+        cached_hash = cached_entry.get("hash", "")
+    elif isinstance(cached_entry, tuple | list) and cached_entry:
+        cached_hash = cached_entry[0]
+    else:
+        cached_hash = ""
+    current_hash = hashlib.sha256(_strip_harness_injections(raw_content).encode()).hexdigest()[:8]
     return current_hash == cached_hash
 
 
