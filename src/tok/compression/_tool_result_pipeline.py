@@ -103,7 +103,9 @@ def tok_tool_result_impl(
 
     compressed = _tighten_compressed_output(kind, compressed, compression_level)
 
-    already_compressed = kind == "file" and ("|> [" in compressed or "lines]" in compressed)
+    # git_diff is already content-aware compressed (context lines stripped, only +/- kept).
+    # Truncating it further would remove actual diff lines — the content that matters.
+    already_compressed = (kind == "file" and ("|> [" in compressed or "lines]" in compressed)) or kind == "git_diff"
     compressed = truncate_large_result(compressed, already_compressed=already_compressed)
 
     saved = original_chars - len(compressed)

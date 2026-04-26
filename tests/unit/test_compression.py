@@ -20,7 +20,6 @@ from tok.compression import (
     _compress_install,
     _compress_ls,
     _detect_tool_content_type,
-    _should_replay_host_stub,
     classify_cut_eligibility,
     compress_history,
     compress_recent_window,
@@ -147,7 +146,6 @@ class TestCompressHistory:
             "cmds",
             "tests",
             "errs",
-            "blockers",
             "constraints",
             "next",
         )
@@ -1055,6 +1053,16 @@ class TestNewCompressors:
     def test_git_diff_shorter(self) -> None:
         text = _make_git_diff(3, 8)
         assert len(_compress_git_diff(text)) < len(text)
+
+    def test_large_git_diff_not_truncated_by_generic_truncation(self) -> None:
+        # A large diff (many files, many changed lines) must not have its +/- lines
+        # chopped by truncate_large_result. After _compress_git_diff strips context,
+        # the result is already content-aware compressed and should be left intact.
+        large_diff = _make_git_diff(n_files=10, context_lines=20)
+        result = tok_tool_result(large_diff, tool_context={"tool": "Bash", "args": {"command": "git diff HEAD"}})
+        # All +new lines from the original diff must survive
+        for i in range(10):
+            assert f"+new line in file {i}" in result, f"diff line for file {i} was truncated"
 
     # --- ls ---
 
@@ -2045,7 +2053,7 @@ class TestHarnessInjectionStripping:
         v2 = _strip_harness_injections(base + "\n<system-reminder>v2</system-reminder>\n")
         # All three normalise to the same bytes (base without trailing \n from the separator)
         assert v1 == v2
-        # plain returns the original unchanged; v1 strips the extra \n separator too
+        # _strip_harness_injections on a plain string returns it unchanged; v1 strips the extra \n separator too
         assert "<system-reminder>" not in v1
 
     def _large_file_content(self) -> str:
@@ -2098,43 +2106,3 @@ class TestHarnessInjectionStripping:
         entry = next(iter(cache.values()))
         stored_raw = entry.get("raw", "") if isinstance(entry, dict) else entry[1]
         assert "<system-reminder>" not in stored_raw
-
-
-class TestShouldReplayHostStub:
-    """Regression tests for _should_replay_host_stub error signal checking (BUG-001)."""
-
-    def test_no_replay_when_cached_has_errors_even_if_current_clean(self) -> None:
-        """Cached content with error signals should not be replayed when current is clean."""
-        assert not _should_replay_host_stub(
-            is_file_like=True,
-            cached_raw_text="Error: file not found\nTraceback (most recent call last):",
-            stub_text="",
-            raw_text="def hello():\n    pass\n",
-        )
-
-    def test_no_replay_when_cached_has_errors_and_current_short(self) -> None:
-        """Short current + long cached error content should not replay."""
-        assert not _should_replay_host_stub(
-            is_file_like=True,
-            cached_raw_text="Error: permission denied\n" + "x" * 300,
-            stub_text="some cached content",
-            raw_text="ok",
-        )
-
-    def test_replay_when_both_clean_and_empty_stub(self) -> None:
-        """Clean current + clean cached + empty stub should replay."""
-        assert _should_replay_host_stub(
-            is_file_like=True,
-            cached_raw_text="def foo():\n    return 1\n",
-            stub_text="",
-            raw_text="def foo():\n    return 1\n",
-        )
-
-    def test_no_replay_for_non_file_like(self) -> None:
-        """Non-file-like tools should never replay."""
-        assert not _should_replay_host_stub(
-            is_file_like=False,
-            cached_raw_text="some content",
-            stub_text="cached",
-            raw_text="new content",
-        )

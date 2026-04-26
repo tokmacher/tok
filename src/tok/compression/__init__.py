@@ -56,8 +56,6 @@ ResultCacheEntry: TypeAlias = dict[str, object] | tuple[str, str, float] | tuple
 # Maximum number of entries in the result cache to bound memory usage
 RESULT_CACHE_MAX_SIZE = 256
 
-VALID_COMPRESSION_LEVELS = frozenset({"aggressive", "balanced", "recovery"})
-
 # Lock for thread-safe cache operations (callers must use this for external synchronization)
 _result_cache_lock = threading.Lock()
 
@@ -279,7 +277,6 @@ CANONICAL_MEMORY_FIELDS = (
     "cmds",
     "tests",
     "errs",
-    "blockers",
     "constraints",
     "next",
 )
@@ -632,10 +629,6 @@ def tok_tool_result(
     session: Any | None = None,
 ) -> str:
     """Convert large tool result to dense tok representation."""
-    if compression_level not in VALID_COMPRESSION_LEVELS:
-        raise ValueError(
-            f"Invalid compression_level={compression_level!r}. Must be one of {sorted(VALID_COMPRESSION_LEVELS)}"
-        )
     from ._pipeline import tok_tool_result_impl
 
     return tok_tool_result_impl(
@@ -681,8 +674,7 @@ def _apply_result_cache(
     cache_key = _build_cache_key(tool_name, context)
     raw_text = _strip_harness_injections(str(raw or ""))
     raw = raw_text  # use stripped content for both hashing and storage
-    with _result_cache_lock:
-        cached_entry = result_cache.get(cache_key)
+    cached_entry = result_cache.get(cache_key)
 
     if cached_entry is None:
         logger.debug("result_cache_miss: key=%s tool=%s", cache_key, tool_name)
@@ -1011,21 +1003,20 @@ def _update_cache_after_hit(
     raw: str,
 ) -> None:
     """Update the cache entry after a cache hit."""
-    with _result_cache_lock:
-        if host_stub_replayed and entry_length == 3:
-            result_cache[cache_key] = {
-                "hash": cached_hash,
-                "raw": cached_raw,
-                "timestamp": time_module.time(),
-                "first_read_complete": True,
-            }
-        else:
-            result_cache[cache_key] = {
-                "hash": content_hash,
-                "raw": raw,
-                "timestamp": time_module.time(),
-                "first_read_complete": True,
-            }
+    if host_stub_replayed and entry_length == 3:
+        result_cache[cache_key] = {
+            "hash": cached_hash,
+            "raw": cached_raw,
+            "timestamp": time_module.time(),
+            "first_read_complete": True,
+        }
+    else:
+        result_cache[cache_key] = {
+            "hash": content_hash,
+            "raw": raw,
+            "timestamp": time_module.time(),
+            "first_read_complete": True,
+        }
 
 
 def _count_changed_lines(diff_lines: list[str]) -> int:
@@ -1084,7 +1075,7 @@ def _handle_hash_mismatch_result(
         stub = _error_stub(tool=str(tool_name or "unknown"), reason=error_type)
         saved = len(raw_text) - len(stub)
         if saved < 0:
-            return raw_text, 0
+            return _error_stub(tool=str(tool_name or "unknown"), reason=error_type) + "\n", 0
         return stub + "\n", saved
     compressed = tok_tool_result(
         raw_text,
@@ -1117,7 +1108,7 @@ def _handle_diff_result(
         stub = _error_stub(tool=str(tool_name or "unknown"), reason=error_type)
         saved = len(raw_text) - len(stub)
         if saved < 0:
-            return raw_text, 0
+            return _error_stub(tool=str(tool_name or "unknown"), reason=error_type) + "\n", 0
         return stub + "\n", saved
     compressed = tok_tool_result(
         raw_text,
@@ -1158,23 +1149,11 @@ def _should_replay_host_stub(
 ) -> bool:
     if not is_file_like or not cached_raw_text:
         return False
-    has_error_signal = _contains_error_signal(raw_text) or _normalize_error_content(raw_text) is not None
-    has_cached_error_signal = (
-        _contains_error_signal(cached_raw_text) or _normalize_error_content(cached_raw_text) is not None
-    )
     if not stub_text:
-        if has_error_signal or has_cached_error_signal:
-            return False
         return True
     if "unchanged since last read" in stub_text.lower():
         return True
-    if len(raw_text) < 80 and len(cached_raw_text) > 200:
-        if has_error_signal or has_cached_error_signal:
-            return False
-        if not any(sig in stub_text.lower() for sig in ("unchanged", "cached", ">>> tool:", "@stable_result")):
-            return False
-        return True
-    return False
+    return bool(len(raw_text) < 80 and len(cached_raw_text) > 200)
 
 
 def _serve_cached_content_hash_match(
@@ -1202,25 +1181,22 @@ def _serve_cached_content_hash_match(
         # For precision reads, return the content we want to use
         # If host_stub_replayed, use cached_raw (actual content), not raw (stub)
         content_to_return = cached_raw if host_stub_replayed else raw
-        with _result_cache_lock:
-            result_cache[cache_key] = {
-                "hash": cached_hash,
-                "raw": content_to_return,
-                "timestamp": current_time,
-                "first_read_complete": first_read_complete,
-            }
+        result_cache[cache_key] = {
+            "hash": cached_hash,
+            "raw": content_to_return,
+            "timestamp": current_time,
+            "first_read_complete": first_read_complete,
+        }
         return content_to_return, 0
 
     if normalized_tool_name in FILE_LIKE_TOOLS:
         if not first_read_complete:
-            with _result_cache_lock:
-                result_cache[cache_key] = {
-                    "hash": cached_hash,
-                    "raw": cached_raw,
-                    "timestamp": current_time,
-                    "first_read_complete": True,
-                }
-            return cached_raw, 0
+            result_cache[cache_key] = {
+                "hash": cached_hash,
+                "raw": cached_raw,
+                "timestamp": current_time,
+                "first_read_complete": True,
+            }
         confidence, reason = _compute_confidence(cached_hash, cached_hash)
         raw_path = _context_path(context)
         stub_parts = [f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"]

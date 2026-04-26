@@ -172,12 +172,14 @@ class SavingsTracker:
 
         baseline_input = actual_input + input_saved
         baseline_output = actual_output + output_saved
-        # Baseline represents cost without Tok: no caching, all tokens at full input rate
+        # Baseline represents cost without Tok's compression, but with caching intact.
+        # Cache tokens keep their actual rates — caching is an API feature, not a Tok
+        # contribution, so we don't credit it to savings.
         baseline_cost = (
             baseline_input * inp_rate / M
             + baseline_output * out_rate / M
-            + cache_read * inp_rate / M
-            + cache_write * inp_rate / M
+            + cache_read * cr_rate / M
+            + cache_write * cw_rate / M
         )
 
         with self._lock:
@@ -809,6 +811,7 @@ class SavingsTracker:
             "baseline_tokens": int(entry["tokens"]) + int(entry["tokens_saved"]),
             "tokens_saved": int(entry["tokens_saved"]),
             "savings_pct": float(entry["savings_pct"]),
+            "cost_savings_pct": float(entry["cost_savings_pct"]),
             "actual_cost_usd": float(entry["actual_cost_usd"]),
             "baseline_cost_usd": float(entry["baseline_cost_usd"]),
             "cost_saved_usd": float(entry["saved_usd"]),

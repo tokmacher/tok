@@ -44,6 +44,32 @@ class TestSavingsTracker:
         assert loaded["models"]["claude-sonnet-4"]["actual_input_tokens"] == 1000
         assert loaded["models"]["claude-sonnet-4"]["behavior_signals"]["repeat_file_read"] == 2
 
+    def test_baseline_cost_excludes_caching_discount(self, tracker) -> None:
+        # Cache tokens must be charged at their actual rates in both actual and baseline
+        # costs. Previously the baseline charged cache_read/write at inp_rate, inflating
+        # cost savings by attributing the API's caching discount to Tok.
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=1000,
+            actual_output=200,
+            cache_read=5000,
+            cache_write=500,
+            input_saved=300,
+            output_saved=0,
+        )
+        # inp=3.00, out=15.00, cr=0.30, cw=3.75 per MTok for claude-sonnet-4
+        M = 1_000_000
+        expected_actual = (1000 * 3.00 + 200 * 15.00 + 5000 * 0.30 + 500 * 3.75) / M
+        expected_baseline = (1300 * 3.00 + 200 * 15.00 + 5000 * 0.30 + 500 * 3.75) / M
+        stats = tracker.load_stats()
+        m = stats["models"]["claude-sonnet-4"]
+        assert abs(m["actual_cost_usd"] - expected_actual) < 1e-9
+        assert abs(m["baseline_cost_usd"] - expected_baseline) < 1e-9
+        # Token savings pct and cost savings pct should be close (within 5pp)
+        summary = tracker.session_summary()
+        assert summary is not None
+        assert abs(summary["savings_pct"] - summary["cost_savings_pct"]) < 5.0
+
     def test_record_call(self, tracker) -> None:
         tracker.record_call(
             model="claude-sonnet-4",
