@@ -670,6 +670,22 @@ class TestCLI:
         assert "Session quality" in result.output
         assert "Degradation reason" in result.output
 
+    def test_stats_default_shows_last_completed_with_no_active_session(self, tmp_path, monkeypatch) -> None:
+        ledger = tmp_path / "global_savings.tok"
+        ledger.write_text(
+            "@lifetime_savings\n  sessions: 2\n  total_turns: 10\n  total_tokens: 2000\n  total_cost_usd: 0.020000\n  estimated_baseline_cost_usd: 0.045000\n  tokens_saved: 1200\n  cost_saved_usd: 0.025000\n  savings_pct: 55.0\n\n@per_session_log\n  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response\n  2026-03-17T10:00:00Z;aaa11111;5;1000;0.010000;0.020000;0.010000;500;3;1\n  2026-03-18T10:00:00Z;bbb22222;5;1000;0.010000;0.025000;0.015000;700;1;0"
+            "\n"
+        )
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
+
+        result = runner.invoke(app, ["stats"])
+        assert result.exit_code == 0
+        assert "Last Completed Session" in result.output
+        assert "Saved 700 tokens" in result.output
+        assert "41.2% saved" in result.output
+        assert "2026-03-18T10:00:00Z" in result.output
+
     def test_stats_recent_shows_recent_window_summary(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"
         ledger.write_text(

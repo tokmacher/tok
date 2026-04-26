@@ -145,38 +145,77 @@ def stats_command(
                     )
                 )
 
-        if last_session and last_completed:
-            pct = float(last_completed["savings_pct"])
-            headline, headline_pct, subhead = savings_headline(last_completed)
-            console.print(
-                render_stats_panel(
-                    "Last Completed Session",
-                    headline=f"{headline} • {headline_pct}",
-                    headline_style=savings_style(pct),
-                    subhead=subhead,
-                    rows=[
-                        ("Date", str(last_completed["date"])),
-                        ("Turns", str(last_completed["turns"])),
-                        (
-                            "Session quality",
-                            str(last_completed.get("session_quality", "clean")),
-                        ),
-                        (
-                            "Degradation reason",
-                            str(last_completed.get("last_degradation_reason", "") or "none"),
-                        ),
-                        (
-                            "With Tok vs without Tok",
-                            f"{int(last_completed['actual_tokens']):,} / {int(last_completed['baseline_tokens']):,} tokens",
-                        ),
-                        (
-                            "Cost",
-                            f"${float(last_completed['actual_cost_usd']):.4f} / ${float(last_completed['baseline_cost_usd']):.4f}",
-                        ),
-                    ],
-                    border_style="cyan",
+        elif not session and last_session is False:
+            if last_completed:
+                pct = float(last_completed["savings_pct"])
+                headline, headline_pct, subhead = savings_headline(last_completed)
+                console.print(
+                    render_stats_panel(
+                        "Last Completed Session",
+                        headline=f"{headline} • {headline_pct}",
+                        headline_style=savings_style(pct),
+                        subhead=subhead,
+                        rows=[
+                            ("Date", str(last_completed["date"])),
+                            ("Turns", str(last_completed["turns"])),
+                            (
+                                "Session quality",
+                                str(last_completed.get("session_quality", "clean")),
+                            ),
+                            (
+                                "Degradation reason",
+                                str(last_completed.get("last_degradation_reason", "") or "none"),
+                            ),
+                            (
+                                "With Tok vs without Tok",
+                                f"{int(last_completed['actual_tokens']):,} / {int(last_completed['baseline_tokens']):,} tokens",
+                            ),
+                            (
+                                "Cost",
+                                f"${float(last_completed['actual_cost_usd']):.4f} / ${float(last_completed['baseline_cost_usd']):.4f}",
+                            ),
+                        ],
+                        border_style="cyan",
+                    )
                 )
-            )
+            else:
+                console.print("[dim]No active session data[/dim]")
+        elif not session:
+            if last_session:
+                if last_completed:
+                    pct = float(last_completed["savings_pct"])
+                    headline, headline_pct, subhead = savings_headline(last_completed)
+                    console.print(
+                        render_stats_panel(
+                            "Last Completed Session",
+                            headline=f"{headline} • {headline_pct}",
+                            headline_style=savings_style(pct),
+                            subhead=subhead,
+                            rows=[
+                                ("Date", str(last_completed["date"])),
+                                ("Turns", str(last_completed["turns"])),
+                                (
+                                    "Session quality",
+                                    str(last_completed.get("session_quality", "clean")),
+                                ),
+                                (
+                                    "Degradation reason",
+                                    str(last_completed.get("last_degradation_reason", "") or "none"),
+                                ),
+                                (
+                                    "With Tok vs without Tok",
+                                    f"{int(last_completed['actual_tokens']):,} / {int(last_completed['baseline_tokens']):,} tokens",
+                                ),
+                                (
+                                    "Cost",
+                                    f"${float(last_completed['actual_cost_usd']):.4f} / ${float(last_completed['baseline_cost_usd']):.4f}",
+                                ),
+                            ],
+                            border_style="cyan",
+                        )
+                    )
+                else:
+                    console.print("[dim]No completed session data yet[/dim]")
 
         if breakdown:
             if os.getenv("TOK_DEBUG", "0") == "1":
