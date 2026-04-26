@@ -236,17 +236,18 @@ class TokMemory(BaseModel):
                 # Contradiction detected!
                 if key not in self.entropy.primacy_locked:
                     # Safe to demote (not identity-locked)
-                    # STAGE INHERITANCE: Preserve trust level from old value
+                    # HEAT TRANSFER: Transfer heat from old value to new value
+                    # This prevents the "Amnesia Trap" for software agents
+                    # Stage is recomputed from transferred heat, not directly inherited
                     old_heat = self.entropy.heatmap.get(key, 0)
                     logger.debug("UPDATE: %s:%s → %s", key, perm_facts[key], new_val)
                     logger.debug("HEAT INHERITED: %s (State Continuity)", old_heat)
                     del perm_facts[key]
-                    # Transfer the heat from old value to new value
-                    # This prevents the "Amnesia Trap" for software agents
                     self.entropy.heatmap[key] = old_heat
                     self.entropy.stages[key] = (
                         3 if old_heat >= self.entropy.threshold_permanent else self.entropy.stages.get(key, 0)
                     )
+                    self.entropy.next_refresh.pop(key, None)
                 else:
                     logger.debug(
                         "BLOCKED: %s is primacy-locked (identity protected)",

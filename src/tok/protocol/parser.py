@@ -1,5 +1,6 @@
 """Tok parser module - LL(1) line-driven state machine."""
 
+import logging
 import random
 import re
 import string
@@ -7,6 +8,8 @@ from typing import Any, cast
 
 from .models import TokNode, Trust
 from .protocol import SerializationProtocol
+
+_logger = logging.getLogger("tok.protocol.parser")
 
 
 def tok_to_dict(node: TokNode) -> dict[str, Any]:
@@ -202,6 +205,7 @@ class TokParser(SerializationProtocol):
             result.extend(self._flush_stack())
             return result
         except Exception:
+            _logger.debug("Parser recovered from error during flush")
             return self._flush_stack()
 
     def _ingest_line(self, line: str) -> list[TokNode]:
@@ -218,7 +222,8 @@ class TokParser(SerializationProtocol):
                 return []
 
             return self._ingest_line_inner(line)
-        except Exception:
+        except (ValueError, IndexError, KeyError, TypeError) as exc:
+            _logger.warning("Parser recovered from error in line ingestion: %r: %s", line[:80], exc)
             if self._stack:
                 self._stack[-1][1].text += line + "\n"
             return []
@@ -261,7 +266,7 @@ class TokParser(SerializationProtocol):
                 elif text[i] == "}":
                     depth_c -= 1
             i += 1
-        return not in_q and not in_tq and depth_b <= 0 and depth_c <= 0
+        return not in_q and not in_tq and depth_b == 0 and depth_c == 0
 
     def _ingest_line_inner(self, line: str) -> list[TokNode]:
         if len(line) > self.MAX_LINE_LENGTH:

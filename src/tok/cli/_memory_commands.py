@@ -33,7 +33,7 @@ def memory_snap(
 
     if not memory_file.exists():
         console.print("[yellow]No bridge memory file found — nothing to snap.[/yellow]")
-        raise typer.Exit
+        raise typer.Exit()
 
     if not yes:
         confirm = typer.confirm(
@@ -42,7 +42,7 @@ def memory_snap(
         )
         if not confirm:
             console.print("[dim]Aborted.[/dim]")
-            raise typer.Exit
+            raise typer.Exit()
 
     state = BridgeMemoryState.from_tok(memory_file.read_text())
 

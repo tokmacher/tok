@@ -31,8 +31,6 @@ from ._cli_support import (
     status_border,
 )
 
-bridge_app = typer.Typer(help="Bridge management commands")
-
 _LOCAL_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
@@ -75,7 +73,6 @@ def _is_self_bridged_invocation(port: int) -> bool:
     return target_host in _LOCAL_HOST_ALIASES and bridge_host in _LOCAL_HOST_ALIASES
 
 
-@bridge_app.command("start")
 def bridge_start(
     port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on")] = 9090,
     keep_turns: Annotated[int, typer.Option("--keep-turns", help="Human turns to keep verbatim")] = 2,
@@ -160,7 +157,7 @@ def bridge_start(
                     console.print(f"[green]Bridge started on :{port} (PID {proc.pid})[/green]")
                     console.print(f"Logs: {LOG_FILE}")
                     console.print(
-                        "[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:9090 claude`, then "
+                        f"[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:{port} claude`, then "
                         "`tok bridge status` or `tok doctor`.[/dim]"
                     )
                     if capture:
@@ -184,7 +181,6 @@ def bridge_start(
             console.print(f"Capture directory: {memory_root() / 'sessions'}")
 
 
-@bridge_app.command("stop")
 def bridge_stop(force: bool = False) -> None:
     """Stop the Tok bridge server."""
     port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
@@ -249,7 +245,6 @@ def bridge_stop(force: bool = False) -> None:
         )
 
 
-@bridge_app.command("status")
 def bridge_status() -> None:
     """Check bridge status."""
     port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))

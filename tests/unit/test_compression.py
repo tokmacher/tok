@@ -1054,6 +1054,16 @@ class TestNewCompressors:
         text = _make_git_diff(3, 8)
         assert len(_compress_git_diff(text)) < len(text)
 
+    def test_large_git_diff_not_truncated_by_generic_truncation(self) -> None:
+        # A large diff (many files, many changed lines) must not have its +/- lines
+        # chopped by truncate_large_result. After _compress_git_diff strips context,
+        # the result is already content-aware compressed and should be left intact.
+        large_diff = _make_git_diff(n_files=10, context_lines=20)
+        result = tok_tool_result(large_diff, tool_context={"tool": "Bash", "args": {"command": "git diff HEAD"}})
+        # All +new lines from the original diff must survive
+        for i in range(10):
+            assert f"+new line in file {i}" in result, f"diff line for file {i} was truncated"
+
     # --- ls ---
 
     def test_ls_detected(self) -> None:
@@ -2043,7 +2053,7 @@ class TestHarnessInjectionStripping:
         v2 = _strip_harness_injections(base + "\n<system-reminder>v2</system-reminder>\n")
         # All three normalise to the same bytes (base without trailing \n from the separator)
         assert v1 == v2
-        # plain returns the original unchanged; v1 strips the extra \n separator too
+        # _strip_harness_injections on a plain string returns it unchanged; v1 strips the extra \n separator too
         assert "<system-reminder>" not in v1
 
     def _large_file_content(self) -> str:

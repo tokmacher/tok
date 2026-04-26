@@ -7,6 +7,7 @@ events during a turn and produces reports.
 
 from __future__ import annotations
 
+import threading
 import uuid
 from typing import Any
 
@@ -32,6 +33,7 @@ class SmoothnessTracker:
     """
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self._current_turn_id: str | None = None
         self._current_task_id: str | None = None
         self._current_events: list[SmoothnessEvent] = []
@@ -49,9 +51,10 @@ class SmoothnessTracker:
         if task_id is None:
             task_id = f"task_{uuid.uuid4().hex[:8]}"
 
-        self._current_turn_id = turn_id
-        self._current_task_id = task_id
-        self._current_events = []
+        with self._lock:
+            self._current_turn_id = turn_id
+            self._current_task_id = task_id
+            self._current_events = []
 
     def record(
         self,
@@ -83,7 +86,8 @@ class SmoothnessTracker:
             metadata=metadata or {},
         )
 
-        self._current_events.append(event)
+        with self._lock:
+            self._current_events.append(event)
 
     def finish_turn(self) -> TurnSmoothnessReport:
         """
@@ -100,25 +104,25 @@ class SmoothnessTracker:
             msg = "Must call start_turn() before finish_turn()"
             raise RuntimeError(msg)
 
-        report = score_turn(
-            turn_id=self._current_turn_id,
-            task_id=self._current_task_id,
-            events=self._current_events,
-        )
+        with self._lock:
+            report = score_turn(
+                turn_id=self._current_turn_id,
+                task_id=self._current_task_id,
+                events=list(self._current_events),
+            )
 
-        # Use policy module to choose the mode
-        task_report = self._task_reports.get(self._current_task_id)
-        mode = choose_tok_mode(report, task_report)
-        report.mode = mode
+            task_report = self._task_reports.get(self._current_task_id)
+            mode = choose_tok_mode(report, task_report)
+            report.mode = mode
 
-        self._turn_reports.append(report)
+            self._turn_reports.append(report)
 
-        task_id = self._current_task_id
-        task_reports = [r for r in self._turn_reports if r.task_id == task_id]
-        self._task_reports[task_id] = score_task(task_id, task_reports)
+            task_id = self._current_task_id
+            task_reports = [r for r in self._turn_reports if r.task_id == task_id]
+            self._task_reports[task_id] = score_task(task_id, task_reports)
 
-        self._current_turn_id = None
-        self._current_events = []
+            self._current_turn_id = None
+            self._current_events = []
 
         return report
 
@@ -154,11 +158,12 @@ class SmoothnessTracker:
 
     def reset(self) -> None:
         """Reset all tracking state."""
-        self._current_turn_id = None
-        self._current_task_id = None
-        self._current_events = []
-        self._turn_reports = []
-        self._task_reports = {}
+        with self._lock:
+            self._current_turn_id = None
+            self._current_task_id = None
+            self._current_events = []
+            self._turn_reports = []
+            self._task_reports = {}
 
     @property
     def current_turn_id(self) -> str | None:

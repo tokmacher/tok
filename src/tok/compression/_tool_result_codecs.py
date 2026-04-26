@@ -41,8 +41,12 @@ __all__ = [
 _CODE_PATTERNS = re.compile(r"\bdef \b|\bclass \b|\bimport \b|\basync def \b|\bfunction \b")
 
 
-def _detect_tool_content_type(text: str) -> str:
+def _detect_tool_content_type(text: str, path: str = "") -> str:
     """Detect the content type of a tool result."""
+    if path:
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        if ext in {"py", "pyi"}:
+            return "file"
     if "Traceback (most recent call last):" in text or "at new " in text:
         return "stack_trace"
     if re.search(r"\b(PASSED|FAILED)\b", text) and re.search(r"\d+ (passed|failed)( in | ,)", text):
@@ -85,6 +89,13 @@ def _detect_tool_content_type(text: str) -> str:
         )
         if grep_matches / len(non_empty) > 0.7:
             return "grep"
+        bare_lnum_matches = sum(
+            1
+            for line in non_empty
+            if re.match(r"^\d+:\s*\S", line)  # linenum:content (single-file grep -n)
+        )
+        if bare_lnum_matches / len(non_empty) > 0.7:
+            return "grep"
 
     if len(non_empty) >= 8:
         la_lines = sum(1 for line in non_empty if re.match(r"^[dl-][rwx-]{9}", line))
@@ -101,11 +112,20 @@ def _detect_tool_content_type(text: str) -> str:
             return "install"
 
     if len(text) > 1000 and _CODE_PATTERNS.search(text):
-        return "file"
+        _has_js_signals = bool(
+            re.search(r"\b(const|let|var)\b", text)
+            or re.search(r"=>\s*[{(]", text)
+            or re.search(r"\bexport\s+(default\s+)?", text)
+            or re.search(r"[{]\s*\.\.\.", text)
+        )
+        if not _has_js_signals:
+            return "file"
 
     if TOK_FORCE_FILE_CODEC and len(text) > 200:
         if _CODE_PATTERNS.search(text) or text.count("\n") > 5:
-            return "file"
+            _has_js = bool(re.search(r"\b(const|let|var)\b", text) or re.search(r"=>\s*[{(]", text))
+            if not _has_js:
+                return "file"
 
     if len(lines) >= 5:
         for i in range(len(lines) - 4):
@@ -147,10 +167,20 @@ def _compress_pytest(text: str, command: str = "") -> str:
             label = label[: -len(" PASSED")].strip()
         return label[:120]
 
+    summary_passed = 0
+    summary_failed = 0
+
     for line in lines:
         if re.match(r"=+\s+\d+.*\s+=+\s*$", line):
             result.append(line)
             in_failure = False
+            if passed == 0 and failed == 0:
+                m_passed = re.search(r"(\d+)\s+passed", line)
+                if m_passed:
+                    summary_passed = int(m_passed.group(1))
+                m_failed = re.search(r"(\d+)\s+failed", line)
+                if m_failed:
+                    summary_failed = int(m_failed.group(1))
             continue
         if " PASSED" in line or line.endswith(" PASSED"):
             passed += 1
@@ -174,6 +204,11 @@ def _compress_pytest(text: str, command: str = "") -> str:
             continue
         if line.startswith(("collected ", "platform ", "rootdir")):
             result.append(line)
+
+    if passed == 0 and failed == 0:
+        if summary_passed or summary_failed:
+            passed = summary_passed
+            failed = summary_failed
 
     header = f">>> tool:pytest|passed:{passed}|failed:{failed}"
     verification_line = ""
@@ -207,24 +242,33 @@ def _compress_pytest(text: str, command: str = "") -> str:
 
 def _compress_grep(text: str) -> str:
     lines = text.splitlines()
-    by_file: dict[str, list[str]] = {}
+    by_file: dict[str, list[tuple[str, str]]] = {}
     order: list[str] = []
 
     for line in lines:
         m = re.match(r"^([^\s:][^:]*):(\d+):(.*)", line)
         if m:
-            path, _lnum, snippet = m.group(1), m.group(2), m.group(3)
+            path, lnum, snippet = m.group(1), m.group(2), m.group(3)
         else:
-            m2 = re.match(r"^([^\s:][^:]*):(.+)", line)
-            if m2:
-                path, snippet = m2.group(1), m2.group(2)
+            m_bare = re.match(r"^(\d+):(.*)", line)
+            if m_bare:
+                path, lnum, snippet = "", m_bare.group(1), m_bare.group(2)
             else:
-                path, snippet = "", line
+                lnum = ""
+                m2 = re.match(r"^([^\s:][^:]*):(.+)", line)
+                if m2:
+                    _candidate = m2.group(1)
+                    if any(c in _candidate for c in ("/", ".", "\\")) or _candidate.startswith("~"):
+                        path, snippet = m2.group(1), m2.group(2)
+                    else:
+                        path, snippet = "", line
+                else:
+                    path, snippet = "", line
         key = path or "__other__"
         if key not in by_file:
             by_file[key] = []
             order.append(key)
-        by_file[key].append(snippet.strip())
+        by_file[key].append((lnum, snippet.strip()))
 
     total = sum(len(v) for v in by_file.values())
     if total <= 3:
@@ -246,8 +290,11 @@ def _compress_grep(text: str) -> str:
         snippets = by_file[key]
         limit = min(per_file_limit, len(snippets))
         shown = snippets[:limit]
-        for _i, s in enumerate(shown):
-            result.append(f"{key}: {s[:80]}")
+        for lnum, s in shown:
+            if lnum:
+                result.append(f"{key}:{lnum}: {s[:80]}")
+            else:
+                result.append(f"{key}: {s[:80]}")
         remaining = len(snippets) - limit
         if remaining > 0:
             result.append(f"{key}: ... ({remaining} more matches)")
@@ -285,11 +332,11 @@ def _compress_repetitive(text: str, command: str = "") -> str:
         result.append(line)
         i += 1
 
-    if len(result) >= len(lines):
-        return text
-
     header = f">>> tool:bash|original_lines:{len(lines)}|compressed_lines:{len(result)}"
-    return header + "\n" + "\n".join(result)
+    compressed = header + "\n" + "\n".join(result)
+    if len(compressed) >= len(text):
+        return text
+    return compressed
 
 
 def _compress_git_diff(text: str) -> str:
@@ -630,7 +677,10 @@ def _compress_stack_traces(text: str) -> str:
         result.insert(0, f"  [... filtered {hidden_count} library frames]")
 
     header = f">>> tool:stack_trace|lines:{len(lines)}|hidden_frames:{hidden_count}"
-    return header + "\n" + "\n".join(result)
+    compressed = header + "\n" + "\n".join(result)
+    if len(compressed) >= len(text):
+        return text
+    return compressed
 
 
 def _compress_json_response(data: str | dict[str, Any] | list[Any], depth: int = 0) -> str | dict[str, Any] | list[Any]:

@@ -91,7 +91,7 @@ def _apply_runtime_hint_cooldown(
         session._runtime_hint_last_turn[hint_key] = current_turn
         filtered.append(hint)
     if len(session._runtime_hint_last_turn) > 512:
-        cutoff = current_turn - max(cooldown_turns + 8, 12)
+        cutoff = max(1, current_turn - max(cooldown_turns + 8, 12))
         session._runtime_hint_last_turn = {
             key: turn for key, turn in session._runtime_hint_last_turn.items() if int(turn) >= cutoff
         }
@@ -121,7 +121,6 @@ def build_tool_compatible_resend(
     bool,
 ]:
     """Build a tool-compatible resend payload with state compression and hints."""
-    del runtime
     if request.tool_compatible:
         pre_resend_memory = memory
         previous_comparable = dict(session._last_tool_compatible_state_fields)
@@ -182,8 +181,6 @@ def build_tool_compatible_resend(
                 late_answer_assembly_repair_mode=session._late_answer_assembly_repair_mode_active,
             )
         )
-        if not runtime_hints:
-            pass
         hot_recent_hints, hot_metrics = session.hot_recent_runtime_hints(max_hints=None)
         if hot_recent_hints:
             runtime_hints.extend(hot_recent_hints)
@@ -245,7 +242,7 @@ def build_tool_compatible_resend(
         runtime_hints,
         behavior_signals,
         hot_hint_metrics,
-        {},
+        {"messages": []},
         {},
         False,
     )
@@ -259,10 +256,10 @@ def process_response_impl(
     session: RuntimeSession,
     behavior_signals: dict[str, int] | None = None,
     tool_compatible: bool = False,
-    jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,
+    jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,  # noqa: F841
 ) -> ProcessedRuntimeResponse:
     """Process a raw LLM response into structured content with drift handling."""
-    del jit_executor
+    # TODO: wire jit_executor into response processing path
     from .types import ProcessedRuntimeResponse
 
     contract = response_contract_for_mode(text, tool_compatible=tool_compatible, session=session)

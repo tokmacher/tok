@@ -82,8 +82,8 @@ def _execution_task() -> BenchmarkTaskManifest:
                 "seed_patch_edits": [
                     {
                         "path": "README.md",
-                        "old_string": "Tok is an invisible bridge",
-                        "new_string": "Tok remains an invisible benchmark bridge",
+                        "old_string": "Tok is a local bridge",
+                        "new_string": "Tok is a local benchmark bridge",
                     }
                 ],
             },
@@ -122,8 +122,8 @@ def test_build_task_asset_generates_seed_patch_from_declared_edits(tmp_path: Pat
     seed_patch = (asset_root / "seed.patch").read_text()
     workspace_text = (workspace_root / "README.md").read_text()
 
-    assert "Tok remains an invisible benchmark bridge" in seed_patch
-    assert "Tok is an invisible bridge" in workspace_text
+    assert "Tok is a local benchmark bridge" in seed_patch
+    assert "Tok is a local bridge" in workspace_text
 
 
 def test_build_seed_patch_preserves_trailing_blank_context_lines(tmp_path: Path) -> None:

@@ -258,7 +258,7 @@ def evaluate_expected_failure(
 
     missing_failures = [name for name in expected_failures if name not in actual_failures]
     missing_signals = [name for name in expected_signals if behavior_signals.get(name, 0) <= 0]
-    unexpected_failures = [name for name in actual_failures if expected_failures and name not in expected_failures]
+    unexpected_failures = [name for name in actual_failures if name not in expected_failures]
 
     failures: list[str] = []
     failures.extend(f"missing_expected_failure:{name}" for name in missing_failures)

@@ -568,6 +568,12 @@ def _repair_structured_answer_text(
 def _synthesize_answer_phase_fallback_text(
     session: RuntimeSession | None,
 ) -> str:
+    """Placeholder for answer-phase fallback text synthesis.
+
+    Returns empty string by design. Callers check for truthiness before
+    using the result. This will be wired to bridge memory anchors in a
+    future release.
+    """
     return ""
 
 

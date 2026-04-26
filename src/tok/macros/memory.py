@@ -12,7 +12,7 @@ from typing import Any
 
 
 @dataclass(frozen=True, kw_only=True)
-class TokMemory:
+class MacroMemory:
     tokens: frozenset[str]
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -21,25 +21,25 @@ class TokMemory:
 
 
 @dataclass(frozen=True, kw_only=True)
-class EpisodeMemory(TokMemory):
+class EpisodeMemory(MacroMemory):
     question: str
     answer: str
     ok: bool | None
 
 
 @dataclass(frozen=True, kw_only=True)
-class LessonMemory(TokMemory):
+class LessonMemory(MacroMemory):
     lesson: str
 
 
 @dataclass(frozen=True, kw_only=True)
-class ConstraintMemory(TokMemory):
+class ConstraintMemory(MacroMemory):
     """Stores negative knowledge or 'never-do' patterns."""
 
     constraint: str
 
 
 @dataclass(frozen=True, kw_only=True)
-class RepairMemory(TokMemory):
+class RepairMemory(MacroMemory):
     history: tuple[tuple[str, str], ...]
     final_ok: bool
