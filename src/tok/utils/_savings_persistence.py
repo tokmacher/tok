@@ -94,6 +94,8 @@ def parse_kv_string(s: str) -> dict[str, int]:
 
 def parse_model_line(line: str) -> tuple[str, dict[str, Any]]:
     """Parse a model statistics line from the savings file."""
+    if " m:" not in line:
+        return (line, {})
     parts = line.split(" m:", 1)[1].strip().split("|")
     model_name = parts[0]
     model_stats: dict[str, Any] = {

@@ -270,6 +270,7 @@ def test_health_endpoint(monkeypatch) -> None:
         "mode": "natural-first",
         "request_policy": "natural_first",
         "baseline_only": False,
+        "persistence_failures": 0,
         "fallback_count": 0,
         "actual_tokens": 0,
         "baseline_tokens": 0,
@@ -420,6 +421,7 @@ def test_health_endpoint_reports_baseline_only_and_session_savings(
     assert response.status_code == 200
     payload = response.json()
     assert payload["baseline_only"] is True
+    assert payload["persistence_failures"] == 0
     assert payload["fallback_count"] == 2
     assert payload["session_tokens_saved"] == 100
     assert payload["session_savings_pct"] == 40.0

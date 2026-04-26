@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+_logger = logging.getLogger("tok.runtime.pipeline.request_preparation")
 
 # Matches grep output lines: path:lineno: content
 _GREP_PATH_RE = re.compile(r"^([^:\s][^:]+\.[a-zA-Z]{1,8}):\d+:")
@@ -796,5 +799,6 @@ def _inject_system(
     except TypeError as exc:
         if "runtime_hints" not in str(exc):
             raise
+        _logger.warning("runtime_hints rejected by inject_system_additions; retrying without")
         kwargs.pop("runtime_hints", None)
         return inject_system_additions(**kwargs)

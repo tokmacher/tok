@@ -167,5 +167,3 @@ flowchart TB
 ```
 
 ______________________________________________________________________
-
-See `ops/archive/roadmap_20260419_stale.md` for archived planning and phase status.

@@ -670,10 +670,6 @@ def _run_bridge_preflight(
             canonical_body=canonical_body,
             original_body=original_body,
         )
-        _merge_signal_counts(
-            behavior_signals,
-            bridge_strict_failure_signals(outgoing_failures),
-        )
         if _should_return_read_burst_hint(outgoing_failures):
             (
                 rewritten_body,

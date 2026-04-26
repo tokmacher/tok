@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.1.4 (2026-04-26)
+
+### Fixes
+
+- **Stats accuracy**: baseline cost model now reflects Tok's compression contribution
+  only. Previously, cache token discounts (an API feature) were attributed to Tok,
+  inflating cost savings figures to ~90%. Cost savings now tracks token savings (~36% in
+  typical sessions).
+- **Stats display**: `cost_savings_pct` was missing from completed-session summaries,
+  causing the Last Completed Session panel to show token % as the cost headline. Fixed.
+- **Compression pipeline**: large `git diff` outputs were being truncated by the generic
+  truncation layer after `_compress_git_diff` had already stripped context lines,
+  removing actual changed lines. Diffs are now marked already-compressed and exempt from
+  further truncation.
+- **Stats command**: duplicate rendering branch for Last Completed Session panel
+  removed.
+- Session persistence errors now increment a `_persistence_failures` counter on
+  `RuntimeSession`, making previously silent disk failures observable.
+- Result cache entries truncated on save now emit a warning log instead of silently
+  dropping characters.
+- Memory command `typer.Exit()` handling corrected.
+
+### Improved
+
+- Token and cost row labels across all stats panels now read "Tokens (with Tok / est. no
+  Tok)" and "Cost (with Tok / est. no caching)" to make the baseline assumption
+  explicit.
+- `reset_session()` added to `RuntimeSession` for clean transient state resets without
+  touching persisted data.
+- Compression level validation introduced for `tok_tool_result`.
+- Thread safety improved in result cache operations.
+
+### Removed
+
+- Unused `TokMemory` class replaced by `MacroMemory` throughout.
+- Deprecated runtime configuration hints removed.
+- Unused `_install.py` CLI module removed.
+- Unused `typings/streamlit` stub removed.
+
 ## 0.1.3 (2026-04-25)
 
 ### Fixes

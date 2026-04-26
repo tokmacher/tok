@@ -379,19 +379,26 @@ def savings_headline(
 ) -> tuple[str, str, str]:
     if summary is None:
         pct = 0.0 if savings_pct is None else savings_pct
-        token_text = "No session savings recorded yet" if tokens_saved is None else f"{tokens_saved:,} tokens avoided"
-        return ("Saved $0.0000", f"{pct:.1f}% saved", token_text)
+        ts = 0 if tokens_saved is None else tokens_saved
+        cost_pct = pct
+        return (
+            f"Saved {ts:,} tokens",
+            f"{cost_pct:.1f}% saved",
+            f"{savings_verdict(cost_pct)}" + (" • $0.0000 cost saved" if tokens_saved is not None else ""),
+        )
 
     savings_pct_val = summary["savings_pct"]
+    cost_savings_pct_val = summary.get("cost_savings_pct", summary["savings_pct"])
     cost_saved_val = summary["cost_saved_usd"]
     tokens_saved_val = summary["tokens_saved"]
     pct = float(savings_pct_val) if isinstance(savings_pct_val, int | float | str) else 0.0
+    cost_pct = float(cost_savings_pct_val) if isinstance(cost_savings_pct_val, int | float | str) else 0.0
     saved_usd = float(cost_saved_val) if isinstance(cost_saved_val, int | float | str) else 0.0
     tokens_saved = int(tokens_saved_val) if isinstance(tokens_saved_val, int | float | str) else 0
     return (
-        f"Saved ${saved_usd:.4f}",
+        f"Saved {tokens_saved:,} tokens",
         f"{pct:.1f}% saved",
-        f"{savings_verdict(pct)} • {tokens_saved:,} tokens avoided",
+        f"{savings_verdict(pct)} • ${saved_usd:.4f} cost saved ({cost_pct:.1f}% cost)",
     )
 
 
@@ -471,11 +478,11 @@ def session_status_rows(
         rows.extend(
             [
                 (
-                    "With Tok vs without Tok",
-                    f"{int(summary['actual_tokens']) if isinstance(summary.get('actual_tokens'), int | float | str) else 0:,} / {int(summary['baseline_tokens']) if isinstance(summary.get('baseline_tokens'), int | float | str) else 0:,} tokens",
+                    "Tokens (with Tok / est. no Tok)",
+                    f"{int(summary['actual_tokens']) if isinstance(summary.get('actual_tokens'), int | float | str) else 0:,} / {int(summary['baseline_tokens']) if isinstance(summary.get('baseline_tokens'), int | float | str) else 0:,}",
                 ),
                 (
-                    "Cost",
+                    "Cost (with Tok / est. no caching)",
                     f"${float(summary['actual_cost_usd']) if isinstance(summary.get('actual_cost_usd'), int | float | str) else 0.0:.4f} / ${float(summary['baseline_cost_usd']) if isinstance(summary.get('baseline_cost_usd'), int | float | str) else 0.0:.4f}",
                 ),
             ]

@@ -5,64 +5,42 @@
 [![Python](https://img.shields.io/pypi/pyversions/tok-protocol.svg)](https://pypi.org/project/tok-protocol/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Tok is designed to reduce LLM token costs on longer sessions, without changing how you
-use Claude Code once it's routed through the local bridge.**
+AI agent tools still pass around context as if every reader were human.
 
-Savings come primarily from **input token compression** (prompt/context optimization)
-with additional savings from response compression. Short sessions (< 8 turns) default to
-baseline mode since compression overhead exceeds savings. Since most providers charge
-different rates for input vs output tokens, your actual cost reduction depends on your
-provider's pricing structure and session length.
+Long-running coding-agent sessions often resend verbose transcripts, tool outputs, file
+reads, search results, and status text on every turn. But in many agent loops, the next
+reader is another model. Tok is a local bridge that explores a better runtime shape:
+compact, deterministic, model-facing state instead of repeated human-facing context.
 
-Tok is an invisible bridge that sits between Claude Code and the model API. It
-compresses conversations on the way out and re-hydrates them on the way back. The
-focused 0.1.x public release story is Claude Code first: you keep using Claude exactly
-as before while Tok runs underneath and saves tokens automatically.
+For the 0.1.x release, Tok focuses on one narrow path: Claude Code routed through a
+local bridge. It reduces repeated context where it can do so safely, preserves the
+normal Claude Code workflow, and fails open when compression would risk fidelity.
 
-## Who Is Tok For?
+Token and cost savings are a meaningful result of this approach, but they follow from
+the core idea rather than defining it. Savings come primarily from input-token
+compression (prompt/context optimization) with additional savings from response
+compression. Since providers charge different rates for input vs. output tokens, actual
+cost reduction depends on your provider's pricing structure and session length.
 
-- **Individual developers** using Claude Code who want to reduce token costs
-- **Teams** with shared API budgets looking to stretch their token allowances
-- **Power users** who work on long-running sessions where context accumulates
+## Why Tok Exists
 
-If you already use Claude Code, Tok is a small add-on: start the bridge and point Claude
-at it via `ANTHROPIC_BASE_URL=http://localhost:9090`.
+Human-facing output is useful at the edges of a system, where a person reads the result.
+Inside an agent loop, however, repeated state should be compact, structured, replayable,
+and auditable. Resending the same file contents, search results, or tool outputs
+verbatim on every turn is wasteful IO between two machines.
 
-## What Tok Does
+Tok tests that idea through a narrow Claude Code bridge path. It intercepts
+conversations, compresses repeated and redundant context using deterministic rules (not
+LLM summarization), and passes compact state to the model. Tok preserves the
+request/response shape Claude Code expects, and falls back to baseline when it cannot
+safely do so.
 
-Tok intercepts LLM traffic and applies deterministic compression:
+This is a bridge-layer experiment, not a framework. The 0.1.x release is deliberately
+narrow to keep claims testable and the supported surface small.
 
-- **Semantic deduplication**: Repeated file reads, search results, and tool outputs are
-  cached and stubbed
-- **Delta compression**: Changed content shows only the diff, not the full payload
-- **Rolling state**: Conversation history is capped at a fixed memory footprint —
-  entries only drop when the cap is reached after very long sessions (practical
-  conversations are effectively unlimited)
-- **Lossless round-trip**: Everything re-hydrates perfectly on the way back
+## Quickstart
 
-The result is typically lower token volume on sustained sessions, while preserving the
-bridge-first Claude workflow.
-
-## Support Tok
-
-Tok exists because I ran into a real problem and wanted to solve it: getting the same AI
-results with less wasted context and lower token spend. The goal is to keep Tok open
-source and useful first.
-
-If Tok helps you, the most helpful support is:
-
-- Star the repo and share it with people who would benefit
-- File issues, report regressions, and share benchmark results
-- Contribute docs, tests, or fixes
-- Use any sponsorship links listed here in the future if you want to help fund ongoing
-  maintenance
-
-Support is appreciated, but not expected. If Tok saves you money or makes your workflow
-less frustrating, that's why it's here.
-
-## Supported Workflow
-
-The first open-source release supports exactly this path:
+The supported 0.1.x workflow:
 
 ```bash
 pip install tok-protocol
@@ -82,20 +60,110 @@ Default behavior is explicit. Tok does not override `claude` unless you opt in w
 The main CLI commands for `0.1.x` are: `tok init`, `tok install`,
 `tok bridge start|status|logs|stop`, `tok doctor`, and `tok stats`.
 
-## Validation-Only Provider Paths
+### Optional Wrapper Mode
 
-Tok can be pointed at OpenAI-compatible APIs, but for the focused `0.1.x` release those
-paths are validation-only and explicitly outside the supported default story. The public
-contract is still the Claude Code bridge workflow.
+```bash
+tok install --wrap-claude
+source ~/.zshrc  # or source ~/.bashrc
+claude
+```
 
-Experimental validation may be useful for:
+### Expected Output
 
-- OpenRouter and other OpenAI-compatible endpoints
-- DeepSeek or Qwen endpoints you already operate
-- local inference servers that mimic the Anthropic/OpenAI-style request shape
+The normal happy path:
 
-These paths are not part of the supported `0.1.x` onboarding flow, are not surfaced in
-the default CLI help, and may change without compatibility guarantees.
+- `tok bridge status` says the bridge is running and Tok is active
+- `tok doctor` ends with `Recommendation: keep Tok on`
+- `tok stats` shows saved dollars, saved percent, and `With Tok vs without Tok`
+
+Representative output:
+
+```text
+Bridge running on :9090 (PID 12345)
+Saved $0.0123 • 48.1% saved
+Verdict                Tok active and helping
+Tok active             yes
+Degraded to baseline   no
+Fallbacks              0
+```
+
+If you see `Degraded to baseline: yes` or fallback counts rising, Tok protected the
+session by serving requests without compression.
+
+If you enabled wrapper mode and `claude` is still not found, reload your shell with
+`source ~/.zshrc` or `source ~/.bashrc` before debugging Tok itself.
+
+## Who Is Tok For?
+
+- **Individual developers** using Claude Code who want to reduce token costs
+- **Teams** with shared API budgets looking to stretch their token allowances
+- **Power users** who work on long-running sessions where context accumulates
+- **Developers** interested in AI runtime efficiency and compact model-facing state
+- **Anyone** who prefers a local, inspectable bridge rather than a hosted service
+
+If you already use Claude Code, Tok is a small add-on: start the bridge and point Claude
+at it via `ANTHROPIC_BASE_URL=http://localhost:9090`.
+
+## What Tok Does
+
+Tok intercepts LLM traffic and applies deterministic compression:
+
+- **Semantic deduplication**: Repeated file reads, search results, and tool outputs are
+  cached and stubbed
+- **Delta compression**: Changed content shows only the diff, not the full payload
+- **Rolling state**: Conversation history is capped at a fixed memory footprint. Entries
+  only drop when the cap is reached after very long sessions. Practical conversations
+  are effectively unlimited.
+- **Designed for round-trip fidelity**: Tok is designed to preserve the visible Claude
+  Code workflow. When Tok cannot safely preserve fidelity, it falls back to baseline.
+  The supported bridge path is covered by fidelity and smoke tests.
+
+The result is typically lower token volume on sustained sessions, while preserving the
+bridge-first Claude workflow.
+
+## Design Principles
+
+- **Model-facing state should be compact.** Verbose human-shaped context is expensive
+  and unnecessary when the reader is a model.
+- **Human-facing output belongs at the edges.** Generate it where a person reads it, not
+  in every internal hop.
+- **Compression must be deterministic.** No LLM summarization. Rules are repeatable and
+  auditable.
+- **Fail open rather than corrupt context.** When fidelity is at risk, Tok serves
+  requests without compression and signals the fallback.
+- **Narrow supported surface before broad provider expansion.** Claude Code bridge-first
+  for 0.1.x.
+- **Measure savings honestly.** Workload-dependent, with upper-bound examples clearly
+  labeled.
+
+## Demonstrated Savings
+
+Here is an example of the `tok stats` output from a long session with heavy tool-result
+repetition (207 API calls). This is **not typical**: it represents an upper bound from a
+highly repetitive workload.
+
+![Tok Savings Output — upper-bound example from a high-repetition session](docs/images/tok_stats.png)
+
+This output from a high-repetition session shows an upper-bound example. Your actual
+savings depend on session length, tool usage patterns, and provider pricing:
+
+- **Typical sessions (8+ turns)**: meaningful input-token savings on sustained work with
+  repeated file reads and search operations
+- **Short sessions (< 8 turns)**: Tok defaults to baseline since compression overhead
+  exceeds savings
+- **Fail-open safety**: if compression risks fidelity, Tok falls back to uncompressed
+
+Savings are workload-dependent. Repetitive long-running sessions benefit most; short
+sessions may intentionally run at baseline.
+
+See:
+
+- [`docs/claims_matrix.md`](./docs/claims_matrix.md) for detailed claim evidence and
+  status
+- [`docs/pricing_verification.md`](./docs/pricing_verification.md) for pricing
+  methodology
+- [`docs/live_smoke_matrix.md`](./docs/live_smoke_matrix.md) for automated smoke test
+  results
 
 ## What Tok Is / Is Not
 
@@ -109,35 +177,31 @@ the default CLI help, and may change without compatibility guarantees.
 
 - A broad multi-agent framework
 - A general-purpose SDK for arbitrary Python applications
-- A replacement for your existing tools (it runs invisibly underneath them)
+- A replacement for your existing tools (it runs underneath them)
 
 The bridge is the supported public workflow. A Python SDK path exists but is
 experimental.
 
-## Demonstrated Savings
+## Provider Posture
 
-Here's an example of the `tok stats` output from a long session with heavy tool-result
-repetition (207 API calls). This is **not typical** — it represents an upper bound from
-a highly repetitive workload:
+The supported `0.1.x` product path is **Claude Code routed through the local Tok
+bridge**.
 
-![Tok Savings Output — upper-bound example from a high-repetition session](docs/images/tok_stats.png)
+Tok can also be pointed at OpenAI-compatible APIs, but for the 0.1.x release those paths
+are **validation-only** and explicitly outside the supported default story. Treat them
+as experimental unless a future release promotes them into the supported surface.
 
-This output from a high-repetition session shows an upper-bound example. Your actual
-savings depend on session length, tool usage patterns, and provider pricing:
+Experimental validation may be useful for:
 
-- **Typical sessions (8+ turns)**: meaningful input-token savings on sustained work with
-  repeated file reads and search operations
-- **Short sessions (< 8 turns)**: Tok defaults to baseline since compression overhead
-  exceeds savings
-- **Fail-open safety** — if compression risks fidelity, Tok falls back to uncompressed
+- OpenRouter and other OpenAI-compatible endpoints
+- DeepSeek or Qwen endpoints you already operate
+- Local inference servers that mimic the Anthropic/OpenAI-style request shape
 
-See:
+These paths are not part of the supported `0.1.x` onboarding flow, are not surfaced in
+the default CLI help, and may change without compatibility guarantees.
 
-- [`docs/claims_matrix.md`](./docs/claims_matrix.md) — detailed claim evidence and
-  status
-- [`docs/pricing_verification.md`](./docs/pricing_verification.md) — pricing methodology
-- [`docs/live_smoke_matrix.md`](./docs/live_smoke_matrix.md) — automated smoke test
-  results
+`tok install` is a setup/migration helper and does not modify `claude` by default. If
+you want legacy auto-routing behavior, run `tok install --wrap-claude`.
 
 ## Technical Overview
 
@@ -167,14 +231,15 @@ Tok achieves its compression through several deterministic techniques:
 - **BPE-aligned sigils**: Single-character fields (`t:`, `g:`, `f:`) minimize token cost
 - **Structured state**: `>>> t:2|g:refactor|f:src/main.py|cmds:pytest` encodes context
   efficiently
-- **Lossless round-trip**: Tok state perfectly re-hydrates to original JSON/Markdown
+- **Round-trip fidelity**: Tok state is designed to preserve the supported bridge
+  workflow, with fallback when fidelity cannot be guaranteed
 
 ### Memory Architecture
 
 - **Hot/durable buckets**: Recent context vs. long-term knowledge with different decay
   rates
 - **Bounded rolling state**: Updates are constant-time; memory caps at ~600 hot + ~2000
-  durable entries — practical sessions never reach the cap
+  durable entries. Most practical sessions stay well below the cap.
 - **Fail-open safety**: Automatic fallback to baseline if compression risks fidelity
 
 ### Pointer System (Experimental)
@@ -222,7 +287,7 @@ but not part of the supported 0.1.x public API.
 ```
 
 These examples illustrate the internal wire protocol. Users do not write Tok syntax
-directly — the bridge handles all encoding and decoding transparently.
+directly. The bridge handles all encoding and decoding transparently.
 
 ## Prerequisites
 
@@ -231,19 +296,8 @@ directly — the bridge handles all encoding and decoding transparently.
 - Claude Code installed and available as `claude`
 - An Anthropic API key (`ANTHROPIC_API_KEY`) already configured for Claude Code
 
-Tok is a proxy — it does not manage API keys. It forwards whatever credentials Claude
+Tok is a proxy. It does not manage API keys. It forwards whatever credentials Claude
 Code already uses. If `claude` works without Tok, it will work with Tok.
-
-## Provider Posture
-
-The supported `0.1.x` product path is Claude Code routed through the local Tok bridge.
-
-Validation-only evidence also exists for some OpenAI-compatible providers, but those
-paths are not the public contract for this release. Treat them as experimental unless a
-future release promotes them into the supported surface.
-
-`tok install` is now a setup/migration helper and does not modify `claude` by default.
-If you want legacy auto-routing behavior, run `tok install --wrap-claude`.
 
 ## Install
 
@@ -259,63 +313,7 @@ If you are working from a local checkout instead of PyPI:
 pip install .
 ```
 
-## Quickstart
-
-Run this exact bridge-first flow:
-
-```bash
-tok init          # optional: create project workspace
-tok install
-tok bridge start
-ANTHROPIC_BASE_URL=http://localhost:9090 claude
-tok bridge status
-tok doctor
-tok bridge stop
-tok stats
-```
-
-Optional wrapper mode:
-
-```bash
-tok install --wrap-claude
-source ~/.zshrc  # or source ~/.bashrc
-claude
-```
-
-The normal happy path is:
-
-- `tok bridge status` says the bridge is running and Tok is active
-- `tok doctor` ends with `Recommendation: keep Tok on`
-- `tok stats` shows saved dollars, saved percent, and `With Tok vs without Tok`
-
-Representative output:
-
-```text
-Bridge running on :9090 (PID 12345)
-Saved $0.0123 • 48.1% saved
-Verdict                Tok active and helping
-Tok active             yes
-Degraded to baseline   no
-Fallbacks              0
-```
-
-If you see `Degraded to baseline: yes` or fallback counts rising, Tok protected the
-session by serving requests without compression.
-
-If you enabled wrapper mode and `claude` is still not found, reload your shell with
-`source ~/.zshrc` or `source ~/.bashrc` before debugging Tok itself.
-
-## First 10 Minutes Troubleshooting
-
-| If you see this                                               | Check this first                                              | Likely fix                                                                                                              |
-| ------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `tok: command not found`                                      | Was the package installed into the active Python environment? | Re-activate the environment and run `pip install tok-protocol` again.                                                   |
-| `claude: command not found` after `tok install --wrap-claude` | Was your shell reloaded?                                      | Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.                                                       |
-| `Bridge not running`                                          | Did `tok bridge start` succeed?                               | Restart with `tok bridge start --foreground` and inspect `tok bridge logs`.                                             |
-| No savings visible yet                                        | Is the session still very short?                              | Keep working for a few turns, then run `tok doctor` and `tok stats --last-session`, or `tok stats` for a lifetime view. |
-| `Degraded to baseline: yes`                                   | Did the session fall back for safety?                         | Run `tok doctor` first, then follow the steps in [`docs/troubleshooting.md`](docs/troubleshooting.md).                  |
-
-## Clean-Room Install Verification
+### Clean-Room Install Verification
 
 Use this when validating the package from scratch:
 
@@ -338,7 +336,7 @@ wheel from `dist/`:
 python -m build
 python -m venv .venv
 source .venv/bin/activate
-pip install dist/tok_protocol-0.1.3-py3-none-any.whl
+pip install dist/tok_protocol-*.whl
 tok --version
 tok --help
 tok install
@@ -352,6 +350,16 @@ published dependencies to be available in the environment or via an internal pac
 mirror.
 
 This is the minimum supported install bar for the first public release.
+
+## Troubleshooting
+
+| If you see this                                               | Check this first                                              | Likely fix                                                                                                              |
+| ------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `tok: command not found`                                      | Was the package installed into the active Python environment? | Re-activate the environment and run `pip install tok-protocol` again.                                                   |
+| `claude: command not found` after `tok install --wrap-claude` | Was your shell reloaded?                                      | Run `source ~/.zshrc` or `source ~/.bashrc`, or open a new shell.                                                       |
+| `Bridge not running`                                          | Did `tok bridge start` succeed?                               | Restart with `tok bridge start --foreground` and inspect `tok bridge logs`.                                             |
+| No savings visible yet                                        | Is the session still very short?                              | Keep working for a few turns, then run `tok doctor` and `tok stats --last-session`, or `tok stats` for a lifetime view. |
+| `Degraded to baseline: yes`                                   | Did the session fall back for safety?                         | Run `tok doctor` first, then follow the steps in [`docs/troubleshooting.md`](docs/troubleshooting.md).                  |
 
 ## Bridge Workflow
 
@@ -373,7 +381,8 @@ ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok stats
 ```
 
-Baseline prices are calculated using current Openrouter USD rates.
+Pricing estimates depend on the configured provider/model rates. See
+[`docs/pricing_verification.md`](docs/pricing_verification.md) for methodology.
 
 ## Mode Selection
 
@@ -467,6 +476,23 @@ uv run mypy src/tok/
 
 Tok runs locally. No data leaves your machine except the model/API calls you would
 already make.
+
+## Support Tok
+
+Tok exists because I ran into a real problem and wanted to solve it: preserving the
+normal Claude Code workflow while reducing wasted context and token spend where it is
+safe to do so. The goal is to keep Tok open source and useful first.
+
+If Tok helps you, the most helpful support is:
+
+- Star the repo and share it with people who would benefit
+- File issues, report regressions, and share benchmark results
+- Contribute docs, tests, or fixes
+- Use any sponsorship links listed here in the future if you want to help fund ongoing
+  maintenance
+
+Support is appreciated, but not expected. If Tok saves you money or makes your workflow
+less frustrating, that is why it is here.
 
 ## License
 

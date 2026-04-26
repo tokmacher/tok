@@ -144,7 +144,8 @@ def stats_command(
                         border_style="cyan",
                     )
                 )
-        elif not session and last_session is False:
+
+        elif not session:
             if last_completed:
                 pct = float(last_completed["savings_pct"])
                 headline, headline_pct, subhead = savings_headline(last_completed)
@@ -166,11 +167,11 @@ def stats_command(
                                 str(last_completed.get("last_degradation_reason", "") or "none"),
                             ),
                             (
-                                "With Tok vs without Tok",
-                                f"{int(last_completed['actual_tokens']):,} / {int(last_completed['baseline_tokens']):,} tokens",
+                                "Tokens (with Tok / est. no Tok)",
+                                f"{int(last_completed['actual_tokens']):,} / {int(last_completed['baseline_tokens']):,}",
                             ),
                             (
-                                "Cost",
+                                "Cost (with Tok / est. no caching)",
                                 f"${float(last_completed['actual_cost_usd']):.4f} / ${float(last_completed['baseline_cost_usd']):.4f}",
                             ),
                         ],
@@ -178,43 +179,7 @@ def stats_command(
                     )
                 )
             else:
-                console.print("[dim]No active session data[/dim]")
-        elif not session:
-            if last_session:
-                if last_completed:
-                    pct = float(last_completed["savings_pct"])
-                    headline, headline_pct, subhead = savings_headline(last_completed)
-                    console.print(
-                        render_stats_panel(
-                            "Last Completed Session",
-                            headline=f"{headline} • {headline_pct}",
-                            headline_style=savings_style(pct),
-                            subhead=subhead,
-                            rows=[
-                                ("Date", str(last_completed["date"])),
-                                ("Turns", str(last_completed["turns"])),
-                                (
-                                    "Session quality",
-                                    str(last_completed.get("session_quality", "clean")),
-                                ),
-                                (
-                                    "Degradation reason",
-                                    str(last_completed.get("last_degradation_reason", "") or "none"),
-                                ),
-                                (
-                                    "With Tok vs without Tok",
-                                    f"{int(last_completed['actual_tokens']):,} / {int(last_completed['baseline_tokens']):,} tokens",
-                                ),
-                                (
-                                    "Cost",
-                                    f"${float(last_completed['actual_cost_usd']):.4f} / ${float(last_completed['baseline_cost_usd']):.4f}",
-                                ),
-                            ],
-                            border_style="cyan",
-                        )
-                    )
-                else:
-                    console.print("[dim]No completed session data yet[/dim]")
+                console.print("[dim]No completed session data yet[/dim]")
 
         if breakdown:
             if os.getenv("TOK_DEBUG", "0") == "1":
@@ -261,11 +226,11 @@ def stats_command(
                             ),
                             ("Turns", str(recent_completed["turns"])),
                             (
-                                "With Tok vs without Tok",
-                                f"{int(recent_completed['actual_tokens']):,} / {int(recent_completed['baseline_tokens']):,} tokens",
+                                "Tokens (with Tok / est. no Tok)",
+                                f"{int(recent_completed['actual_tokens']):,} / {int(recent_completed['baseline_tokens']):,}",
                             ),
                             (
-                                "Cost",
+                                "Cost (with Tok / est. no caching)",
                                 f"${float(recent_completed['actual_cost_usd']):.4f} / ${float(recent_completed['baseline_cost_usd']):.4f}",
                             ),
                         ],
@@ -293,11 +258,11 @@ def stats_command(
                             ),
                             ("Turns", str(since_completed["turns"])),
                             (
-                                "With Tok vs without Tok",
-                                f"{int(since_completed['actual_tokens']):,} / {int(since_completed['baseline_tokens']):,} tokens",
+                                "Tokens (with Tok / est. no Tok)",
+                                f"{int(since_completed['actual_tokens']):,} / {int(since_completed['baseline_tokens']):,}",
                             ),
                             (
-                                "Cost",
+                                "Cost (with Tok / est. no caching)",
                                 f"${float(since_completed['actual_cost_usd']):.4f} / ${float(since_completed['baseline_cost_usd']):.4f}",
                             ),
                         ],
@@ -320,11 +285,11 @@ def stats_command(
                         ("Sessions", str(lifetime_summary["sessions"])),
                         ("Turns", str(lifetime_summary["total_turns"])),
                         (
-                            "With Tok vs without Tok",
-                            f"{int(lifetime_summary['actual_tokens']):,} / {int(lifetime_summary['baseline_tokens']):,} tokens",
+                            "Tokens (with Tok / est. no Tok)",
+                            f"{int(lifetime_summary['actual_tokens']):,} / {int(lifetime_summary['baseline_tokens']):,}",
                         ),
                         (
-                            "Cost",
+                            "Cost (with Tok / est. no caching)",
                             f"${float(lifetime_summary['actual_cost_usd']):.4f} / ${float(lifetime_summary['baseline_cost_usd']):.4f}",
                         ),
                         (
@@ -404,6 +369,7 @@ def replay_command(
     history_turns = 0
     file_cache: dict[str, tuple[str, str, float] | tuple[str, str] | tuple[str]] = {}
     behavior_totals: dict[str, int] = {}
+    before_by_kind: dict[str, int] = {}
 
     lines_read = 0
     for line in p.read_text().splitlines():
@@ -439,13 +405,13 @@ def replay_command(
             compression_level=compression_level,
         )
 
-        for kind, chars in bd.items():
-            toks = chars // 4
+        for kind, chars_saved in bd.items():
+            saved_toks = chars_saved // 4
             if kind not in totals:
                 totals[kind] = [0, 0, 0]
             totals[kind][0] += 1
-            totals[kind][1] += toks
-            totals[kind][2] += 0
+            totals[kind][2] += saved_toks
+            before_by_kind[kind] = before_by_kind.get(kind, 0) + before
 
         from tok.compression import compress_history
 
@@ -474,9 +440,10 @@ def replay_command(
     grand_before = 0
     grand_saved = 0
 
-    for kind, (turns, before_tok, _) in sorted(totals.items(), key=lambda x: -x[1][1]):
-        saved = before_tok
-        pct = 100.0
+    for kind, (turns, _, saved_tok) in sorted(totals.items(), key=lambda x: -x[1][1]):
+        before_tok = before_by_kind.get(kind, 0)
+        saved = saved_tok
+        pct = (saved / before_tok * 100) if before_tok > 0 else 0.0
         console.print(f"{kind:<16} | {turns:>5} | {before_tok:>12,} | {saved:>10,} | {pct:>4.0f}%")
         grand_before += before_tok
         grand_saved += saved

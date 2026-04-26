@@ -67,9 +67,14 @@ def test_result_cache_persistence(tmp_path) -> None:
     session.result_cache = {"some_hash": ("h1", "old content")}
     session._save_result_cache()
 
-    # Reload in new session
+    # Reload in new session — legacy 2-tuples are upgraded to dict format
     session2 = RuntimeSession(memory_dir=memory_dir)
-    assert session2.result_cache == {"some_hash": ["h1", "old content"]}
+    entry = session2.result_cache["some_hash"]
+    assert isinstance(entry, dict)
+    assert entry["hash"] == "h1"
+    assert entry["raw"] == "old content"
+    assert entry["first_read_complete"] is False
+    assert isinstance(entry["timestamp"], float)
 
 
 def test_tok_tool_result_applies_truncation() -> None:

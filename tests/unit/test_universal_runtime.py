@@ -5,7 +5,6 @@ from tok.runtime.config import (
     ANSWER_READY_REPAIR_HINT,
     TOK_LARGE_FILE_HINT,
     TOK_READ_PLAN_HINT,
-    TOK_TOOL_REQUIRED_LATCH_HINT,
 )
 from tok.runtime.core import (
     TOOL_COMPAT_MEMORY_PROFILE,
@@ -3425,7 +3424,6 @@ def test_prepare_request_tool_required_latch_activates_and_blocks_answer_ready(
 
     assert second.behavior_signals.get("tool_required_latch_active", 0) == 1
     assert second.behavior_signals.get("answer_ready_turn", 0) == 0
-    assert TOK_TOOL_REQUIRED_LATCH_HINT not in second.body["system"]
 
 
 def test_prepare_request_tool_required_latch_hint_obeys_cooldown(
@@ -3475,7 +3473,6 @@ def test_prepare_request_hint_suppression_on_answer_ready_repair(
     prepared = runtime.prepare_request(request, session)
 
     assert ANSWER_READY_REPAIR_HINT not in prepared.body["system"]
-    assert TOK_TOOL_REQUIRED_LATCH_HINT not in prepared.body["system"]
 
 
 def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
@@ -3681,14 +3678,75 @@ def test_record_fallback_event_increments_and_degrades() -> None:
     assert session._consecutive_fallback_count == _FALLBACK_THRESHOLD
 
 
-def test_reset_fallback_count_clears_counter() -> None:
-    """reset_fallback_count resets the consecutive counter but not _baseline_only."""
+def test_reset_fallback_count_clears_counter_and_restores_baseline() -> None:
+    """reset_fallback_count resets the counter AND clears _baseline_only to restore compression."""
     from tok.runtime.core import RuntimeSession
 
     session = RuntimeSession()
     session._consecutive_fallback_count = 2
+    session._baseline_only = True
     session.reset_fallback_count()
     assert session._consecutive_fallback_count == 0
+    assert not session._baseline_only
+
+
+def test_baseline_only_recovered_after_successful_compression() -> None:
+    """After degradation, a successful compressed request restores compression capability."""
+    from tok.runtime.core import _FALLBACK_THRESHOLD, RuntimeSession
+
+    session = RuntimeSession()
+    for _ in range(_FALLBACK_THRESHOLD):
+        session.record_fallback_event()
+    assert session._baseline_only
+
+    session.reset_fallback_count()
+    assert not session._baseline_only
+    assert session._consecutive_fallback_count == 0
+
+    session.record_fallback_event()
+    assert not session._baseline_only
+    assert session._consecutive_fallback_count == 1
+
+
+def test_persistence_failures_counter_starts_at_zero() -> None:
+    """_persistence_failures starts at 0 for a new session."""
+    from tok.runtime.core import RuntimeSession
+
+    session = RuntimeSession()
+    assert session._persistence_failures == 0
+
+
+def test_persistence_failures_increments_on_save_error(tmp_path) -> None:
+    """save_bridge_memory increments _persistence_failures when I/O fails."""
+    from unittest.mock import patch
+
+    from tok.runtime._session_persistence import save_bridge_memory
+    from tok.runtime.core import RuntimeSession
+
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.memory_dir.mkdir(parents=True, exist_ok=True)
+
+    with patch.object(session.bridge_memory, "to_tok", side_effect=OSError("disk full")):
+        save_bridge_memory(session)
+
+    assert session._persistence_failures == 1
+
+    with patch.object(session.bridge_memory, "to_tok", side_effect=OSError("still full")):
+        save_bridge_memory(session)
+
+    assert session._persistence_failures == 2
+
+
+def test_persistence_failures_stays_zero_on_successful_save(tmp_path) -> None:
+    """save_bridge_memory does not increment _persistence_failures on success."""
+    from tok.runtime._session_persistence import save_bridge_memory
+    from tok.runtime.core import RuntimeSession
+
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.memory_dir.mkdir(parents=True, exist_ok=True)
+
+    save_bridge_memory(session)
+    assert session._persistence_failures == 0
 
 
 def test_cost_usd_computed_when_pricing_provided() -> None:

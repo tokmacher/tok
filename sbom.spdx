@@ -15,17 +15,17 @@
     {
       "name": "tok-protocol",
       "SPDXID": "SPDXRef-tok-protocol",
-      "versionInfo": "0.1.0",
+      "versionInfo": "0.1.4",
       "downloadLocation": "https://github.com/tokmacher/tok",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
-      "copyrightText": "Copyright 2024 tokmacher",
+      "copyrightText": "Copyright 2026 tokmacher",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/tok-protocol@0.1.0"
+          "referenceLocator": "pkg:pypi/tok-protocol@0.1.4"
         }
       ]
     },
@@ -1267,23 +1267,6 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/tiktoken@0.12.0"
-        }
-      ]
-    },
-    {
-      "name": "tok-protocol",
-      "SPDXID": "SPDXRef-tok_protocol",
-      "versionInfo": "0.1.0",
-      "downloadLocation": "NOASSERTION",
-      "filesAnalyzed": false,
-      "licenseConcluded": "NOASSERTION",
-      "licenseDeclared": "NOASSERTION",
-      "copyrightText": "NOASSERTION",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/tok-protocol@0.1.0"
         }
       ]
     },

@@ -18,31 +18,12 @@ _SYMBOLS = {
         ".smart_policy",
         "CANONICAL_WIRE_FIELD_ORDER",
     ),
-    "expand_macros": (".macro_handling", "expand_macros"),
-    "detect_macros": (".macro_handling", "detect_macros"),
-    "resolve_macro_references": (
-        ".macro_handling",
-        "resolve_macro_references",
-    ),
-    "repair_answer": (".answer_repair", "repair_answer"),
-    "validate_answer": (".answer_repair", "validate_answer"),
-    "detect_malformed_answer": (".answer_repair", "detect_malformed_answer"),
-    "validate_semantic_coherence": (
-        ".semantic_validation",
-        "validate_semantic_coherence",
-    ),
-    "detect_semantic_regression": (
-        ".semantic_validation",
-        "detect_semantic_regression",
-    ),
     "calculate_invisible_pressure": (
         ".semantic_validation",
         "calculate_invisible_pressure",
     ),
     "IS_TOK": (".translator", "IS_TOK"),
     "postprocess_response": (".translator", "postprocess_response"),
-    "translate_tok_to_english": (".translator", "translate_tok_to_english"),
-    "translate_english_to_tok": (".translator", "translate_english_to_tok"),
 }
 
 

@@ -831,7 +831,7 @@ def compress_tool_results_impl(
         if delivery_turn is None:
             return False
         if current_turn is None or keep_turns_window is None:
-            return True
+            return False
         return (current_turn - delivery_turn) < keep_turns_window
 
     def _mark_file_fully_delivered(norm_path: str) -> None:
@@ -1044,7 +1044,7 @@ def compress_tool_results_impl(
                         kind = _detect_tool_content_type_impl(content)
                         key = f"{kind}_cached" if "|unchanged|" in compressed else f"{kind}_diff"
                         breakdown[key] = breakdown.get(key, 0) + saved
-                    msg["content"] = compressed
+                        msg["content"] = compressed
             continue
         for block in content:
             if not (isinstance(block, dict) and block.get("type") == "tool_result"):
@@ -1391,7 +1391,7 @@ def compress_tool_results_impl(
                         kind = _detect_tool_content_type_impl(raw)
                         key = f"{kind}_cached" if "|unchanged|" in compressed else f"{kind}_diff"
                         breakdown[key] = breakdown.get(key, 0) + saved
-                    block["content"] = compressed
+                        block["content"] = compressed
                     continue
 
             # Zero-heat check: never compress files that haven't been read before
@@ -1563,10 +1563,7 @@ def compress_recent_window_impl(
         first_exact_evidence_seen.add(key)
         return True
 
-    def _first_exact_guard(
-        context: dict[str, Any] | None,
-        _raw: str,
-    ) -> bool:
+    def _first_exact_guard(context: dict[str, Any] | None, raw: str) -> bool:
         """Guard first exact observation from compression.
 
         Preserves content if:
@@ -1575,9 +1572,12 @@ def compress_recent_window_impl(
         """
         if not context:
             return False
+        tool_name = str(context.get("name", "")).lower()
+        if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(raw) == "navigation":
+            return False
         key = evidence_identity_key(
             str(context.get("name", "")),
-            path=str(context.get("path") or "").strip() or None,
+            path=_extract_normalized_path(context),
             query=str(context.get("query") or "").strip() or None,
             command=str(
                 (context.get("args") or {}).get("command") or (context.get("args") or {}).get("cmd") or ""
@@ -1588,14 +1588,11 @@ def compress_recent_window_impl(
         if not key:
             return False
 
-        # Check if first time ever in conversation
         is_first_ever = first_exact_evidence_seen is not None and key not in first_exact_evidence_seen
 
-        # Check if first time in current session
         norm_path = _extract_normalized_path(context)
         is_first_session = session_files_read is not None and norm_path and norm_path not in session_files_read
 
-        # Preserve if either first ever OR first in this session
         if is_first_ever or is_first_session:
             if is_first_ever and first_exact_evidence_seen is not None:
                 first_exact_evidence_seen.add(key)

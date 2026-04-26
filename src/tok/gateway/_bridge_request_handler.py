@@ -77,15 +77,23 @@ def _normalize_provider_safe_retry_payload(
             normalized_messages.append(msg)
             continue
 
-        # Filter out thinking/redacted_thinking blocks that are between tool_use blocks
+        # Filter out thinking/redacted_thinking blocks interleaved between tool_use blocks
+        # Only remove thinking blocks that appear AFTER the first tool_use and BEFORE the last tool_use
         filtered_content: list[dict[str, Any]] = []
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            block_type = block.get("type")
-            if block_type in {"thinking", "redacted_thinking"}:
-                # Skip thinking blocks that appear after tool_use blocks start
-                # (they're interleaved between tool_uses)
+        first_tool_use_idx = -1
+        last_tool_use_idx = -1
+        for i, block in enumerate(content):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                if first_tool_use_idx == -1:
+                    first_tool_use_idx = i
+                last_tool_use_idx = i
+
+        for i, block in enumerate(content):
+            if (
+                isinstance(block, dict)
+                and block.get("type") in {"thinking", "redacted_thinking"}
+                and first_tool_use_idx <= i < last_tool_use_idx
+            ):
                 changed = True
                 continue
             filtered_content.append(block)

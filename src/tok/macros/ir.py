@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -101,6 +102,7 @@ class Macro:
 
 class MacroRegistry:
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.macros: dict[str, Macro] = {}
 
     def _is_duplicate(self, m1: Macro, m2: Macro) -> bool:
@@ -155,25 +157,27 @@ class MacroRegistry:
         Registers a macro. If an identical one or an op-sequence duplicate exists,
         returns the existing name. Otherwise, registers and returns the new name.
         """
-        duplicate_name = self.find_duplicate(macro)
-        if duplicate_name:
-            return duplicate_name
+        with self._lock:
+            duplicate_name = self.find_duplicate(macro)
+            if duplicate_name:
+                return duplicate_name
 
-        op_seq_duplicate = self.find_op_sequence_duplicate(macro)
-        if op_seq_duplicate:
-            return op_seq_duplicate
+            op_seq_duplicate = self.find_op_sequence_duplicate(macro)
+            if op_seq_duplicate:
+                return op_seq_duplicate
 
-        self.macros[macro.name] = macro
-        log_macro_registered(macro.name, source="mined")
-        return macro.name
+            self.macros[macro.name] = macro
+            log_macro_registered(macro.name, source="mined")
+            return macro.name
 
     def get(self, name: str) -> Macro | None:
         return self.macros.get(name)
 
     def record_use(self, name: str) -> None:
-        if macro := self.macros.get(name):
-            macro.hit_count += 1
-            macro.last_seen = datetime.datetime.now().isoformat()
+        with self._lock:
+            if macro := self.macros.get(name):
+                macro.hit_count += 1
+                macro.last_seen = datetime.datetime.now().isoformat()
 
     # Macros that have saved at least this many tokens are preserved regardless of age/hits.
     ROI_PROTECTION_THRESHOLD: int = 50
@@ -186,35 +190,37 @@ class MacroRegistry:
         even if they would otherwise fall below the age/hit threshold, since they
         have proven value even with infrequent use.
         """
-        now = datetime.datetime.now()
-        to_remove = []
-        for name, macro in self.macros.items():
-            if macro.is_durable:
-                continue
-            if not macro.last_seen:
-                continue
-            if macro.lifetime_savings >= self.ROI_PROTECTION_THRESHOLD:
-                continue
-            try:
-                last_seen = datetime.datetime.fromisoformat(macro.last_seen)
-                age = (now - last_seen).days
-                if age > max_age_days and macro.hit_count < min_hits:
-                    to_remove.append(name)
-            except ValueError:
-                pass
-        for name in to_remove:
-            del self.macros[name]
+        with self._lock:
+            now = datetime.datetime.now()
+            to_remove = []
+            for name, macro in self.macros.items():
+                if macro.is_durable:
+                    continue
+                if not macro.last_seen:
+                    continue
+                if macro.lifetime_savings >= self.ROI_PROTECTION_THRESHOLD:
+                    continue
+                try:
+                    last_seen = datetime.datetime.fromisoformat(macro.last_seen)
+                    age = (now - last_seen).days
+                    if age > max_age_days and macro.hit_count < min_hits:
+                        to_remove.append(name)
+                except ValueError:
+                    pass
+            for name in to_remove:
+                del self.macros[name]
 
     def record_savings(self, name: str, tokens: int) -> None:
         """Attribute token savings to a macro and update its rolling average."""
-        if tokens <= 0:
-            return
-        macro = self.macros.get(name)
-        if macro is None:
-            return
-        macro.lifetime_savings += tokens
-        uses = max(macro.hit_count, 1)
-        macro.avg_tokens_per_use = macro.lifetime_savings / uses
+        with self._lock:
+            if tokens <= 0:
+                return
+            macro = self.macros.get(name)
+            if macro is None:
+                return
+            macro.lifetime_savings += tokens
+            uses = max(macro.hit_count, 1)
+            macro.avg_tokens_per_use = macro.lifetime_savings / uses
 
     def update_from_repair(
         self,
@@ -232,18 +238,19 @@ class MacroRegistry:
         Only updates when the new instruction op-sequence differs from the current
         one — a no-op repair is not written.
         """
-        macro = self.macros.get(name)
-        if macro is None:
-            return False
-        old_ops = tuple(ins.op for ins in macro.instructions)
-        new_ops = tuple(ins.op for ins in new_instructions)
-        if old_ops == new_ops and macro.instructions == new_instructions:
-            return False
-        macro.instructions = new_instructions
-        if new_inputs is not None:
-            macro.inputs = new_inputs
-        macro.last_seen = datetime.datetime.now().isoformat()
-        return True
+        with self._lock:
+            macro = self.macros.get(name)
+            if macro is None:
+                return False
+            old_ops = tuple(ins.op for ins in macro.instructions)
+            new_ops = tuple(ins.op for ins in new_instructions)
+            if old_ops == new_ops and macro.instructions == new_instructions:
+                return False
+            macro.instructions = new_instructions
+            if new_inputs is not None:
+                macro.inputs = new_inputs
+            macro.last_seen = datetime.datetime.now().isoformat()
+            return True
 
     def load_global(self, path: str | None = None) -> None:
         if path is None:
@@ -253,26 +260,34 @@ class MacroRegistry:
         try:
             with open(path) as f:
                 data = json.load(f)
-                for m_data in data:
-                    macro = Macro.from_dict(m_data)
-                    self.register(macro)
+                with self._lock:
+                    for m_data in data:
+                        macro = Macro.from_dict(m_data)
+                        duplicate_name = self.find_duplicate(macro)
+                        if duplicate_name:
+                            continue
+                        op_seq_duplicate = self.find_op_sequence_duplicate(macro)
+                        if op_seq_duplicate:
+                            continue
+                        self.macros[macro.name] = macro
             self.apply_decay()
-            seen_op_seqs: dict[tuple[str, ...], str] = {}
-            to_remove = []
-            for name, macro in list(self.macros.items()):
-                op_seq = tuple(ins.op for ins in macro.instructions)
-                if op_seq in seen_op_seqs:
-                    existing_name = seen_op_seqs[op_seq]
-                    existing = self.macros[existing_name]
-                    if macro.hit_count >= existing.hit_count:
-                        to_remove.append(existing_name)
-                        seen_op_seqs[op_seq] = name
+            with self._lock:
+                seen_op_seqs: dict[tuple[str, ...], str] = {}
+                to_remove = []
+                for name, macro in list(self.macros.items()):
+                    op_seq = tuple(ins.op for ins in macro.instructions)
+                    if op_seq in seen_op_seqs:
+                        existing_name = seen_op_seqs[op_seq]
+                        existing = self.macros[existing_name]
+                        if macro.hit_count >= existing.hit_count:
+                            to_remove.append(existing_name)
+                            seen_op_seqs[op_seq] = name
+                        else:
+                            to_remove.append(name)
                     else:
-                        to_remove.append(name)
-                else:
-                    seen_op_seqs[op_seq] = name
-            for name in to_remove:
-                del self.macros[name]
+                        seen_op_seqs[op_seq] = name
+                for name in to_remove:
+                    del self.macros[name]
         except Exception as e:
             import logging
 
@@ -283,8 +298,10 @@ class MacroRegistry:
             path = os.path.expanduser("~/.tok/macros.tok")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
+            with self._lock:
+                macros_snapshot = [m.to_dict() for m in self.macros.values()]
             with open(path, "w") as f:
-                json.dump([m.to_dict() for m in self.macros.values()], f, indent=2)
+                json.dump(macros_snapshot, f, indent=2)
         except Exception as e:
             import logging
 
