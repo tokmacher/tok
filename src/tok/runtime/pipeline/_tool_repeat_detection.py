@@ -86,7 +86,7 @@ def _should_skip_history_rewrite(
     if file_like_reads >= 6 and command_like >= 5:
         return False, "file_and_command_heavy"
     if heavy_results >= 4:
-        return False, "tool_volume_heavy"
+        return True, "tool_volume_heavy"
     return False, ""
 
 

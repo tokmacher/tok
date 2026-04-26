@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -84,11 +85,25 @@ def load_bridge_memory(session: RuntimeSession) -> BridgeMemoryState:
 
 
 def save_bridge_memory(session: RuntimeSession) -> None:
-    """Persist bridge memory state to disk."""
+    """Persist bridge memory state to disk atomically."""
+    tmp_path = None
     try:
         assert session.memory_dir is not None
         session.memory_dir.mkdir(parents=True, exist_ok=True)
-        bridge_memory_file(session).write_text(session.bridge_memory.to_tok())
+        target_path = bridge_memory_file(session)
+        content = session.bridge_memory.to_tok()
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=target_path.parent,
+            prefix=".tmp_",
+            suffix=".tok",
+            delete=False,
+        ) as tmp:
+            tmp.write(content)
+            tmp.flush()
+            tmp_path = tmp.name
+        os.replace(tmp_path, target_path)
     except Exception as exc:
         session_logger = session_logger_for(session)
         session_logger.warning(
@@ -96,6 +111,11 @@ def save_bridge_memory(session: RuntimeSession) -> None:
             bridge_memory_file(session),
             exc,
         )
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 def result_cache_file(session: RuntimeSession) -> Path:
@@ -122,7 +142,13 @@ def load_result_cache(session: RuntimeSession) -> dict[str, Any]:
                     if current_time - timestamp < RESULT_CACHE_TTL_SECONDS:
                         cleaned[key] = value
                 elif isinstance(value, list) and len(value) == 2:
-                    cleaned[key] = value
+                    upgraded: dict[str, Any] = {
+                        "hash": str(value[0]) if value[0] else "",
+                        "raw": str(value[1]) if len(value) > 1 else "",
+                        "timestamp": current_time,
+                        "first_read_complete": False,
+                    }
+                    cleaned[key] = upgraded
                 elif isinstance(value, dict):
                     # Reset first_read_complete for every entry loaded from a prior
                     # session.  The persistent cache exists to avoid re-hashing; it
@@ -156,10 +182,9 @@ def save_result_cache(session: RuntimeSession) -> None:
         for key, value in session.result_cache.items():
             if isinstance(value, dict):
                 trimmed[key] = {
-                    "hash": value.get("hash", ""),
+                    **value,
                     "raw": _trim_raw(value.get("raw", "")),
                     "timestamp": value.get("timestamp"),
-                    "first_read_complete": value.get("first_read_complete", True),
                 }
             elif isinstance(value, tuple | list) and len(value) >= 2:
                 trimmed[key] = [
@@ -203,7 +228,10 @@ def save_fallback_memory(session: RuntimeSession) -> None:
     try:
         assert session.memory_dir is not None
         session.memory_dir.mkdir(parents=True, exist_ok=True)
-        fallback_memory_file(session).write_text(session.fallback_memory + "\n")
+        content = session.fallback_memory
+        if len(content) > 100_000:
+            content = content[-100_000:]
+        fallback_memory_file(session).write_text(content + "\n")
     except Exception as exc:
         session_logger_for(session).warning(
             "Failed to save fallback memory to %s: %s",

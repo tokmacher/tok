@@ -172,11 +172,12 @@ class SavingsTracker:
 
         baseline_input = actual_input + input_saved
         baseline_output = actual_output + output_saved
+        # Baseline represents cost without Tok: no caching, all tokens at full input rate
         baseline_cost = (
             baseline_input * inp_rate / M
             + baseline_output * out_rate / M
-            + cache_read * cr_rate / M
-            + cache_write * cw_rate / M
+            + cache_read * inp_rate / M
+            + cache_write * inp_rate / M
         )
 
         with self._lock:
@@ -300,7 +301,8 @@ class SavingsTracker:
         net_saved_tokens = saved_tokens - reacquisition_cost
         fallback_count = int(signals.get(FALLBACK_SIGNAL, 0))
         baseline_only = bool(signals.get(BASELINE_ONLY_SIGNAL, 0))
-        savings_pct = cost_saved / baseline_cost * 100 if baseline_cost > 0 else 0.0
+        cost_savings_pct = cost_saved / baseline_cost * 100 if baseline_cost > 0 else 0.0
+        savings_pct = saved_tokens / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
         semantic_drift_count = int(signals.get("semantic_drift_detected", 0))
         fail_open_count = int(signals.get("fail_open_compat_response", 0))
         non_tok_count = int(signals.get("non_tok_response", 0))
@@ -377,6 +379,7 @@ class SavingsTracker:
             "hot_hint_tokens_added": hot_hint_tokens_added,
             "reacquisition_tokens_avoided_estimate": reacquisition_tokens_avoided_estimate,
             "savings_pct": round(savings_pct, 1),
+            "cost_savings_pct": round(cost_savings_pct, 1),
             "actual_cost_usd": actual_cost,
             "baseline_cost_usd": baseline_cost,
             "cost_saved_usd": cost_saved,
@@ -773,6 +776,10 @@ class SavingsTracker:
         actual_tokens = int(ledger.get("total_tokens", 0))
         saved_tokens = int(ledger.get("tokens_saved", 0))
         baseline_tokens = actual_tokens + saved_tokens
+        actual_cost = float(ledger.get("total_cost_usd", 0.0))
+        baseline_cost = float(ledger.get("estimated_baseline_cost_usd", 0.0))
+        cost_savings_pct = (baseline_cost - actual_cost) / baseline_cost * 100 if baseline_cost > 0 else 0.0
+        savings_pct = saved_tokens / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
 
         return {
             "sessions": int(ledger.get("sessions", 0)),
@@ -780,9 +787,10 @@ class SavingsTracker:
             "actual_tokens": actual_tokens,
             "baseline_tokens": baseline_tokens,
             "tokens_saved": saved_tokens,
-            "savings_pct": float(ledger.get("savings_pct", 0.0)),
-            "actual_cost_usd": float(ledger.get("total_cost_usd", 0.0)),
-            "baseline_cost_usd": float(ledger.get("estimated_baseline_cost_usd", 0.0)),
+            "savings_pct": round(savings_pct, 1),
+            "cost_savings_pct": round(cost_savings_pct, 1),
+            "actual_cost_usd": actual_cost,
+            "baseline_cost_usd": baseline_cost,
             "cost_saved_usd": float(ledger.get("cost_saved_usd", 0.0)),
             "fallback_count": int(ledger.get(FALLBACK_SIGNAL, 0)),
             "baseline_only_requests": int(ledger.get(BASELINE_ONLY_SIGNAL, 0)),
@@ -949,7 +957,8 @@ class SavingsTracker:
         actual_cost = sum(float(entry["actual_cost_usd"]) for entry in entries)
         baseline_cost = sum(float(entry["baseline_cost_usd"]) for entry in entries)
         cost_saved = baseline_cost - actual_cost
-        savings_pct = (cost_saved / baseline_cost * 100) if baseline_cost > 0 else 0.0
+        cost_savings_pct = (cost_saved / baseline_cost * 100) if baseline_cost > 0 else 0.0
+        savings_pct = tokens_saved / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
 
         return {
             "label": label,
@@ -961,6 +970,7 @@ class SavingsTracker:
             "baseline_tokens": baseline_tokens,
             "tokens_saved": tokens_saved,
             "savings_pct": round(savings_pct, 1),
+            "cost_savings_pct": round(cost_savings_pct, 1),
             "actual_cost_usd": round(actual_cost, 6),
             "baseline_cost_usd": round(baseline_cost, 6),
             "cost_saved_usd": round(cost_saved, 6),
@@ -1030,7 +1040,10 @@ class SavingsTracker:
                 reacquisition_count = int(parts[12]) if len(parts) > 12 else 0
                 answer_anchor_miss_count = int(parts[13]) if len(parts) > 13 else 0
                 degradation_reason = parts[14] if len(parts) > 14 else ""
-                savings_pct = ((baseline_cost - actual_cost) / baseline_cost) * 100 if baseline_cost > 0 else 0.0
+                actual_tokens = int(parts[3])
+                baseline_tokens = actual_tokens + tokens_saved
+                cost_savings_pct = ((baseline_cost - actual_cost) / baseline_cost) * 100 if baseline_cost > 0 else 0.0
+                savings_pct = tokens_saved / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
             except ValueError:
                 continue
 
@@ -1039,7 +1052,7 @@ class SavingsTracker:
                     "date": parts[0],
                     "session_id": parts[1],
                     "turns": int(parts[2]),
-                    "tokens": int(parts[3]),
+                    "tokens": actual_tokens,
                     "actual_cost_usd": actual_cost,
                     "baseline_cost_usd": baseline_cost,
                     "saved_usd": float(parts[6]),
@@ -1052,9 +1065,15 @@ class SavingsTracker:
                     "answer_anchor_miss_count": answer_anchor_miss_count,
                     "degradation_reason": degradation_reason,
                     "savings_pct": savings_pct,
+                    "cost_savings_pct": cost_savings_pct,
                 }
             )
-        return entries
+        seen: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            seen[str(entry["session_id"])] = entry
+        result = list(seen.values())
+        result.sort(key=lambda e: str(e["date"]))
+        return result
 
     def reset_ledger(self) -> None:
         """Clear the persistent savings ledger."""

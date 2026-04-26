@@ -1,8 +1,9 @@
 """
 Smoothness scoring and control layer for Tok.
 
-This module provides a passive scoring system that tracks interaction quality
-without changing compression behavior in Phase 1.
+This module provides interaction quality scoring that actively controls
+compression behavior. The resulting TokMode gates history compression,
+winnowing, and raw file delivery across multiple code paths.
 """
 
 from .models import (

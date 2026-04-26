@@ -571,14 +571,17 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 else:
                     raise
             except (MemoryError, OverflowError) as exc:
-                logger.error(
-                    "tok_fallback_activated: critical system error, serving without compression: %s",
-                    exc,
-                )
-                behavior_signals["processing_error"] = 1
-                behavior_signals["tok_fallback_activated"] = 1
-                behavior_signals["critical_system_error"] = 1
-                _record_fallback_once(session, request_state)
+                if session.fail_open:
+                    logger.error(
+                        "tok_fallback_activated: critical system error, serving without compression: %s",
+                        exc,
+                    )
+                    behavior_signals["processing_error"] = 1
+                    behavior_signals["tok_fallback_activated"] = 1
+                    behavior_signals["critical_system_error"] = 1
+                    _record_fallback_once(session, request_state)
+                else:
+                    raise
             except Exception as exc:
                 if session.fail_open:
                     logger.error(
@@ -670,9 +673,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     }
                     behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
                     behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
-                    if retry_signals:
-                        for key, value in retry_signals.items():
-                            behavior_signals[key] = behavior_signals.get(key, 0) + value
                     logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
                     _record_fallback_once(session, request_state)
                 resp_headers = _safe_headers(response.headers)
@@ -814,9 +814,6 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 }
                 behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
                 behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
-                if retry_signals:
-                    for key, value in retry_signals.items():
-                        behavior_signals[key] = behavior_signals.get(key, 0) + value
                 logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
                 _record_fallback_once(session, request_state)
 

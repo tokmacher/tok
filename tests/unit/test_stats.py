@@ -533,4 +533,4 @@ class TestSavingsTracker:
         assert result is not None
         assert "Last completed session:" in result
         assert "2026-03-18T10:00:00Z" in result
-        assert "saved: 700 (60.0%)" in result
+        assert "saved: 700 (41.2%)" in result

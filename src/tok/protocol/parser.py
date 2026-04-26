@@ -261,7 +261,7 @@ class TokParser(SerializationProtocol):
                 elif text[i] == "}":
                     depth_c -= 1
             i += 1
-        return not in_q and not in_tq and depth_b <= 0 and depth_c <= 0
+        return not in_q and not in_tq and depth_b == 0 and depth_c == 0
 
     def _ingest_line_inner(self, line: str) -> list[TokNode]:
         if len(line) > self.MAX_LINE_LENGTH:

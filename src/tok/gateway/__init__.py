@@ -474,7 +474,6 @@ def _materialize_stream_tool_blocks(
                     tool_input.update(parsed)
             except json.JSONDecodeError:
                 logger.debug("Tool JSON delta parse error: %s", partial_json[:120])
-                continue
         tool_blocks.append(
             {
                 "type": "tool_use",

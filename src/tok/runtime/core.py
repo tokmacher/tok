@@ -299,6 +299,8 @@ class RuntimeSession:
             self._observed_tool_result_ids.clear()
             self._first_exact_evidence_seen.clear()
             self._pending_exact_evidence_keys.clear()
+            self.result_cache.clear()
+            self.semantic_hash_cache.clear()
             self._stream_recovery_reacquisition_budget = 0
             self._stream_recovery_history_floor_budget = 0
             self._stream_recovery_tool_use_only_signature = ""

@@ -160,7 +160,7 @@ def bridge_start(
                     console.print(f"[green]Bridge started on :{port} (PID {proc.pid})[/green]")
                     console.print(f"Logs: {LOG_FILE}")
                     console.print(
-                        "[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:9090 claude`, then "
+                        f"[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:{port} claude`, then "
                         "`tok bridge status` or `tok doctor`.[/dim]"
                     )
                     if capture:

@@ -31,8 +31,8 @@ from ._tool_result_codecs import (
 )
 
 
-def detect_tool_content_type_impl(text: str) -> str:
-    return _detect_tool_content_type(text)
+def detect_tool_content_type_impl(text: str, path: str = "") -> str:
+    return _detect_tool_content_type(text, path=path)
 
 
 def compress_git_log_impl(text: str) -> str:
@@ -63,13 +63,24 @@ def tok_tool_result_impl(
     tool_context: dict[str, Any] | None = None,
     session: Any | None = None,
 ) -> str:
-    """Compress a tool result using registry-based compressors."""
+    """Compress a tool result using registry-based compressors.
+
+    Returns the original content unchanged when compression would not save
+    characters (i.e., when ``saved <= 0``).  Callers should not assume the
+    return value always starts with ``>>>`` — check for the prefix explicitly.
+    """
     if len(content) <= tool_compress_threshold:
         return content
     if _is_tok_cli_command(_tool_command_hint(tool_context)):
         return content
 
-    kind = detect_tool_content_type_impl(content)
+    _tool_path = ""
+    if tool_context and isinstance(tool_context.get("args"), dict):
+        _args = tool_context["args"]
+        _tool_path = str(
+            _args.get("path") or _args.get("file_path") or _args.get("AbsolutePath") or _args.get("TargetFile") or ""
+        )
+    kind = detect_tool_content_type_impl(content, path=_tool_path)
     original_chars = len(content)
     registry = build_default_registry(
         compress_pytest=lambda text: _compress_pytest(text, command=_tool_command_hint(tool_context)),

@@ -72,6 +72,7 @@ def report_protocol_drift(
             "response_contract_recovered_valid",
             "natural_response_contract_accepted",
             "tok_drift_healed",
+            "tok_memory_snap_triggered",
         )
     }
 

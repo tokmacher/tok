@@ -146,6 +146,7 @@ class TestCompressHistory:
             "cmds",
             "tests",
             "errs",
+            "blockers",
             "constraints",
             "next",
         )

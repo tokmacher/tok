@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 from typing import TYPE_CHECKING, Any
@@ -36,8 +37,9 @@ def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
     """
     Create a signature from tool_use blocks for loop detection.
 
-    Returns a hashable string signature based on tool names and input keys
-    to detect repeated identical tool_use-only recovery patterns.
+    Returns a hashable string signature based on tool names, input keys,
+    and input value hashes to detect repeated identical tool_use-only
+    recovery patterns.
     """
     tool_uses = [block for block in blocks if isinstance(block, dict) and block.get("type") == "tool_use"]
     if not tool_uses:
@@ -48,9 +50,14 @@ def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
         input_dict = tool.get("input", {})
         if isinstance(input_dict, dict):
             keys = ",".join(sorted(input_dict.keys()))
+            try:
+                value_hash = hashlib.sha256(json.dumps(input_dict, sort_keys=True).encode()).hexdigest()[:8]
+            except Exception:
+                value_hash = ""
         else:
             keys = ""
-        parts.append(f"{name}:{keys}")
+            value_hash = ""
+        parts.append(f"{name}:{keys}:{value_hash}")
     return "|".join(parts)
 
 
@@ -413,12 +420,6 @@ async def buffer_strip_restream_impl(
         ]
         content_blocks = _response_contract_for_mode(full_text, tool_compatible=tool_compatible).content_blocks
         translated_blocks = thinking_blocks + content_blocks + tool_blocks + text_blocks_from_start
-        has_visible_blocks = any(
-            block.get("type") == "tool_use"
-            or (block.get("type") == "text" and str(block.get("text", "")).strip())
-            or block.get("type") == "thinking"
-            for block in translated_blocks
-        )
         logger.info(
             "Translated %d content blocks from %d chars",
             len(translated_blocks),
@@ -446,12 +447,13 @@ async def buffer_strip_restream_impl(
             logger.info("Response signals: %s", response_signals)
             logger.info("Content blocks count: %d", len(content_blocks))
             translated_blocks = content_blocks
-            recovered = any(
-                block.get("type") == "tool_use"
-                or (block.get("type") == "text" and str(block.get("text", "")).strip())
-                or block.get("type") == "thinking"
-                for block in translated_blocks
-            )
+
+        has_visible_blocks = any(
+            block.get("type") == "tool_use"
+            or (block.get("type") == "text" and str(block.get("text", "")).strip())
+            or block.get("type") == "thinking"
+            for block in translated_blocks
+        )
         recovery_required = not has_visible_blocks and (read_error is not None or len(translated_blocks) == 0)
         if recovery_required:
             recovery_allowed, _recovery_reason = _stream_recovery_allowed_now(session)
@@ -494,14 +496,15 @@ async def buffer_strip_restream_impl(
                         recovery_payload = json.dumps(parsed_request).encode()
                 except Exception:
                     recovery_payload = request_content
-                async with httpx.AsyncClient(timeout=300.0) as retry_client:
-                    retry_request = retry_client.build_request(
-                        request_method,
-                        request_url,
-                        headers=request_headers or {},
-                        content=recovery_payload,
-                    )
-                    retry_response = await retry_client.send(retry_request, stream=False)
+                try:
+                    async with httpx.AsyncClient(timeout=300.0) as retry_client:
+                        retry_request = retry_client.build_request(
+                            request_method,
+                            request_url,
+                            headers=request_headers or {},
+                            content=recovery_payload,
+                        )
+                        retry_response = await retry_client.send(retry_request, stream=False)
                     if retry_response.status_code == 200:
                         try:
                             retry_json = retry_response.json()
@@ -686,6 +689,13 @@ async def buffer_strip_restream_impl(
                                 yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
                                 _clear_stream_read_error_streak(session)
                                 return
+                except Exception as exc:
+                    recovered = False
+                    stream_behavior_signals["stream_recovery_retry_exception"] = 1
+                    logger.warning(
+                        "stream_recovery_retry_exception: recovery retry failed: %s",
+                        exc,
+                    )
             if not recovered:
                 stream_behavior_signals["stream_recovery_fallback"] = 1
                 logger.warning(

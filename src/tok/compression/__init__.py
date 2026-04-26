@@ -277,6 +277,7 @@ CANONICAL_MEMORY_FIELDS = (
     "cmds",
     "tests",
     "errs",
+    "blockers",
     "constraints",
     "next",
 )
@@ -1149,11 +1150,20 @@ def _should_replay_host_stub(
 ) -> bool:
     if not is_file_like or not cached_raw_text:
         return False
+    has_error_signal = _contains_error_signal(raw_text) or _normalize_error_content(raw_text) is not None
     if not stub_text:
+        if has_error_signal:
+            return False
         return True
     if "unchanged since last read" in stub_text.lower():
         return True
-    return bool(len(raw_text) < 80 and len(cached_raw_text) > 200)
+    if len(raw_text) < 80 and len(cached_raw_text) > 200:
+        if has_error_signal:
+            return False
+        if not any(sig in stub_text.lower() for sig in ("unchanged", "cached", ">>> tool:", "@stable_result")):
+            return False
+        return True
+    return False
 
 
 def _serve_cached_content_hash_match(
@@ -1197,6 +1207,7 @@ def _serve_cached_content_hash_match(
                 "timestamp": current_time,
                 "first_read_complete": True,
             }
+            return cached_raw, 0
         confidence, reason = _compute_confidence(cached_hash, cached_hash)
         raw_path = _context_path(context)
         stub_parts = [f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"]

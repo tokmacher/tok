@@ -47,7 +47,24 @@ def _build_section_map(lines: list[str]) -> str:
 
 def _is_python_file(text: str, tool_context: dict[str, Any] | None = None) -> bool:
     """Check if the content appears to be Python code."""
-    # Check file extension from context
+    _NON_PYTHON_EXTS = {
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".java",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".go",
+        ".rs",
+        ".rb",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".cs",
+    }
     if tool_context:
         args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
         path = str(
@@ -55,7 +72,10 @@ def _is_python_file(text: str, tool_context: dict[str, Any] | None = None) -> bo
         )
         if path.endswith(".py") or path.endswith(".pyi"):
             return True
-    # Check content heuristics
+        lower_path = path.lower()
+        for ext in _NON_PYTHON_EXTS:
+            if lower_path.endswith(ext):
+                return False
     python_indicators = [
         r"^\s*def\s+\w+\s*\(",
         r"^\s*class\s+\w+",
@@ -461,7 +481,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
 
             header = (
                 f">>> tool:file_read|original_chars:{original_chars}|"
-                f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|edit_unsafe:true"
+                f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|is_skeleton:true"
                 + (f"|sections:{section_map}" if section_map else "")
             )
             return (
@@ -564,7 +584,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
     if in_body:
         _flush_body(not last_signature_closed)
 
-    if len(result) >= len(lines):
+    if len("\n".join(result)) >= len(text):
         return text
 
     trimmed_result = result
@@ -592,7 +612,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
 
     header = (
         f">>> tool:file_read|original_chars:{original_chars}|"
-        f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|edit_unsafe:true"
+        f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|is_skeleton:true"
         + (f"|sections:{section_map}" if section_map else "")
     )
     return (
