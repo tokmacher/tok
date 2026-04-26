@@ -341,6 +341,7 @@ class BridgeSession:
         # Reset session stats so each bridge run starts with a clean slate
         if os.getenv("TOK_RESET_SESSION", "0") == "1":
             self.tracker.reset_session_stats()
+            self.runtime_session.reset_session()
 
     def capture_request(self, body: dict[str, Any]) -> None:
         """Append raw request body to capture file (strips sensitive headers)."""

@@ -1,7 +1,6 @@
 # Architecture
 
 For visual flow diagrams, see [architecture-diagrams.md](./architecture-diagrams.md).
-For the active roadmap, see `ops/archive/roadmap_20260419_stale.md` (archived).
 
 Current architecture posture:
 
@@ -169,7 +168,7 @@ src/tok/
 - Canonical runtime: `runtime/core.py`
 - Compatibility shim: `universal_runtime.py`
 - Primary adapter: `gateway/__init__.py`
-- Secondary / experimental adapters: `adapters.py`, `live_runner.py`, `agent.py`,
+- Secondary / experimental adapters: `adapters/`, `testing/live_benchmark/`,
   `adapters/orchestrator.py`
 - Canonical protocol IDL: `protocol/schema.py`, `protocol/models.py`
 - Derived runtime contract: `runtime/tools.py`

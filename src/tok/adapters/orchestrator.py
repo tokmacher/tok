@@ -234,6 +234,7 @@ class TokOrchestrator:
         self.MAX_CONTEXT_TOKENS = 4096  # Extreme Inversion Test (forced memory reliance)
         # 32k hard limit for sovereign context
         self.entropy_budget = entropy_budget if entropy_budget is not None else 40  # Max tool calls per session
+        self._initial_entropy_budget = self.entropy_budget
         self.compute_budget = compute_budget if compute_budget is not None else 20  # Max compute-intensive operations
         self.MAX_PROMPT_TOKENS = 8192  # Total budget for all content
         self.workspace_root = os.getcwd()
@@ -415,7 +416,7 @@ class TokOrchestrator:
         Execute one or more turns of the Tok protocol:
         Load memory -> Prompt LLM -> Handle Tools -> (Recurse if results exist) -> Persist.
         """
-        self.entropy_budget = 20
+        self.entropy_budget = self._initial_entropy_budget
         self.consecutive_repeats = 0
         self.last_tool_sig = None
 

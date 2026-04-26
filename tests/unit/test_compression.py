@@ -20,6 +20,7 @@ from tok.compression import (
     _compress_install,
     _compress_ls,
     _detect_tool_content_type,
+    _should_replay_host_stub,
     classify_cut_eligibility,
     compress_history,
     compress_recent_window,
@@ -2097,3 +2098,43 @@ class TestHarnessInjectionStripping:
         entry = next(iter(cache.values()))
         stored_raw = entry.get("raw", "") if isinstance(entry, dict) else entry[1]
         assert "<system-reminder>" not in stored_raw
+
+
+class TestShouldReplayHostStub:
+    """Regression tests for _should_replay_host_stub error signal checking (BUG-001)."""
+
+    def test_no_replay_when_cached_has_errors_even_if_current_clean(self) -> None:
+        """Cached content with error signals should not be replayed when current is clean."""
+        assert not _should_replay_host_stub(
+            is_file_like=True,
+            cached_raw_text="Error: file not found\nTraceback (most recent call last):",
+            stub_text="",
+            raw_text="def hello():\n    pass\n",
+        )
+
+    def test_no_replay_when_cached_has_errors_and_current_short(self) -> None:
+        """Short current + long cached error content should not replay."""
+        assert not _should_replay_host_stub(
+            is_file_like=True,
+            cached_raw_text="Error: permission denied\n" + "x" * 300,
+            stub_text="some cached content",
+            raw_text="ok",
+        )
+
+    def test_replay_when_both_clean_and_empty_stub(self) -> None:
+        """Clean current + clean cached + empty stub should replay."""
+        assert _should_replay_host_stub(
+            is_file_like=True,
+            cached_raw_text="def foo():\n    return 1\n",
+            stub_text="",
+            raw_text="def foo():\n    return 1\n",
+        )
+
+    def test_no_replay_for_non_file_like(self) -> None:
+        """Non-file-like tools should never replay."""
+        assert not _should_replay_host_stub(
+            is_file_like=False,
+            cached_raw_text="some content",
+            stub_text="cached",
+            raw_text="new content",
+        )

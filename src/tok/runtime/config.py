@@ -133,10 +133,6 @@ TOK_REPEAT_COMMAND_SUPPRESSION_HINT = (
     "You just ran an identical command and got the same successful result. "
     "Do not rerun it unless files or constraints changed; proceed to synthesis or next distinct step."
 )
-TOK_TOOL_REQUIRED_LATCH_HINT = (
-    "Tool-required progress is still unresolved. In the next turn, make concrete progress with one tool action "
-    "(edit_file or run_tests) before finalizing."
-)
 TOK_NEIGHBORHOOD_TRIGGER_ANCHORS: int = int(os.getenv("TOK_NEIGHBORHOOD_TRIGGER_ANCHORS", "3"))
 TOK_NEIGHBORHOOD_WINDOW_TURNS: int = int(os.getenv("TOK_NEIGHBORHOOD_WINDOW_TURNS", "6"))
 TOK_TOOL_REQUIRED_LATCH_THRESHOLD: int = int(os.getenv("TOK_TOOL_REQUIRED_LATCH_THRESHOLD", "2"))
@@ -241,7 +237,6 @@ __all__ = [
     "TOK_READ_PLAN_HINT",
     "TOK_REPEAT_COMMAND_SUPPRESSION_HINT",
     "TOK_RUNTIME_HINT_COOLDOWN_TURNS",
-    "TOK_TOOL_REQUIRED_LATCH_HINT",
     "TOK_TOOL_REQUIRED_LATCH_THRESHOLD",
     "TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS",
     "TOK_REQUEST_POLICY_STICKY_TURNS",

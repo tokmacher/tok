@@ -1,6 +1,6 @@
 ---
 name: tok
-description: Guide bridge-first Tok operation in a Tok repository or Tok-managed Claude/Codex session. Use when the user needs help working around Tok without changing the host tool workflow, understanding Tok syntax or conventions, checking bridge health, handling fallback or degraded behavior, or staying within Tok's narrow 0.1.0 release posture.
+description: Guide bridge-first Tok operation in a Tok repository or Tok-managed Claude/Codex session. Use when the user needs help working around Tok without changing the host tool workflow, understanding Tok syntax or conventions, checking bridge health, handling fallback or degraded behavior, or staying within Tok's narrow 0.1.x release posture.
 ---
 
 # Tok
@@ -20,7 +20,7 @@ help the user understand install state, bridge health, savings, or fallback beha
   directly.
 - Explain Tok in bridge-first terms first: install, start, work normally, inspect
   health, inspect savings, stop cleanly.
-- Keep answers consistent with Tok's narrow `0.1.0` public posture.
+- Keep answers consistent with Tok's narrow `0.1.x` public posture.
 
 ## Bridge-First Workflow
 
@@ -59,7 +59,7 @@ workflows or custom prompt conventions.
 
 ## Guardrails
 
-- Do not invent unsupported public workflows for `0.1.0`.
+- Do not invent unsupported public workflows for `0.1.x`.
 - Do not present Tok as a broad multi-agent framework or dashboard product.
 - Do not reintroduce competing runtime philosophies or prompt-level control schemes that
   fight the bridge-first story.
@@ -74,4 +74,4 @@ workflows or custom prompt conventions.
 - `Use $tok to explain what Tok syntax means and when I should care about it.`
 - `Use $tok to diagnose why Tok seems off and tell me which health commands to run first.`
 - `Use $tok to explain Tok fallback behavior if the bridge is unavailable.`
-- `Use $tok to keep my guidance aligned with Tok's narrow 0.1.0 public release posture.`
+- `Use $tok to keep my guidance aligned with Tok's narrow 0.1.x public release posture.`

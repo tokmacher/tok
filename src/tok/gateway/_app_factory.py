@@ -239,6 +239,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "mode": _request_policy_mode_label(session.request_policy_default),
             "request_policy": session.request_policy_default,
             "baseline_only": session.runtime_session._baseline_only,
+            "persistence_failures": session.runtime_session._persistence_failures,
             "fallback_count": int(
                 session_summary.get(
                     "fallback_count",
@@ -936,6 +937,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                 "request_policy": request_policy,
                                 "tool_compatible": request_tool_compatible,
                                 "baseline_only": session.runtime_session._baseline_only,
+                                "persistence_failures": session.runtime_session._persistence_failures,
                                 "fallback_count": int(
                                     session.tracker.behavior_signals().get("tok_fallback_activated", 0)
                                 ),

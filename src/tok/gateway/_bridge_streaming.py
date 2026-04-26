@@ -243,8 +243,8 @@ async def passthrough_stream_impl(
                         sse_usage = msg.get("usage", sse_usage)
                     elif etype == "message_delta":
                         sse_usage.update(d.get("usage", {}))
-                except (json.JSONDecodeError, KeyError):
-                    pass
+                except (json.JSONDecodeError, KeyError) as exc:
+                    logger.debug("SSE parse error (usage extraction): %s", exc)
     except (httpx.ReadError, httpcore.ReadError) as e:
         read_error_occurred = True
         read_error = str(e)
@@ -382,8 +382,8 @@ async def buffer_strip_restream_impl(
                             delta_type,
                             str(delta)[:50],
                         )
-                except (json.JSONDecodeError, KeyError):
-                    pass
+                except (json.JSONDecodeError, KeyError) as exc:
+                    logger.debug("SSE parse error (content accumulation): %s", exc)
 
         full_text = "".join(accumulated)
         logger.info(
@@ -786,7 +786,8 @@ async def buffer_strip_restream_impl(
 
                 yield (event_str + "\n\n").encode()
 
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError) as exc:
+                logger.debug("SSE parse error (relay): %s", exc)
                 yield (event_str + "\n\n").encode()
         if content_emitted:
             _clear_stream_read_error_streak(session)

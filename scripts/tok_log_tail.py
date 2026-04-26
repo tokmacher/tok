@@ -49,10 +49,9 @@ def _savings_summary() -> tuple[int, int, float]:
 
 
 def render() -> None:
-    _saved, _baseline, _pct = _savings_summary()
     _clear_screen()
     for _line in _tail_lines(LOG_PATH, TAIL_LINES):
-        pass
+        print(_line, end="")
 
 
 def main() -> None:

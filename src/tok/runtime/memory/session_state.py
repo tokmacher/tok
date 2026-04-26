@@ -80,14 +80,17 @@ def session_write_memory(session: "RuntimeSession", text: str) -> str:
     return latest_state
 
 
-def get_adaptive_keep_turns(_session: "RuntimeSession") -> int:
+def get_adaptive_keep_turns(session: "RuntimeSession") -> int:
     """
     Determine how many history turns to keep based on session age.
-    A session age ( self._step_count determines how many recent turns to preserve:
-    - Young sessions (few steps): keep 3 turns for working memory stability
-    - Mid sessions (steps 3-10): keep 2 turns
+
+    Session age (self._step_count) determines how many recent turns to preserve:
+    - Young sessions (fewer than 3 steps): keep 3 turns for working memory stability
+    - Mid sessions (3-10 steps): keep 2 turns
     - Mature sessions (11+ steps): keep 2 turns as a minimum floor.
     """
+    if session._step_count < 3:
+        return 3
     return 2
 
 

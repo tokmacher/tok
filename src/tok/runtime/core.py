@@ -199,6 +199,7 @@ class RuntimeSession:
     # Automatic session-scoped fallback tracking
     _consecutive_fallback_count: int = field(default=0, init=False, repr=False)
     _baseline_only: bool = field(default=False, init=False, repr=False)
+    _persistence_failures: int = field(default=0, init=False, repr=False)
     _answer_ready_repair_pending: bool = field(default=False, init=False, repr=False)
     _answer_ready_repair_active: bool = field(default=False, init=False, repr=False)
     _late_answer_assembly_repair_pending: bool = field(default=False, init=False, repr=False)
@@ -281,8 +282,88 @@ class RuntimeSession:
             )
 
     def reset_fallback_count(self) -> None:
-        """Reset the consecutive fallback counter after a successful compressed request."""
+        """Reset the consecutive fallback counter and restore compression after a successful compressed request."""
         self._consecutive_fallback_count = 0
+        self._baseline_only = False
+
+    def reset_session(self) -> None:
+        """Reset all transient session state for a fresh start (preserves persisted data)."""
+        self._consecutive_fallback_count = 0
+        self._baseline_only = False
+        self._persistence_failures = 0
+        self._step_count = 0
+        self._tool_names_seen.clear()
+        self._token_count = 0
+        self._tok_memory_snap_triggered = 0
+        self._current_tool_density = 0.0
+        self._current_context_char_count = 0
+        self._current_invisible_pressure = 0
+        self._active_tools.clear()
+        self._last_tool_compatible_state = ""
+        self._last_tool_compatible_state_fields.clear()
+        self._answer_ready_repair_pending = False
+        self._answer_ready_repair_active = False
+        self._late_answer_assembly_repair_pending = False
+        self._late_answer_assembly_repair_active = False
+        self._late_answer_assembly_repair_mode_pending = ""
+        self._late_answer_assembly_repair_mode_active = ""
+        self._late_answer_followthrough_pending = False
+        self._late_answer_followthrough_active = False
+        self._last_mode = ""
+        self._drift_detected_previous_turn = False
+        self._stream_recovery_reacquisition_budget = 0
+        self._stream_recovery_history_floor_budget = 0
+        self._stream_recovery_tool_use_only_signature = ""
+        self._stream_recovery_tool_use_only_repeat_count = 0
+        self._stream_recovery_cooldown_remaining = 0
+        self._stream_recovery_cooldown_suppressed = False
+        self._stream_read_error_consecutive_count = 0
+        self._stream_read_error_last_stage = ""
+        self._request_policy_tool_mode_sticky_turns = 0
+        self._request_policy_stream_recovery_watch_turns = 0
+        self._request_policy_tool_recovery_watch_turns = 0
+        self._loop_detection_window.clear()
+        self._loop_detected = False
+        self._recently_edited_files.clear()
+        self._latest_turn_smoothness_score = 100
+        self._latest_turn_labour_index = 0
+        self._current_task_smoothness_score = 100
+        self._current_task_labour_index = 0
+        self._current_tok_mode = TokMode.FULL_TOK
+        self._smoothness_event_counts.clear()
+        self._request_policy_last_effective_tool_compatible = False
+        self._invalid_tool_history_recovery_count = 0
+        self._pending_macro_heal = ""
+        self._pending_macro_heal_turn = 0
+        self._recent_repeat_target_events.clear()
+        self._hot_summary_records.clear()
+        self._observed_tool_result_ids.clear()
+        self._prepared_prompt_token_cache.clear()
+        self._predictive_cache_warm_keys.clear()
+        self._evidence_neighborhoods.clear()
+        self._evidence_anchor_novelty_keys.clear()
+        self._evidence_alias_map.clear()
+        self._first_exact_evidence_seen.clear()
+        self._pending_exact_evidence_keys.clear()
+        self._files_read_this_session.clear()
+        self._files_fully_delivered.clear()
+        self._last_user_prompt_text = ""
+        self._last_user_prompt_labels = ()
+        self._request_has_tools = False
+        self._runtime_hint_last_turn.clear()
+        self._fidelity_overrides.clear()
+        self._file_reads_by_turn.clear()
+        self._last_elevated_path = ""
+        self._tool_required_latch_streak = 0
+        self._answer_phase_expected_this_turn = False
+        self._natural_response_acceptable_this_turn = False
+        self._skeleton_delivered_paths.clear()
+        self._response_word_samples.clear()
+        self.pending_behavior_signals.clear()
+        self.family_states.clear()
+        self.result_cache.clear()
+        self.semantic_hash_cache.clear()
+        logger.info("RuntimeSession reset: all transient state cleared")
 
     def record_invalid_tool_history_recovery(self, *, blocked: bool) -> dict[str, int]:
         """Track recovery from broken tool history and clear hot state if it repeats."""

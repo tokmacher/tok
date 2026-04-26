@@ -920,7 +920,7 @@ def test_prepare_request_bridge_cut_search_extends_to_valid_suffix(tmp_path, mon
         session,
     )
 
-    assert compress_history_calls[:2] == [2, 1]
+    assert compress_history_calls[:2] == [3, 2]
     assert prepared.behavior_signals.get("bridge_history_cut_search_used", 0) == 1
     assert prepared.behavior_signals.get("bridge_history_cut_search_extended", 0) == 1
     assert prepared.behavior_signals.get("tok_history_pairing_safety_degraded", 0) == 0

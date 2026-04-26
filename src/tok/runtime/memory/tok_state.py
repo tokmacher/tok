@@ -10,8 +10,8 @@ from tok.macros.memory import (
     ConstraintMemory,
     EpisodeMemory,
     LessonMemory,
+    MacroMemory,
     RepairMemory,
-    TokMemory,
 )
 from tok.runtime.config import (
     TOOL_COMPAT_DELTA_KEYS,
@@ -492,8 +492,8 @@ __all__ = [
     "ConstraintMemory",
     "EpisodeMemory",
     "LessonMemory",
+    "MacroMemory",
     "RepairMemory",
-    "TokMemory",
     "_build_tok_state",
     "_delta_tok_state_fields",
     "_prepare_tool_compatible_state",

@@ -105,6 +105,7 @@ def save_bridge_memory(session: RuntimeSession) -> None:
             tmp_path = tmp.name
         os.replace(tmp_path, target_path)
     except Exception as exc:
+        session._persistence_failures += 1
         session_logger = session_logger_for(session)
         session_logger.warning(
             "Failed to save bridge memory to %s: %s",
@@ -176,7 +177,13 @@ def save_result_cache(session: RuntimeSession) -> None:
         session.memory_dir.mkdir(parents=True, exist_ok=True)
 
         def _trim_raw(raw_val: str) -> str:
-            return raw_val[:10240] if isinstance(raw_val, str) and len(raw_val) > 10240 else raw_val
+            if isinstance(raw_val, str) and len(raw_val) > 10240:
+                session_logger_for(session).warning(
+                    "Result cache entry truncated from %d to 10240 chars during save",
+                    len(raw_val),
+                )
+                return raw_val[:10240]
+            return raw_val
 
         trimmed: dict[str, Any] = {}
         for key, value in session.result_cache.items():
@@ -196,6 +203,7 @@ def save_result_cache(session: RuntimeSession) -> None:
                 trimmed[key] = value
         result_cache_file(session).write_text(json.dumps(trimmed))
     except Exception as exc:
+        session._persistence_failures += 1
         session_logger_for(session).warning(
             "Failed to save result cache to %s: %s",
             result_cache_file(session),
@@ -233,6 +241,7 @@ def save_fallback_memory(session: RuntimeSession) -> None:
             content = content[-100_000:]
         fallback_memory_file(session).write_text(content + "\n")
     except Exception as exc:
+        session._persistence_failures += 1
         session_logger_for(session).warning(
             "Failed to save fallback memory to %s: %s",
             fallback_memory_file(session),
@@ -271,6 +280,7 @@ def save_episode_ledger(session: RuntimeSession) -> None:
         session.memory_dir.mkdir(parents=True, exist_ok=True)
         episode_ledger_file(session).write_text(session.episode_ledger.to_tok())
     except Exception as exc:
+        session._persistence_failures += 1
         session_logger_for(session).warning(
             "Failed to save episode ledger to %s: %s",
             episode_ledger_file(session),
