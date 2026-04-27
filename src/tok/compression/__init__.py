@@ -1159,7 +1159,7 @@ def _should_replay_host_stub(
 ) -> bool:
     if not is_file_like or not cached_raw_text:
         return False
-    if not stub_text:
+    if not stub_text and cached_raw_text:
         return True
     if "unchanged since last read" in stub_text.lower():
         return True

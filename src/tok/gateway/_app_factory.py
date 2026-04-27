@@ -412,7 +412,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             )
             return _build_rate_limit_response(_rate_limit_throttle_remaining(session))
 
-        session.smoothness_tracker.start_turn()
+        session.smoothness_tracker.start_turn(task_id=f"session_{session.runtime_session.bridge_memory.turn}")
 
         skip = {
             "host",
@@ -755,6 +755,8 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         for key, value in retry_signals.items():
                             behavior_signals[key] = behavior_signals.get(key, 0) + value
                         _note_request_policy_recovery_watch(session, retry_signals)
+                        if _retried:
+                            _record_fallback_once(session, request_state)
                         if path == "v1/messages":
                             # Ownership transfers here. The streaming implementation must close both response and client.
                             return StreamingResponse(
