@@ -1034,12 +1034,13 @@ def prepare_request_impl(
             bridge_profile = dict(h_profile)
             if request.adapter_kind == "claude-bridge":
                 bridge_profile["_bridge_cut_search"] = 1
-            recent, tok_state = compress_history(
+            recent, tok_state, suppressed_markers = compress_history(
                 body["messages"],
                 keep_turns=bridge_keep_turns,
                 profile=bridge_profile if request.adapter_kind == "claude-bridge" else h_profile,
                 prune_tool_results=True,
             )
+            session._suppressed_failure_markers = frozenset(suppressed_markers)
             recent, recent_breakdown = compress_recent_window(
                 recent,
                 tool_use_id_to_context=id_to_context,
@@ -1089,7 +1090,7 @@ def prepare_request_impl(
                 if not bridge_search_success:
                     bridge_search_limit = max(1, bridge_keep_turns - _BRIDGE_CUT_SEARCH_MAX_EXTRA_TURNS)
                     for candidate_keep_turns in range(bridge_keep_turns - 1, bridge_search_limit - 1, -1):
-                        candidate_recent, candidate_tok_state = compress_history(
+                        candidate_recent, candidate_tok_state, _ = compress_history(
                             body["messages"],
                             keep_turns=candidate_keep_turns,
                             profile=bridge_profile,
@@ -1133,32 +1134,32 @@ def prepare_request_impl(
                                 behavior_signals[key] = behavior_signals.get(key, 0) + value
                             bridge_search_success = True
                             break
-                    if not bridge_search_success:
-                        if bridge_candidate_had_invalid:
-                            logger.warning(
-                                "tok_history_pairing_safety_degraded: rejecting compressed history that breaks immediate tool-result pairing"
-                            )
-                        recent = body["messages"]
-                        tok_state = ""
-                        recent_breakdown = {}
-                        if bridge_candidate_had_invalid:
-                            behavior_signals["tok_history_pairing_safety_degraded"] = 1
-                        # Immediate escalation: if natural_first and pairing safety degraded,
-                        # escalate to tool-compatible mode now rather than waiting for next turn
-                        if request_policy == "natural_first" and not effective_tool_compatible:
-                            effective_tool_compatible = True
-                            if not request_policy_escalated:
-                                request_policy_escalated = True
-                                behavior_signals["request_policy_escalations"] = 1
-                                behavior_signals["request_policy_escalation_source_tool_recovery"] = 1
-                            behavior_signals["request_policy_reason_tool_recovery"] = 1
-                            behavior_signals["request_policy_tool_compatible"] = 1
-                            behavior_signals["request_policy_natural_first"] = 0
-                            # Set recovery watch for sticky continuation
-                            session._request_policy_tool_recovery_watch_turns = max(
-                                session._request_policy_tool_recovery_watch_turns,
-                                TOK_REQUEST_POLICY_STICKY_TURNS,
-                            )
+                if not bridge_search_success:
+                    if bridge_candidate_had_invalid:
+                        logger.warning(
+                            "tok_history_pairing_safety_degraded: rejecting compressed history that breaks immediate tool-result pairing"
+                        )
+                    recent = body["messages"]
+                    tok_state = ""
+                    recent_breakdown = {}
+                    if bridge_candidate_had_invalid:
+                        behavior_signals["tok_history_pairing_safety_degraded"] = 1
+                    # Immediate escalation: if natural_first and pairing safety degraded,
+                    # escalate to tool-compatible mode now rather than waiting for next turn
+                    if request_policy == "natural_first" and not effective_tool_compatible:
+                        effective_tool_compatible = True
+                        if not request_policy_escalated:
+                            request_policy_escalated = True
+                            behavior_signals["request_policy_escalations"] = 1
+                            behavior_signals["request_policy_escalation_source_tool_recovery"] = 1
+                        behavior_signals["request_policy_reason_tool_recovery"] = 1
+                        behavior_signals["request_policy_tool_compatible"] = 1
+                        behavior_signals["request_policy_natural_first"] = 0
+                        # Set recovery watch for sticky continuation
+                        session._request_policy_tool_recovery_watch_turns = max(
+                            session._request_policy_tool_recovery_watch_turns,
+                            TOK_REQUEST_POLICY_STICKY_TURNS,
+                        )
             for k, v in recent_breakdown.items():
                 type_breakdown[f"recent_{k}"] = type_breakdown.get(f"recent_{k}", 0) + v
 

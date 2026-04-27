@@ -155,7 +155,7 @@ class TestCompressHistory:
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi"},
         ]
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert recent == msgs
         assert state == ""
 
@@ -168,7 +168,7 @@ class TestCompressHistory:
             {"role": "user", "content": "third question"},
             {"role": "assistant", "content": "third answer"},
         ]
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert len(recent) < len(msgs)
         assert state.startswith(">>>")
         assert "turns:" in state
@@ -196,7 +196,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
 
         assert "src/tok/gateway.py" in state or "src/tok/compression.py" in state
         assert "cmds:pytest tests/unit/test_gateway.py" in state
@@ -222,7 +222,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
         tests_field = self._state_field(state, "tests").lower()
         errs_field = self._state_field(state, "errs").lower()
 
@@ -248,7 +248,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
         tests_field = self._state_field(state, "tests").lower()
         errs_field = self._state_field(state, "errs").lower()
 
@@ -270,7 +270,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
         facts_field = self._state_field(state, "facts").lower()
 
         assert "file:<the" not in facts_field
@@ -296,7 +296,7 @@ class TestCompressHistory:
             {"role": "user", "content": "thanks"},
             {"role": "assistant", "content": "done"},
         ]
-        recent, _state = compress_history(msgs, keep_turns=1)
+        recent, _state, _ = compress_history(msgs, keep_turns=1)
         # Should not cut between tool_use and tool_result
         for msg in recent:
             content = msg.get("content", "")
@@ -322,7 +322,7 @@ class TestCompressHistory:
             },
             {"role": "user", "content": "final question"},
         ]
-        recent, _state = compress_history(msgs, keep_turns=2)
+        recent, _state, _ = compress_history(msgs, keep_turns=2)
 
         def _has_tool_use(msgs_in: list[dict[str, Any]], tool_id: str) -> bool:
             for m in msgs_in:
@@ -368,7 +368,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
 
         assert "src/tok/bridge_memory.py" in state
 
@@ -383,7 +383,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
 
         assert "errs:" in state or "next:" in state
 
@@ -398,7 +398,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
 
         assert "questions:" in state
 
@@ -436,7 +436,7 @@ class TestCompressHistoryCutDiagnostics:
 
     def test_tool_heavy_no_eligible_cut_returns_original(self) -> None:
         msgs = self._make_tool_heavy_transcript(6)
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert recent == msgs
         assert state == ""
 
@@ -445,7 +445,7 @@ class TestCompressHistoryCutDiagnostics:
             {"role": "user", "content": "first and only plain text"},
             {"role": "assistant", "content": "response"},
         ]
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert recent == msgs
         assert state == ""
 
@@ -481,7 +481,7 @@ class TestCompressHistoryCutDiagnostics:
             {"role": "user", "content": "final question"},
             {"role": "assistant", "content": "final answer"},
         ]
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert len(recent) < len(msgs)
         assert state.startswith(">>>")
 
@@ -1342,7 +1342,7 @@ class TestSavingsBugFix:
         _, tool_breakdown = compress_tool_results(msgs)
         tool_toks = sum(tool_breakdown.values()) // 4
 
-        _, tok_state = compress_history(msgs, keep_turns=2)
+        _, tok_state, _ = compress_history(msgs, keep_turns=2)
         assert tok_state  # history compression fired
 
         # Verify both have positive savings

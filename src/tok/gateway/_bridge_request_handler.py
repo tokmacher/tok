@@ -77,23 +77,13 @@ def _normalize_provider_safe_retry_payload(
             normalized_messages.append(msg)
             continue
 
-        # Filter out thinking/redacted_thinking blocks interleaved between tool_use blocks
-        # Only remove thinking blocks that appear AFTER the first tool_use and BEFORE the last tool_use
+        # Filter out ALL thinking/redacted_thinking blocks from assistant messages
+        # that contain tool_use blocks.  Anthropic's API rejects any assistant
+        # message where thinking blocks appear alongside tool_use, regardless of
+        # position.
         filtered_content: list[dict[str, Any]] = []
-        first_tool_use_idx = -1
-        last_tool_use_idx = -1
-        for i, block in enumerate(content):
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                if first_tool_use_idx == -1:
-                    first_tool_use_idx = i
-                last_tool_use_idx = i
-
-        for i, block in enumerate(content):
-            if (
-                isinstance(block, dict)
-                and block.get("type") in {"thinking", "redacted_thinking"}
-                and first_tool_use_idx <= i < last_tool_use_idx
-            ):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}:
                 changed = True
                 continue
             filtered_content.append(block)

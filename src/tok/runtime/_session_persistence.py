@@ -141,7 +141,12 @@ def load_result_cache(session: RuntimeSession) -> dict[str, Any]:
                 if isinstance(value, list) and len(value) == 3:
                     _cached_hash, _raw, timestamp = value
                     if current_time - timestamp < RESULT_CACHE_TTL_SECONDS:
-                        cleaned[key] = value
+                        cleaned[key] = {
+                            "hash": str(_cached_hash) if _cached_hash else "",
+                            "raw": str(_raw) if _raw else "",
+                            "timestamp": timestamp,
+                            "first_read_complete": False,
+                        }
                 elif isinstance(value, list) and len(value) == 2:
                     upgraded: dict[str, Any] = {
                         "hash": str(value[0]) if value[0] else "",

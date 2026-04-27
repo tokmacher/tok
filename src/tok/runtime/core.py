@@ -196,6 +196,7 @@ class RuntimeSession:
     _active_tools: list[str] = field(default_factory=list, repr=False)
     _last_tool_compatible_state: str = field(default="", repr=False)
     _last_tool_compatible_state_fields: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    _suppressed_failure_markers: frozenset[str] = field(default_factory=frozenset, repr=False)
     # Automatic session-scoped fallback tracking
     _consecutive_fallback_count: int = field(default=0, init=False, repr=False)
     _baseline_only: bool = field(default=False, init=False, repr=False)
@@ -393,6 +394,9 @@ class RuntimeSession:
             self._pending_exact_evidence_keys.clear()
             self.result_cache.clear()
             self.semantic_hash_cache.clear()
+            self._files_read_this_session.clear()
+            self._files_fully_delivered.clear()
+            self._suppressed_failure_markers = frozenset()
             self._stream_recovery_reacquisition_budget = 0
             self._stream_recovery_history_floor_budget = 0
             self._stream_recovery_tool_use_only_signature = ""
@@ -480,7 +484,9 @@ class RuntimeSession:
         if not file_path:
             return False
 
-        norm_path = file_path.lower().strip()
+        from .repeat_targets import normalize_path_target
+
+        norm_path = normalize_path_target(file_path)
         return norm_path in self._skeleton_delivered_paths
 
     def _extract_file_path_from_event(self, event: NormalizedToolEvent) -> str | None:
@@ -517,7 +523,9 @@ class RuntimeSession:
         if not file_path:
             return
 
-        norm_path = file_path.lower().strip()
+        from .repeat_targets import normalize_path_target
+
+        norm_path = normalize_path_target(file_path)
         if norm_path in self._skeleton_delivered_paths:
             self._skeleton_delivered_paths.remove(norm_path)
 
@@ -866,7 +874,7 @@ class RuntimeSession:
         if strategy == "full":
             return rendered, {"state_resend_full_turn": 1}
         # strategy == "delta"
-        delta = _delta_tok_state_fields(previous_comparable, parsed)
+        delta = _delta_tok_state_fields(previous_comparable, parsed, self._suppressed_failure_markers)
         if delta and len(delta) < len(rendered):
             return delta, {"state_resend_delta_turn": 1}
         return rendered, {

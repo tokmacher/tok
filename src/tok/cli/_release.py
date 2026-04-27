@@ -415,7 +415,7 @@ def replay_command(
 
         from tok.compression import compress_history
 
-        recent_msgs, tok_state = compress_history(
+        recent_msgs, tok_state, _ = compress_history(
             msgs_copy,
             keep_turns=2,
             profile=history_profile,

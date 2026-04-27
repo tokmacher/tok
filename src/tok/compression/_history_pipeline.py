@@ -99,7 +99,7 @@ def _extract_normalized_path(context: dict[str, Any] | None) -> str:
     if not args:
         return ""
     path = str(args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or "")
-    return path.lower().strip()
+    return normalize_path_target(path)
 
 
 TOOL_COMPRESS_THRESHOLD = 0
@@ -189,7 +189,7 @@ def compress_history_impl(
     keep_turns: int = 2,
     profile: dict[str, int | list[str]] | None = None,
     prune_tool_results: bool = False,
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], str, set[str]]:
     """Split messages into old (to compress) + recent (to keep verbatim)."""
     if keep_turns == 0:
         old = copy.deepcopy(messages)
@@ -245,7 +245,7 @@ def compress_history_impl(
                 rejection_counts,
             )
 
-            return messages, ""
+            return messages, "", set()
 
         old = messages[:cut_index]
         recent = copy.deepcopy(messages[cut_index:])
@@ -618,7 +618,7 @@ def compress_history_impl(
         "facts",
     ]
     payload = "|".join(f"{key}:{state_map[key]}" for key in ordered_keys if key in state_map)
-    return recent, f">>> {payload}" if payload else ""
+    return recent, f">>> {payload}" if payload else "", suppressed_failure_markers
 
 
 def tok_tool_result_impl(
@@ -861,7 +861,7 @@ def compress_tool_results_impl(
         if not path:
             return False
         # Normalize path for lookup
-        norm_path = path.lower().strip()
+        norm_path = normalize_path_target(path)
         if session_files_read is not None and norm_path in session_files_read:
             return False
         heat = file_heat.get(norm_path, 0.0)
@@ -988,6 +988,8 @@ def compress_tool_results_impl(
         return True
 
     for msg in messages:
+        if msg.get("role") == "user":
+            _same_turn_seen_paths.clear()
         content = msg.get("content")
         if not isinstance(content, list):
             if (
@@ -1543,21 +1545,6 @@ def compress_recent_window_impl(
             return False
         return any(k in args for k in ("offset", "limit", "start", "end"))
 
-    def _preserve_first_exact_observation(
-        context: dict[str, Any] | None,
-    ) -> bool:
-        """Preserve first exact observation and track it in session."""
-        if not context:
-            return False
-        if _is_precision_read_context(context):
-            return False
-        if not _first_exact_guard(context, ""):
-            return False
-        norm_path = _extract_normalized_path(context)
-        if session_files_read is not None and norm_path and norm_path not in session_files_read:
-            session_files_read.add(norm_path)
-        return True
-
     def _first_exact_guard(context: dict[str, Any] | None, raw: str) -> bool:
         """Guard first exact observation from compression.
 
@@ -1631,7 +1618,7 @@ def compress_recent_window_impl(
         )
         if not path:
             return False
-        norm_path = path.lower().strip()
+        norm_path = normalize_path_target(path)
         if session_files_read is not None and norm_path in session_files_read:
             return False
         heat = file_heat.get(norm_path, 0.0)

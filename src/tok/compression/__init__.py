@@ -568,7 +568,7 @@ def compress_history(
     keep_turns: int = 2,
     profile: dict[str, int | list[str]] | None = None,
     prune_tool_results: bool = False,
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], str, set[str]]:
     """Split messages into old (to compress) + recent (to keep verbatim)."""
     from ._pipeline import compress_history_impl
 
@@ -875,6 +875,15 @@ def _process_cache_hit(
 
 def _build_cache_key(tool_name: str | None, context: dict[str, Any]) -> str:
     serialized_args = context.get("args")
+    if isinstance(serialized_args, dict):
+        from tok.runtime.repeat_targets import normalize_path_target
+
+        path_key = next(
+            (k for k in ("path", "file_path", "AbsolutePath", "TargetFile") if k in serialized_args),
+            None,
+        )
+        if path_key:
+            serialized_args = {**serialized_args, path_key: normalize_path_target(str(serialized_args[path_key]))}
     args_str = json.dumps(serialized_args, sort_keys=True, default=str)
     raw_cache_key = f"{tool_name or ''}:{args_str}"
     return hashlib.sha256(raw_cache_key.encode()).hexdigest()[:12]
@@ -975,9 +984,9 @@ def _is_file_mtime_changed(context: dict[str, Any], cached_timestamp: float | No
     try:
         mtime = os.path.getmtime(path)
         return mtime > cached_timestamp
-    except (OSError, ValueError, TypeError):
-        # Synthetic or inaccessible paths should not force a cache miss.
-        # Real files still invalidate when their mtime is newer than the cache timestamp.
+    except (OSError, ValueError, TypeError) as exc:
+        if isinstance(exc, OSError) and path and (path.startswith("/") or "/" in path):
+            logger.debug("result_cache_mtime_check_failed: path=%s error=%s", path, exc)
         return False
 
 
@@ -1003,20 +1012,21 @@ def _update_cache_after_hit(
     raw: str,
 ) -> None:
     """Update the cache entry after a cache hit."""
-    if host_stub_replayed and entry_length == 3:
-        result_cache[cache_key] = {
-            "hash": cached_hash,
-            "raw": cached_raw,
-            "timestamp": time_module.time(),
-            "first_read_complete": True,
-        }
-    else:
-        result_cache[cache_key] = {
-            "hash": content_hash,
-            "raw": raw,
-            "timestamp": time_module.time(),
-            "first_read_complete": True,
-        }
+    with _result_cache_lock:
+        if host_stub_replayed and entry_length == 3:
+            result_cache[cache_key] = {
+                "hash": cached_hash,
+                "raw": cached_raw,
+                "timestamp": time_module.time(),
+                "first_read_complete": True,
+            }
+        else:
+            result_cache[cache_key] = {
+                "hash": content_hash,
+                "raw": raw,
+                "timestamp": time_module.time(),
+                "first_read_complete": True,
+            }
 
 
 def _count_changed_lines(diff_lines: list[str]) -> int:
@@ -1178,25 +1188,25 @@ def _serve_cached_content_hash_match(
 
     current_time = time_module.time()
     if is_precision_read:
-        # For precision reads, return the content we want to use
-        # If host_stub_replayed, use cached_raw (actual content), not raw (stub)
         content_to_return = cached_raw if host_stub_replayed else raw
-        result_cache[cache_key] = {
-            "hash": cached_hash,
-            "raw": content_to_return,
-            "timestamp": current_time,
-            "first_read_complete": first_read_complete,
-        }
+        with _result_cache_lock:
+            result_cache[cache_key] = {
+                "hash": cached_hash,
+                "raw": content_to_return,
+                "timestamp": current_time,
+                "first_read_complete": first_read_complete,
+            }
         return content_to_return, 0
 
     if normalized_tool_name in FILE_LIKE_TOOLS:
         if not first_read_complete:
-            result_cache[cache_key] = {
-                "hash": cached_hash,
-                "raw": cached_raw,
-                "timestamp": current_time,
-                "first_read_complete": True,
-            }
+            with _result_cache_lock:
+                result_cache[cache_key] = {
+                    "hash": cached_hash,
+                    "raw": cached_raw,
+                    "timestamp": current_time,
+                    "first_read_complete": True,
+                }
         confidence, reason = _compute_confidence(cached_hash, cached_hash)
         raw_path = _context_path(context)
         stub_parts = [f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"]

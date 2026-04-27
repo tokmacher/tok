@@ -6,6 +6,8 @@ import ast
 import re
 from typing import Any
 
+from tok.runtime.repeat_targets import normalize_path_target
+
 _SIGNATURE_CONTINUATION_RE = re.compile(r"^[)\],]\s*$|^[)\],]\s*[#]|,\s*$|\S\s*\\$")
 
 _SIGNATURE_OPEN_PAREN_RE = re.compile(r"\(")
@@ -548,7 +550,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
             )
             if path:
-                norm_path = path.lower().strip()
+                norm_path = normalize_path_target(path)
                 heat = file_heat.get(norm_path, 0.0) if isinstance(file_heat, dict) else 0.0
                 if heat == 0.0:
                     return text
@@ -577,7 +579,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                     or ""
                 )
                 if path:
-                    norm_path = path.lower().strip()
+                    norm_path = normalize_path_target(path)
                     session._skeleton_delivered_paths.add(norm_path)
 
             header = (
@@ -708,7 +710,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
             args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
         )
         if path:
-            norm_path = path.lower().strip()
+            norm_path = normalize_path_target(path)
             session._skeleton_delivered_paths.add(norm_path)
 
     header = (

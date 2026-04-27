@@ -649,14 +649,6 @@ async def buffer_strip_restream_impl(
                                     response_signals,
                                     recovery_success_signals,
                                 )
-                                # Merge stream_behavior_signals (including stream_buffer_read_error)
-                                # into response_signals so they are recorded in the tracker
-                                _merge_signal_counts(
-                                    response_signals,
-                                    stream_behavior_signals,
-                                )
-                                # Merge retry_response_signals (which includes signals from
-                                # the recovery response processing like tool_compatible_response)
                                 _merge_signal_counts(
                                     response_signals,
                                     retry_response_signals,
@@ -716,7 +708,7 @@ async def buffer_strip_restream_impl(
                         actual_output=recovery_usage.get("output_tokens", 0),
                         cache_read=recovery_usage.get("cache_read_input_tokens", 0),
                         cache_write=recovery_usage.get("cache_creation_input_tokens", 0),
-                        input_saved=input_saved_tokens,
+                        input_saved=0,
                         output_saved=0,
                         type_breakdown=type_breakdown,
                         behavior_signals=empty_processed.behavior_signals or None,

@@ -143,7 +143,7 @@ def _process_replay_turn(
         type_savings_tokens[kind] = type_savings_tokens.get(kind, 0) + max(0, chars // 4)
 
     after_tool_tokens = sum(token_counter(_msg_text(m)) for m in msgs_copy)
-    recent_msgs, tok_state = compress_history(
+    recent_msgs, tok_state, _ = compress_history(
         msgs_copy,
         keep_turns=keep_turns,
         profile=history_profile,
