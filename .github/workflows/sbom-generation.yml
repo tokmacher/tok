@@ -40,7 +40,7 @@ jobs:
           python scripts/generate_spdx_sbom.py
 
       - name: Upload SBOM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-artifacts
           path: |
@@ -53,7 +53,7 @@ jobs:
           python scripts/analyze_dependency_tree.py
 
       - name: Upload analysis report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-analysis
           path: dependency-analysis.json
