@@ -49,6 +49,7 @@ from . import (
 from ._registry import Compressor
 from ._tool_result_codecs import (
     _compress_file_read,
+    _compress_find,
     _compress_git_diff,
     _compress_grep,
     _compress_grep_context,
@@ -1651,6 +1652,7 @@ def compress_recent_window_impl(
         "pytest": _compress_pytest,
         "git_diff": _compress_git_diff,
         "ls": _compress_ls,
+        "find": _compress_find,
         "install": _compress_install,
         "git_log": _compress_git_log_impl,
     }

@@ -11,6 +11,79 @@ _SIGNATURE_CONTINUATION_RE = re.compile(r"^[)\],]\s*$|^[)\],]\s*[#]|,\s*$|\S\s*\
 _SIGNATURE_OPEN_PAREN_RE = re.compile(r"\(")
 _SIGNATURE_CLOSE_PAREN_RE = re.compile(r"\)")
 
+_MAX_LITERAL_CHARS: int = 200
+_MAX_CONTAINER_ITEMS: int = 30
+_MAX_NESTING_DEPTH: int = 2
+
+
+def _render_literal_value(node: ast.expr, depth: int = 0) -> str | None:
+    """Render a simple AST literal node to a Python repr string.
+
+    Returns None when the value is complex (function call, comprehension,
+    name reference, etc.) or exceeds size limits.  Never evaluates code.
+    Callers should fall back to existing `...` rendering when None is returned.
+    """
+    if isinstance(node, ast.Constant):
+        v = node.value
+        if v is None:
+            return "None"
+        if isinstance(v, bool):
+            return "True" if v else "False"
+        if isinstance(v, int | float):
+            return repr(v)
+        if isinstance(v, str):
+            rendered = repr(v)
+            return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+        return None
+
+    if depth >= _MAX_NESTING_DEPTH:
+        return None
+
+    if isinstance(node, ast.Tuple):
+        if len(node.elts) > _MAX_CONTAINER_ITEMS:
+            return None
+        parts = [_render_literal_value(elt, depth + 1) for elt in node.elts]
+        if any(p is None for p in parts):
+            return None
+        inner = ", ".join(parts)
+        rendered = f"({inner},)" if len(node.elts) == 1 else f"({inner})"
+        return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+
+    if isinstance(node, ast.List):
+        if len(node.elts) > _MAX_CONTAINER_ITEMS:
+            return None
+        parts = [_render_literal_value(elt, depth + 1) for elt in node.elts]
+        if any(p is None for p in parts):
+            return None
+        rendered = "[" + ", ".join(parts) + "]"
+        return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+
+    if isinstance(node, ast.Set):
+        if len(node.elts) > _MAX_CONTAINER_ITEMS:
+            return None
+        parts = [_render_literal_value(elt, depth + 1) for elt in node.elts]
+        if any(p is None for p in parts):
+            return None
+        rendered = "{" + ", ".join(parts) + "}"
+        return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+
+    if isinstance(node, ast.Dict):
+        if len(node.keys) > _MAX_CONTAINER_ITEMS:
+            return None
+        pairs: list[str] = []
+        for k, v in zip(node.keys, node.values, strict=False):
+            if k is None:
+                return None
+            kr = _render_literal_value(k, depth + 1)
+            vr = _render_literal_value(v, depth + 1)
+            if kr is None or vr is None:
+                return None
+            pairs.append(f"{kr}: {vr}")
+        rendered = "{" + ", ".join(pairs) + "}"
+        return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+
+    return None
+
 
 def _is_signature_continuation(prior_unclosed_parens: int, line: str) -> bool:
     if prior_unclosed_parens > 0:
@@ -335,11 +408,15 @@ def _extract_python_skeleton(text: str) -> str | None:
                 except Exception:
                     ann_str = "..."
                 if node.value is not None:
-                    try:
-                        val_str = ast.unparse(node.value)
-                        val_part = f" = {val_str}" if len(val_str) <= 30 else " = ..."
-                    except Exception:
-                        val_part = " = ..."
+                    lit = _render_literal_value(node.value)
+                    if lit is not None:
+                        val_part = f" = {lit}"
+                    else:
+                        try:
+                            val_str = ast.unparse(node.value)
+                            val_part = f" = {val_str}" if len(val_str) <= 30 else " = ..."
+                        except Exception:
+                            val_part = " = ..."
                 else:
                     val_part = ""
                 result.append(f"{field_name}: {ann_str}{val_part}")
