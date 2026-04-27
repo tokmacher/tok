@@ -71,11 +71,11 @@ def _render_literal_value(node: ast.expr, depth: int = 0) -> str | None:
         if len(node.keys) > _MAX_CONTAINER_ITEMS:
             return None
         pairs: list[str] = []
-        for k, v in zip(node.keys, node.values, strict=False):
-            if k is None:
+        for dk, dv in zip(node.keys, node.values, strict=False):
+            if dk is None:
                 return None
-            kr = _render_literal_value(k, depth + 1)
-            vr = _render_literal_value(v, depth + 1)
+            kr = _render_literal_value(dk, depth + 1)
+            vr = _render_literal_value(dv, depth + 1)
             if kr is None or vr is None:
                 return None
             pairs.append(f"{kr}: {vr}")
@@ -428,15 +428,15 @@ def _extract_python_skeleton(text: str) -> str | None:
                     # Keep named constants (ALL_CAPS), skip numeric tables
                     if target.id.isupper():
                         try:
-                            val_str = ast.unparse(node.value) if node.value else ""
-                            # Skip large numeric dicts/lists
-                            if isinstance(node.value, ast.Dict | ast.List | ast.Tuple):
-                                size_hint = "dict" if isinstance(node.value, ast.Dict) else "list/tuple"
-                                result.append(f"{target.id} = <{size_hint}>")
-                            elif val_str and len(val_str) <= 30:
-                                result.append(f"{target.id} = {val_str}")
+                            lit = _render_literal_value(node.value) if node.value else None
+                            if lit is not None:
+                                result.append(f"{target.id} = {lit}")
                             else:
-                                result.append(f"{target.id} = ...")
+                                val_str = ast.unparse(node.value) if node.value else ""
+                                if val_str and len(val_str) <= 30:
+                                    result.append(f"{target.id} = {val_str}")
+                                else:
+                                    result.append(f"{target.id} = ...")
                         except Exception:
                             result.append(f"{target.id} = ...")
                     # Keep dataclass-style field assignments
@@ -500,6 +500,27 @@ def _extract_python_skeleton(text: str) -> str | None:
     return "\n".join(result)
 
 
+_OBSERVABILITY_PATH_FRAGMENTS = frozenset(
+    {
+        "bridge.log",
+        "collector.log",
+        ".tok/bridge.log",
+        ".tok/collector.log",
+    }
+)
+
+
+def _is_observability_file(tool_context: dict[str, Any] | None) -> bool:
+    if not tool_context:
+        return False
+    args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+    path = str(args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or "")
+    if not path:
+        return False
+    path_lower = path.lower()
+    return any(frag in path_lower for frag in _OBSERVABILITY_PATH_FRAGMENTS)
+
+
 def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, session: Any | None = None) -> str:
     _agg = 1.0
     if tool_context and isinstance(tool_context, dict):
@@ -532,6 +553,9 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 if heat == 0.0:
                     return text
     if len(text) <= _small_chars and text.count("\n") + 1 <= _small_lines:
+        return text
+
+    if _is_observability_file(tool_context):
         return text
 
     # Try AST-based skeleton extraction for Python files

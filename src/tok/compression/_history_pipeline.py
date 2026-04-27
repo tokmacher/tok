@@ -1668,17 +1668,31 @@ def compress_recent_window_impl(
             if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(content) == "navigation":
                 continue
             if _should_preserve_exact_search_observation(ctx, content):
+                logger.debug(
+                    "compression_decision: decision=preserved reason=exact_search_observation tool=%s", tool_name
+                )
                 continue
             if _first_exact_guard(ctx, content):
                 msg["content"] = content
+                logger.debug("compression_decision: decision=preserved reason=first_exact_guard tool=%s", tool_name)
                 continue
             # First-session preservation: None means fresh session, preserve all file reads
             if tool_name in FILE_LIKE_TOOLS:
                 norm_path = _extract_normalized_path(ctx)
                 if bool(norm_path) and (session_files_read is None or norm_path not in session_files_read):
+                    logger.debug(
+                        "compression_decision: decision=preserved reason=first_session tool=%s path=%s",
+                        tool_name,
+                        norm_path,
+                    )
                     continue
                 # Zero-heat check: never compress files that haven't been read before
                 if _is_zero_heat(ctx):
+                    logger.debug(
+                        "compression_decision: decision=preserved reason=zero_heat tool=%s path=%s",
+                        tool_name,
+                        norm_path,
+                    )
                     continue
             kind = _detect_tool_content_type_impl(content)
             if tool_name in FILE_LIKE_TOOLS:
@@ -1686,8 +1700,10 @@ def compress_recent_window_impl(
             elif tool_name in SEARCH_LIKE_TOOLS and kind == "file":
                 kind = "grep"
             elif kind == "raw":
+                logger.debug("compression_decision: decision=bypassed reason=detection_type_raw tool=%s", tool_name)
                 continue
             if kind == "pytest" and " FAILED" in content and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
+                logger.debug("compression_decision: decision=preserved reason=pytest_failed tool=%s", tool_name)
                 continue
             effective_threshold = (
                 RECENT_WINDOW_EVIDENCE_THRESHOLD
@@ -1695,18 +1711,39 @@ def compress_recent_window_impl(
                 else threshold
             )
             if len(content) <= effective_threshold:
+                logger.debug(
+                    "compression_decision: decision=preserved reason=size_below_threshold tool=%s kind=%s len=%d",
+                    tool_name,
+                    kind,
+                    len(content),
+                )
                 continue
             compressor = compressors.get(kind)
             if compressor is None:
+                logger.debug(
+                    "compression_decision: decision=bypassed reason=no_compressor tool=%s kind=%s", tool_name, kind
+                )
                 continue
             if kind == "file" and _skip_file_skeleton:
+                logger.debug("compression_decision: decision=preserved reason=skip_file_skeleton tool=%s", tool_name)
                 continue
             compressed: str = compressor(content)
             saved = len(content) - len(compressed)
             if saved <= 0:
+                logger.debug(
+                    "compression_decision: decision=bypassed reason=zero_savings tool=%s kind=%s", tool_name, kind
+                )
                 continue
             breakdown[kind] = breakdown.get(kind, 0) + saved
             msg["content"] = compressed
+            logger.debug(
+                "compression_decision: decision=compressed tool=%s kind=%s input_chars=%d output_chars=%d saved=%d",
+                tool_name,
+                kind,
+                len(content),
+                len(compressed),
+                saved,
+            )
             continue
         if not isinstance(content, list):
             continue

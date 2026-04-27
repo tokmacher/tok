@@ -287,7 +287,18 @@ class RuntimeSession:
         self._baseline_only = False
 
     def reset_session(self) -> None:
-        """Reset all transient session state for a fresh start (preserves persisted data)."""
+        """Reset all transient session state for a fresh start (preserves persisted data).
+
+        LIMITATION: The Tok bridge process does not receive a stable conversation
+        identifier from Claude Code.  Without an explicit reset (via
+        ``TOK_RESET_SESSION=1`` or ``POST /reset-session``), first-exact-evidence
+        guarantees apply only within a single continuous bridge process session, not
+        across Claude Code conversation restarts that connect to the same running
+        bridge.
+
+        Users can call ``POST http://localhost:9090/reset-session`` to restore
+        first-read protection at the start of a new conversation.
+        """
         self._consecutive_fallback_count = 0
         self._baseline_only = False
         self._persistence_failures = 0
