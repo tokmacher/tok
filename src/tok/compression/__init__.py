@@ -933,7 +933,7 @@ def _unpack_cache_entry(
             str(entry.get("hash", "")),
             str(entry.get("raw", "")),
             cast("float | None", entry.get("timestamp")),
-            bool(entry.get("first_read_complete", True)),  # Default True for safety
+            bool(entry.get("first_read_complete", False)),  # Default False for safety (first-read guarantee)
             4,  # Dict format version
         )
     # Handle legacy tuple format (backwards compatibility)
@@ -943,11 +943,11 @@ def _unpack_cache_entry(
             str(entry[0]),
             str(entry[1]),
             cast("float | None", entry[2]),
-            True,  # Legacy entries assumed complete
+            False,  # Legacy entries must require a verbatim first read
             entry_length,
         )
     if entry_length == 2:
-        return str(entry[0]), str(entry[1]), None, True, entry_length
+        return str(entry[0]), str(entry[1]), None, False, entry_length
     if entry_length == 1:
         return str(entry[0]), "", None, True, entry_length
     return "", "", None, True, entry_length
@@ -987,8 +987,8 @@ def _is_content_hash_match(text_a: str, text_b: str) -> bool:
         return True
     if not text_a or not text_b:
         return False
-    hash_a = hashlib.sha256(text_a.encode()).hexdigest()[:8]
-    hash_b = hashlib.sha256(text_b.encode()).hexdigest()[:8]
+    hash_a = hashlib.sha256(text_a.encode()).hexdigest()[:16]
+    hash_b = hashlib.sha256(text_b.encode()).hexdigest()[:16]
     return hash_a == hash_b
 
 

@@ -38,7 +38,7 @@ __all__ = [
     "truncate_large_result",
 ]
 
-_CODE_PATTERNS = re.compile(r"\bdef \b|\bclass \b|\bimport \b|\basync def \b|\bfunction \b")
+_CODE_PATTERNS = re.compile(r"\bdef |\bclass |\bimport |\basync def |\bfunction ")
 
 
 def _detect_tool_content_type(text: str, path: str = "") -> str:

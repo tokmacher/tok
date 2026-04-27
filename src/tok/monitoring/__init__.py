@@ -8,8 +8,3 @@ analyzing performance metrics, and monitoring system integrity.
 
 from .profiler import TokProfiler as TokProfiler
 from .profiler import UsageRecord as UsageRecord
-
-
-def __getattr__(name: str) -> object:
-    msg = f"module {__name__!r} has no attribute {name!r}"
-    raise AttributeError(msg)

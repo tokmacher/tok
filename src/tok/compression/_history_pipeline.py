@@ -1546,21 +1546,15 @@ def compress_recent_window_impl(
         context: dict[str, Any] | None,
     ) -> bool:
         """Preserve first exact observation and track it in session."""
-        if first_exact_evidence_seen is None or not context:
+        if not context:
             return False
-        key = evidence_identity_key(
-            str(context.get("name", "")),
-            path=str(context.get("path") or "").strip() or None,
-            query=str(context.get("query") or "").strip() or None,
-            command=str(
-                (context.get("args") or {}).get("command") or (context.get("args") or {}).get("cmd") or ""
-            ).strip()
-            or None,
-            args=context.get("args") if isinstance(context.get("args"), dict) else None,
-        )
-        if not key or key in first_exact_evidence_seen:
+        if _is_precision_read_context(context):
             return False
-        first_exact_evidence_seen.add(key)
+        if not _first_exact_guard(context, ""):
+            return False
+        norm_path = _extract_normalized_path(context)
+        if session_files_read is not None and norm_path and norm_path not in session_files_read:
+            session_files_read.add(norm_path)
         return True
 
     def _first_exact_guard(context: dict[str, Any] | None, raw: str) -> bool:

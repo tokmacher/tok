@@ -21,7 +21,6 @@ class TestCLI:
         assert result.exit_code == 0
         assert "bridge" in result.output
         assert "stats" in result.output
-        assert "savings" in result.output
         assert "install" in result.output
         assert "doctor" in result.output
         assert "metrics" not in result.output
@@ -595,7 +594,7 @@ class TestCLI:
         assert captured["env"]["TOK_RESET_SESSION"] == "1"
 
     def test_savings_no_data(self) -> None:
-        result = runner.invoke(app, ["savings"])
+        result = runner.invoke(app, ["stats"])
         assert result.exit_code == 0
 
     def test_stats_alias_shows_fallback_and_baseline_state(self, tmp_path, monkeypatch) -> None:
@@ -857,7 +856,7 @@ class TestCLI:
         monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
 
-        result = runner.invoke(app, ["savings", "--breakdown"])
+        result = runner.invoke(app, ["stats", "--breakdown"])
         assert result.exit_code == 0
         assert "Tok health:" in result.output
         assert "Request-side savings:" in result.output
@@ -874,7 +873,7 @@ class TestCLI:
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
         monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "savings.tok"))
 
-        result = runner.invoke(app, ["savings", "--total", "--trends"])
+        result = runner.invoke(app, ["stats", "--total", "--trends"])
         assert result.exit_code == 0
         assert "Trend:" in result.output
         assert "direction=improving" in result.output

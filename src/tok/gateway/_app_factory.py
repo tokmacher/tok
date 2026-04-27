@@ -176,6 +176,8 @@ def _rebuild_content_preserving_position(
             if processed_idx < len(processed_blocks):
                 result.append(processed_blocks[processed_idx])
                 processed_idx += 1
+            else:
+                result.append(block)
         else:
             block_id = block.get("id", "")
             if block_id and block_id in passthrough_by_id:
@@ -385,6 +387,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "task_score": session.runtime_session.current_task_smoothness_score,
             "repeated_active_file_reads": int(signals.get("repeat_file_read", 0)),
         }
+
+    @app.post("/reset-session")
+    async def reset_session_endpoint() -> dict[str, str]:
+        """Reset per-session first-read / first-exact state for a new conversation."""
+        session.tracker.reset_session_stats()
+        session.runtime_session.reset_session()
+        return {"status": "ok", "action": "session_reset"}
 
     @app.api_route(
         "/{path:path}",
@@ -993,7 +1002,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     else:
                         raise
 
-            if thinking_forced_non_stream and response.status_code == 200:
+            if thinking_forced_non_stream and response.status_code == 200 and resp_json:
                 sse_headers = _safe_headers(response.headers)
                 sse_headers["content-type"] = "text/event-stream"
                 return StreamingResponse(

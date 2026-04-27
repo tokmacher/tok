@@ -119,6 +119,7 @@ def _decode_bridge_body(raw_content: bytes | None) -> dict[str, Any] | None:
     try:
         decoded = json.loads(raw_content)
     except Exception:
+        logger.debug("Failed to decode bridge body as JSON", exc_info=True)
         return None
     return decoded if isinstance(decoded, dict) else None
 
@@ -318,7 +319,7 @@ async def send_with_tok_fail_open_retry(
             prepared_split_boundaries = _count_user_tool_result_split_boundaries(prepared_body.get("messages", []))
         fallback_body = _decode_bridge_body(fallback_content)
         # Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks
-        if isinstance(fallback_body, dict) and retry_content is not None:
+        if isinstance(fallback_body, dict):
             (
                 normalized_fallback_body,
                 normalized_changed,

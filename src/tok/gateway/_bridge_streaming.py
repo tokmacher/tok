@@ -455,6 +455,7 @@ async def buffer_strip_restream_impl(
             for block in translated_blocks
         )
         recovery_required = not has_visible_blocks and (read_error is not None or len(translated_blocks) == 0)
+        _cost_recorded_by_fallback = False
         if recovery_required:
             recovery_allowed, _recovery_reason = _stream_recovery_allowed_now(session)
             stream_behavior_signals["stream_empty_after_success"] = 1
@@ -544,7 +545,7 @@ async def buffer_strip_restream_impl(
                             )
                             retry_output_saved = 0
                             # Initialize retry_response_signals to accumulate across branches
-                            retry_response_signals: dict[str, int] = dict(stream_behavior_signals)
+                            retry_response_signals: dict[str, int] = {}
                             if retry_text:
                                 retry_processed = _RUNTIME.process_response(
                                     retry_text,
@@ -723,7 +724,8 @@ async def buffer_strip_restream_impl(
                     )
                 if request_state is not None:
                     _record_fallback_once(session, request_state)
-        if sse_model != "unknown" and sse_usage:
+                _cost_recorded_by_fallback = bool(recovery_model and recovery_usage)
+        if sse_model != "unknown" and sse_usage and not _cost_recorded_by_fallback:
             if not full_text:
                 processed = _RUNTIME.process_response(
                     "",
