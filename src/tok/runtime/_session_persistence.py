@@ -36,6 +36,7 @@ def initialize_session_storage(session: RuntimeSession, *, explicit_memory_dir: 
         session._load_global_macros = not explicit_memory_dir
     session.bridge_memory = load_bridge_memory(session)
     session.result_cache = load_result_cache(session)
+    session.episode_ledger = load_episode_ledger(session)
     loaded_fallback_memory = load_fallback_memory(session)
     session.fallback_memory = provided_fallback_memory or loaded_fallback_memory
     if session.fallback_memory and not session.bridge_memory.wire_state():
@@ -68,6 +69,7 @@ def load_bridge_memory(session: RuntimeSession) -> BridgeMemoryState:
     except FileNotFoundError:
         return BridgeMemoryState(load_global_macros=session._load_global_macros)
     except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as exc:
+        session._persistence_failures += 1
         session_logger = session_logger_for(session)
         session_logger.warning(
             "Bridge memory file corrupted at %s: %s — starting with empty memory",
@@ -75,6 +77,7 @@ def load_bridge_memory(session: RuntimeSession) -> BridgeMemoryState:
             exc,
         )
     except Exception as exc:
+        session._persistence_failures += 1
         session_logger = session_logger_for(session)
         session_logger.warning(
             "Failed to load bridge memory from %s: %s",
@@ -141,7 +144,12 @@ def load_result_cache(session: RuntimeSession) -> dict[str, Any]:
                 if isinstance(value, list) and len(value) == 3:
                     _cached_hash, _raw, timestamp = value
                     if current_time - timestamp < RESULT_CACHE_TTL_SECONDS:
-                        cleaned[key] = value
+                        cleaned[key] = {
+                            "hash": str(_cached_hash) if _cached_hash else "",
+                            "raw": str(_raw) if _raw else "",
+                            "timestamp": timestamp,
+                            "first_read_complete": False,
+                        }
                 elif isinstance(value, list) and len(value) == 2:
                     upgraded: dict[str, Any] = {
                         "hash": str(value[0]) if value[0] else "",

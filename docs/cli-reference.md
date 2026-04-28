@@ -2,7 +2,7 @@
 
 This page summarizes the supported Tok CLI surface for the first public release. The
 default `tok --help` output intentionally highlights only the bridge-first onboarding
-path plus the `tok savings` compatibility alias.
+path plus the `tok stats` command.
 
 If you are new to Tok, start with [`README.md`](../README.md) or the full workflow in
 [`docs/bridge.md`](./bridge.md).
@@ -53,14 +53,12 @@ Use:
 tok doctor
 tok stats [--session | --total | --last-session | --recent N | --since DATE]
 tok stats [--breakdown] [--trends] [--window N]
-tok savings [same options as tok stats]
 ```
 
 Use:
 
 - `tok doctor` as the first troubleshooting command after install
 - `tok stats` for current, last-session, recent, and lifetime savings views
-- `tok savings` only as a compatibility alias for `tok stats`
 
 Advanced maintainer utilities remain available, but they are intentionally hidden from
 the default help surface in `0.1.x` so new users land on one clear workflow. Hidden

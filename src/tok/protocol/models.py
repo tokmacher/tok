@@ -214,7 +214,7 @@ class TokMemory(BaseModel):
                 k = k.strip()
                 v = v.strip()
                 # Strict Key Validation: Only alphanumeric keys, ignore metadata
-                if re.match(r"^[a-zA-Z0-9_\-]+$", k) and k not in [
+                if re.match(r"^[a-zA-Z0-9_\-/.:\[\]]+$", k) and k not in [
                     "heat",
                     "last",
                     "stage",

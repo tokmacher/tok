@@ -8,7 +8,39 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("tok.translator")
 
-IS_TOK = re.compile(r"(^>>>|^@[A-Za-z_]|\s+\|>|^\|>)", re.MULTILINE)
+IS_TOK = re.compile(r"(^>>>|^@[A-Za-z_][A-Za-z0-9_]*|\s+\|>|^\|>)", re.MULTILINE)
+
+_line_start_tok = re.compile(r"^>>>", re.MULTILINE)
+
+_KNOWN_TOK_BLOCKS = frozenset(
+    {
+        "thought",
+        "msg",
+        "tool",
+        "summary",
+        "state",
+        "hot_state",
+        "cold_state",
+        "permanent_state",
+        "scheduled_state",
+        "meta",
+        "agent",
+        "tools",
+        "grammar",
+        "entropy",
+    }
+)
+
+
+def _is_likely_tok(text: str) -> bool:
+    markers = set(IS_TOK.findall(text))
+    if _line_start_tok.search(text):
+        return True
+    at_blocks = {m[1:] for m in markers if m.startswith("@")}
+    if at_blocks & _KNOWN_TOK_BLOCKS:
+        return True
+    return len(markers) >= 2
+
 
 _MD_STRIP = [
     (re.compile(r"^#{1,6}\s+", re.MULTILINE), ""),
@@ -139,7 +171,7 @@ def postprocess_response(text: str) -> tuple[str, str]:
 
     Returns (processed_text, mode) where mode is 'tok-native', 'tok-empty', 'tok', or 'markdown'.
     """
-    if IS_TOK.search(text):
+    if _is_likely_tok(text):
         readable = tok_to_readable(text)
         if readable:
             return readable, "tok-native"

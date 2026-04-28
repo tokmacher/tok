@@ -84,14 +84,16 @@ def get_adaptive_keep_turns(session: "RuntimeSession") -> int:
     """
     Determine how many history turns to keep based on session age.
 
-    Session age (self._step_count) determines how many recent turns to preserve:
-    - Young sessions (fewer than 3 steps): keep 3 turns for working memory stability
-    - Mid sessions (3-10 steps): keep 2 turns
-    - Mature sessions (11+ steps): keep 2 turns as a minimum floor.
+    Raw runtime sessions retain the young-session stability floor.  Bridge
+    sessions mark keep_turns as explicit so user-facing configuration such as
+    ``--keep-turns 0`` is honored exactly.
     """
+    configured_keep_turns = max(0, int(getattr(session, "keep_turns", 2)))
+    if getattr(session, "_keep_turns_explicit", False):
+        return configured_keep_turns
     if session._step_count < 3:
-        return 3
-    return 2
+        return max(configured_keep_turns, 3)
+    return configured_keep_turns
 
 
 def _discover_project_markers(cwd: Path | None = None) -> frozenset[str]:

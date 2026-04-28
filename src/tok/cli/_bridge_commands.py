@@ -6,7 +6,7 @@ from typing import Annotated
 
 import typer
 
-from ._cli_support import LOG_FILE, console
+from ._cli_support import LOG_FILE, bridge_url, console
 
 
 def bridge_start(
@@ -84,9 +84,26 @@ def bridge_logs(
         console.print(line, markup=True)
 
 
+def bridge_reset_session() -> None:
+    """Reset the running bridge's session state (first-read / first-exact tracking)."""
+    import httpx
+
+    try:
+        resp = httpx.post(bridge_url(path="/reset-session"), timeout=5)
+        if resp.status_code == 200:
+            console.print("[green]Session reset successfully.[/green]")
+        else:
+            console.print(f"[red]Reset failed: HTTP {resp.status_code}[/red]")
+            raise typer.Exit(1)
+    except httpx.ConnectError:
+        console.print("[red]Bridge not running.[/red]")
+        raise typer.Exit(1) from None
+
+
 def register(bridge_app: typer.Typer) -> None:
     """Register bridge commands with the CLI app."""
     bridge_app.command("start")(bridge_start)
     bridge_app.command("stop")(bridge_stop)
     bridge_app.command("status")(bridge_status)
     bridge_app.command("logs")(bridge_logs)
+    bridge_app.command("reset-session", hidden=True)(bridge_reset_session)

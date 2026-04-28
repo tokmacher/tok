@@ -155,7 +155,7 @@ class TestCompressHistory:
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi"},
         ]
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert recent == msgs
         assert state == ""
 
@@ -168,7 +168,7 @@ class TestCompressHistory:
             {"role": "user", "content": "third question"},
             {"role": "assistant", "content": "third answer"},
         ]
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert len(recent) < len(msgs)
         assert state.startswith(">>>")
         assert "turns:" in state
@@ -196,7 +196,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
 
         assert "src/tok/gateway.py" in state or "src/tok/compression.py" in state
         assert "cmds:pytest tests/unit/test_gateway.py" in state
@@ -222,7 +222,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
         tests_field = self._state_field(state, "tests").lower()
         errs_field = self._state_field(state, "errs").lower()
 
@@ -248,7 +248,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
         tests_field = self._state_field(state, "tests").lower()
         errs_field = self._state_field(state, "errs").lower()
 
@@ -270,7 +270,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
         facts_field = self._state_field(state, "facts").lower()
 
         assert "file:<the" not in facts_field
@@ -296,7 +296,7 @@ class TestCompressHistory:
             {"role": "user", "content": "thanks"},
             {"role": "assistant", "content": "done"},
         ]
-        recent, _state = compress_history(msgs, keep_turns=1)
+        recent, _state, _ = compress_history(msgs, keep_turns=1)
         # Should not cut between tool_use and tool_result
         for msg in recent:
             content = msg.get("content", "")
@@ -322,7 +322,7 @@ class TestCompressHistory:
             },
             {"role": "user", "content": "final question"},
         ]
-        recent, _state = compress_history(msgs, keep_turns=2)
+        recent, _state, _ = compress_history(msgs, keep_turns=2)
 
         def _has_tool_use(msgs_in: list[dict[str, Any]], tool_id: str) -> bool:
             for m in msgs_in:
@@ -368,7 +368,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
 
         assert "src/tok/bridge_memory.py" in state
 
@@ -383,7 +383,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
 
         assert "errs:" in state or "next:" in state
 
@@ -398,7 +398,7 @@ class TestCompressHistory:
             {"role": "assistant", "content": "done"},
         ]
 
-        _, state = compress_history(msgs, keep_turns=1)
+        _, state, _ = compress_history(msgs, keep_turns=1)
 
         assert "questions:" in state
 
@@ -436,7 +436,7 @@ class TestCompressHistoryCutDiagnostics:
 
     def test_tool_heavy_no_eligible_cut_returns_original(self) -> None:
         msgs = self._make_tool_heavy_transcript(6)
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert recent == msgs
         assert state == ""
 
@@ -445,7 +445,7 @@ class TestCompressHistoryCutDiagnostics:
             {"role": "user", "content": "first and only plain text"},
             {"role": "assistant", "content": "response"},
         ]
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert recent == msgs
         assert state == ""
 
@@ -481,7 +481,7 @@ class TestCompressHistoryCutDiagnostics:
             {"role": "user", "content": "final question"},
             {"role": "assistant", "content": "final answer"},
         ]
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         assert len(recent) < len(msgs)
         assert state.startswith(">>>")
 
@@ -1064,6 +1064,26 @@ class TestNewCompressors:
         for i in range(10):
             assert f"+new line in file {i}" in result, f"diff line for file {i} was truncated"
 
+    def test_git_diff_name_only_preserves_raw_paths(self) -> None:
+        paths = "\n".join([f"src/module_{idx}.py" for idx in range(45)] + [f"docs/page_{idx}.md" for idx in range(9)])
+        result = tok_tool_result(
+            paths,
+            tool_context={"tool": "Bash", "args": {"command": "git diff --name-only HEAD~1 HEAD"}},
+        )
+        assert result == paths
+        assert ">>> tool:ls|total:" not in result
+        assert "src/module_44.py" in result
+
+    def test_git_log_name_only_preserves_raw_paths(self) -> None:
+        paths = "\n".join([f"src/module_{idx}.py" for idx in range(47)] + [f"docs/page_{idx}.md" for idx in range(7)])
+        result = tok_tool_result(
+            paths,
+            tool_context={"tool": "Bash", "args": {"command": "git log --name-only --oneline -n 5"}},
+        )
+        assert result == paths
+        assert ">>> tool:ls|total:" not in result
+        assert "docs/page_6.md" in result
+
     # --- ls ---
 
     def test_ls_detected(self) -> None:
@@ -1342,7 +1362,7 @@ class TestSavingsBugFix:
         _, tool_breakdown = compress_tool_results(msgs)
         tool_toks = sum(tool_breakdown.values()) // 4
 
-        _, tok_state = compress_history(msgs, keep_turns=2)
+        _, tok_state, _ = compress_history(msgs, keep_turns=2)
         assert tok_state  # history compression fired
 
         # Verify both have positive savings
@@ -2106,3 +2126,245 @@ class TestHarnessInjectionStripping:
         entry = next(iter(cache.values()))
         stored_raw = entry.get("raw", "") if isinstance(entry, dict) else entry[1]
         assert "<system-reminder>" not in stored_raw
+
+
+# ---------------------------------------------------------------------------
+# Bug 0.1.5-1: find output path preservation
+# ---------------------------------------------------------------------------
+
+
+def _make_find_output(n_paths: int, base: str = "/repo/src", ext: str = ".py") -> str:
+    lines = []
+    for i in range(n_paths):
+        subdir = f"pkg_{i // 10}"
+        lines.append(f"{base}/{subdir}/file_{i}{ext}")
+    return "\n".join(lines)
+
+
+def _make_find_mixed(n_paths: int) -> str:
+    exts = [".py", ".md", ".json", ".toml"]
+    lines = []
+    for i in range(n_paths):
+        ext = exts[i % len(exts)]
+        lines.append(f"/repo/src/mod_{i}/file_{i}{ext}")
+    return "\n".join(lines)
+
+
+class TestFindPathPreservation:
+    """find output must preserve navigable path strings, never reduce to count-only."""
+
+    def test_find_output_10_paths_detected_as_find(self) -> None:
+        text = _make_find_output(10)
+        assert _detect_tool_content_type(text) == "find"
+
+    def test_find_output_80_paths_detected_as_find(self) -> None:
+        text = _make_find_output(80)
+        assert _detect_tool_content_type(text) == "find"
+
+    def test_find_output_10_paths_preserves_all_paths(self) -> None:
+        text = _make_find_output(10)
+        result = tok_tool_result(text)
+        for i in range(10):
+            assert f"file_{i}.py" in result, f"path for file_{i} lost in result: {result[:300]}"
+
+    def test_find_output_80_paths_preserves_paths_not_count_only(self) -> None:
+        text = _make_find_output(80)
+        result = tok_tool_result(text)
+        preserved = sum(1 for i in range(80) if f"file_{i}.py" in result)
+        assert preserved > 0, f"All 80 paths lost; result: {result[:300]}"
+        assert not (result.strip().startswith(">>> tool:ls|") and ".py: 80" in result and "file_" not in result), (
+            f"find result reduced to count-only ls summary: {result[:300]}"
+        )
+
+    def test_find_output_mixed_extensions_preserves_paths(self) -> None:
+        text = _make_find_mixed(20)
+        result = tok_tool_result(text)
+        assert "file_0" in result
+        assert "file_4" in result
+
+    def test_find_output_not_confused_with_ls_la(self) -> None:
+        text = _make_ls_la(12)
+        assert _detect_tool_content_type(text) == "ls"
+
+    def test_find_output_result_starts_with_tok_find_header(self) -> None:
+        text = _make_find_output(30)
+        result = tok_tool_result(text)
+        assert "find" in result.lower() or "path" in result[:100].lower() or "/repo/src/" in result
+
+    def test_find_output_large_above_50_preserves_samples(self) -> None:
+        text = _make_find_output(150)
+        result = tok_tool_result(text)
+        preserved = sum(1 for i in range(150) if f"file_{i}.py" in result)
+        assert preserved > 0, f"No paths preserved for 150-path find: {result[:300]}"
+        assert "file_" in result, f"All paths lost in 150-path find: {result[:300]}"
+
+
+# ---------------------------------------------------------------------------
+# Bug 0.1.5-2: Python skeleton must preserve top-level constant values
+# ---------------------------------------------------------------------------
+
+from tok.compression._tool_result_file_read import _extract_python_skeleton  # noqa: E402
+
+
+def _skeleton(source: str) -> str:
+    result = _extract_python_skeleton(source)
+    assert result is not None, "skeleton extraction returned None"
+    return result
+
+
+class TestSkeletonConstantPreservation:
+    """Python AST skeleton must render simple top-level constant values, not replace with ..."""
+
+    def test_preserves_short_string_constant(self) -> None:
+        result = _skeleton('FOO = "bar"\n')
+        assert "FOO = 'bar'" in result
+
+    def test_preserves_int_constant(self) -> None:
+        result = _skeleton("MAX_SIZE = 100\n")
+        assert "MAX_SIZE = 100" in result
+
+    def test_preserves_bool_true(self) -> None:
+        result = _skeleton("DEBUG = True\n")
+        assert "DEBUG = True" in result
+
+    def test_preserves_bool_false(self) -> None:
+        result = _skeleton("ENABLED = False\n")
+        assert "ENABLED = False" in result
+
+    def test_preserves_none(self) -> None:
+        result = _skeleton("DEFAULT = None\n")
+        assert "DEFAULT = None" in result
+
+    def test_preserves_tuple_of_strings(self) -> None:
+        src = 'CMDS = ("bridge", "init", "install", "doctor")\n'
+        result = _skeleton(src)
+        assert "bridge" in result
+        assert "init" in result
+        assert "doctor" in result
+        assert "..." not in result.split("CMDS")[1].split("\n")[0]
+
+    def test_preserves_list_of_strings(self) -> None:
+        src = 'EXPORTS = ["Bridge", "Sifter", "RuntimeSession"]\n'
+        result = _skeleton(src)
+        assert "Bridge" in result
+        assert "Sifter" in result
+        assert "RuntimeSession" in result
+
+    def test_preserves_annotated_tuple(self) -> None:
+        src = 'SUPPORTED: tuple[str, ...] = ("bridge", "init", "install", "doctor", "stats")\n'
+        result = _skeleton(src)
+        assert "bridge" in result
+        assert "doctor" in result
+        assert "stats" in result
+        assert "SUPPORTED: tuple[str, ...] = ..." not in result
+
+    def test_preserves_small_dict_of_literals(self) -> None:
+        src = 'PROFILES = {"claude": 1.0, "gpt4": 0.8}\n'
+        result = _skeleton(src)
+        assert "claude" in result
+        assert "gpt4" in result
+
+    def test_preserves_release_surface_supported_root_exports(self) -> None:
+        src = 'SUPPORTED_ROOT_EXPORTS: tuple[str, ...] = ("Bridge",)\n'
+        result = _skeleton(src)
+        assert "'Bridge'" in result or '"Bridge"' in result
+
+    def test_preserves_release_surface_candidate_pending_proof(self) -> None:
+        src = (
+            "CANDIDATE_PENDING_PROOF: tuple[str, ...] = (\n"
+            '    "BlockSchema",\n'
+            '    "BridgeUnavailableError",\n'
+            '    "CompressionError",\n'
+            '    "DEFAULT_SCHEMA",\n'
+            '    "DocumentTransformer",\n'
+            ")\n"
+        )
+        result = _skeleton(src)
+        assert "BlockSchema" in result
+        assert "BridgeUnavailableError" in result
+        assert "DocumentTransformer" in result
+
+    def test_preserves_supported_cli_root_commands(self) -> None:
+        src = (
+            "SUPPORTED_CLI_ROOT_COMMANDS: tuple[str, ...] = (\n"
+            '    "bridge",\n'
+            '    "init",\n'
+            '    "install",\n'
+            '    "doctor",\n'
+            '    "stats",\n'
+            '    "savings",\n'
+            ")\n"
+        )
+        result = _skeleton(src)
+        assert "bridge" in result
+        assert "install" in result
+        assert "savings" in result
+
+    def test_does_not_use_eval_for_expressions(self) -> None:
+        long_call = "FOO = very_long_function_name_that_exceeds_30_chars()\n"
+        result = _skeleton(long_call)
+        assert "very_long_function_name_that_exceeds_30_chars()" not in result
+
+    def test_truncates_very_long_string_constant(self) -> None:
+        long_val = "x" * 500
+        src = f'LONG = "{long_val}"\n'
+        result = _skeleton(src)
+        assert long_val not in result
+
+    def test_truncates_tuple_beyond_item_limit(self) -> None:
+        items = ", ".join(f'"item_{i}"' for i in range(50))
+        src = f"BIG_TUPLE = ({items},)\n"
+        result = _skeleton(src)
+        assert "BIG_TUPLE" in result
+
+    def test_function_bodies_still_summarized(self) -> None:
+        src = "def my_func(x: int) -> str:\n    return str(x)\n"
+        result = _skeleton(src)
+        assert "def my_func" in result
+        assert len(result) <= len(src) + 100
+
+
+# ---------------------------------------------------------------------------
+# Improvement 0.1.5-5: bridge log inspectability
+# ---------------------------------------------------------------------------
+
+from tok.compression._tool_result_file_read import _compress_file_read, _is_observability_file  # noqa: E402
+
+
+class TestObservabilityFileBypass:
+    """Tok's own log/observability files must not be skeletonized."""
+
+    _BIG_PYTHON = "\n".join(
+        ["import os", "import sys"]
+        + [f"def func_{i}(): pass" for i in range(50)]
+        + [f'    x_{i} = "{"x" * 200}"' for i in range(50)]
+        + ["# end"]
+    )
+
+    def test_bridge_log_not_skeletonized(self) -> None:
+        ctx = {"args": {"path": "/home/user/.tok/bridge.log"}}
+        result = _compress_file_read(self._BIG_PYTHON, tool_context=ctx)
+        assert result == self._BIG_PYTHON
+
+    def test_collector_log_not_skeletonized(self) -> None:
+        ctx = {"args": {"file_path": "/home/user/.tok/collector.log"}}
+        result = _compress_file_read(self._BIG_PYTHON, tool_context=ctx)
+        assert result == self._BIG_PYTHON
+
+    def test_normal_file_still_skeletonized(self) -> None:
+        ctx = {"args": {"path": "/home/user/project/src/main.py"}}
+        result = _compress_file_read(self._BIG_PYTHON, tool_context=ctx)
+        assert result != self._BIG_PYTHON or "skeleton" in result.lower()
+
+    def test_is_observability_file_detects_known_paths(self) -> None:
+        assert _is_observability_file({"args": {"path": "/home/.tok/bridge.log"}})
+        assert _is_observability_file({"args": {"path": "/home/.tok/collector.log"}})
+
+    def test_is_observability_file_rejects_normal_paths(self) -> None:
+        assert not _is_observability_file({"args": {"path": "/home/project/src/main.py"}})
+
+    def test_is_observability_file_handles_none_context(self) -> None:
+        assert not _is_observability_file(None)
+
+    def test_is_observability_file_handles_empty_args(self) -> None:
+        assert not _is_observability_file({"args": {}})

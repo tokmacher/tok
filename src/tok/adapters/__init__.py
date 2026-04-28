@@ -9,10 +9,6 @@ from .adapters import (
 )
 
 
-class OrchestratorConfig:
-    """Placeholder for orchestrator configuration (not yet implemented)."""
-
-
 def __getattr__(name: str) -> object:
     """Lazy-load TokOrchestrator to avoid circular imports."""
     if name == "TokOrchestrator":
@@ -27,10 +23,7 @@ __all__ = [
     "ClaudeBridgeAdapter",
     "OpenAIChatAdapter",
     "OrchestratorAdapter",
-    "OrchestratorConfig",
-    # Adapters
     "RuntimeAdapter",
     "TextLoopAdapter",
-    # Orchestrator
     "TokOrchestrator",
 ]

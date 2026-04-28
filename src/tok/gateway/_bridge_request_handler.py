@@ -77,23 +77,13 @@ def _normalize_provider_safe_retry_payload(
             normalized_messages.append(msg)
             continue
 
-        # Filter out thinking/redacted_thinking blocks interleaved between tool_use blocks
-        # Only remove thinking blocks that appear AFTER the first tool_use and BEFORE the last tool_use
+        # Filter out ALL thinking/redacted_thinking blocks from assistant messages
+        # that contain tool_use blocks.  Anthropic's API rejects any assistant
+        # message where thinking blocks appear alongside tool_use, regardless of
+        # position.
         filtered_content: list[dict[str, Any]] = []
-        first_tool_use_idx = -1
-        last_tool_use_idx = -1
-        for i, block in enumerate(content):
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                if first_tool_use_idx == -1:
-                    first_tool_use_idx = i
-                last_tool_use_idx = i
-
-        for i, block in enumerate(content):
-            if (
-                isinstance(block, dict)
-                and block.get("type") in {"thinking", "redacted_thinking"}
-                and first_tool_use_idx <= i < last_tool_use_idx
-            ):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}:
                 changed = True
                 continue
             filtered_content.append(block)
@@ -119,6 +109,7 @@ def _decode_bridge_body(raw_content: bytes | None) -> dict[str, Any] | None:
     try:
         decoded = json.loads(raw_content)
     except Exception:
+        logger.debug("Failed to decode bridge body as JSON", exc_info=True)
         return None
     return decoded if isinstance(decoded, dict) else None
 
@@ -318,7 +309,7 @@ async def send_with_tok_fail_open_retry(
             prepared_split_boundaries = _count_user_tool_result_split_boundaries(prepared_body.get("messages", []))
         fallback_body = _decode_bridge_body(fallback_content)
         # Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks
-        if isinstance(fallback_body, dict) and retry_content is not None:
+        if isinstance(fallback_body, dict):
             (
                 normalized_fallback_body,
                 normalized_changed,
@@ -505,6 +496,7 @@ async def send_with_tok_fail_open_retry(
             request_obj = client.build_request(method, url, headers=headers, content=retry_candidate_content)
             response = await client.send(request_obj, stream=stream)
             retried_without_tok = True
+            retry_signals["fail_open_retry_usage"] = 1
             if retry_kind == "provider-safe":
                 retry_signals["fail_open_retry_provider_safe"] = 1
             else:

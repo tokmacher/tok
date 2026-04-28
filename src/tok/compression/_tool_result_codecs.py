@@ -22,6 +22,7 @@ __all__ = [
     "_compress_config_json",
     "_compress_env_ps",
     "_compress_file_read",
+    "_compress_find",
     "_compress_git_diff",
     "_compress_git_log",
     "_compress_grep",
@@ -38,7 +39,9 @@ __all__ = [
     "truncate_large_result",
 ]
 
-_CODE_PATTERNS = re.compile(r"\bdef \b|\bclass \b|\bimport \b|\basync def \b|\bfunction \b")
+_CODE_PATTERNS = re.compile(r"\bdef |\bclass |\bimport |\basync def |\bfunction ")
+
+_FIND_ABS_PATH_RE = re.compile(r"^/\S+$")
 
 
 def _detect_tool_content_type(text: str, path: str = "") -> str:
@@ -96,6 +99,12 @@ def _detect_tool_content_type(text: str, path: str = "") -> str:
         )
         if bare_lnum_matches / len(non_empty) > 0.7:
             return "grep"
+
+    # Detect find-style recursive path lists BEFORE the ls check.
+    if len(non_empty) >= 3:
+        abs_path_lines = sum(1 for line in non_empty if _FIND_ABS_PATH_RE.match(line.strip()))
+        if abs_path_lines / len(non_empty) >= 0.85:
+            return "find"
 
     if len(non_empty) >= 8:
         la_lines = sum(1 for line in non_empty if re.match(r"^[dl-][rwx-]{9}", line))
@@ -427,6 +436,45 @@ def _compress_ls(text: str) -> str:
     if len(result) >= len(text):
         return text
     return result
+
+
+def _compress_find(text: str) -> str:
+    """Compress find-style recursive path-list output.
+
+    Paths are the payload for navigation evidence.  This compressor preserves
+    ALL paths up to _FIND_PATH_PRESERVE_LIMIT and groups larger outputs by
+    top-level subdirectory while still keeping individual path strings.
+    It never reduces output to a count-only summary.
+    """
+    paths = [line.strip() for line in text.splitlines() if line.strip()]
+    total = len(paths)
+    header = f">>> tool:find|total:{total}"
+
+    if total <= _FIND_PATH_PRESERVE_LIMIT:
+        return header + "\n" + "\n".join(paths)
+
+    from collections import defaultdict
+
+    groups: dict[str, list[str]] = defaultdict(list)
+    for p in paths:
+        parts = p.split("/")
+        key = "/".join(parts[:3]) if len(parts) >= 3 else p
+        groups[key].append(p)
+
+    result_lines = [header]
+    for group_key in sorted(groups):
+        group_paths = groups[group_key]
+        result_lines.append(f"  {group_key}/ ({len(group_paths)} files):")
+        for gp in group_paths:
+            result_lines.append(f"    {gp}")
+
+    result = "\n".join(result_lines)
+    if len(result) >= len(text):
+        return text
+    return result
+
+
+_FIND_PATH_PRESERVE_LIMIT = 200
 
 
 _INSTALL_PROGRESS_RE = re.compile(

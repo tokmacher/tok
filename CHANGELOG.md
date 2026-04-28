@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.1.5 (2026-04-28)
+
+### Fixes
+
+- **Compression path tracking**: verbatim file observations are now recorded through a
+  single `_mark_verbatim_file_observation` helper, closing gaps where path-tracking was
+  missed at two of three call sites.
+- **Cache fidelity tagging**: results served from a content-hash match are now annotated
+  `fidelity:summary|lossy:true` so downstream consumers know the response is a stub, not
+  the original content.
+- **`first_read_complete` propagation**: cache entries were stored with
+  `first_read_complete=False` regardless of content type; now initialised to
+  `is_file_like` on store and forced `True` on hash-match serve, preventing spurious
+  re-reads.
+- **Host-stub replay null guard**: `_should_replay_host_stub` was gating on
+  `if not stub_text` alone, which suppressed replay when `cached_raw_text` was also
+  absent. Guard now requires both to be falsy.
+- **`IS_TOK` false positives**: identifier pattern tightened from `@[A-Za-z_]` to
+  `@[A-Za-z_][A-Za-z0-9_]*`, preventing single-character `@x` tokens in user content
+  from being misidentified as Tok grammar.
+- **`TokMemory` key validation**: regex expanded to permit `/`, `.`, `:`, `[`, `]`
+  characters, fixing rejections of valid path-style memory keys.
+- **Session persistence**: `load_bridge_memory` failures now increment
+  `_persistence_failures` on `RuntimeSession` (previously silent).
+- **Episode ledger**: `initialize_session_storage` now loads the episode ledger on
+  startup; previously it was skipped until the first explicit load call.
+- **`compress_history` return type**: function now returns a three-tuple
+  `(messages, tok_state, suppressed_failure_markers)`; call sites in
+  `prompt_analyzer.py` and `_release.py` updated accordingly.
+- **Cache path normalisation**: path arguments are normalised via
+  `normalize_path_target` before result-cache lookup, preventing misses caused by path
+  representation differences.
+- **mtime check logging**: `OSError` during mtime validation on real-looking paths now
+  emits a `debug` log instead of silently passing.
+- **Bridge reset URL**: `bridge_reset_session` now uses `bridge_url()` helper instead of
+  a hardcoded `localhost:9090`, respecting custom port configuration.
+- **Retry fallback recording**: retried requests now call `_record_fallback_once` so
+  retry-driven fallbacks are visible in session stats.
+- **Turn task IDs**: `smoothness_tracker.start_turn()` now receives a `task_id` derived
+  from the current turn counter, improving turn-level observability in diagnostics.
+
+### Added
+
+- `tok bridge reset-session` hidden CLI command: resets the running bridge's first-read
+  and first-exact tracking state without restarting the process.
+- `_KNOWN_TOK_BLOCKS` frozen set and `_line_start_tok` pattern for more structured Tok
+  grammar detection.
+- Structured `compression_decision` debug log lines throughout
+  `compress_recent_window_impl`, covering preserved/bypassed decisions with reason codes
+  (`exact_search_observation`, `first_exact_guard`, `first_session`, `zero_heat`,
+  `detection_type_raw`, `pytest_failed`, `size_below_threshold`, `no_compressor`).
+
 ## 0.1.4 (2026-04-26)
 
 ### Fixes
@@ -34,7 +86,8 @@
 
 ### Removed
 
-- Unused `TokMemory` class replaced by `MacroMemory` throughout.
+- `TokMemory` Pydantic model retained in `protocol/models.py`; call-sites migrated to
+  `MacroMemory`.
 - Deprecated runtime configuration hints removed.
 - Unused `_install.py` CLI module removed.
 - Unused `typings/streamlit` stub removed.
@@ -60,7 +113,7 @@
 
 ### Added
 
-- First-class CLI: `tok bridge start/stop/status/logs`, `tok savings`, `tok install`,
+- First-class CLI: `tok bridge start/stop/status/logs`, `tok stats`, `tok install`,
   `tok doctor`
 - Bridge decomposed into focused modules: `gateway.py`, `compression.py`,
   `translator.py`, `pricing.py`, `stats.py`

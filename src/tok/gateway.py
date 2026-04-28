@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from .gateway import _response_contract_for_mode, app, create_app
+from .gateway import _response_contract_for_mode, create_app
 
 __all__ = [
     "_response_contract_for_mode",
-    "app",
     "create_app",
 ]

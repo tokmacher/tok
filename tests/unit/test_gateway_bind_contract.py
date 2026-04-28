@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import tok.gateway as gateway
+from tok.gateway import BridgeSession
+from tok.universal_runtime import RuntimeSession
 
 
 class _Tracker:
@@ -66,3 +68,40 @@ def test_run_bridge_honors_explicit_bind_host_override(monkeypatch, tmp_path) ->
 
     assert captured["host"] == "0.0.0.0"
     assert captured["port"] == 9090
+
+
+def test_bridge_session_reads_env_defaults_at_construction_time(monkeypatch) -> None:
+    monkeypatch.setenv("TOK_BRIDGE_PORT", "7777")
+    monkeypatch.setenv("TOK_KEEP_TURNS", "9")
+    monkeypatch.setenv("TOK_FAIL_OPEN", "0")
+    monkeypatch.setenv("TOK_CAPTURE", "1")
+    monkeypatch.setenv("TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS", "5")
+
+    session = BridgeSession()
+
+    assert session.port == 7777
+    assert session.keep_turns == 9
+    assert session.runtime_session.keep_turns == 9
+    assert session.fail_open is False
+    assert session.capture is True
+    assert session.rate_limit_retry_max_attempts == 5
+
+
+def test_bridge_session_keep_turns_reaches_runtime_without_explicit_memory_dir() -> None:
+    session = BridgeSession(keep_turns=7)
+
+    assert session.runtime_session.keep_turns == 7
+    assert session.runtime_session.adaptive_keep_turns() == 7
+
+
+def test_bridge_session_honors_zero_keep_turns_without_young_session_floor() -> None:
+    session = BridgeSession(keep_turns=0)
+
+    assert session.runtime_session.keep_turns == 0
+    assert session.runtime_session.adaptive_keep_turns() == 0
+
+
+def test_raw_runtime_session_keeps_young_session_floor() -> None:
+    session = RuntimeSession(keep_turns=2)
+
+    assert session.adaptive_keep_turns() == 3

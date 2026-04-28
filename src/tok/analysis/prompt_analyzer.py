@@ -370,7 +370,7 @@ def analyze_history_compression() -> dict[str, Any]:
                 continue
             msgs = _make_conversation(n_turns)
             original_text = " ".join(str(m.get("content", "")) for m in msgs)
-            recent, tok_state = compress_history(msgs, keep_turns=keep_turns)
+            recent, tok_state, _ = compress_history(msgs, keep_turns=keep_turns)
             recent_text = " ".join(str(m.get("content", "")) for m in recent)
             key = f"{n_turns}turns_keep{keep_turns}"
             results[key] = {

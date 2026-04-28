@@ -277,7 +277,7 @@ class TestExtractPythonSkeleton:
         text = "x: int = 1" + "0" * 100
         result = _extract_python_skeleton(text)
         assert result is not None
-        assert "x: int = ..." in result
+        assert "x: int =" in result
 
     def test_constant_assignment(self) -> None:
         text = "MAX_SIZE = 1000"
@@ -289,13 +289,13 @@ class TestExtractPythonSkeleton:
         text = "CONFIG = {'a': 1, 'b': 2}"
         result = _extract_python_skeleton(text)
         assert result is not None
-        assert "CONFIG = <dict>" in result
+        assert "CONFIG = {'a': 1, 'b': 2}" in result
 
     def test_constant_list(self) -> None:
         text = "ITEMS = [1, 2, 3]"
         result = _extract_python_skeleton(text)
         assert result is not None
-        assert "ITEMS = <list/tuple>" in result
+        assert "ITEMS = [1, 2, 3]" in result
 
     def test_dataclass_style_field(self) -> None:
         text = """class Foo:

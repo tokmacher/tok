@@ -43,7 +43,14 @@ def _parse_tok_state_fields(tok_state: str) -> dict[str, list[str]]:
         "facts",
     }
     result: dict[str, list[str]] = {}
-    for part in line.split("|"):
+    raw_parts = line.split("|")
+    parts: list[str] = []
+    for part in raw_parts:
+        if ":" not in part and parts:
+            parts[-1] += "|" + part
+        else:
+            parts.append(part)
+    for part in parts:
         if ":" not in part:
             continue
         key, raw_value = part.split(":", 1)
@@ -294,6 +301,8 @@ def _rank_file_candidates(
     current: dict[str, list[str]],
 ) -> list[str]:
     """Score and rank file candidates by relevance to tests/errors/goal."""
+    if len(candidates) <= 1:
+        return candidates
     test_err_text = " ".join(
         [
             *current.get("tests", []),
@@ -396,18 +405,43 @@ def _should_include_delta_field(
     has_answer_facts: bool,
     answer_files: set[str],
     has_answer_file_facts: bool,
+    suppressed_failure_markers: frozenset[str] = frozenset(),
 ) -> bool:
     """Determine if a field should be included in the delta state."""
     if key == "files" and has_answer_facts:
         return previous.get(key) != values or any(f in answer_files for f in values)
     if key == "tests":
-        return previous.get(key) != values
+        if previous.get(key) == values:
+            return False
+        if not suppressed_failure_markers:
+            return True
+        filtered = [v for v in values if not _mentions_suppressed_failure(v, suppressed_failure_markers)]
+        return bool(filtered)
+    if key == "errs":
+        if previous.get(key) == values:
+            return False
+        if not suppressed_failure_markers:
+            return True
+        filtered = [v for v in values if not _mentions_suppressed_failure(v, suppressed_failure_markers)]
+        return bool(filtered)
     if key == "facts" and has_answer_facts:
         return previous.get(key) != values or has_answer_file_facts
     return previous.get(key) != values
 
 
-def _delta_tok_state_fields(previous: dict[str, list[str]], current: dict[str, list[str]]) -> str:
+def _mentions_suppressed_failure(item: str, suppressed_markers: frozenset[str]) -> bool:
+    """Check if an item mentions a suppressed failure marker."""
+    lowered_item = item.lower()
+    if not any(fail_word in lowered_item for fail_word in ("failed", "error", "exception", "traceback")):
+        return False
+    return any(marker and marker in lowered_item for marker in suppressed_markers)
+
+
+def _delta_tok_state_fields(
+    previous: dict[str, list[str]],
+    current: dict[str, list[str]],
+    suppressed_failure_markers: frozenset[str] = frozenset(),
+) -> str:
     if not current:
         return ""
     delta: dict[str, list[str]] = {}
@@ -422,15 +456,19 @@ def _delta_tok_state_fields(previous: dict[str, list[str]], current: dict[str, l
     for key, values in current.items():
         if key == "turns" or key not in TOOL_COMPAT_DELTA_KEYS:
             continue
+        filtered_values = values
+        if key in ("tests", "errs") and suppressed_failure_markers:
+            filtered_values = [v for v in values if not _mentions_suppressed_failure(v, suppressed_failure_markers)]
         if _should_include_delta_field(
             key,
-            values,
+            filtered_values,
             previous,
             has_answer_facts,
             answer_files,
             has_answer_file_facts,
+            suppressed_failure_markers,
         ):
-            delta[key] = values
+            delta[key] = filtered_values
     if list(delta.keys()) == ["turns"]:
         return ""
     return _build_tok_state(delta)
