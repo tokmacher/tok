@@ -1164,7 +1164,9 @@ def _should_replay_host_stub(
         return True
     if "unchanged since last read" in stub_text.lower():
         return True
-    return bool(len(raw_text) < 80 and len(cached_raw_text) > 200)
+    if len(raw_text) < 80 and len(cached_raw_text) > 200:
+        return _is_content_hash_match(raw_text, cached_raw_text)
+    return False
 
 
 def _serve_cached_content_hash_match(

@@ -480,6 +480,7 @@ async def buffer_strip_restream_impl(
             block.get("type") == "tool_use"
             or (block.get("type") == "text" and str(block.get("text", "")).strip())
             or block.get("type") == "thinking"
+            or block.get("type") == "redacted_thinking"
             for block in translated_blocks
         )
         recovery_required = not has_visible_blocks and (read_error is not None or len(translated_blocks) == 0)

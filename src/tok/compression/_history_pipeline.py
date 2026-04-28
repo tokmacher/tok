@@ -1503,7 +1503,7 @@ def inject_system_additions_impl(
         if not tool_compatible and (grammar or deltas or todo):
             dynamic_blocks.append(f"@state\n{tok_state}")
         else:
-            dynamic_blocks.append(f">>>\n{tok_state}")
+            dynamic_blocks.append(tok_state)
     if deltas:
         dynamic_blocks.append(f"@delta\n{deltas}")
     if todo:

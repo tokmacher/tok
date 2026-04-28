@@ -444,6 +444,8 @@ def _run_bridge_preflight(
                 behavior_signals,
                 bridge_strict_failure_signals(provider_safe_failures),
             )
+            behavior_signals["tok_fallback_activated"] = 1
+            _record_fallback_once(session, request_state)
             return (
                 canonical_body,
                 behavior_signals,
@@ -621,6 +623,8 @@ def _run_bridge_preflight(
                     "behavior_signals": behavior_signals,
                 }
             )
+            behavior_signals["tok_fallback_activated"] = 1
+            _record_fallback_once(session, request_state)
             return (
                 canonical_body,
                 behavior_signals,
@@ -828,6 +832,8 @@ def _run_bridge_preflight(
             local_response = _local_bridge_invalid_history_response(
                 "Tok bridge preflight rejected a provider-sensitive tool concurrency payload before send."
             )
+        behavior_signals["tok_fallback_activated"] = 1
+        _record_fallback_once(session, request_state)
         return (
             canonical_body,
             behavior_signals,
