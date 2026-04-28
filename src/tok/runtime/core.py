@@ -172,6 +172,7 @@ class RuntimeSession:
     """
 
     keep_turns: int = 2
+    _keep_turns_explicit: bool = field(default=False, init=False, repr=False)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     model: str = ""
     result_cache: dict[str, Any] = field(default_factory=dict)

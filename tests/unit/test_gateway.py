@@ -24,6 +24,7 @@ from tok.gateway._bridge_preflight import (
     _rewrite_provider_sensitive_large_tool_use_text_interleaving,
 )
 from tok.gateway._bridge_request_handler import send_with_tok_fail_open_retry
+from tok.gateway._bridge_runtime_pipeline import prepare_bridge_payload
 from tok.runtime.memory.bridge_memory import MemoryEntry
 from tok.runtime.pipeline.request_validation import (
     summarize_bridge_pairing,
@@ -121,6 +122,39 @@ def _fake_prepare_request_recovery_test(
         mode="balanced",
         normalized_tool_events=[],
     )
+
+
+def test_prepare_bridge_payload_passthroughs_plan_finalization_when_tok_has_no_clear_savings(
+    tmp_path: Path,
+) -> None:
+    session = BridgeSession()
+    session.runtime_session.memory_dir = tmp_path / ".tok"
+    body = {
+        "model": "claude-sonnet-4",
+        "max_tokens": 4096,
+        "system": "You are Claude Code.",
+        "messages": [
+            {"role": "user", "content": "We already explored the bridge."},
+            {"role": "assistant", "content": "I have enough evidence."},
+            {"role": "user", "content": "Write the plan now."},
+        ],
+        "stream": True,
+    }
+
+    payload, response = prepare_bridge_payload(
+        session=session,
+        body=body,
+        headers={},
+        path="v1/messages",
+    )
+
+    assert response is None
+    assert payload.body == payload.provider_safe_original_body
+    assert payload.compressed is False
+    assert payload.saved_toks == 0
+    assert payload.request_tool_compatible is False
+    assert payload.behavior_signals.get("plan_finalization_turn") == 1
+    assert payload.behavior_signals.get("plan_finalization_passthrough") == 1
 
 
 async def _collect_stream_chunks(session):
@@ -331,6 +365,89 @@ def test_health_endpoint(monkeypatch) -> None:
         "thinking_mutation_events": 0,
         "task_score": 100,
         "repeated_active_file_reads": 0,
+    }
+
+
+def test_non_streaming_processing_error_records_visible_fallback(monkeypatch, tmp_path) -> None:
+    from tok.gateway import _app_factory
+
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.reset_session_stats()
+    app = create_app(BridgeSession(port=9191, tracker=tracker, fail_open=True))
+    client = TestClient(app)
+
+    async def fake_send_with_tok_fail_open_retry(*args, **kwargs):
+        return (
+            httpx.Response(
+                200,
+                json={
+                    "model": "claude-sonnet-4",
+                    "usage": {"input_tokens": 12, "output_tokens": 4},
+                    "content": [{"type": "text", "text": "raw response"}],
+                },
+            ),
+            False,
+            {},
+        )
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("translator failed")
+
+    monkeypatch.setattr(_app_factory, "send_with_tok_fail_open_retry", fake_send_with_tok_fail_open_retry)
+    monkeypatch.setattr(_app_factory._RUNTIME, "process_response", boom)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"] == [{"type": "text", "text": "raw response"}]
+    signals = tracker.behavior_signals()
+    assert signals["processing_error"] == 1
+    assert signals["tok_fallback_activated"] == 1
+
+
+@pytest.mark.asyncio
+async def test_json_to_sse_emits_complete_message_start_contract() -> None:
+    from tok.gateway._app_factory import _json_to_sse
+
+    chunks = [
+        chunk.decode()
+        async for chunk in _json_to_sse(
+            {
+                "id": "msg_123",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4",
+                "content": [{"type": "text", "text": "hello"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 3, "output_tokens": 2},
+            }
+        )
+    ]
+
+    first_data = json.loads(chunks[0].split("data: ", 1)[1])
+    assert first_data["type"] == "message_start"
+    assert first_data["message"] == {
+        "id": "msg_123",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4",
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {"input_tokens": 3, "output_tokens": 2},
     }
 
 
@@ -3391,6 +3508,36 @@ def test_streaming_tool_only_response_records_tracker() -> None:
         return chunks
 
     asyncio.run(_collect())
+    assert "Read" in session.runtime_session._tool_names_seen
+    session.tracker.record_call.assert_called_once()
+
+
+def test_streaming_tool_only_response_records_edit_semantics() -> None:
+    from unittest.mock import MagicMock
+
+    class FakeResponse:
+        async def aiter_bytes(self):
+            payload = b'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-sonnet-4","usage":{"input_tokens":10,"output_tokens":5}}}\n\nevent: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"edit","input":{}}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\": \\"src/example.py\\", \\"replace\\": \\"x\\"}"}}\n\nevent: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n'
+            yield payload
+
+    class FakeClient:
+        async def aclose(self) -> None:
+            pass
+
+    session = BridgeSession()
+    session.tracker.record_call = MagicMock()
+    client = FakeClient()
+
+    async def _collect():
+        chunks = []
+        async for chunk in _buffer_strip_restream(session, client, FakeResponse(), tool_compatible=True):
+            chunks.append(chunk)
+        return chunks
+
+    asyncio.run(_collect())
+
+    assert "edit" in session.runtime_session._tool_names_seen
+    assert "src/example.py" in session.runtime_session._recently_edited_files
 
 
 def test_streaming_empty_success_recovers_via_non_stream_text(monkeypatch, caplog) -> None:

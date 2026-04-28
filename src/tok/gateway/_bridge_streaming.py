@@ -208,6 +208,32 @@ def _stream_recovery_allowed_now(
     return True, "eligible"
 
 
+def _observe_stream_tool_blocks(session: BridgeSession, tool_blocks: list[dict[str, Any]]) -> dict[str, int]:
+    """Record semantic runtime side effects for streamed tool-only responses."""
+    signals: dict[str, int] = {}
+    runtime_session = session.runtime_session
+    for block in tool_blocks:
+        if block.get("type") != "tool_use" or not block.get("name"):
+            continue
+        tool_name = str(block["name"])
+        runtime_session._tool_names_seen.add(tool_name)
+        tool_input = block.get("input", {})
+        input_key = next(iter(tool_input.values()), "") if isinstance(tool_input, dict) and tool_input else ""
+        if runtime_session.observe_tool_action(tool_name, str(input_key)[:120]):
+            signals["loop_detected"] = 1
+        if tool_name.lower() in ("edit_file", "edit", "write_file", "write", "replace", "create_file"):
+            edited_path = ""
+            if isinstance(tool_input, dict):
+                edited_path = str(
+                    tool_input.get("path") or tool_input.get("file_path") or tool_input.get("filename") or ""
+                )
+            if edited_path:
+                from tok.runtime.repeat_targets import normalize_path_target
+
+                runtime_session.mark_file_edited(normalize_path_target(edited_path))
+    return signals
+
+
 async def passthrough_stream_impl(
     session: BridgeSession,
     client: httpx.AsyncClient,
@@ -401,6 +427,8 @@ async def buffer_strip_restream_impl(
         processed: Any | None = None  # Will hold ProcessedRuntimeResponse when available
 
         tool_blocks = _materialize_stream_tool_blocks(stream_blocks, stream_order)
+        if tool_blocks:
+            _merge_signal_counts(stream_behavior_signals, _observe_stream_tool_blocks(session, tool_blocks))
         thinking_blocks = [
             stream_blocks[idx]
             for idx in stream_order
@@ -656,6 +684,7 @@ async def buffer_strip_restream_impl(
                                 retry_usage = retry_json.get("usage", {})
                                 retry_model = str(retry_json.get("model", ""))
                                 if retry_model and retry_usage:
+                                    stream_behavior_signals["stream_recovery_usage"] = 1
                                     session.tracker.record_call(
                                         model=retry_model,
                                         actual_input=retry_usage.get("input_tokens", 0),
@@ -695,6 +724,7 @@ async def buffer_strip_restream_impl(
                     "stream_recovery_fallback: non-stream retry produced no visible content; recording fallback"
                 )
                 if recovery_model and recovery_usage:
+                    stream_behavior_signals["stream_recovery_usage"] = 1
                     empty_processed = _RUNTIME.process_response(
                         "",
                         model=recovery_model,

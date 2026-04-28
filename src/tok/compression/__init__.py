@@ -737,6 +737,7 @@ def _apply_result_cache(
         cached_raw_text,
         compression_level,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
+        first_read_complete=first_read_complete,
     )
 
 
@@ -907,7 +908,7 @@ def _store_cache_entry(
             "hash": content_hash,
             "raw": raw,
             "timestamp": time_module.time(),
-            "first_read_complete": False,
+            "first_read_complete": is_file_like,
         }
         while len(result_cache) > RESULT_CACHE_MAX_SIZE:
             try:
@@ -1194,7 +1195,7 @@ def _serve_cached_content_hash_match(
                 "hash": cached_hash,
                 "raw": content_to_return,
                 "timestamp": current_time,
-                "first_read_complete": first_read_complete,
+                "first_read_complete": True,
             }
         return content_to_return, 0
 
@@ -1207,6 +1208,7 @@ def _serve_cached_content_hash_match(
                     "timestamp": current_time,
                     "first_read_complete": True,
                 }
+            return (cached_raw if host_stub_replayed else raw_text), 0
         confidence, reason = _compute_confidence(cached_hash, cached_hash)
         raw_path = _context_path(context)
         stub_parts = [f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"]

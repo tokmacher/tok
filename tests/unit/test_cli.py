@@ -517,6 +517,28 @@ class TestCLI:
         assert result.exit_code == 0
         assert captured["env"]["TOK_RESET_SESSION"] == "1"
 
+    def test_bridge_reset_session_honors_configured_bridge_port(self, monkeypatch) -> None:
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+        def fake_post(url, timeout):
+            captured["url"] = url
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        monkeypatch.setenv("TOK_BRIDGE_PORT", "7777")
+        monkeypatch.setattr("httpx.post", fake_post)
+
+        result = runner.invoke(app, ["bridge", "reset-session"])
+
+        assert result.exit_code == 0
+        assert captured == {
+            "url": "http://localhost:7777/reset-session",
+            "timeout": 5,
+        }
+
     def test_bridge_start_foreground_forwards_api_base(self, monkeypatch, tmp_path) -> None:
         from tok.cli import _cli_support
 

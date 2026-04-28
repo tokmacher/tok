@@ -727,6 +727,9 @@ class BridgeMemoryState:
                 state_parts,
             )
 
+        if state_parts and not any(part.startswith("t:") or part.startswith("turns:") for part in state_parts):
+            state_parts.insert(0, f"t:{self.turn}")
+
         state_line = ">>> " + "|".join(state_parts) if state_parts else ""
 
         extra_blocks = self._build_extra_blocks(markers)

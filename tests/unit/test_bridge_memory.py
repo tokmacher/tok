@@ -499,6 +499,31 @@ def test_wire_state_field_ordering_is_deterministic() -> None:
     assert "k:no_prose" in wire
 
 
+def test_wire_state_emits_turns_when_memory_exists_without_turn_field() -> None:
+    state = BridgeMemoryState()
+    state.record_file_snapshot("a.py", "def f():\n    return 1\n")
+
+    wire = state.wire_state()
+
+    assert wire.startswith(">>> t:")
+    assert "|f:" in wire
+
+
+def test_wire_state_keeps_noncanonical_facts_after_canonical_fields() -> None:
+    state = BridgeMemoryState()
+    state.ingest_wire_state(
+        ">>> turns:2|goal:g|files:a.py|cmds:pytest|tests:1 passed|errs:e|constraints:c|next:n|facts:branch:main"
+    )
+
+    wire = state.wire_state()
+    state_line = wire.splitlines()[0].removeprefix(">>> ")
+    fields = [part.split(":", 1)[0] for part in state_line.split("|")]
+
+    assert fields.index("t") < fields.index("g") < fields.index("f") < fields.index("c")
+    assert fields.index("c") < fields.index("s") < fields.index("e") < fields.index("k") < fields.index("n")
+    assert fields.index("branch") > fields.index("n")
+
+
 def test_wire_state_respects_profile_limits() -> None:
     """Profile limits must override default HOT_LIMITS."""
     from tok.runtime.memory.bridge_memory import BridgeMemoryState

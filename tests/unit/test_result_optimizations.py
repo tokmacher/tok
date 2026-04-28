@@ -77,6 +77,28 @@ def test_result_cache_persistence(tmp_path) -> None:
     assert isinstance(entry["timestamp"], float)
 
 
+def test_restored_file_cache_entry_serves_one_exact_read_before_stub() -> None:
+    from tok.compression import _apply_result_cache
+
+    raw = "\n".join(f"line {i}: stable restored content" for i in range(80))
+    context = {"name": "read", "args": {"path": "src/example.py"}}
+    cache = {}
+
+    first, _ = _apply_result_cache(raw, context, cache)
+    assert first == raw
+    cache_key = next(iter(cache))
+    cache[cache_key]["first_read_complete"] = False
+
+    restored_first, saved = _apply_result_cache(raw, context, cache)
+    assert restored_first == raw
+    assert saved == 0
+    assert cache[cache_key]["first_read_complete"] is True
+
+    restored_second, saved = _apply_result_cache(raw, context, cache)
+    assert restored_second.startswith(">>> tool:read|unchanged|cached")
+    assert saved > 0
+
+
 def test_tok_tool_result_applies_truncation() -> None:
     # Long result that doesn't match any specific compressor
     long_raw = "A" * 5000

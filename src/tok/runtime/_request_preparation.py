@@ -65,6 +65,7 @@ from .pipeline.request_preparation import (
     _is_answer_ready_turn,
     _is_read_only_audit_turn,
     collect_transient_error_snippets,
+    is_plan_or_answer_finalization_turn,
     mutation_signals,
 )
 from .pipeline.request_validation import (
@@ -604,6 +605,9 @@ def prepare_request_impl(
 
     translated_messages = translate_request_results(body.get("messages", []))
     body["messages"] = translated_messages
+    plan_finalization_turn = request.adapter_kind == "claude-bridge" and is_plan_or_answer_finalization_turn(
+        translated_messages
+    )
 
     rolling_cmds = session.bridge_memory.rolling_cmds
     if rolling_cmds:
@@ -705,6 +709,26 @@ def prepare_request_impl(
         elif request_policy == "forced_baseline":
             effective_tool_compatible = False
             request_policy_reasons = []
+
+        if plan_finalization_turn:
+            behavior_signals["plan_finalization_turn"] = 1
+            active_tool_recovery = any(
+                reason in {"stream_recovery", "tool_recovery"} for reason in request_policy_reasons
+            ) or any(
+                session.pending_behavior_signals.get(key, 0) > 0
+                for key in (
+                    "tok_bridge_provider_sensitive_degraded_to_provider_safe",
+                    "tok_bridge_provider_sensitive_blocked_local",
+                    "tok_bridge_provider_pairing_risk_detected",
+                    "tok_bridge_assistant_tool_use_text_interleaving_blocked",
+                    "fail_open_retry_upstream_pairing_disagreement",
+                    "tok_history_pairing_safety_degraded",
+                )
+            )
+            if request_policy == "natural_first" and effective_tool_compatible and not active_tool_recovery:
+                effective_tool_compatible = False
+                request_policy_reasons = ["plan_finalization"]
+                behavior_signals["plan_finalization_tool_escalation_suppressed"] = 1
 
         fresh_tool_mode_trigger = any(
             reason in {"stream_recovery", "tool_recovery", "structured_tool_loop"} for reason in request_policy_reasons
@@ -928,6 +952,9 @@ def prepare_request_impl(
             session._last_elevated_path = current_path
         if stream_recovery_history_floor_active:
             body["messages"] = translated_messages
+        elif plan_finalization_turn:
+            body["messages"] = translated_messages
+            behavior_signals["plan_finalization_tool_result_compression_skipped"] = 1
         else:
             effective_compression_level = policy.tool_levels[mode]
             if session.model_profile.compression_aggressiveness < 0.8:
@@ -984,6 +1011,11 @@ def prepare_request_impl(
             skip_reason = "answer_ready_exact_search_evidence"
             history_skip_reason = skip_reason
             behavior_signals["answer_ready_exact_search_evidence_history_preserved"] = 1
+        elif plan_finalization_turn:
+            should_skip_history = True
+            skip_reason = "plan_finalization"
+            history_skip_reason = skip_reason
+            behavior_signals["plan_finalization_history_skipped"] = 1
         elif stream_recovery_history_floor_active:
             should_skip_history = True
             skip_reason = "stream_recovery_history_floor"

@@ -11,6 +11,7 @@ from tok.runtime.core import (
     UniversalTokRuntime,
 )
 from tok.runtime.memory.tok_state import _delta_tok_state_fields
+from tok.runtime.pipeline.request_preparation import is_plan_or_answer_finalization_turn
 from tok.runtime.pipeline.tool_processing import (
     logical_target_key_from_context,
 )
@@ -531,6 +532,42 @@ def test_prepared_request_reports_baseline_and_prepared_prompt_tokens(
     assert prepared.baseline_prompt_tokens >= 0
     assert prepared.prepared_prompt_tokens >= 0
     assert prepared.saved_prompt_tokens == max(0, prepared.baseline_prompt_tokens - prepared.prepared_prompt_tokens)
+
+
+def test_plan_finalization_turn_is_classified_without_tool_required_conditions() -> None:
+    assert is_plan_or_answer_finalization_turn(
+        [{"role": "user", "content": "Please write the plan in a proposed_plan block."}]
+    )
+    assert not is_plan_or_answer_finalization_turn(
+        [{"role": "user", "content": "Search the repository and inspect the bridge first."}]
+    )
+
+
+def test_plan_finalization_request_skips_tok_hints_and_tool_escalation(tmp_path) -> None:
+    runtime, session = _runtime(tmp_path)
+    session.bridge_memory.turn = 10
+    session._request_policy_tool_mode_sticky_turns = 2
+    session._request_policy_last_effective_tool_compatible = True
+
+    prepared = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            adapter_kind="claude-bridge",
+            tool_compatible=True,
+            request_policy="natural_first",
+            messages=[
+                {"role": "user", "content": "We already inspected the code."},
+                {"role": "assistant", "content": "I have enough context."},
+                {"role": "user", "content": "Write the plan now."},
+            ],
+        ),
+        session,
+    )
+
+    assert prepared.behavior_signals.get("plan_finalization_turn") == 1
+    assert prepared.behavior_signals.get("plan_finalization_tool_escalation_suppressed") == 1
+    assert prepared.behavior_signals.get("plan_finalization_history_skipped") == 1
+    assert prepared.effective_tool_compatible is False
 
 
 def test_unchanged_prepared_payload_reuses_cached_token_estimate(

@@ -496,6 +496,7 @@ async def send_with_tok_fail_open_retry(
             request_obj = client.build_request(method, url, headers=headers, content=retry_candidate_content)
             response = await client.send(request_obj, stream=stream)
             retried_without_tok = True
+            retry_signals["fail_open_retry_usage"] = 1
             if retry_kind == "provider-safe":
                 retry_signals["fail_open_retry_provider_safe"] = 1
             else:

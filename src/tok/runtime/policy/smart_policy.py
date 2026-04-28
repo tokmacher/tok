@@ -25,15 +25,15 @@ class ModelFamily:
 CANONICAL_WIRE_FIELD_ORDER: tuple[str, ...] = (
     "turns",
     "goal",
-    "blockers",
     "files",
-    "facts",
     "cmds",
     "tests",
     "errs",
     "constraints",
-    "questions",
     "next",
+    "blockers",
+    "questions",
+    "facts",
 )
 
 

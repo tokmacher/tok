@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import os
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -12,6 +13,16 @@ from tok.universal_runtime import RuntimeRequest
 
 from . import _RUNTIME, BridgeSession, logger
 from ._bridge_preflight import _run_bridge_preflight
+
+
+def _plan_finalization_min_saved_tokens() -> int:
+    try:
+        return max(0, int(os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "32")))
+    except ValueError:
+        return 32
+
+
+_PLAN_FINALIZATION_MIN_SAVED_TOKENS = _plan_finalization_min_saved_tokens()
 
 
 @dataclass
@@ -58,6 +69,71 @@ def _extract_allowed_tools_from_body(body: dict[str, Any]) -> tuple[str, ...]:
         seen.add(name)
         names.append(name)
     return tuple(names)
+
+
+def _apply_plan_finalization_spend_guard(
+    *,
+    session: BridgeSession,
+    prepared_body: dict[str, Any],
+    provider_safe_original_body: dict[str, Any],
+    behavior_signals: dict[str, int],
+    compressed: bool,
+    saved_toks: int,
+    prompt_metrics: dict[str, int],
+) -> tuple[dict[str, Any], bool, int, dict[str, int], dict[str, int], bool]:
+    """Force final-answer/plan turns to provider-safe passthrough unless Tok clearly saves input tokens."""
+    if not behavior_signals.get("plan_finalization_turn", 0):
+        return prepared_body, compressed, saved_toks, prompt_metrics, behavior_signals, False
+
+    original_prompt_tokens = int(prompt_metrics.get("baseline_prompt_tokens", 0))
+    prepared_prompt_tokens = int(prompt_metrics.get("prepared_prompt_tokens", 0))
+    if original_prompt_tokens <= 0:
+        original_prompt_tokens = session.runtime_session.prepared_prompt_tokens(provider_safe_original_body)
+    if prepared_prompt_tokens <= 0:
+        prepared_prompt_tokens = session.runtime_session.prepared_prompt_tokens(prepared_body)
+    observed_saved_tokens = max(0, original_prompt_tokens - prepared_prompt_tokens)
+    minimum_saved_tokens = max(0, _PLAN_FINALIZATION_MIN_SAVED_TOKENS)
+
+    behavior_signals["plan_finalization_original_prompt_tokens"] = original_prompt_tokens
+    behavior_signals["plan_finalization_prepared_prompt_tokens"] = prepared_prompt_tokens
+    behavior_signals["plan_finalization_saved_prompt_tokens"] = observed_saved_tokens
+    behavior_signals["plan_finalization_min_saved_tokens"] = minimum_saved_tokens
+
+    tok_added_tokens = prepared_prompt_tokens > original_prompt_tokens
+    insufficient_savings = observed_saved_tokens < minimum_saved_tokens
+    if tok_added_tokens:
+        behavior_signals["plan_finalization_tok_overhead_blocked"] = 1
+    if insufficient_savings:
+        behavior_signals["plan_finalization_passthrough"] = 1
+
+    if not tok_added_tokens and not insufficient_savings:
+        return prepared_body, compressed, saved_toks, prompt_metrics, behavior_signals, False
+
+    passthrough_metrics = dict(prompt_metrics)
+    passthrough_metrics.update(
+        {
+            "baseline_prompt_tokens": original_prompt_tokens,
+            "prepared_prompt_tokens": original_prompt_tokens,
+            "saved_prompt_tokens": 0,
+            "hot_hint_tokens_added": 0,
+            "reacquisition_tokens_avoided_estimate": 0,
+        }
+    )
+    logger.info(
+        "plan_finalization_passthrough: original_prompt_tokens=%d prepared_prompt_tokens=%d saved=%d min_saved=%d",
+        original_prompt_tokens,
+        prepared_prompt_tokens,
+        observed_saved_tokens,
+        minimum_saved_tokens,
+    )
+    return (
+        copy.deepcopy(provider_safe_original_body),
+        False,
+        0,
+        passthrough_metrics,
+        behavior_signals,
+        True,
+    )
 
 
 def prepare_bridge_payload(
@@ -245,6 +321,26 @@ def prepare_bridge_payload(
         saved_toks = 0
         tool_breakdown = {}
         prompt_metrics = _empty_prompt_metrics()
+
+    (
+        prepared_body,
+        compressed,
+        saved_toks,
+        prompt_metrics,
+        behavior_signals,
+        plan_finalization_passthrough,
+    ) = _apply_plan_finalization_spend_guard(
+        session=session,
+        prepared_body=prepared_body,
+        provider_safe_original_body=provider_safe_original_body,
+        behavior_signals=behavior_signals,
+        compressed=compressed,
+        saved_toks=saved_toks,
+        prompt_metrics=prompt_metrics,
+    )
+    if plan_finalization_passthrough:
+        request_tool_compatible = False
+        tool_breakdown = {}
 
     payload = BridgePreparedPayload(
         body=prepared_body,
