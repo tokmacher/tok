@@ -604,12 +604,77 @@ class SavingsTracker:
             f"  malformed_tok_bad_header: {ledger['malformed_tok_bad_header']}",
             "",
             "@per_session_log",
-            "  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response;memory_lift;semantic_regression;reacquisition_count;answer_anchor_miss_count;degradation_reason",
+            "  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response;memory_lift;semantic_regression;reacquisition_count;answer_anchor_miss_count;degradation_reason;prompt_tokens;completion_tokens;fallback_activated;baseline_only;baseline_prompt_tokens;prepared_prompt_tokens;saved_prompt_tokens;hot_hint_tokens_added;reacquisition_avoided;reacquisition_cost_tokens",
         ]
         for ll in log_lines:
             out.append(f"  {ll}")
         out.append("")
         return out
+
+    @staticmethod
+    def _parse_session_log_core(line: str) -> dict[str, int | float | str] | None:
+        parts = line.strip().split(";")
+        if len(parts) < 10:
+            return None
+        try:
+            return {
+                "date": parts[0],
+                "session_id": parts[1],
+                "turns": int(parts[2]),
+                "tokens": int(parts[3]),
+                "actual_cost_usd": float(parts[4]),
+                "baseline_cost_usd": float(parts[5]),
+                "saved_usd": float(parts[6]),
+                "tokens_saved": int(parts[7]),
+                "prompt_tokens": int(parts[15]) if len(parts) > 15 and parts[15] else 0,
+                "completion_tokens": int(parts[16]) if len(parts) > 16 and parts[16] else 0,
+                FALLBACK_SIGNAL: int(parts[17]) if len(parts) > 17 and parts[17] else 0,
+                BASELINE_ONLY_SIGNAL: int(parts[18]) if len(parts) > 18 and parts[18] else 0,
+                "baseline_prompt_tokens": int(parts[19]) if len(parts) > 19 and parts[19] else 0,
+                "prepared_prompt_tokens": int(parts[20]) if len(parts) > 20 and parts[20] else 0,
+                "saved_prompt_tokens": int(parts[21]) if len(parts) > 21 and parts[21] else 0,
+                "hot_hint_tokens_added": int(parts[22]) if len(parts) > 22 and parts[22] else 0,
+                "reacquisition_tokens_avoided_estimate": int(parts[23]) if len(parts) > 23 and parts[23] else 0,
+                "reacquisition_cost_tokens": int(parts[24]) if len(parts) > 24 and parts[24] else 0,
+            }
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _subtract_session_from_ledger(ledger: dict[str, Any], entry: dict[str, int | float | str]) -> None:
+        ledger["sessions"] = max(0, int(ledger["sessions"]) - 1)
+        ledger["total_turns"] = max(0, int(ledger["total_turns"]) - int(entry["turns"]))
+        ledger["total_tokens"] = max(0, int(ledger["total_tokens"]) - int(entry["tokens"]))
+        ledger["total_prompt_tokens"] = max(0, int(ledger["total_prompt_tokens"]) - int(entry["prompt_tokens"]))
+        ledger["total_completion_tokens"] = max(
+            0,
+            int(ledger["total_completion_tokens"]) - int(entry["completion_tokens"]),
+        )
+        ledger["tokens_saved"] = max(0, int(ledger["tokens_saved"]) - int(entry["tokens_saved"]))
+        ledger["net_tokens_saved"] = max(0, int(ledger["net_tokens_saved"]) - int(entry["tokens_saved"]))
+        ledger["total_cost_usd"] = max(0.0, float(ledger["total_cost_usd"]) - float(entry["actual_cost_usd"]))
+        ledger["estimated_baseline_cost_usd"] = max(
+            0.0,
+            float(ledger["estimated_baseline_cost_usd"]) - float(entry["baseline_cost_usd"]),
+        )
+        ledger["cost_saved_usd"] = max(0.0, float(ledger["cost_saved_usd"]) - float(entry["saved_usd"]))
+        int_field_map = {
+            "baseline_prompt_tokens": "baseline_prompt_tokens",
+            "prepared_prompt_tokens": "prepared_prompt_tokens",
+            "saved_prompt_tokens": "saved_prompt_tokens",
+            "hot_hint_tokens_added": "hot_hint_tokens_added",
+            "reacquisition_tokens_avoided_estimate": "reacquisition_tokens_avoided_estimate",
+            "reacquisition_cost_tokens": "reacquisition_cost_tokens",
+        }
+        for ledger_key, entry_key in int_field_map.items():
+            ledger[ledger_key] = max(0, int(ledger[ledger_key]) - int(entry.get(entry_key, 0)))
+        signal_keys = [
+            FALLBACK_SIGNAL,
+            BASELINE_ONLY_SIGNAL,
+        ]
+        for sig_key in signal_keys:
+            if sig_key in ledger and sig_key in entry:
+                ledger[sig_key] = max(0, int(ledger[sig_key]) - int(entry.get(sig_key, 0)))
 
     def merge_session_to_ledger(self) -> None:
         """On shutdown, merge session stats into the persistent savings ledger."""
@@ -627,15 +692,6 @@ class SavingsTracker:
 
             ledger = self._default_ledger()
             log_lines = self._parse_ledger(self._ledger_path, ledger)
-
-            ledger["sessions"] = int(ledger["sessions"]) + 1
-            self._accumulate_ledger(ledger, sess, sess_signals)
-
-            pct = (
-                ledger["cost_saved_usd"] / ledger["estimated_baseline_cost_usd"] * 100
-                if ledger["estimated_baseline_cost_usd"] > 0
-                else 0.0
-            )
 
             date_str = stats.get(
                 "session_start",
@@ -671,22 +727,34 @@ class SavingsTracker:
                 f"{sess_signals.get('non_tok_response', 0)};{memory_lift}"
                 f";{semantic_regression};{reacquisition_count}"
                 f";{answer_anchor_miss_count};{degradation_reason}"
+                f";{sess['prompt_tokens']};{sess['actual_output_tokens']}"
+                f";{sess_signals.get(FALLBACK_SIGNAL, 0)};{int(sess_signals.get(BASELINE_ONLY_SIGNAL, 0))}"
+                f";{sess['baseline_prompt_tokens']};{sess['prepared_prompt_tokens']}"
+                f";{sess['saved_prompt_tokens']};{sess['hot_hint_tokens_added']}"
+                f";{sess['reacquisition_tokens_avoided_estimate']};{sess['reacquisition_cost_tokens']}"
             )
 
-            is_duplicate = any(
-                line.startswith(f"{date_str};")
-                and line.split(";", 4)[2:4] == [str(sess["calls"]), str(sess["total_tokens"])]
-                for line in log_lines
+            replacement_log_lines: list[str] = []
+            replaced = 0
+            for line in log_lines:
+                prior = self._parse_session_log_core(line)
+                if prior and (prior["session_id"] == sess_id or prior["date"] == date_str):
+                    self._subtract_session_from_ledger(ledger, prior)
+                    replaced += 1
+                    continue
+                replacement_log_lines.append(line)
+            log_lines = replacement_log_lines
+
+            ledger["sessions"] = int(ledger["sessions"]) + 1
+            self._accumulate_ledger(ledger, sess, sess_signals)
+            pct = (
+                ledger["cost_saved_usd"] / ledger["estimated_baseline_cost_usd"] * 100
+                if ledger["estimated_baseline_cost_usd"] > 0
+                else 0.0
             )
-            if not is_duplicate:
-                log_lines.append(new_entry)
-            else:
-                logger.info(
-                    "Skipping duplicate session: %s (%d turns)",
-                    date_str,
-                    sess["calls"],
-                )
-                return
+            log_lines.append(new_entry)
+            if replaced:
+                logger.info("Replaced %d prior ledger row(s) for session %s", replaced, sess_id)
 
             self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
             out = self._format_ledger_output(ledger, pct, log_lines)
@@ -778,6 +846,35 @@ class SavingsTracker:
             if s and not s.startswith("@") and not s.startswith("#") and ":" in s:
                 k, _, v = s.partition(":")
                 ledger[k.strip()] = v.strip()
+
+        entries = self._load_session_log_entries()
+        if entries:
+            actual_tokens = sum(int(entry["tokens"]) for entry in entries)
+            saved_tokens = sum(int(entry["tokens_saved"]) for entry in entries)
+            baseline_tokens = actual_tokens + saved_tokens
+            actual_cost = sum(float(entry["actual_cost_usd"]) for entry in entries)
+            baseline_cost = sum(float(entry["baseline_cost_usd"]) for entry in entries)
+            cost_saved = sum(float(entry["saved_usd"]) for entry in entries)
+            cost_savings_pct = cost_saved / baseline_cost * 100 if baseline_cost > 0 else 0.0
+            savings_pct = saved_tokens / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
+
+            fallback_count = sum(int(entry.get(FALLBACK_SIGNAL, 0)) for entry in entries)
+            baseline_only_count = sum(int(entry.get(BASELINE_ONLY_SIGNAL, 0)) for entry in entries)
+
+            return {
+                "sessions": len(entries),
+                "total_turns": sum(int(entry["turns"]) for entry in entries),
+                "actual_tokens": actual_tokens,
+                "baseline_tokens": baseline_tokens,
+                "tokens_saved": saved_tokens,
+                "savings_pct": round(savings_pct, 1),
+                "cost_savings_pct": round(cost_savings_pct, 1),
+                "actual_cost_usd": actual_cost,
+                "baseline_cost_usd": baseline_cost,
+                "cost_saved_usd": cost_saved,
+                "fallback_count": fallback_count,
+                "baseline_only_requests": baseline_only_count,
+            }
 
         if ledger.get("sessions", "0") == "0":
             return None
@@ -1050,6 +1147,14 @@ class SavingsTracker:
                 reacquisition_count = int(parts[12]) if len(parts) > 12 else 0
                 answer_anchor_miss_count = int(parts[13]) if len(parts) > 13 else 0
                 degradation_reason = parts[14] if len(parts) > 14 else ""
+                fallback_activated = int(parts[17]) if len(parts) > 17 and parts[17] else 0
+                baseline_only_session = int(parts[18]) if len(parts) > 18 and parts[18] else 0
+                baseline_prompt_tokens = int(parts[19]) if len(parts) > 19 and parts[19] else 0
+                prepared_prompt_tokens = int(parts[20]) if len(parts) > 20 and parts[20] else 0
+                saved_prompt_tokens = int(parts[21]) if len(parts) > 21 and parts[21] else 0
+                hot_hint_tokens_added = int(parts[22]) if len(parts) > 22 and parts[22] else 0
+                reacquisition_avoided = int(parts[23]) if len(parts) > 23 and parts[23] else 0
+                reacquisition_cost_tokens = int(parts[24]) if len(parts) > 24 and parts[24] else 0
                 actual_tokens = int(parts[3])
                 baseline_tokens = actual_tokens + tokens_saved
                 cost_savings_pct = ((baseline_cost - actual_cost) / baseline_cost) * 100 if baseline_cost > 0 else 0.0
@@ -1074,6 +1179,14 @@ class SavingsTracker:
                     "reacquisition_count": reacquisition_count,
                     "answer_anchor_miss_count": answer_anchor_miss_count,
                     "degradation_reason": degradation_reason,
+                    FALLBACK_SIGNAL: fallback_activated,
+                    BASELINE_ONLY_SIGNAL: baseline_only_session,
+                    "baseline_prompt_tokens": baseline_prompt_tokens,
+                    "prepared_prompt_tokens": prepared_prompt_tokens,
+                    "saved_prompt_tokens": saved_prompt_tokens,
+                    "hot_hint_tokens_added": hot_hint_tokens_added,
+                    "reacquisition_tokens_avoided_estimate": reacquisition_avoided,
+                    "reacquisition_cost_tokens": reacquisition_cost_tokens,
                     "savings_pct": savings_pct,
                     "cost_savings_pct": cost_savings_pct,
                 }

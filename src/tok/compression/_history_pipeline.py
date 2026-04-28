@@ -1146,6 +1146,7 @@ def compress_tool_results_impl(
                             bypass_cache=bypass_result_cache,
                             ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                             preserve_exact_search_evidence=preserve_exact_search_evidence,
+                            tool_compatible=True,
                         )
                         if saved > 0:
                             breakdown["search_repeat_cached"] = breakdown.get("search_repeat_cached", 0) + saved
@@ -1225,6 +1226,7 @@ def compress_tool_results_impl(
                         bypass_cache=bypass_result_cache,
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                         preserve_exact_search_evidence=preserve_exact_search_evidence,
+                        tool_compatible=True,
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
@@ -1402,6 +1404,7 @@ def compress_tool_results_impl(
                         bypass_cache=bypass_result_cache,
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                         preserve_exact_search_evidence=preserve_exact_search_evidence,
+                        tool_compatible=True,
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (

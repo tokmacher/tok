@@ -612,6 +612,8 @@ class TestCLI:
         assert "Strong savings" in result.output
         assert "Fallbacks" in result.output
         assert "Degraded to baseline" in result.output
+        assert "Cost (with Tok / est. no Tok)" in result.output
+        assert "est. no caching" not in result.output
         assert "yes" in result.output
         assert "Session quality" in result.output
         assert "Degradation reason" in result.output

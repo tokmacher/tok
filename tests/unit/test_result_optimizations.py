@@ -99,6 +99,29 @@ def test_restored_file_cache_entry_serves_one_exact_read_before_stub() -> None:
     assert saved > 0
 
 
+def test_replayed_tok_cache_stub_serves_cached_raw_content() -> None:
+    from tok.compression import _apply_result_cache
+
+    raw = "\n".join(f"line {i}: stable restored content" for i in range(80))
+    context = {"name": "read", "args": {"path": "src/example.py"}}
+    cache = {}
+
+    first, _ = _apply_result_cache(raw, context, cache)
+    assert first == raw
+    cache_key = next(iter(cache))
+    cache[cache_key]["first_read_complete"] = True
+
+    stub = (
+        ">>> tool:read|unchanged|cached|confidence:exact|reason:hash_match|path:src/example.py\n"
+        "@stable_hint |> File unchanged - summary shown to save tokens. Read offset=1 for full content."
+    )
+
+    replayed, saved = _apply_result_cache(stub, context, cache)
+
+    assert replayed == raw
+    assert saved == 0
+
+
 def test_tok_tool_result_applies_truncation() -> None:
     # Long result that doesn't match any specific compressor
     long_raw = "A" * 5000

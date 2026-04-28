@@ -562,6 +562,7 @@ def _repair_structured_answer_text(
         signals["structured_answer_repaired"] = 1
     if backfilled:
         signals["structured_answer_backfilled"] = 1
+        repaired_text = "[memory-derived]\n" + repaired_text
     return repaired_text, signals
 
 

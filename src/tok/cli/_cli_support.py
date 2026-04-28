@@ -482,7 +482,7 @@ def session_status_rows(
                     f"{int(summary['actual_tokens']) if isinstance(summary.get('actual_tokens'), int | float | str) else 0:,} / {int(summary['baseline_tokens']) if isinstance(summary.get('baseline_tokens'), int | float | str) else 0:,}",
                 ),
                 (
-                    "Cost (with Tok / est. no caching)",
+                    "Cost (with Tok / est. no Tok)",
                     f"${float(summary['actual_cost_usd']) if isinstance(summary.get('actual_cost_usd'), int | float | str) else 0.0:.4f} / ${float(summary['baseline_cost_usd']) if isinstance(summary.get('baseline_cost_usd'), int | float | str) else 0.0:.4f}",
                 ),
             ]

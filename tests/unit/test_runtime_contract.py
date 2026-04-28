@@ -57,6 +57,18 @@ def test_response_contract_classifies_tok_native_vs_fail_open() -> None:
     assert degraded.behavior_signals.get("fail_open_compat_response", 0) == 1
 
 
+def test_response_contract_plain_text_does_not_reuse_previous_tok_mode(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._last_mode = "tok-native"
+
+    contract = response_contract_for_mode("Plain response", tool_compatible=False, session=session)
+
+    assert contract.mode == "markdown"
+    assert session._last_mode == "markdown"
+    assert contract.behavior_signals.get("non_tok_response", 0) == 1
+    assert contract.behavior_signals.get("tok_native_response", 0) == 0
+
+
 def test_response_contract_handles_tool_compatible_plain_text() -> None:
     text = "Plain response"
 

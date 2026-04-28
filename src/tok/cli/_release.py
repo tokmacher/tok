@@ -171,7 +171,7 @@ def stats_command(
                                 f"{int(last_completed['actual_tokens']):,} / {int(last_completed['baseline_tokens']):,}",
                             ),
                             (
-                                "Cost (with Tok / est. no caching)",
+                                "Cost (with Tok / est. no Tok)",
                                 f"${float(last_completed['actual_cost_usd']):.4f} / ${float(last_completed['baseline_cost_usd']):.4f}",
                             ),
                         ],
@@ -230,7 +230,7 @@ def stats_command(
                                 f"{int(recent_completed['actual_tokens']):,} / {int(recent_completed['baseline_tokens']):,}",
                             ),
                             (
-                                "Cost (with Tok / est. no caching)",
+                                "Cost (with Tok / est. no Tok)",
                                 f"${float(recent_completed['actual_cost_usd']):.4f} / ${float(recent_completed['baseline_cost_usd']):.4f}",
                             ),
                         ],
@@ -262,7 +262,7 @@ def stats_command(
                                 f"{int(since_completed['actual_tokens']):,} / {int(since_completed['baseline_tokens']):,}",
                             ),
                             (
-                                "Cost (with Tok / est. no caching)",
+                                "Cost (with Tok / est. no Tok)",
                                 f"${float(since_completed['actual_cost_usd']):.4f} / ${float(since_completed['baseline_cost_usd']):.4f}",
                             ),
                         ],
@@ -289,7 +289,7 @@ def stats_command(
                             f"{int(lifetime_summary['actual_tokens']):,} / {int(lifetime_summary['baseline_tokens']):,}",
                         ),
                         (
-                            "Cost (with Tok / est. no caching)",
+                            "Cost (with Tok / est. no Tok)",
                             f"${float(lifetime_summary['actual_cost_usd']):.4f} / ${float(lifetime_summary['baseline_cost_usd']):.4f}",
                         ),
                         (
