@@ -873,10 +873,10 @@ def test_prepare_request_bridge_cut_search_extends_to_valid_suffix(tmp_path, mon
         bridge_search_enabled = bool(profile and profile.get("_bridge_cut_search"))
         assert bridge_search_enabled is True
         if keep_turns == 2:
-            return invalid_recent, "compressed tail"
+            return invalid_recent, "compressed tail", frozenset()
         if keep_turns == 1:
-            return valid_recent, "compressed tail"
-        return invalid_recent, "compressed tail"
+            return valid_recent, "compressed tail", frozenset()
+        return invalid_recent, "compressed tail", frozenset()
 
     def _fake_compress_recent_window(
         messages,
@@ -1030,7 +1030,7 @@ def test_prepare_request_bridge_cut_preflight_advances_to_safe_suffix(tmp_path, 
 
     def _fake_compress_history(messages, keep_turns=2, profile=None, prune_tool_results=False):
         del messages, keep_turns, profile, prune_tool_results
-        return invalid_then_safe_recent, "compressed tail"
+        return invalid_then_safe_recent, "compressed tail", frozenset()
 
     def _fake_compress_recent_window(
         messages,
@@ -1140,7 +1140,7 @@ def test_prepare_request_discards_history_rewrite_that_breaks_pairing(tmp_path, 
 
     def _fake_compress_history(messages, keep_turns=2, profile=None, prune_tool_results=False):
         del messages, keep_turns, profile, prune_tool_results
-        return invalid_recent, "compressed tail"
+        return invalid_recent, "compressed tail", frozenset()
 
     def _fake_compress_recent_window(
         messages,

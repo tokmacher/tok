@@ -111,7 +111,9 @@ class SavingsTracker:
                         stats["models"][model_name] = m
             return stats
         except Exception as exc:
-            logger.debug("Stats load error: %s", exc)
+            logger.error("Stats load error (file may be corrupted): %s", exc)
+            if os.path.exists(self._savings_file) and os.stat(self._savings_file).st_size > 0:
+                raise
             return self._empty_stats()
 
     def save_stats(self, stats: dict[str, Any]) -> None:
@@ -463,6 +465,7 @@ class SavingsTracker:
             "total_cost_usd": 0.0,
             "estimated_baseline_cost_usd": 0.0,
             "tokens_saved": 0,
+            "net_tokens_saved": 0,
             "cost_saved_usd": 0.0,
             "baseline_prompt_tokens": 0,
             "prepared_prompt_tokens": 0,
@@ -536,11 +539,13 @@ class SavingsTracker:
             "total_completion_tokens": "actual_output_tokens",
             "total_tokens": "total_tokens",
             "tokens_saved": "saved_tokens",
+            "net_tokens_saved": "net_tokens_saved",
             "baseline_prompt_tokens": "baseline_prompt_tokens",
             "prepared_prompt_tokens": "prepared_prompt_tokens",
             "saved_prompt_tokens": "saved_prompt_tokens",
             "hot_hint_tokens_added": "hot_hint_tokens_added",
             "reacquisition_tokens_avoided_estimate": "reacquisition_tokens_avoided_estimate",
+            "reacquisition_cost_tokens": "reacquisition_cost_tokens",
         }
         for ledger_key, sess_key in int_map.items():
             ledger[ledger_key] = int(ledger[ledger_key]) + int(sess[sess_key])
@@ -563,6 +568,7 @@ class SavingsTracker:
             f"  total_cost_usd: {ledger['total_cost_usd']:.6f}",
             f"  estimated_baseline_cost_usd: {ledger['estimated_baseline_cost_usd']:.6f}",
             f"  tokens_saved: {ledger['tokens_saved']}",
+            f"  net_tokens_saved: {ledger['net_tokens_saved']}",
             f"  cost_saved_usd: {ledger['cost_saved_usd']:.6f}",
             f"  savings_pct: {pct:.1f}",
             f"  baseline_prompt_tokens: {ledger['baseline_prompt_tokens']}",
@@ -612,7 +618,8 @@ class SavingsTracker:
                 stats = self.load_stats()
 
             models = stats.get("models", {})
-            if not models or all(m.get("calls", 0) == 0 for m in models.values()):
+            total_calls = sum(m.get("calls", 0) for m in models.values())
+            if total_calls == 0:
                 return
 
             sess = self._aggregate_session(models)

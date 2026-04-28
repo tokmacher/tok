@@ -34,7 +34,8 @@
 
 ### Removed
 
-- Unused `TokMemory` class replaced by `MacroMemory` throughout.
+- `TokMemory` Pydantic model retained in `protocol/models.py`; call-sites migrated to
+  `MacroMemory`.
 - Deprecated runtime configuration hints removed.
 - Unused `_install.py` CLI module removed.
 - Unused `typings/streamlit` stub removed.
@@ -60,7 +61,7 @@
 
 ### Added
 
-- First-class CLI: `tok bridge start/stop/status/logs`, `tok savings`, `tok install`,
+- First-class CLI: `tok bridge start/stop/status/logs`, `tok stats`, `tok install`,
   `tok doctor`
 - Bridge decomposed into focused modules: `gateway.py`, `compression.py`,
   `translator.py`, `pricing.py`, `stats.py`

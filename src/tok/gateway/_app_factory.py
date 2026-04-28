@@ -31,7 +31,7 @@ from ._anthropic_optimizations import apply_anthropic_optimizations
 from ._bridge_comparison import _safe_headers
 from ._bridge_request_handler import send_with_tok_fail_open_retry
 from ._bridge_runtime_pipeline import prepare_bridge_payload
-from ._bridge_streaming import _emit_sse_block, buffer_strip_restream_impl
+from ._bridge_streaming import _emit_sse_block, buffer_strip_restream_impl, passthrough_stream_impl
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -176,6 +176,8 @@ def _rebuild_content_preserving_position(
             if processed_idx < len(processed_blocks):
                 result.append(processed_blocks[processed_idx])
                 processed_idx += 1
+            else:
+                result.append(block)
         else:
             block_id = block.get("id", "")
             if block_id and block_id in passthrough_by_id:
@@ -191,9 +193,19 @@ def _rebuild_content_preserving_position(
 async def _json_to_sse(resp_json: dict[str, Any]) -> AsyncIterator[bytes]:
     model = resp_json.get("model", "")
     usage = resp_json.get("usage", {})
+    message = {
+        "id": resp_json.get("id", ""),
+        "type": resp_json.get("type", "message"),
+        "role": resp_json.get("role", "assistant"),
+        "model": model,
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": usage,
+    }
     message_start = {
         "type": "message_start",
-        "message": {"model": model, "usage": usage},
+        "message": message,
     }
     yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n".encode()
     content = resp_json.get("content", [])
@@ -386,6 +398,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "repeated_active_file_reads": int(signals.get("repeat_file_read", 0)),
         }
 
+    @app.post("/reset-session")
+    async def reset_session_endpoint() -> dict[str, str]:
+        """Reset per-session first-read / first-exact state for a new conversation."""
+        session.tracker.reset_session_stats()
+        session.runtime_session.reset_session()
+        return {"status": "ok", "action": "session_reset"}
+
     @app.api_route(
         "/{path:path}",
         methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
@@ -403,7 +422,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             )
             return _build_rate_limit_response(_rate_limit_throttle_remaining(session))
 
-        session.smoothness_tracker.start_turn()
+        session.smoothness_tracker.start_turn(task_id=f"session_{session.runtime_session.bridge_memory.turn}")
 
         skip = {
             "host",
@@ -516,9 +535,17 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             "model": request_model,
                             "tool_compatible": request_tool_compatible,
                             "request_policy": request_policy,
+                            "plan_finalization": bool(behavior_signals.get("plan_finalization_turn", 0)),
+                            "plan_finalization_passthrough": bool(
+                                behavior_signals.get("plan_finalization_passthrough", 0)
+                            ),
+                            "prompt_metrics": prompt_metrics,
+                            "original_body_bytes": len(provider_safe_original_body_bytes),
+                            "prepared_body_bytes": len(json.dumps(body).encode()),
                         }
                     )
-                    body = apply_anthropic_optimizations(body)
+                    if not behavior_signals.get("plan_finalization_passthrough", 0):
+                        body = apply_anthropic_optimizations(body)
                     body_bytes = json.dumps(body).encode()
 
                     if tool_breakdown:
@@ -689,6 +716,21 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
 
                 if path == "v1/messages":
                     # Ownership transfers here. The streaming implementation must close both response and client.
+                    if behavior_signals.get("plan_finalization_passthrough", 0):
+                        return StreamingResponse(
+                            passthrough_stream_impl(
+                                session,
+                                client,
+                                response,
+                                input_saved_tokens=0,
+                                behavior_signals=behavior_signals or None,
+                                prompt_metrics=None,
+                                client_owned=True,
+                            ),
+                            status_code=response.status_code,
+                            headers=resp_headers,
+                            media_type=response.headers.get("content-type", "text/event-stream"),
+                        )
                     return StreamingResponse(
                         buffer_strip_restream_impl(
                             session,
@@ -746,6 +788,8 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         for key, value in retry_signals.items():
                             behavior_signals[key] = behavior_signals.get(key, 0) + value
                         _note_request_policy_recovery_watch(session, retry_signals)
+                        if _retried:
+                            _record_fallback_once(session, request_state)
                         if path == "v1/messages":
                             # Ownership transfers here. The streaming implementation must close both response and client.
                             return StreamingResponse(
@@ -963,11 +1007,19 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             "Non-streaming processing error (fail-open): %s",
                             exc,
                         )
+                        behavior_signals["processing_error"] = behavior_signals.get("processing_error", 0) + 1
+                        behavior_signals["tok_fallback_activated"] = (
+                            behavior_signals.get("tok_fallback_activated", 0) + 1
+                        )
+                        _record_fallback_once(session, request_state)
                         try:
                             _model = resp_json.get("model", "")
                             _usage = resp_json.get("usage", {})
                             session_signals = session.consume_behavior_signals()
-                            error_signals = {"processing_error": 1}
+                            error_signals = {
+                                "processing_error": 1,
+                                "tok_fallback_activated": 1,
+                            }
                             if session_signals:
                                 for k, v in session_signals.items():
                                     error_signals[k] = error_signals.get(k, 0) + v
@@ -993,7 +1045,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     else:
                         raise
 
-            if thinking_forced_non_stream and response.status_code == 200:
+            if thinking_forced_non_stream and response.status_code == 200 and resp_json:
                 sse_headers = _safe_headers(response.headers)
                 sse_headers["content-type"] = "text/event-stream"
                 return StreamingResponse(

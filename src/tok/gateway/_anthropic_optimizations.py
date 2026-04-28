@@ -19,7 +19,6 @@ from typing import Any
 
 from tok.compression._tool_result_codecs import (
     _CODE_PATTERNS,
-    _compress_file_read,
     _compress_git_log,
     _compress_grep,
     _compress_grep_context,
@@ -173,11 +172,11 @@ def _sift_stdout(text: str) -> str:
     if content_type == "install":
         return _compress_install(text)
     if len(text) > 1200:
-        # For code-like content, use skeletonizer instead of blunt truncation
+        # Runtime compression owns file-read fidelity.  The gateway layer lacks
+        # tool context, so code-like stdout may be a first read and must remain
+        # exact for audit/release tasks.
         if content_type == "file" or _CODE_PATTERNS.search(text):
-            skeletonized = _compress_file_read(text)
-            if len(skeletonized) < len(text):
-                return skeletonized
+            return text
         return truncate_large_result(text, limit=1200)
     return text
 
@@ -193,6 +192,24 @@ _PIPE_ATTR_RE = re.compile(r"\|([a-z_]+:)")
 
 _TOK_BLOCK_RE = re.compile(r"^( {2,})@(msg|thought|Tool|result|meta|Delegate)\b", re.MULTILINE)
 _BLANK_BETWEEN_BLOCKS_RE = re.compile(r"\n{3,}")
+_TOK_HEADER_RE = re.compile(r"^>>>", re.MULTILINE)
+_TOK_KNOWN_BLOCK_RE = re.compile(r"^@(msg|thought|Tool|result|meta|Delegate)\b", re.MULTILINE)
+_TOK_PIPE_RE = re.compile(r"^\s+\|>", re.MULTILINE)
+
+
+def _looks_like_tok_wire(text: str) -> bool:
+    """Return True only for actual Tok wire syntax, not stray snippets."""
+    if not text or len(text) < 10:
+        return False
+    if _TOK_HEADER_RE.search(text) or _TOK_KNOWN_BLOCK_RE.search(text):
+        return True
+    # Pipe-only text is too ambiguous for request-side mutation. Require at
+    # least two inverted lines and no traceback/error context before treating it
+    # as lazy Tok.
+    pipe_lines = _TOK_PIPE_RE.findall(text)
+    if len(pipe_lines) >= 2 and "traceback" not in text.lower() and "attributeerror" not in text.lower():
+        return True
+    return False
 
 
 def _translate_bpe(text: str) -> str:
@@ -241,7 +258,7 @@ def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:
     for msg in messages:
         content = msg.get("content")
         if isinstance(content, str):
-            if ">>>" in content or "|>" in content or " @msg" in content:
+            if _looks_like_tok_wire(content):
                 translated = _translate_bpe(content)
                 total_saved_chars += len(content) - len(translated)
                 msg["content"] = translated
@@ -254,14 +271,14 @@ def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:
             if block.get("type") != "text":
                 continue
             raw = block.get("text", "")
-            if ">>>" in raw or "|>" in raw or "@msg" in raw:
+            if _looks_like_tok_wire(raw):
                 translated = _translate_bpe(raw)
                 total_saved_chars += len(raw) - len(translated)
                 block["text"] = translated
 
     system = body.get("system")
     if isinstance(system, str):
-        if ">>>" in system or "|>" in system:
+        if _looks_like_tok_wire(system):
             translated = _translate_bpe(system)
             total_saved_chars += len(system) - len(translated)
             body["system"] = translated
@@ -269,7 +286,7 @@ def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:
         for block in system:
             if isinstance(block, dict) and block.get("type") == "text":
                 raw = block.get("text", "")
-                if ">>>" in raw or "|>" in raw:
+                if _looks_like_tok_wire(raw):
                     translated = _translate_bpe(raw)
                     total_saved_chars += len(raw) - len(translated)
                     block["text"] = translated

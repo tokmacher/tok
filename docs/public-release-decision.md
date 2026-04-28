@@ -25,7 +25,7 @@ The default CLI help surface should reinforce that path by centering:
 - `tok install`
 - `tok bridge start|status|logs|stop`
 - `tok doctor`
-- `tok stats` / `tok savings`
+- `tok stats`
 
 The only supported product path in this release is the bridge-first workflow above.
 

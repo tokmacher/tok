@@ -329,6 +329,92 @@ class TestSemanticHashDedup:
         assert len(block_content2) < len(content)
         assert "@stable_result" in block_content2 or "tool:file_read" in block_content2
 
+    def test_first_visible_read_ignores_hot_session_state(self) -> None:
+        """Already-hot files still need one verbatim delivery in this request."""
+        pyproject_path = "pyproject.toml"
+        changelog_path = "CHANGELOG.md"
+        pyproject = '[project]\nname = "tok"\nversion = "0.1.5"\n' + ("# filler\n" * 220)
+        changelog = "# Changelog\n\n## 0.1.5 - 2026-04-28\n\n- Audit fix.\n" + ("more detail\n" * 220)
+        first_exact_seen = {
+            "read_file:path:pyproject.toml",
+            "read_file:path:CHANGELOG.md",
+        }
+        session_files = {pyproject_path, changelog_path}
+        files_delivered = {pyproject_path: 9, changelog_path: 9}
+        semantic_cache: dict[str, str] = {}
+        for tool_id, path, content in (
+            ("pyproject", pyproject_path, pyproject),
+            ("changelog", changelog_path, changelog),
+        ):
+            context = _make_id_to_context(tool_id, "read_file", path)[tool_id]
+            cache_key = _make_semantic_cache_key(context, content)
+            assert cache_key is not None
+            semantic_cache[cache_key] = _compute_semantic_hash(content)
+
+        messages = [
+            _make_tool_result_block("pyproject", pyproject),
+            _make_tool_result_block("changelog", changelog),
+        ]
+        id_to_context = {
+            **_make_id_to_context("pyproject", "read_file", pyproject_path),
+            **_make_id_to_context("changelog", "read_file", changelog_path),
+        }
+
+        result, breakdown = compress_tool_results(
+            messages,
+            tool_use_id_to_context=id_to_context,
+            semantic_hash_cache=semantic_cache,
+            session_files_read=session_files,
+            files_fully_delivered=files_delivered,
+            first_exact_evidence_seen=first_exact_seen,
+            current_turn=10,
+            keep_turns_window=5,
+        )
+
+        assert result[0]["content"][0]["content"] == pyproject
+        assert result[1]["content"][0]["content"] == changelog
+        assert breakdown.get("semantic_dedup", 0) == 0
+
+    def test_second_visible_read_can_use_stable_summary(self) -> None:
+        path = "pyproject.toml"
+        content = '[project]\nname = "tok"\nversion = "0.1.5"\n' + ("# filler\n" * 220)
+        cache: dict[str, str] = {}
+        session_files = {path}
+        files_delivered = {path: 9}
+        first_exact_seen = {"read_file:path:pyproject.toml"}
+        context = _make_id_to_context("first", "read_file", path)["first"]
+        cache_key = _make_semantic_cache_key(context, content)
+        assert cache_key is not None
+        cache[cache_key] = _compute_semantic_hash(content)
+
+        messages = [
+            _make_tool_result_block("first", content),
+            _make_tool_result_block("second", content),
+        ]
+        id_to_context = {
+            **_make_id_to_context("first", "read_file", path),
+            **_make_id_to_context("second", "read_file", path),
+        }
+
+        result, breakdown = compress_tool_results(
+            messages,
+            tool_use_id_to_context=id_to_context,
+            semantic_hash_cache=cache,
+            session_files_read=session_files,
+            files_fully_delivered=files_delivered,
+            first_exact_evidence_seen=first_exact_seen,
+            current_turn=10,
+            keep_turns_window=5,
+        )
+
+        first = result[0]["content"][0]["content"]
+        second = result[1]["content"][0]["content"]
+        assert first == content
+        assert len(second) < len(content)
+        assert "fidelity:summary" in second
+        assert "lossy:true" in second
+        assert breakdown.get("semantic_dedup", 0) > 0
+
     def test_stable_payload_includes_skeleton_for_code(self) -> None:
         path = "src/tok/foo.py"
         tool_id = "tid1"

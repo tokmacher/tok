@@ -556,7 +556,7 @@ class LiveBenchmarkRunner:
                 if canonical_mode == "tok-neuro" and idx > 0:
                     h_profile = dict(policy_for_model(self.model).history_profiles["balanced"])
                     h_profile["_no_pointers"] = True
-                    _, tok_state = compress_history(
+                    _, tok_state, _ = compress_history(
                         past_messages,
                         keep_turns=1,
                         profile=h_profile,

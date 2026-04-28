@@ -91,6 +91,25 @@ def _default_bind_host() -> str:
     return configured or "127.0.0.1"
 
 
+def _env_int(name: str, fallback: int, *, legacy_name: str | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None and legacy_name is not None:
+        raw = os.getenv(legacy_name)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        return fallback
+
+
+def _env_bool(name: str, fallback: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    return raw == "1"
+
+
 def _is_sensitive_capture_key(key: str) -> bool:
     normalized = key.strip().lower().replace("-", "_")
     return normalized in _CAPTURE_SENSITIVE_KEYS or normalized.endswith("_api_key")
@@ -283,18 +302,22 @@ def _response_contract_for_mode(text: str, *, tool_compatible: bool) -> Response
 class BridgeSession:
     """HTTP gateway configuration and telemetry (delegates runtime state to RuntimeSession)."""
 
-    port: int = int(os.getenv("TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090")))
-    keep_turns: int = int(os.getenv("TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2")))
-    debug: bool = os.getenv("TOK_DEBUG", "0") == "1"
-    fail_open: bool = os.getenv("TOK_FAIL_OPEN", "1") == "1"
-    capture: bool = os.getenv("TOK_CAPTURE", "0") == "1"
+    port: int = field(default_factory=lambda: _env_int("TOK_BRIDGE_PORT", 9090, legacy_name="TOK_PROXY_PORT"))
+    keep_turns: int = field(default_factory=lambda: _env_int("TOK_KEEP_TURNS", 2, legacy_name="TOK_PROXY_KEEP_TURNS"))
+    debug: bool = field(default_factory=lambda: _env_bool("TOK_DEBUG", False))
+    fail_open: bool = field(default_factory=lambda: _env_bool("TOK_FAIL_OPEN", True))
+    capture: bool = field(default_factory=lambda: _env_bool("TOK_CAPTURE", False))
     api_base: str = field(default_factory=_default_api_base)
-    rate_limit_retry_max_attempts: int = int(os.getenv("TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS", "2"))
-    rate_limit_backoff_base_ms: int = int(os.getenv("TOK_RATE_LIMIT_BACKOFF_BASE_MS", "150"))
-    rate_limit_backoff_cap_ms: int = int(os.getenv("TOK_RATE_LIMIT_BACKOFF_CAP_MS", "1000"))
-    rate_limit_throttle_threshold: int = int(os.getenv("TOK_RATE_LIMIT_THROTTLE_THRESHOLD", "4"))
-    rate_limit_throttle_cooldown_sec: int = int(os.getenv("TOK_RATE_LIMIT_THROTTLE_COOLDOWN_SEC", "20"))
-    rate_limit_throttle_window_sec: int = int(os.getenv("TOK_RATE_LIMIT_THROTTLE_WINDOW_SEC", "30"))
+    rate_limit_retry_max_attempts: int = field(default_factory=lambda: _env_int("TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS", 2))
+    rate_limit_backoff_base_ms: int = field(default_factory=lambda: _env_int("TOK_RATE_LIMIT_BACKOFF_BASE_MS", 150))
+    rate_limit_backoff_cap_ms: int = field(default_factory=lambda: _env_int("TOK_RATE_LIMIT_BACKOFF_CAP_MS", 1000))
+    rate_limit_throttle_threshold: int = field(default_factory=lambda: _env_int("TOK_RATE_LIMIT_THROTTLE_THRESHOLD", 4))
+    rate_limit_throttle_cooldown_sec: int = field(
+        default_factory=lambda: _env_int("TOK_RATE_LIMIT_THROTTLE_COOLDOWN_SEC", 20)
+    )
+    rate_limit_throttle_window_sec: int = field(
+        default_factory=lambda: _env_int("TOK_RATE_LIMIT_THROTTLE_WINDOW_SEC", 30)
+    )
     _rate_limit_throttle_until: float = 0.0
     _rate_limit_429_history: list[float] = field(default_factory=list)
     _rate_limit_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -338,6 +361,9 @@ class BridgeSession:
                 memory_dir=self.memory_dir,
                 keep_turns=self.keep_turns,
             )
+        else:
+            self.runtime_session.keep_turns = self.keep_turns
+        self.runtime_session._keep_turns_explicit = True
         # Reset session stats so each bridge run starts with a clean slate
         if os.getenv("TOK_RESET_SESSION", "0") == "1":
             self.tracker.reset_session_stats()

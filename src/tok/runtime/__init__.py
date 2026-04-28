@@ -33,18 +33,7 @@ _SYMBOLS = {
         ".config",
         "DEFAULT_PROJECT_MARKER_PATTERNS",
     ),
-    "RuntimeMetrics": (".metrics", "RuntimeMetrics"),
-    "calculate_tokens_saved": (".metrics", "calculate_tokens_saved"),
-    "calculate_compression_ratio": (".metrics", "calculate_compression_ratio"),
-    "calculate_invisible_pressure": (
-        ".metrics",
-        "calculate_invisible_pressure",
-    ),
     "TOOL_DENSITY_THRESHOLD": (".config", "TOOL_DENSITY_THRESHOLD"),
-    "calculate_reasoning_depth_per_token": (
-        ".metrics",
-        "calculate_reasoning_depth_per_token",
-    ),
     "RuntimeToolExecutor": (".tools", "RuntimeToolExecutor"),
 }
 

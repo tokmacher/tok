@@ -211,7 +211,6 @@ def gate_check(
 def register(app: typer.Typer) -> None:
     """Register release commands with the CLI app."""
     app.command("stats")(stats)
-    app.command("savings")(stats)
     app.command(hidden=True)(replay)
     app.command()(doctor)
     app.command("gate-check", hidden=True)(gate_check)

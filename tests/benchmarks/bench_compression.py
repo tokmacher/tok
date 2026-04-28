@@ -37,7 +37,7 @@ class TestCompressionBenchmarks:
         orig_len = sum(len(m["content"]) for m in msgs)
 
         start = time.perf_counter()
-        recent, state = compress_history(msgs, keep_turns=2)
+        recent, state, _ = compress_history(msgs, keep_turns=2)
         time.perf_counter() - start
 
         new_len = sum(len(m["content"]) for m in recent) + len(state)

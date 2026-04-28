@@ -6,10 +6,85 @@ import ast
 import re
 from typing import Any
 
+from tok.runtime.repeat_targets import normalize_path_target
+
 _SIGNATURE_CONTINUATION_RE = re.compile(r"^[)\],]\s*$|^[)\],]\s*[#]|,\s*$|\S\s*\\$")
 
 _SIGNATURE_OPEN_PAREN_RE = re.compile(r"\(")
 _SIGNATURE_CLOSE_PAREN_RE = re.compile(r"\)")
+
+_MAX_LITERAL_CHARS: int = 200
+_MAX_CONTAINER_ITEMS: int = 30
+_MAX_NESTING_DEPTH: int = 2
+
+
+def _render_literal_value(node: ast.expr, depth: int = 0) -> str | None:
+    """Render a simple AST literal node to a Python repr string.
+
+    Returns None when the value is complex (function call, comprehension,
+    name reference, etc.) or exceeds size limits.  Never evaluates code.
+    Callers should fall back to existing `...` rendering when None is returned.
+    """
+    if isinstance(node, ast.Constant):
+        v = node.value
+        if v is None:
+            return "None"
+        if isinstance(v, bool):
+            return "True" if v else "False"
+        if isinstance(v, int | float):
+            return repr(v)
+        if isinstance(v, str):
+            rendered = repr(v)
+            return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+        return None
+
+    if depth >= _MAX_NESTING_DEPTH:
+        return None
+
+    if isinstance(node, ast.Tuple):
+        if len(node.elts) > _MAX_CONTAINER_ITEMS:
+            return None
+        parts = [_render_literal_value(elt, depth + 1) for elt in node.elts]
+        if any(p is None for p in parts):
+            return None
+        inner = ", ".join(parts)
+        rendered = f"({inner},)" if len(node.elts) == 1 else f"({inner})"
+        return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+
+    if isinstance(node, ast.List):
+        if len(node.elts) > _MAX_CONTAINER_ITEMS:
+            return None
+        parts = [_render_literal_value(elt, depth + 1) for elt in node.elts]
+        if any(p is None for p in parts):
+            return None
+        rendered = "[" + ", ".join(parts) + "]"
+        return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+
+    if isinstance(node, ast.Set):
+        if len(node.elts) > _MAX_CONTAINER_ITEMS:
+            return None
+        parts = [_render_literal_value(elt, depth + 1) for elt in node.elts]
+        if any(p is None for p in parts):
+            return None
+        rendered = "{" + ", ".join(parts) + "}"
+        return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+
+    if isinstance(node, ast.Dict):
+        if len(node.keys) > _MAX_CONTAINER_ITEMS:
+            return None
+        pairs: list[str] = []
+        for dk, dv in zip(node.keys, node.values, strict=False):
+            if dk is None:
+                return None
+            kr = _render_literal_value(dk, depth + 1)
+            vr = _render_literal_value(dv, depth + 1)
+            if kr is None or vr is None:
+                return None
+            pairs.append(f"{kr}: {vr}")
+        rendered = "{" + ", ".join(pairs) + "}"
+        return rendered if len(rendered) <= _MAX_LITERAL_CHARS else None
+
+    return None
 
 
 def _is_signature_continuation(prior_unclosed_parens: int, line: str) -> bool:
@@ -335,11 +410,15 @@ def _extract_python_skeleton(text: str) -> str | None:
                 except Exception:
                     ann_str = "..."
                 if node.value is not None:
-                    try:
-                        val_str = ast.unparse(node.value)
-                        val_part = f" = {val_str}" if len(val_str) <= 30 else " = ..."
-                    except Exception:
-                        val_part = " = ..."
+                    lit = _render_literal_value(node.value)
+                    if lit is not None:
+                        val_part = f" = {lit}"
+                    else:
+                        try:
+                            val_str = ast.unparse(node.value)
+                            val_part = f" = {val_str}" if len(val_str) <= 30 else " = ..."
+                        except Exception:
+                            val_part = " = ..."
                 else:
                     val_part = ""
                 result.append(f"{field_name}: {ann_str}{val_part}")
@@ -351,15 +430,15 @@ def _extract_python_skeleton(text: str) -> str | None:
                     # Keep named constants (ALL_CAPS), skip numeric tables
                     if target.id.isupper():
                         try:
-                            val_str = ast.unparse(node.value) if node.value else ""
-                            # Skip large numeric dicts/lists
-                            if isinstance(node.value, ast.Dict | ast.List | ast.Tuple):
-                                size_hint = "dict" if isinstance(node.value, ast.Dict) else "list/tuple"
-                                result.append(f"{target.id} = <{size_hint}>")
-                            elif val_str and len(val_str) <= 30:
-                                result.append(f"{target.id} = {val_str}")
+                            lit = _render_literal_value(node.value) if node.value else None
+                            if lit is not None:
+                                result.append(f"{target.id} = {lit}")
                             else:
-                                result.append(f"{target.id} = ...")
+                                val_str = ast.unparse(node.value) if node.value else ""
+                                if val_str and len(val_str) <= 30:
+                                    result.append(f"{target.id} = {val_str}")
+                                else:
+                                    result.append(f"{target.id} = ...")
                         except Exception:
                             result.append(f"{target.id} = ...")
                     # Keep dataclass-style field assignments
@@ -423,6 +502,27 @@ def _extract_python_skeleton(text: str) -> str | None:
     return "\n".join(result)
 
 
+_OBSERVABILITY_PATH_FRAGMENTS = frozenset(
+    {
+        "bridge.log",
+        "collector.log",
+        ".tok/bridge.log",
+        ".tok/collector.log",
+    }
+)
+
+
+def _is_observability_file(tool_context: dict[str, Any] | None) -> bool:
+    if not tool_context:
+        return False
+    args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+    path = str(args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or "")
+    if not path:
+        return False
+    path_lower = path.lower()
+    return any(frag in path_lower for frag in _OBSERVABILITY_PATH_FRAGMENTS)
+
+
 def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, session: Any | None = None) -> str:
     _agg = 1.0
     if tool_context and isinstance(tool_context, dict):
@@ -450,11 +550,14 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
             )
             if path:
-                norm_path = path.lower().strip()
+                norm_path = normalize_path_target(path)
                 heat = file_heat.get(norm_path, 0.0) if isinstance(file_heat, dict) else 0.0
                 if heat == 0.0:
                     return text
     if len(text) <= _small_chars and text.count("\n") + 1 <= _small_lines:
+        return text
+
+    if _is_observability_file(tool_context):
         return text
 
     # Try AST-based skeleton extraction for Python files
@@ -464,7 +567,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
             original_chars = len(text)
             skeleton_lines = ast_skeleton.count("\n") + 1
             # Build a better section map from the AST skeleton
-            section_map = _build_section_map(ast_skeleton.splitlines())
+            section_map = _build_section_map(text.splitlines())
             # Track skeleton delivery for edit interception
             if session and hasattr(session, "_skeleton_delivered_paths") and tool_context:
                 args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
@@ -476,13 +579,13 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                     or ""
                 )
                 if path:
-                    norm_path = path.lower().strip()
+                    norm_path = normalize_path_target(path)
                     session._skeleton_delivered_paths.add(norm_path)
 
             header = (
                 f">>> tool:file_read|original_chars:{original_chars}|"
-                f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|is_skeleton:true"
-                + (f"|sections:{section_map}" if section_map else "")
+                f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|"
+                "is_skeleton:true|fidelity:summary|lossy:true" + (f"|sections:{section_map}" if section_map else "")
             )
             return (
                 header
@@ -607,13 +710,13 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
             args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
         )
         if path:
-            norm_path = path.lower().strip()
+            norm_path = normalize_path_target(path)
             session._skeleton_delivered_paths.add(norm_path)
 
     header = (
         f">>> tool:file_read|original_chars:{original_chars}|"
-        f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|is_skeleton:true"
-        + (f"|sections:{section_map}" if section_map else "")
+        f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|"
+        "is_skeleton:true|fidelity:summary|lossy:true" + (f"|sections:{section_map}" if section_map else "")
     )
     return (
         header

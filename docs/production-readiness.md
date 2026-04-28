@@ -43,7 +43,7 @@ status probes when you intentionally connect through a non-default hostname.
 
 ## Release Posture
 
-- Development status: Alpha (0.1.3)
+- Development status: Alpha (0.1.4)
 - The bridge is the only supported product surface
 - SDK/wrapper path exists but is experimental
 - No breaking changes are guaranteed before 1.0

@@ -208,6 +208,32 @@ def _stream_recovery_allowed_now(
     return True, "eligible"
 
 
+def _observe_stream_tool_blocks(session: BridgeSession, tool_blocks: list[dict[str, Any]]) -> dict[str, int]:
+    """Record semantic runtime side effects for streamed tool-only responses."""
+    signals: dict[str, int] = {}
+    runtime_session = session.runtime_session
+    for block in tool_blocks:
+        if block.get("type") != "tool_use" or not block.get("name"):
+            continue
+        tool_name = str(block["name"])
+        runtime_session._tool_names_seen.add(tool_name)
+        tool_input = block.get("input", {})
+        input_key = next(iter(tool_input.values()), "") if isinstance(tool_input, dict) and tool_input else ""
+        if runtime_session.observe_tool_action(tool_name, str(input_key)[:120]):
+            signals["loop_detected"] = 1
+        if tool_name.lower() in ("edit_file", "edit", "write_file", "write", "replace", "create_file"):
+            edited_path = ""
+            if isinstance(tool_input, dict):
+                edited_path = str(
+                    tool_input.get("path") or tool_input.get("file_path") or tool_input.get("filename") or ""
+                )
+            if edited_path:
+                from tok.runtime.repeat_targets import normalize_path_target
+
+                runtime_session.mark_file_edited(normalize_path_target(edited_path))
+    return signals
+
+
 async def passthrough_stream_impl(
     session: BridgeSession,
     client: httpx.AsyncClient,
@@ -401,6 +427,8 @@ async def buffer_strip_restream_impl(
         processed: Any | None = None  # Will hold ProcessedRuntimeResponse when available
 
         tool_blocks = _materialize_stream_tool_blocks(stream_blocks, stream_order)
+        if tool_blocks:
+            _merge_signal_counts(stream_behavior_signals, _observe_stream_tool_blocks(session, tool_blocks))
         thinking_blocks = [
             stream_blocks[idx]
             for idx in stream_order
@@ -455,6 +483,7 @@ async def buffer_strip_restream_impl(
             for block in translated_blocks
         )
         recovery_required = not has_visible_blocks and (read_error is not None or len(translated_blocks) == 0)
+        _cost_recorded_by_fallback = False
         if recovery_required:
             recovery_allowed, _recovery_reason = _stream_recovery_allowed_now(session)
             stream_behavior_signals["stream_empty_after_success"] = 1
@@ -544,7 +573,7 @@ async def buffer_strip_restream_impl(
                             )
                             retry_output_saved = 0
                             # Initialize retry_response_signals to accumulate across branches
-                            retry_response_signals: dict[str, int] = dict(stream_behavior_signals)
+                            retry_response_signals: dict[str, int] = {}
                             if retry_text:
                                 retry_processed = _RUNTIME.process_response(
                                     retry_text,
@@ -648,14 +677,6 @@ async def buffer_strip_restream_impl(
                                     response_signals,
                                     recovery_success_signals,
                                 )
-                                # Merge stream_behavior_signals (including stream_buffer_read_error)
-                                # into response_signals so they are recorded in the tracker
-                                _merge_signal_counts(
-                                    response_signals,
-                                    stream_behavior_signals,
-                                )
-                                # Merge retry_response_signals (which includes signals from
-                                # the recovery response processing like tool_compatible_response)
                                 _merge_signal_counts(
                                     response_signals,
                                     retry_response_signals,
@@ -663,6 +684,7 @@ async def buffer_strip_restream_impl(
                                 retry_usage = retry_json.get("usage", {})
                                 retry_model = str(retry_json.get("model", ""))
                                 if retry_model and retry_usage:
+                                    stream_behavior_signals["stream_recovery_usage"] = 1
                                     session.tracker.record_call(
                                         model=retry_model,
                                         actual_input=retry_usage.get("input_tokens", 0),
@@ -702,6 +724,7 @@ async def buffer_strip_restream_impl(
                     "stream_recovery_fallback: non-stream retry produced no visible content; recording fallback"
                 )
                 if recovery_model and recovery_usage:
+                    stream_behavior_signals["stream_recovery_usage"] = 1
                     empty_processed = _RUNTIME.process_response(
                         "",
                         model=recovery_model,
@@ -715,7 +738,7 @@ async def buffer_strip_restream_impl(
                         actual_output=recovery_usage.get("output_tokens", 0),
                         cache_read=recovery_usage.get("cache_read_input_tokens", 0),
                         cache_write=recovery_usage.get("cache_creation_input_tokens", 0),
-                        input_saved=input_saved_tokens,
+                        input_saved=0,
                         output_saved=0,
                         type_breakdown=type_breakdown,
                         behavior_signals=empty_processed.behavior_signals or None,
@@ -723,7 +746,8 @@ async def buffer_strip_restream_impl(
                     )
                 if request_state is not None:
                     _record_fallback_once(session, request_state)
-        if sse_model != "unknown" and sse_usage:
+                _cost_recorded_by_fallback = bool(recovery_model and recovery_usage)
+        if sse_model != "unknown" and sse_usage and not _cost_recorded_by_fallback:
             if not full_text:
                 processed = _RUNTIME.process_response(
                     "",

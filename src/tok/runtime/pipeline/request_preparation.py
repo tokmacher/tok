@@ -195,6 +195,26 @@ _ANSWER_READY_TEXT_PATTERNS = (
     "what is the answer",
     "confirm",
 )
+_FINALIZATION_TEXT_PATTERNS = (
+    "write the plan",
+    "finish the plan",
+    "finalize the plan",
+    "finalise the plan",
+    "proposed_plan",
+    "produce the plan",
+    "summarize your findings",
+    "summarize the findings",
+    "summarise your findings",
+    "summarise the findings",
+    "final answer",
+    "answer now",
+    "reply now",
+    "what did you find",
+    "what's the verdict",
+    "what is the verdict",
+    "what's the answer",
+    "what is the answer",
+)
 
 
 class AuditTurnIntent(BaseModel):
@@ -265,6 +285,19 @@ def _message_explicitly_requests_answer(
     if any(pattern in lowered for pattern in _NO_ANSWER_PATTERNS):
         return False
     return any(pattern in lowered for pattern in _ANSWER_READY_TEXT_PATTERNS)
+
+
+def is_plan_or_answer_finalization_turn(messages: list[dict[str, Any]]) -> bool:
+    """Return True when the latest user turn asks for a final plan/answer, not new tool work."""
+    latest_user = _latest_user_message(messages)
+    lowered = _message_user_text(latest_user).lower()
+    if not lowered:
+        return False
+    if _is_read_only_audit_turn(messages):
+        return False
+    if _has_unresolved_tool_required_conditions(messages):
+        return False
+    return any(pattern in lowered for pattern in _FINALIZATION_TEXT_PATTERNS)
 
 
 def _has_unresolved_tool_required_conditions(
