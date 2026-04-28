@@ -667,6 +667,7 @@ def compress_tool_results_impl(
     # Tracks paths first seen in this compress pass — used to dedup parallel reads
     # of the same file within a single turn regardless of session heat.
     _same_turn_seen_paths: set[str] = set()
+    _verbatim_delivered_paths: set[str] = set()
 
     def _record_feature_telemetry(
         feature: str,
@@ -880,6 +881,20 @@ def compress_tool_results_impl(
             return
         cache[cache_key] = _compute_semantic_hash(raw)
 
+    def _mark_verbatim_file_observation(context: dict[str, Any] | None, raw: str, norm_path: str) -> None:
+        if not norm_path:
+            return
+        _verbatim_delivered_paths.add(norm_path)
+        _same_turn_seen_paths.add(norm_path)
+        _mark_file_fully_delivered(norm_path)
+        if session_files_read is not None:
+            session_files_read.add(norm_path)
+        if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
+            _cache_semantic_hash(context, raw, semantic_hash_cache)
+
+    def _stable_result_header(content_hash: str) -> str:
+        return f"@stable_result(hash:{content_hash};fidelity:summary;lossy:true)"
+
     def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
         if not context:
             return False
@@ -953,12 +968,10 @@ def compress_tool_results_impl(
                 if isinstance(args, dict) and any(k in args for k in ("offset", "limit", "start", "end")):
                     return False
         if session_files_read is not None and norm_path and norm_path not in session_files_read:
-            session_files_read.add(norm_path)
-            if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
-                _cache_semantic_hash(context, raw, semantic_hash_cache)
+            _mark_verbatim_file_observation(context, raw, norm_path)
+            return True
         if norm_path:
-            _mark_file_fully_delivered(norm_path)
-            _same_turn_seen_paths.add(norm_path)
+            _mark_verbatim_file_observation(context, raw, norm_path)
         return True
 
     def _should_preserve_exact_search_observation(
@@ -1025,10 +1038,7 @@ def compress_tool_results_impl(
                         and norm_path
                         and norm_path not in session_files_read
                     ):
-                        session_files_read.add(norm_path)
-                        if semantic_hash_cache is not None and len(content) >= _SEMANTIC_HASH_MIN_CHARS:
-                            _cache_semantic_hash(context, content, semantic_hash_cache)
-                        _mark_file_fully_delivered(norm_path)
+                        _mark_verbatim_file_observation(context, content, norm_path)
                         continue
                     compressed, saved = _apply_result_cache(
                         content,
@@ -1172,7 +1182,7 @@ def compress_tool_results_impl(
                                         )
                                 if not summary:
                                     summary = _truncate_stable_snippet(raw, 280)
-                                token = f"@stable_result(hash:{content_hash})\n@stable_summary |> {summary}"
+                                token = f"{_stable_result_header(content_hash)}\n@stable_summary |> {summary}"
                                 saved = len(raw) - len(token)
                                 if saved > 0:
                                     breakdown["search_repeat_dedup"] = breakdown.get("search_repeat_dedup", 0) + saved
@@ -1203,9 +1213,7 @@ def compress_tool_results_impl(
                         _mark_precision_range(path, start, end)
                 norm_path = _extract_normalized_path(ctx) if ctx else ""
                 if session_files_read is not None and norm_path and norm_path not in session_files_read:
-                    session_files_read.add(norm_path)
-                    if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
-                        _cache_semantic_hash(ctx, raw, semantic_hash_cache)
+                    _mark_verbatim_file_observation(ctx, raw, norm_path)
                 if result_cache is not None and not bypass_result_cache:
                     if ctx is None:
                         continue
@@ -1261,13 +1269,17 @@ def compress_tool_results_impl(
                 and norm_path
                 and norm_path not in session_files_read
             ):
-                if session_files_read is not None:
-                    session_files_read.add(norm_path)
-                    if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
-                        _cache_semantic_hash(ctx, raw, semantic_hash_cache)
-                _mark_file_fully_delivered(norm_path)
-                if norm_path:
-                    _same_turn_seen_paths.add(norm_path)
+                _mark_verbatim_file_observation(ctx, raw, norm_path)
+                continue
+
+            if (
+                first_exact_evidence_seen is not None
+                and tool_name in FILE_LIKE_TOOLS
+                and norm_path
+                and norm_path not in _verbatim_delivered_paths
+                and (session_files_read is None or norm_path not in session_files_read)
+            ):
+                _mark_verbatim_file_observation(ctx, raw, norm_path)
                 continue
 
             # Only apply semantic dedup if this is a repeat read in the current session
@@ -1276,6 +1288,11 @@ def compress_tool_results_impl(
                 not _skip_stable_result
                 and tool_name in FILE_LIKE_TOOLS
                 and _is_file_fully_delivered(norm_path)
+                and (
+                    first_exact_evidence_seen is None
+                    or norm_path in _verbatim_delivered_paths
+                    or (session_files_read is not None and norm_path in session_files_read)
+                )
                 and (session_files_read is None or norm_path in session_files_read)
                 and semantic_hash_cache is not None
                 and len(raw) >= _SEMANTIC_HASH_MIN_CHARS
@@ -1303,7 +1320,7 @@ def compress_tool_results_impl(
                                 if record and hasattr(record, "summary"):
                                     summary = record.summary
                             if summary:
-                                token = f"@stable_result(hash:{content_hash})\n@stable_summary |> {_truncate_stable_snippet(summary, 280)}"
+                                token = f"{_stable_result_header(content_hash)}\n@stable_summary |> {_truncate_stable_snippet(summary, 280)}"
                                 saved = len(raw) - len(token)
                                 if saved > 0:
                                     breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)
@@ -1351,7 +1368,7 @@ def compress_tool_results_impl(
                                         max_chars=280,
                                         max_lines=14,
                                     )
-                        lines = [f"@stable_result(hash:{content_hash})"]
+                        lines = [_stable_result_header(content_hash)]
                         if summary:
                             lines.append(f"@stable_summary |> {_truncate_stable_snippet(summary, 280)}")
                         if skeleton:

@@ -584,8 +584,8 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
 
             header = (
                 f">>> tool:file_read|original_chars:{original_chars}|"
-                f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|is_skeleton:true"
-                + (f"|sections:{section_map}" if section_map else "")
+                f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|"
+                "is_skeleton:true|fidelity:summary|lossy:true" + (f"|sections:{section_map}" if section_map else "")
             )
             return (
                 header
@@ -715,8 +715,8 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
 
     header = (
         f">>> tool:file_read|original_chars:{original_chars}|"
-        f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|is_skeleton:true"
-        + (f"|sections:{section_map}" if section_map else "")
+        f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|"
+        "is_skeleton:true|fidelity:summary|lossy:true" + (f"|sections:{section_map}" if section_map else "")
     )
     return (
         header

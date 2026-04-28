@@ -1064,6 +1064,26 @@ class TestNewCompressors:
         for i in range(10):
             assert f"+new line in file {i}" in result, f"diff line for file {i} was truncated"
 
+    def test_git_diff_name_only_preserves_raw_paths(self) -> None:
+        paths = "\n".join([f"src/module_{idx}.py" for idx in range(45)] + [f"docs/page_{idx}.md" for idx in range(9)])
+        result = tok_tool_result(
+            paths,
+            tool_context={"tool": "Bash", "args": {"command": "git diff --name-only HEAD~1 HEAD"}},
+        )
+        assert result == paths
+        assert ">>> tool:ls|total:" not in result
+        assert "src/module_44.py" in result
+
+    def test_git_log_name_only_preserves_raw_paths(self) -> None:
+        paths = "\n".join([f"src/module_{idx}.py" for idx in range(47)] + [f"docs/page_{idx}.md" for idx in range(7)])
+        result = tok_tool_result(
+            paths,
+            tool_context={"tool": "Bash", "args": {"command": "git log --name-only --oneline -n 5"}},
+        )
+        assert result == paths
+        assert ">>> tool:ls|total:" not in result
+        assert "docs/page_6.md" in result
+
     # --- ls ---
 
     def test_ls_detected(self) -> None:

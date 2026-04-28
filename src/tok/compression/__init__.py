@@ -1224,6 +1224,7 @@ def _serve_cached_content_hash_match(
                 if len(summary) > 280:
                     summary = summary[:279] + "…"
                 if skeleton:
+                    stub_parts[0] += "|fidelity:summary|lossy:true"
                     stub_parts.append(f"@stable_summary |> {summary}")
                     stub_parts.append(f"@stable_skeleton |> {skeleton}")
             except Exception:

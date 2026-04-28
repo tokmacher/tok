@@ -1,6 +1,6 @@
 from tok.compression import tok_tool_result, truncate_large_result
 from tok.compression._tool_result_codecs import _compress_file_read, _compress_grep, _detect_tool_content_type
-from tok.gateway._anthropic_optimizations import _sift_stdout
+from tok.gateway._anthropic_optimizations import _sift_stdout, bpe_translate_request
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
 
@@ -283,8 +283,8 @@ def test_sift_stdout_preserves_small_files() -> None:
     assert result == small_file
 
 
-def test_sift_stdout_uses_skeletonizer_for_large_code() -> None:
-    """Large code-like content should be skeletonized, not bluntly truncated."""
+def test_sift_stdout_preserves_large_code() -> None:
+    """Gateway sifting must not skeletonize possible first-read code."""
     lines = [f"def method_{i}(self):" for i in range(20)]
     lines.extend(f"    x = {i} + {i * 2}" for i in range(200))
     lines.extend(f"    y = self.data[{i}]" for i in range(200))
@@ -293,11 +293,7 @@ def test_sift_stdout_uses_skeletonizer_for_large_code() -> None:
 
     result = _sift_stdout(large_code)
 
-    # Should use skeletonizer (preserves signatures) not blunt truncation
-    assert ">>>" in result or len(result) < len(large_code)
-    # Skeleton should preserve method signatures
-    if ">>>" in result:
-        assert "def method_0(self):" in result
+    assert result == large_code
 
 
 def test_sift_stdout_skips_already_compressed() -> None:
@@ -305,6 +301,31 @@ def test_sift_stdout_skips_already_compressed() -> None:
     compressed = ">>> tool:file_read|original_chars:5000|skeleton_lines:10\nimport os\ndef foo():"
     result = _sift_stdout(compressed)
     assert result == compressed
+
+
+def test_bpe_translate_request_ignores_traceback_with_stray_tok_pipe() -> None:
+    leaked_context = (
+        "gitStatus:\n"
+        "Traceback (most recent call last):\n"
+        '  File "src/tok/runtime/__init__.py", line 45, in __getattr__\n'
+        "    |> AttributeError: missing field from compressed annotation\n"
+    )
+    body = {"messages": [{"role": "user", "content": leaked_context}]}
+
+    result = bpe_translate_request(body)
+
+    assert result["messages"][0]["content"] == leaked_context
+
+
+def test_bpe_translate_request_still_translates_tok_wire() -> None:
+    tok_text = ">>> t:1|state:active\n@msg role:assistant\n  |> ok"
+    body = {"messages": [{"role": "assistant", "content": [{"type": "text", "text": tok_text}]}]}
+
+    result = bpe_translate_request(body)
+    translated = result["messages"][0]["content"][0]["text"]
+
+    assert "state:active" in translated
+    assert "  > ok" in translated
 
 
 def test_cache_hit_preserves_small_files() -> None:
