@@ -1,4 +1,4 @@
-# Tok Diagnostics (0.1.4)
+# Tok Diagnostics (0.1.5)
 
 This document explains the key health and recovery signals you may see in:
 
