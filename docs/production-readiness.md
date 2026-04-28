@@ -57,9 +57,9 @@ status probes when you intentionally connect through a non-default hostname.
 
 ## Intentional Deferrals For 0.1.x
 
-- `src/tok/cli/__init__.py` is still larger than ideal. The split helpers now own real
-  implementation paths, but the final command-registration file will be reduced further
-  after the first public release rather than during the release-candidate window.
+- CLI decomposition: completed in 0.1.6. `src/tok/cli/__init__.py` is 76 lines;
+  `_legacy_commands.py` (9 hidden root-level aliases duplicating `tok dev *` and
+  `tok metrics *`) was removed after confirming no internal callers.
 - Published dependencies do not currently carry blanket upper bounds. For `0.1.x`, Tok
   treats the lockfile, CI matrix, and clean-room install/build verification as the
   source of truth for tested compatibility.

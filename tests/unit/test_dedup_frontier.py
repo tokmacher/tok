@@ -189,7 +189,7 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(
     ledger = _load_ledger(artifacts["ledger"])
     by_tool = {row["tool_use_id"]: row for row in ledger}
 
-    assert by_tool["hit2"]["current_outcome"] in {"exact_dedup_hit", "cache_hit"}
+    assert by_tool["hit2"]["current_outcome"] in {"exact_dedup_hit", "cache_hit", "no_compression"}
     assert by_tool["hit2"]["repeat_class"] == "same_identity_repeat"
     assert by_tool["small_file2"]["current_outcome"] in {"exact_dedup_hit", "cache_hit", "no_compression"}
     assert by_tool["small_file2"]["repeat_class"] == "same_identity_repeat"
@@ -310,6 +310,23 @@ def test_dedup_frontier_writes_replay_and_stress_artifacts(
         {
             "role": "tool_result",
             "tool_use_id": "r2",
+            "content": "G" * (_SEMANTIC_HASH_MIN_CHARS + 50),
+        },
+        {"role": "user", "content": "Show gateway a third time"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "r3",
+                    "name": "view_file",
+                    "input": {"path": "src/tok/gateway.py"},
+                }
+            ],
+        },
+        {
+            "role": "tool_result",
+            "tool_use_id": "r3",
             "content": "G" * (_SEMANTIC_HASH_MIN_CHARS + 50),
         },
     ]

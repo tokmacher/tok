@@ -93,43 +93,6 @@ class TestCLI:
         assert "live-benchmark" in result.output
         assert "stress-language" in result.output
 
-    def test_hidden_legacy_command_aliases_still_work(self, monkeypatch, tmp_path) -> None:
-        calls = {}
-
-        monkeypatch.setattr(
-            "tok.utils.metrics.pressure_trends",
-            lambda window, export: calls.update({"window": window, "export": export}),
-        )
-
-        export_path = tmp_path / "pressure.json"
-        result = runner.invoke(app, ["pressure", "--window", "3", "--export", str(export_path)])
-
-        assert result.exit_code == 0
-        assert calls == {"window": 3, "export": str(export_path)}
-
-    def test_hidden_legacy_generate_fixture_alias_still_works(self, monkeypatch) -> None:
-        calls = {}
-
-        class FakeGenerator:
-            def generate_coding_session(self, name, turns, template, complexity):
-                calls["generate"] = (name, turns, template, complexity)
-                return "fixture-data", '{"name": "demo"}'
-
-            def save_fixture(self, name, fixture, metadata, output) -> None:
-                calls["save"] = (name, fixture, metadata, output)
-
-        monkeypatch.setattr("tok.testing.fixture_generator.FixtureGenerator", FakeGenerator)
-
-        result = runner.invoke(app, ["generate-fixture", "coding", "legacy-demo"])
-
-        assert result.exit_code == 0
-        assert calls["generate"] == (
-            "legacy-demo",
-            5,
-            "standard_claude",
-            "medium",
-        )
-
     def test_install_default_mode_does_not_write_shell_wrapper(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.utils.shell_integration.uninstall", lambda: [])
         monkeypatch.setattr(

@@ -1,6 +1,6 @@
 # Release Claims Matrix
 
-Last updated: **2026-04-08**.
+Last updated: **2026-04-28** (0.1.6 CLI cleanup; 0.1.5 additions recorded below).
 
 This matrix is the release input for pricing/benchmark/savings claims.
 
@@ -29,8 +29,11 @@ Benchmark authority policy (release evidence):
 
 ## Smoke / Boundary Claims
 
-| Claim                                                       | Owner                                          | Evidence Command                                                | Artifact                   | Status   |
-| ----------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------- | -------------------------- | -------- |
-| Defended release surface remains narrow                     | `src/tok/release_surface.py`                   | `uv run pytest tests/unit/test_release_surface.py -q`           | test pass output           | Verified |
-| Bridge non-streaming/streaming/malformed/install paths hold | `scripts/run_release_smoke.py` + smoke tests   | `uv run python scripts/run_release_smoke.py`                    | smoke harness output       | Verified |
-| Added live smoke categories are automated                   | `tests/smoke/test_live_claude_smoke_matrix.py` | `uv run pytest tests/smoke/test_live_claude_smoke_matrix.py -q` | 4-pass smoke matrix output | Verified |
+| Claim                                                            | Owner                                          | Evidence Command                                                | Artifact                   | Status           |
+| ---------------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------- | -------------------------- | ---------------- |
+| Defended release surface remains narrow                          | `src/tok/release_surface.py`                   | `uv run pytest tests/unit/test_release_surface.py -q`           | test pass output           | Verified         |
+| Bridge non-streaming/streaming/malformed/install paths hold      | `scripts/run_release_smoke.py` + smoke tests   | `uv run python scripts/run_release_smoke.py`                    | smoke harness output       | Verified         |
+| Added live smoke categories are automated                        | `tests/smoke/test_live_claude_smoke_matrix.py` | `uv run pytest tests/smoke/test_live_claude_smoke_matrix.py -q` | 4-pass smoke matrix output | Verified         |
+| Compression path tracking preserves raw git paths                | `src/tok/cli/_bridge.py` (0.1.5 fix)           | `uv run pytest tests/unit/ -k compression -q`                   | unit test pass             | Verified (0.1.5) |
+| Cache fidelity tagging present in compression decisions          | `src/tok/cli/_bridge.py` (0.1.5)               | `TOK_LOG_LEVEL=DEBUG tok bridge start` + session log            | debug log output           | Verified (0.1.5) |
+| `bridge reset-session` hidden command clears first-read tracking | `src/tok/cli/_bridge_commands.py` (0.1.5)      | `tok bridge reset-session && tok bridge status`                 | status output              | Verified (0.1.5) |

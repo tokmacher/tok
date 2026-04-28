@@ -908,7 +908,7 @@ def _store_cache_entry(
             "hash": content_hash,
             "raw": raw,
             "timestamp": time_module.time(),
-            "first_read_complete": is_file_like,
+            "first_read_complete": False,
         }
         while len(result_cache) > RESULT_CACHE_MAX_SIZE:
             try:

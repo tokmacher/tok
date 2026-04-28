@@ -179,7 +179,7 @@ def truncate_large_result(text: str, limit: int = 1200, *, already_compressed: b
     # But still truncate if caller explicitly requests a smaller limit.
     line_count = text.count("\n") + 1
     avg_line_len = len(text) / max(1, line_count)
-    if limit >= 1000 and line_count >= 2 and line_count < 100 and avg_line_len < 100:
+    if limit >= 1000 and line_count >= 2 and line_count < 100 and avg_line_len < 300:
         return text
 
     lines = text.splitlines(keepends=True)

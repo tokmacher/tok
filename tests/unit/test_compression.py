@@ -1227,11 +1227,17 @@ class TestFileCache:
     def test_second_read_unchanged_is_stubbed(self) -> None:
         cache: dict[str, ResultCacheEntry] = {}
         raw = self._big_file(20)
+        # First read (cache miss) delivers verbatim.
         _apply_file_cache(raw, "src/foo.py", cache)
-        result, saved = _apply_file_cache(raw, "src/foo.py", cache)
-        # Repeated identical file read must be replaced with a compact stub.
-        assert "unchanged" in result, f"Expected 'unchanged' stub; got: {result!r}"
-        assert saved > 0, f"Expected positive savings for repeated read; got saved={saved}"
+        # Second read (first cache hit) also delivers verbatim — this is the
+        # "first_read_complete" delivery that marks the file as fully seen.
+        result2, saved2 = _apply_file_cache(raw, "src/foo.py", cache)
+        assert result2 == raw, f"Expected verbatim on second read; got: {result2!r}"
+        assert saved2 == 0
+        # Third read triggers the stub now that the file has been fully delivered twice.
+        result3, saved3 = _apply_file_cache(raw, "src/foo.py", cache)
+        assert "unchanged" in result3, f"Expected 'unchanged' stub on third read; got: {result3!r}"
+        assert saved3 > 0, f"Expected positive savings for third read; got saved={saved3}"
 
     def test_second_read_changed_uses_diff(self) -> None:
         cache: dict[str, ResultCacheEntry] = {}
@@ -1261,15 +1267,22 @@ class TestFileCache:
         msgs1 = self._tool_result_msg("t1", raw)
         _, bd1 = compress_tool_results(msgs1, result_cache=cache, tool_use_id_to_context=id_to_context)
 
+        # Second call: first cache hit — delivers verbatim and marks as fully delivered.
         msgs2 = self._tool_result_msg("t1", raw)
         out2, bd2 = compress_tool_results(msgs2, result_cache=cache, tool_use_id_to_context=id_to_context)
-        result_content = out2[1]["content"][0]["content"]
-        # Second read must be compressed to a stub, not returned verbatim.
-        assert "unchanged" in result_content, (
-            f"Expected 'unchanged' stub for repeated file read; got: {result_content!r}"
+        result2_content = out2[1]["content"][0]["content"]
+        assert result2_content == raw, f"Expected verbatim on second read; got: {result2_content!r}"
+
+        # Third call: file is now fully delivered — expect the stub.
+        msgs3 = self._tool_result_msg("t1", raw)
+        out3, bd3 = compress_tool_results(msgs3, result_cache=cache, tool_use_id_to_context=id_to_context)
+        result3_content = out3[1]["content"][0]["content"]
+        assert "unchanged" in result3_content, (
+            f"Expected 'unchanged' stub for third file read; got: {result3_content!r}"
         )
         assert bd1 == {}
-        assert sum(bd2.values()) > 0, f"Expected savings on second read; got {bd2}"
+        assert bd2 == {}
+        assert sum(bd3.values()) > 0, f"Expected savings on third read; got {bd3}"
 
     def test_parallel_reads_of_same_file_deduplicated_within_turn(self) -> None:
         """Two tool_results for the same file in a single turn: second must be @stable_result."""
@@ -2093,10 +2106,15 @@ class TestHarnessInjectionStripping:
         raw_with_reminder = file_content + "\n<system-reminder>reminder v1</system-reminder>\n"
         _apply_result_cache(raw_with_reminder, ctx, cache)
 
-        # Second call: different reminder — must still be a cache hit
+        # Second call: first cache hit — delivers verbatim (cleaned) and marks as fully delivered.
         raw_with_different_reminder = file_content + "\n<system-reminder>reminder v2</system-reminder>\n"
         result2, _ = _apply_result_cache(raw_with_different_reminder, ctx, cache)
-        assert "|unchanged|" in result2, f"Expected cache hit stub, got: {result2!r}"
+        assert result2 == file_content
+
+        # Third call: stub now that file has been fully delivered.
+        raw_with_reminder_v3 = file_content + "\n<system-reminder>reminder v3</system-reminder>\n"
+        result3, _ = _apply_result_cache(raw_with_reminder_v3, ctx, cache)
+        assert "|unchanged|" in result3, f"Expected cache hit stub, got: {result3!r}"
 
     def test_cache_hit_reminder_then_clean(self) -> None:
         """A file read cached with a reminder must hit when re-read with no reminder."""
@@ -2109,8 +2127,13 @@ class TestHarnessInjectionStripping:
         raw_with_reminder = file_content + "\n<system-reminder>injected</system-reminder>"
         _apply_result_cache(raw_with_reminder, ctx, cache)
 
-        result, _ = _apply_result_cache(file_content, ctx, cache)
-        assert "|unchanged|" in result, f"Expected cache hit stub, got: {result!r}"
+        # Second call: first cache hit — delivers verbatim and marks as fully delivered.
+        result2, _ = _apply_result_cache(file_content, ctx, cache)
+        assert result2 == file_content
+
+        # Third call: stub now that file has been fully delivered.
+        result3, _ = _apply_result_cache(file_content, ctx, cache)
+        assert "|unchanged|" in result3, f"Expected cache hit stub, got: {result3!r}"
 
     def test_cached_raw_does_not_contain_reminder(self) -> None:
         """Raw stored in cache must be the clean content, not the reminder-polluted version."""

@@ -346,17 +346,18 @@ def test_cache_hit_preserves_small_files() -> None:
 
     # First call — populates cache
     first_result, _first_saved = _apply_result_cache(small_file, context, cache)
-    # Second call — cache hit path
+    # Second call — first cache hit delivers verbatim and marks as fully delivered.
     second_result, _second_saved = _apply_result_cache(small_file, context, cache)
+    # Third call — file is now fully delivered; emits the stable guided stub.
+    third_result, _third_saved = _apply_result_cache(small_file, context, cache)
 
-    # First read is verbatim content.
     assert first_result == small_file
-    # Repeat read should be a stable guided stub with explicit recovery hints.
-    assert second_result.startswith(">>> tool:view_file|unchanged|cached|")
-    assert "Read offset=1 for full content" in second_result
-    assert "@stable_skeleton |>" in second_result
     assert ">>>" not in first_result
-    assert ">>> tool:view_file|unchanged|cached|" in second_result
+    assert second_result == small_file
+    assert ">>>" not in second_result
+    assert third_result.startswith(">>> tool:view_file|unchanged|cached|")
+    assert "Read offset=1 for full content" in third_result
+    assert "@stable_skeleton |>" in third_result
 
 
 def test_compress_file_read_preserves_medium_small_slices() -> None:

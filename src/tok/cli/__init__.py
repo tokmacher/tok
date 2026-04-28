@@ -14,7 +14,6 @@ from ._cli_support import console
 from ._dev import dev_app
 from ._init_commands import register as register_init_commands
 from ._install_commands import register as register_install_commands
-from ._legacy_commands import register as register_legacy_commands
 from ._memory_commands import register as register_memory_commands
 from ._metrics import metrics_app
 from ._release_commands import register as register_release_commands
@@ -71,7 +70,6 @@ register_init_commands(app)
 register_bridge_commands(bridge_app)
 register_memory_commands(app)
 register_release_commands(app)
-register_legacy_commands(app)
 
 
 if __name__ == "__main__":
