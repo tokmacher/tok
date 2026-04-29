@@ -289,18 +289,37 @@ def _compress_grep(text: str, tool_context: dict[str, Any] | None = None) -> str
 
     single_file_mode = all(k == "__other__" or k == "" for k in order)
     if single_file_mode and command:
-        m_cmd = re.search(r"(?:^|\s)([^\s/]+(?:\.[^\s/]+)*)(?=\s*$|\s+[^\s])", command)
-        if m_cmd:
-            fname = m_cmd.group(1).strip()
-            if fname and not fname.startswith("-"):
-                if "__other__" in by_file:
-                    entry = by_file.pop("__other__")
-                    by_file[fname] = entry
-                    order = [fname] + [k for k in order if k not in (fname, "__other__")]
-                elif "" in by_file:
-                    entry = by_file.pop("")
-                    by_file[fname] = entry
-                    order = [fname] + [k for k in order if k not in (fname, "")]
+        # Avoid a complex regex on attacker-controlled strings (CodeQL flagged potential backtracking).
+        # This only tries to infer a "filename-ish" token to label grep output that lacks paths.
+        try:
+            import shlex
+
+            tokens = shlex.split(command)
+        except Exception:
+            tokens = command.split()
+
+        fname = ""
+        for tok in reversed(tokens):
+            tok = tok.strip()
+            if not tok or tok.startswith("-"):
+                continue
+            if any(sep in tok for sep in ("/", "\\")):
+                continue
+            # Keep it conservative: only adopt tokens that look like a file-ish identifier.
+            if "." not in tok and not tok.startswith("~"):
+                continue
+            fname = tok
+            break
+
+        if fname:
+            if "__other__" in by_file:
+                entry = by_file.pop("__other__")
+                by_file[fname] = entry
+                order = [fname] + [k for k in order if k not in (fname, "__other__")]
+            elif "" in by_file:
+                entry = by_file.pop("")
+                by_file[fname] = entry
+                order = [fname] + [k for k in order if k not in (fname, "")]
 
     file_count = len([k for k in order if k not in ("__other__", "")])
     if file_count == 0 and total > 0:

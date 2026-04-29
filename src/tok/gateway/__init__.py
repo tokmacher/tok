@@ -12,10 +12,12 @@ from __future__ import annotations
 import asyncio
 import atexit
 import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,6 +120,17 @@ _SESSION_ID_HEADERS = (
     "x-codex-session-id",
     "x-client-session-id",
 )
+
+# Keyed digest to avoid treating auth-like data as "password hashing" (CodeQL) and
+# to make session bucketing tokens non-brute-forceable without in-process memory.
+# Session keys only matter within a running bridge process; they do not need to be
+# stable across restarts.
+_SESSION_KEY_SECRET = secrets.token_bytes(16)
+
+
+def _session_digest(value: str, *, length: int) -> str:
+    digest = hmac.new(_SESSION_KEY_SECRET, value.encode(), hashlib.sha256).hexdigest()
+    return digest[:length]
 
 
 @dataclass
@@ -410,7 +423,7 @@ class BridgeSession:
     def _new_savings_tracker(self, key: str) -> SavingsTracker:
         stats_dir = (self.memory_dir or TOK_DIR) / "session_stats"
         stats_dir.mkdir(parents=True, exist_ok=True)
-        digest = hashlib.sha256(key.encode()).hexdigest()[:24]
+        digest = _session_digest(key, length=24)
         return SavingsTracker(savings_file=str(stats_dir / f"{digest}.tok"))
 
     def _create_session_bucket(self, key: str) -> _BridgeSessionBucket:
@@ -454,7 +467,7 @@ class BridgeSession:
         for header in _SESSION_ID_HEADERS:
             value = normalized_headers.get(header, "").strip()
             if value:
-                digest = hashlib.sha256(f"{header}:{value}".encode()).hexdigest()[:24]
+                digest = _session_digest(f"{header}:{value}", length=24)
                 return f"hdr:{digest}"
 
         auth = normalized_headers.get("authorization") or normalized_headers.get("x-api-key", "")
@@ -473,14 +486,14 @@ class BridgeSession:
                 message_seed = json.dumps(first, sort_keys=True, default=str)[:2048]
         seed = json.dumps(
             {
-                "auth": hashlib.sha256(auth.encode()).hexdigest()[:16] if auth else "",
+                "auth": _session_digest(auth, length=16) if auth else "",
                 "user_agent": user_agent,
                 "client_hint": client_hint,
                 "message_seed": message_seed,
             },
             sort_keys=True,
         )
-        return f"auto:{hashlib.sha256(seed.encode()).hexdigest()[:24]}"
+        return f"auto:{_session_digest(seed, length=24)}"
 
     def activate_session_for_request(
         self,
