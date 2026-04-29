@@ -406,21 +406,17 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         if request.query_params.get("scope", "").strip().lower() == "all":
             session.reset_all_sessions()
             return {"status": "ok", "action": "session_reset_all"}
-        if any(
-            request.headers.get(header)
-            for header in (
-                "x-tok-session-id",
-                "x-claude-session-id",
-                "x-codex-session-id",
-                "x-client-session-id",
-            )
-        ):
-            session.activate_session_for_request(dict(request.headers), None)
-            session.reset_active_session()
-        else:
-            report_session = session.reporting_session()
-            report_session.tracker.reset_session_stats()
-            report_session.runtime_session.reset_session()
+        body_bytes = await request.body()
+        request_body_obj: dict[str, Any] | None = None
+        if body_bytes:
+            with contextlib.suppress(Exception):
+                decoded_body = json.loads(body_bytes)
+                if isinstance(decoded_body, dict):
+                    request_body_obj = decoded_body
+        # Always resolve the caller's bucket the same way as normal requests
+        # (header-based keys or auto keys derived from auth/user-agent/message seed).
+        session.activate_session_for_request(dict(request.headers), request_body_obj)
+        session.reset_active_session()
         return {"status": "ok", "action": "session_reset"}
 
     @app.api_route(

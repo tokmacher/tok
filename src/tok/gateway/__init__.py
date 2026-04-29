@@ -582,6 +582,22 @@ class BridgeSession:
         if active is not None:
             self._activate_session_bucket(active)
 
+    def merge_all_trackers_to_ledger(self) -> None:
+        """Merge all session trackers into the persistent lifetime ledger.
+
+        We keep per-session trackers for isolation, so shutdown persistence must not
+        capture only the original default tracker (which may later be replaced when
+        promoting the default bucket into a keyed bucket).
+        """
+        seen: set[int] = set()
+        for bucket in list(self._session_buckets.values()):
+            tracker = bucket.tracker
+            tracker_id = id(tracker)
+            if tracker_id in seen:
+                continue
+            seen.add(tracker_id)
+            tracker.merge_session_to_ledger()
+
     def capture_request(self, body: dict[str, Any]) -> None:
         """Append raw request body to capture file (strips sensitive headers)."""
         if not self.capture or self._capture_file is None:
@@ -787,7 +803,7 @@ def run_bridge(
         logger.exception("Failed to create bridge session: %s", exc)
         raise
 
-    atexit.register(session.tracker.merge_session_to_ledger)
+    atexit.register(session.merge_all_trackers_to_ledger)
     atexit.register(lambda: PID_FILE.unlink(missing_ok=True))
 
     try:
