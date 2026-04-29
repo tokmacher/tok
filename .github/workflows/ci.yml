@@ -26,7 +26,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen --extra dev
       - run: uv run python scripts/check_repo_hygiene.py
-      - run: uv run pre-commit run --all-files
+      - run: SKIP=gitleaks uv run pre-commit run --all-files
+      - name: gitleaks (dedicated)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: uv run ruff check src/tok tests
       - run: uv run python scripts/run_security_audit.py
       - run: uvx pip-audit
