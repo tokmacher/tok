@@ -2390,6 +2390,7 @@ def test_live_benchmark_cli_program_both_writes_separate_artifacts(monkeypatch, 
 
 
 def test_live_benchmark_cli_program_catalog_writes_report(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
     catalog = BenchmarkCatalog(root=str(tmp_path), lanes=(_production_lane(),), tasks=tuple())
     report = build_benchmark_report(
         catalog,
@@ -2711,6 +2712,7 @@ def test_family_evaluator_uses_checked_in_evaluator_spec(tmp_path: Path) -> None
 
 
 def test_live_benchmark_cli_program_both_defaults_catalog_repeats_to_five(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
     catalog = BenchmarkCatalog(root=str(tmp_path), lanes=(_production_lane(),), tasks=tuple())
     report = build_benchmark_report(
         catalog,
