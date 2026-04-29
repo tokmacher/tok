@@ -13,8 +13,10 @@ class _Tracker:
 
 
 def _fake_session(**kwargs) -> SimpleNamespace:
+    tracker = _Tracker()
     return SimpleNamespace(
-        tracker=_Tracker(),
+        tracker=tracker,
+        merge_all_trackers_to_ledger=tracker.merge_session_to_ledger,
         api_base=kwargs["api_base"],
         request_policy_default="natural_first",
     )
