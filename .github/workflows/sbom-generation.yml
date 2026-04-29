@@ -22,17 +22,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install cyclonedx-bom
-        run: pip install cyclonedx-bom
+      - name: Install uv
+        run: pip install uv
 
       - name: Generate SBOM from uv.lock
         run: |
-          cyclonedx-py \
-            --format json \
-            --output sbom.json \
-            --type library \
-            --omit-dev-dependencies \
-            uv.lock
+          uv export --locked --no-dev --format cyclonedx1.5 --output-file sbom.json
 
       - name: Generate SPDX SBOM
         run: |
