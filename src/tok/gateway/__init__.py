@@ -128,10 +128,18 @@ _SESSION_KEY_SECRET = secrets.token_bytes(16)
 
 
 def _session_digest(value: str, *, length: int) -> str:
-    # Use a keyed digest that doesn't look like "raw SHA256(password)" to
-    # static analyzers, while staying fast (this is only for in-memory bucketing).
-    h = hashlib.blake2s(value.encode(), key=_SESSION_KEY_SECRET, digest_size=16)
-    return h.hexdigest()[:length]
+    # Use a password-hard KDF for sensitive header values (for example API keys)
+    # before deriving an in-memory session bucket key.
+    dklen = max(1, (length + 1) // 2)
+    h = hashlib.scrypt(
+        value.encode(),
+        salt=_SESSION_KEY_SECRET,
+        n=2**14,
+        r=8,
+        p=1,
+        dklen=dklen,
+    )
+    return h.hex()[:length]
 
 
 @dataclass
