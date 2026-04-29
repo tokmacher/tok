@@ -1133,7 +1133,7 @@ def _handle_diff_result(
         tool_context=context,
     )
     confidence, reason = _compute_confidence(None, None, is_heuristic=True)
-    header = f">>> tool:{tool_name}|delta|changed|confidence:{confidence}|reason:{reason}\n"
+    header = f">>> tool:{tool_name}|delta_overflow|changed|confidence:{confidence}|reason:{reason}\n"
     return header + compressed, len(raw_text) - (len(header) + len(compressed))
 
 

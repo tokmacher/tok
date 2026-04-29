@@ -733,9 +733,11 @@ class BridgeMemoryState:
         state_line = ">>> " + "|".join(state_parts) if state_parts else ""
 
         extra_blocks = self._build_extra_blocks(markers)
-
-        if (is_fallback_context or state_line) and extra_blocks:
-            return state_line + "\n" + "\n".join(extra_blocks)
+        if extra_blocks:
+            if state_line:
+                return state_line + "\n" + "\n".join(extra_blocks)
+            if is_fallback_context:
+                return "\n".join(extra_blocks)
         return state_line
 
     @staticmethod

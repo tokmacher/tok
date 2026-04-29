@@ -314,3 +314,140 @@ class TestResetSessionEndpoint:
         payload = resp.json()
         assert payload["session_tokens_saved"] > 0
         assert payload["session_savings_pct"] > 0
+
+
+class TestIsFirstRequestFlag:
+    """RuntimeSession._is_first_request tracks fresh session start vs resumption."""
+
+    def test_starts_true_on_new_session(self) -> None:
+        rs = RuntimeSession()
+        assert rs._is_first_request is True
+
+    def test_stays_false_after_being_set(self) -> None:
+        rs = RuntimeSession()
+        rs._is_first_request = False
+        assert rs._is_first_request is False
+
+    def test_reset_session_resets_to_true(self) -> None:
+        rs = RuntimeSession()
+        rs._is_first_request = False
+        rs.reset_session()
+        assert rs._is_first_request is True
+
+
+class TestFreshSessionPointerInjection:
+    """On a fresh session start, a pointer existence notice is injected once."""
+
+    def test_pointer_notice_injected_on_first_request(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from tok.compression import inject_system_additions
+        from tok.runtime._request_preparation import prepare_request_impl
+        from tok.runtime.core import RuntimeSession, UniversalTokRuntime
+        from tok.runtime.memory.bridge_memory import MemoryEntry
+        from tok.runtime.types import RuntimeRequest
+
+        rs = RuntimeSession(memory_dir=tmp_path / ".tok")
+        rs.bridge_memory.turn = 100
+        rs.bridge_memory.pointers.get_pointer("/repo/src/foo.py")
+        rs.bridge_memory.durable["facts"] = [MemoryEntry(value="answer_file:/repo/src/foo.py")]
+        assert rs._is_first_request is True
+
+        runtime = UniversalTokRuntime()
+
+        captured_hints: list[str] = []
+
+        def capture_inject(body, **kwargs):
+            captured_hints.extend(kwargs.get("runtime_hints", []) or [])
+            return inject_system_additions(body, **kwargs)
+
+        req = RuntimeRequest(
+            model="claude-sonnet-4",
+            messages=[{"role": "user", "content": "hello"}],
+            adapter_kind="claude-bridge",
+            tool_compatible=False,
+        )
+
+        with patch("tok.runtime._request_preparation.inject_system_additions", side_effect=capture_inject):
+            with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
+                prepare_request_impl(runtime, req, rs)
+
+        assert any("bridge_memory.tok @pointers" in h for h in captured_hints), (
+            f"Pointer hint not found in runtime_hints: {captured_hints}"
+        )
+        assert rs._is_first_request is False
+
+    def test_pointer_notice_not_injected_on_second_request(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from tok.compression import inject_system_additions
+        from tok.runtime._request_preparation import prepare_request_impl
+        from tok.runtime.core import RuntimeSession, UniversalTokRuntime
+        from tok.runtime.memory.bridge_memory import MemoryEntry
+        from tok.runtime.types import RuntimeRequest
+
+        rs = RuntimeSession(memory_dir=tmp_path / ".tok")
+        rs.bridge_memory.turn = 100
+        rs.bridge_memory.pointers.get_pointer("/repo/src/bar.py")
+        rs.bridge_memory.durable["facts"] = [MemoryEntry(value="answer_file:/repo/src/bar.py")]
+        rs._is_first_request = False
+
+        runtime = UniversalTokRuntime()
+
+        captured_hints: list[str] = []
+
+        def capture_inject(body, **kwargs):
+            captured_hints.extend(kwargs.get("runtime_hints", []) or [])
+            return inject_system_additions(body, **kwargs)
+
+        req = RuntimeRequest(
+            model="claude-sonnet-4",
+            messages=[{"role": "user", "content": "hello"}],
+            adapter_kind="claude-bridge",
+            tool_compatible=False,
+        )
+
+        with patch("tok.runtime._request_preparation.inject_system_additions", side_effect=capture_inject):
+            with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
+                prepare_request_impl(runtime, req, rs)
+
+        assert not any("bridge_memory.tok @pointers" in h for h in captured_hints), (
+            f"Pointer hint unexpectedly found in runtime_hints on second request: {captured_hints}"
+        )
+
+    def test_short_session_no_injection(self, tmp_path) -> None:
+        from unittest.mock import patch
+
+        from tok.compression import inject_system_additions
+        from tok.runtime._request_preparation import prepare_request_impl
+        from tok.runtime.core import RuntimeSession, UniversalTokRuntime
+        from tok.runtime.types import RuntimeRequest
+
+        rs = RuntimeSession(memory_dir=tmp_path / ".tok")
+        rs.bridge_memory.turn = 3
+        rs.bridge_memory.pointers.get_pointer("/repo/src/baz.py")
+        rs._is_first_request = True
+
+        runtime = UniversalTokRuntime()
+
+        captured_hints: list[str] = []
+
+        def capture_inject(body, **kwargs):
+            captured_hints.extend(kwargs.get("runtime_hints", []) or [])
+            return inject_system_additions(body, **kwargs)
+
+        req = RuntimeRequest(
+            model="claude-sonnet-4",
+            messages=[{"role": "user", "content": "hello"}],
+            adapter_kind="claude-bridge",
+            tool_compatible=False,
+        )
+
+        with patch("tok.runtime._request_preparation.inject_system_additions", side_effect=capture_inject):
+            with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
+                prepare_request_impl(runtime, req, rs)
+
+        assert not any("bridge_memory.tok @pointers" in h for h in captured_hints), (
+            f"Pointer hint unexpectedly found for short session: {captured_hints}"
+        )
+        assert rs._is_first_request is False

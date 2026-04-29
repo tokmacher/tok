@@ -202,6 +202,7 @@ class RuntimeSession:
     _consecutive_fallback_count: int = field(default=0, init=False, repr=False)
     _baseline_only: bool = field(default=False, init=False, repr=False)
     _persistence_failures: int = field(default=0, init=False, repr=False)
+    _is_first_request: bool = field(default=True, init=False, repr=False)
     _answer_ready_repair_pending: bool = field(default=False, init=False, repr=False)
     _answer_ready_repair_active: bool = field(default=False, init=False, repr=False)
     _late_answer_assembly_repair_pending: bool = field(default=False, init=False, repr=False)
@@ -378,6 +379,7 @@ class RuntimeSession:
         self.semantic_hash_cache.clear()
         self.bridge_memory.hot.clear()
         self.bridge_memory.rolling_cmds = []
+        self._is_first_request = True
         logger.info("RuntimeSession reset: all transient state cleared")
 
     def record_invalid_tool_history_recovery(self, *, blocked: bool) -> dict[str, int]:

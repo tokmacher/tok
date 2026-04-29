@@ -1249,6 +1249,11 @@ def prepare_request_impl(
         else:
             session_memory = session.refresh_hot_memory("", model=request.model)
 
+        if session._is_first_request and session.bridge_memory.pointers.map:
+            pointer_hint = "see /Users/jfj/.tok/bridge_memory.tok @pointers for recent file references"
+            runtime_hints = [pointer_hint] + runtime_hints
+            session._is_first_request = False
+
         if effective_tool_compatible:
             if skip_reason == "short_session":
                 # Short session: skip ALL Tok additions to avoid overhead
