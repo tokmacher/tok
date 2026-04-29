@@ -60,6 +60,19 @@ class TestResetSessionClearsState:
 
 
 class TestBridgeSessionBuckets:
+    def test_auth_bucket_token_cache_is_bounded(self, monkeypatch) -> None:
+        import tok.gateway as gateway
+
+        monkeypatch.setattr(gateway, "_AUTH_TOKEN_CACHE_MAX", 2)
+        gateway._AUTH_TOKEN_CACHE.clear()
+
+        gateway._auth_bucket_token("Bearer a")
+        gateway._auth_bucket_token("Bearer b")
+        gateway._auth_bucket_token("Bearer c")
+
+        assert len(gateway._AUTH_TOKEN_CACHE) == 2
+        assert "Bearer a" not in gateway._AUTH_TOKEN_CACHE
+
     def test_explicit_session_headers_select_distinct_buckets(self, tmp_path) -> None:
         from tok.gateway import BridgeSession
 
@@ -144,6 +157,23 @@ class TestBridgeSessionBuckets:
 
         assert any(key.startswith("hdr:") for key in merged)
         assert len(merged) == 1
+
+    def test_auto_fingerprint_map_pruned_when_bucket_evicted(self, tmp_path) -> None:
+        from tok.gateway import BridgeSession
+
+        session = BridgeSession(memory_dir=tmp_path / ".tok", max_sessions=1)
+        h1 = {"authorization": "Bearer one", "user-agent": "ua"}
+        h2 = {"authorization": "Bearer two", "user-agent": "ua"}
+
+        key1 = session.activate_session_for_request(h1, {"messages": [{"role": "user", "content": "one"}]})
+        assert key1.startswith("auto:")
+        fp1 = session._auto_fingerprint({k.lower(): v for k, v in h1.items()})
+        assert session._auto_fingerprint_to_key.get(fp1) == key1
+
+        key2 = session.activate_session_for_request(h2, {"messages": [{"role": "user", "content": "two"}]})
+        assert key2.startswith("auto:")
+        assert key1 not in session._session_buckets
+        assert fp1 not in session._auto_fingerprint_to_key
 
     def test_bound_session_view_survives_parent_activation_swap(self, tmp_path) -> None:
         from tok.gateway import BridgeSession
@@ -478,4 +508,24 @@ class TestFreshSessionPointerInjection:
         assert not any("bridge_memory.tok @pointers" in h for h in captured_hints), (
             f"Pointer hint unexpectedly found for short session: {captured_hints}"
         )
+        assert rs._is_first_request is False
+
+    def test_first_request_flag_clears_even_without_pointers(self, tmp_path) -> None:
+        from tok.runtime._request_preparation import prepare_request_impl
+        from tok.runtime.core import RuntimeSession, UniversalTokRuntime
+        from tok.runtime.types import RuntimeRequest
+
+        rs = RuntimeSession(memory_dir=tmp_path / ".tok")
+        rs.bridge_memory.turn = 100
+        rs._is_first_request = True
+        assert not rs.bridge_memory.pointers.map
+
+        runtime = UniversalTokRuntime()
+        req = RuntimeRequest(
+            model="claude-sonnet-4",
+            messages=[{"role": "user", "content": "hello"}],
+            adapter_kind="claude-bridge",
+            tool_compatible=False,
+        )
+        prepare_request_impl(runtime, req, rs)
         assert rs._is_first_request is False

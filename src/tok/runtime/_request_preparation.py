@@ -1250,14 +1250,15 @@ def prepare_request_impl(
         else:
             session_memory = session.refresh_hot_memory("", model=request.model)
 
-        if session._is_first_request and session.bridge_memory.pointers.map:
-            # Don't hard-code a developer machine path; derive from the active session memory dir.
-            try:
-                memory_path = bridge_memory_file(session)
-                pointer_hint = f"see {memory_path} @pointers for recent file references"
-            except Exception:
-                pointer_hint = "see ~/.tok/bridge_memory.tok @pointers for recent file references"
-            runtime_hints = [pointer_hint] + runtime_hints
+        if session._is_first_request:
+            if session.bridge_memory.pointers.map:
+                # Don't hard-code a developer machine path; derive from the active session memory dir.
+                try:
+                    memory_path = bridge_memory_file(session)
+                    pointer_hint = f"see {memory_path} @pointers for recent file references"
+                except Exception:
+                    pointer_hint = "see ~/.tok/bridge_memory.tok @pointers for recent file references"
+                runtime_hints = [pointer_hint] + runtime_hints
             session._is_first_request = False
 
         if effective_tool_compatible:

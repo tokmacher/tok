@@ -19,6 +19,7 @@ import re
 import secrets
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -126,7 +127,8 @@ _SESSION_ID_HEADERS = (
 # Session keys only matter within a running bridge process; they do not need to be
 # stable across restarts.
 _SESSION_KEY_SECRET = secrets.token_bytes(16)
-_AUTH_TOKEN_CACHE: dict[str, str] = {}
+_AUTH_TOKEN_CACHE_MAX = max(64, _env_int("TOK_AUTH_TOKEN_CACHE_MAX", 2048))
+_AUTH_TOKEN_CACHE: OrderedDict[str, str] = OrderedDict()
 _AUTH_TOKEN_LOCK = threading.Lock()
 
 
@@ -136,9 +138,13 @@ def _auth_bucket_token(auth_value: str) -> str:
         return ""
     with _AUTH_TOKEN_LOCK:
         token = _AUTH_TOKEN_CACHE.get(auth_value)
-        if token is None:
+        if token is not None:
+            _AUTH_TOKEN_CACHE.move_to_end(auth_value)
+        else:
             token = secrets.token_hex(12)
             _AUTH_TOKEN_CACHE[auth_value] = token
+            while len(_AUTH_TOKEN_CACHE) > _AUTH_TOKEN_CACHE_MAX:
+                _AUTH_TOKEN_CACHE.popitem(last=False)
         return token
 
 
@@ -469,6 +475,11 @@ class BridgeSession:
         return bucket
 
     def _cleanup_session_buckets(self, *, keep_key: str) -> None:
+        def _prune_auto_fingerprint_map_for_key(session_key: str) -> None:
+            stale = [fp for fp, mapped in self._auto_fingerprint_to_key.items() if mapped == session_key]
+            for fp in stale:
+                self._auto_fingerprint_to_key.pop(fp, None)
+
         now = time.time()
         ttl = max(1, int(self.session_ttl_seconds))
         for key, bucket in list(self._session_buckets.items()):
@@ -478,6 +489,7 @@ class BridgeSession:
                 evicted = self._session_buckets.pop(key, None)
                 if evicted is not None:
                     evicted.tracker.merge_session_to_ledger()
+                    _prune_auto_fingerprint_map_for_key(key)
         max_sessions = max(1, int(self.max_sessions))
         while len(self._session_buckets) > max_sessions:
             candidates = [(key, bucket.last_seen) for key, bucket in self._session_buckets.items() if key != keep_key]
@@ -487,6 +499,7 @@ class BridgeSession:
             evicted = self._session_buckets.pop(evict_key, None)
             if evicted is not None:
                 evicted.tracker.merge_session_to_ledger()
+                _prune_auto_fingerprint_map_for_key(evict_key)
 
     def resolve_session_key(self, headers: dict[str, str], body: dict[str, Any] | None = None) -> str:
         normalized_headers = {k.lower(): v for k, v in headers.items()}
