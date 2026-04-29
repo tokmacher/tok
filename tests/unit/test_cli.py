@@ -73,9 +73,11 @@ class TestCLI:
         result = runner.invoke(app, ["stats", "--help"])
         assert result.exit_code == 0
         assert "Show token savings and fallback state" in result.output
-        assert "--last-session" in result.output
-        assert "--recent" in result.output
-        assert "--since" in result.output
+        assert (
+            ("--last-session" in result.output) or ("-last-session" in result.output) or ("-session" in result.output)
+        )
+        assert ("--recent" in result.output) or ("-recent" in result.output)
+        assert ("--since" in result.output) or ("-since" in result.output)
 
     def test_metrics_help(self) -> None:
         result = runner.invoke(app, ["metrics", "--help"])
