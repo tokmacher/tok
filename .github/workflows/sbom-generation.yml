@@ -25,6 +25,9 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      - name: Install analysis deps
+        run: pip install requests
+
       - name: Generate SBOM from uv.lock
         run: |
           uv export --locked --no-dev --format cyclonedx1.5 --output-file sbom.json
