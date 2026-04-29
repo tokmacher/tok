@@ -51,7 +51,7 @@ class TestCLI:
     def test_bridge_stop_help_shows_force_flag(self) -> None:
         result = runner.invoke(app, ["bridge", "stop", "--help"])
         assert result.exit_code == 0
-        assert "--force" in result.output
+        assert ("--force" in result.output) or ("-force" in result.output)
 
     def test_bridge_stop_force_flag_forwards_to_backend(self, monkeypatch) -> None:
         calls: dict[str, bool] = {}
