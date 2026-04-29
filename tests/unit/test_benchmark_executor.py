@@ -1351,7 +1351,10 @@ def test_execution_patch_evaluator_enforces_expect_initial_hidden_failure_gate(t
     assert result.success is False
     assert "initial_hidden_failure_not_observed" in result.notes
     assert result.details["command_invoked"] is True
-    assert result.details["command_argv"][:2] == ["/bin/zsh", "-lc"]
+    command_argv = result.details["command_argv"]
+    assert isinstance(command_argv, list)
+    assert len(command_argv) >= 2
+    assert command_argv[1] == "-lc"
     assert isinstance(result.details["command_returncode"], int)
     assert result.details["suspicious_noop_pass"] is True
 

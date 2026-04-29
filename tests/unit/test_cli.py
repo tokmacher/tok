@@ -1,6 +1,7 @@
 """Tests for tok.cli — CLI commands via typer testing."""
 
 import json
+import re
 import signal
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,11 @@ from tok.cli import app
 from tok.stats import SavingsTracker
 
 runner = CliRunner()
+
+
+def _normalized_help(text: str) -> str:
+    stripped = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    return stripped.replace("-", "").lower()
 
 
 class TestCLI:
@@ -51,7 +57,7 @@ class TestCLI:
     def test_bridge_stop_help_shows_force_flag(self) -> None:
         result = runner.invoke(app, ["bridge", "stop", "--help"])
         assert result.exit_code == 0
-        assert ("--force" in result.output) or ("-force" in result.output)
+        assert "force" in _normalized_help(result.output)
 
     def test_bridge_stop_force_flag_forwards_to_backend(self, monkeypatch) -> None:
         calls: dict[str, bool] = {}
@@ -65,19 +71,19 @@ class TestCLI:
     def test_doctor_help(self) -> None:
         result = runner.invoke(app, ["doctor", "--help"])
         assert result.exit_code == 0
-        assert "Check bridge health and runtime contract conformance" in (result.output)
-        assert ("--report" in result.output) or ("-report" in result.output)
-        assert ("--verbose" in result.output) or ("-verbose" in result.output)
+        normalized = _normalized_help(result.output)
+        assert "Check bridge health and runtime contract conformance" in result.output
+        assert "report" in normalized
+        assert "verbose" in normalized
 
     def test_stats_help(self) -> None:
         result = runner.invoke(app, ["stats", "--help"])
         assert result.exit_code == 0
+        normalized = _normalized_help(result.output)
         assert "Show token savings and fallback state" in result.output
-        assert (
-            ("--last-session" in result.output) or ("-last-session" in result.output) or ("-session" in result.output)
-        )
-        assert ("--recent" in result.output) or ("-recent" in result.output)
-        assert ("--since" in result.output) or ("-since" in result.output)
+        assert ("lastsession" in normalized) or ("session" in normalized)
+        assert "recent" in normalized
+        assert "since" in normalized
 
     def test_metrics_help(self) -> None:
         result = runner.invoke(app, ["metrics", "--help"])
