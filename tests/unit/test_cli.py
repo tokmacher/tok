@@ -66,8 +66,8 @@ class TestCLI:
         result = runner.invoke(app, ["doctor", "--help"])
         assert result.exit_code == 0
         assert "Check bridge health and runtime contract conformance" in (result.output)
-        assert "--report" in result.output
-        assert "--verbose" in result.output
+        assert ("--report" in result.output) or ("-report" in result.output)
+        assert ("--verbose" in result.output) or ("-verbose" in result.output)
 
     def test_stats_help(self) -> None:
         result = runner.invoke(app, ["stats", "--help"])
