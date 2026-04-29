@@ -468,6 +468,14 @@ def test_tool_loop_executor_execution_patch_requires_edit_and_run_tests_before_f
                 "visible_response": "Done.",
                 "content_blocks": [],
             },
+            {
+                # Keep one spare terminal turn so execution-patch recovery
+                # nudges cannot exhaust the scripted runner on slower/variant
+                # CI paths (for example Python-version-specific step timing).
+                "raw_response": "Done.",
+                "visible_response": "Done.",
+                "content_blocks": [],
+            },
         ]
     )
 
