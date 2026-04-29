@@ -1,28 +1,36 @@
-"""
-Unit test for memory extraction - tests the extraction logic directly.
-
-NOTE: TokOrchestrator.__init__ calls OpenAI() which requires OPENAI_API_KEY
-or OPENROUTER_API_KEY. These tests are skipped unless the key is present.
-"""
+"""Unit tests for memory extraction logic."""
 
 import os
 import sys
-
-import pytest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), "src")))
-
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("OPENROUTER_API_KEY") and not os.environ.get("OPENAI_API_KEY"),
-    reason="requires OPENROUTER_API_KEY or OPENAI_API_KEY",
-)
 
 from tok.adapters.orchestrator import TokOrchestrator
 
 
+class _FakeModels:
+    def retrieve(self, _model: str):
+        class _Response:
+            pricing = {"prompt": 0.000075, "completion": 0.00030}
+
+        return _Response()
+
+
+class _FakeOpenAI:
+    def __init__(self, *args, **kwargs) -> None:
+        del args, kwargs
+        self.models = _FakeModels()
+
+
+def _new_orchestrator() -> TokOrchestrator:
+    with patch("tok.adapters.orchestrator.OpenAI", _FakeOpenAI):
+        return TokOrchestrator()
+
+
 def test_extract_compression() -> None:
     """Test >>> line extraction."""
-    tok = TokOrchestrator()
+    tok = _new_orchestrator()
 
     # Test 1: >>> line present
     response = """Some text
@@ -50,7 +58,7 @@ secret: X99
 
 def test_extract_state() -> None:
     """Test @state block extraction."""
-    tok = TokOrchestrator()
+    tok = _new_orchestrator()
 
     # Test 1: @state block with content
     response = """Some text
@@ -86,7 +94,7 @@ def test_memory_persistence_unit() -> None:
     """Test that memory is persisted and reloaded via the session bridge_memory."""
     from tok.universal_runtime import RuntimeSession
 
-    tok = TokOrchestrator()
+    tok = _new_orchestrator()
 
     # Inject a wire state directly into the session bridge_memory
     wire_state = ">>> t:1|g:test_goal|f:identity.py"
