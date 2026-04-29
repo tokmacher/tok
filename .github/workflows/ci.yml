@@ -30,7 +30,7 @@ jobs:
       - run: uv run ruff check src/tok tests
       - run: uv run python scripts/run_security_audit.py
       - run: uvx pip-audit
-      - run: uv run safety check --json --output safety-report.json
+      - run: uv run safety check --output json > safety-report.json
       - run: uv run python scripts/verify_dependency_integrity.py
 
   typecheck:
