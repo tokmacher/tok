@@ -697,7 +697,9 @@ class SavingsTracker:
                 "session_start",
                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             )
-            sess_id = hashlib.md5(date_str.encode()).hexdigest()[:8]  # nosec B324
+            # Session IDs should be stable for a given session bucket (so reruns replace),
+            # but not collide just because two sessions started in the same second.
+            sess_id = hashlib.md5(f"{date_str}:{self._savings_file}".encode()).hexdigest()[:8]  # nosec B324
             invisible_pressure = calculate_invisible_pressure(sess_signals)
             memory_lift = calculate_memory_lift(sess_signals)
             semantic_regression = calculate_semantic_regression_score(sess_signals)
@@ -738,7 +740,7 @@ class SavingsTracker:
             replaced = 0
             for line in log_lines:
                 prior = self._parse_session_log_core(line)
-                if prior and (prior["session_id"] == sess_id or prior["date"] == date_str):
+                if prior and prior["session_id"] == sess_id:
                     self._subtract_session_from_ledger(ledger, prior)
                     replaced += 1
                     continue

@@ -36,6 +36,7 @@ from ._history_slicing import (
 from ._history_slicing import (
     _tool_result_only_suffix_has_safe_pairing as _tool_result_only_suffix_has_safe_pairing_impl,
 )
+from ._session_persistence import bridge_memory_file
 from .config import (
     _SHORT_SESSION_THRESHOLD,
     RUNTIME_HINTS_MAX_PER_TURN,
@@ -1250,7 +1251,12 @@ def prepare_request_impl(
             session_memory = session.refresh_hot_memory("", model=request.model)
 
         if session._is_first_request and session.bridge_memory.pointers.map:
-            pointer_hint = "see /Users/jfj/.tok/bridge_memory.tok @pointers for recent file references"
+            # Don't hard-code a developer machine path; derive from the active session memory dir.
+            try:
+                memory_path = bridge_memory_file(session)
+                pointer_hint = f"see {memory_path} @pointers for recent file references"
+            except Exception:
+                pointer_hint = "see ~/.tok/bridge_memory.tok @pointers for recent file references"
             runtime_hints = [pointer_hint] + runtime_hints
             session._is_first_request = False
 
