@@ -379,6 +379,7 @@ class BridgeSession:
     max_sessions: int = field(default_factory=lambda: _env_int("TOK_MAX_SESSIONS", 32))
     _session_buckets: dict[str, _BridgeSessionBucket] = field(default_factory=dict, init=False, repr=False)
     _active_session_key: str = field(default="default", init=False, repr=False)
+    _auto_fingerprint_to_key: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.api_base = self.api_base.strip() or ANTHROPIC_API_BASE
@@ -462,14 +463,18 @@ class BridgeSession:
             if key == keep_key:
                 continue
             if now - bucket.last_seen > ttl:
-                self._session_buckets.pop(key, None)
+                evicted = self._session_buckets.pop(key, None)
+                if evicted is not None:
+                    evicted.tracker.merge_session_to_ledger()
         max_sessions = max(1, int(self.max_sessions))
         while len(self._session_buckets) > max_sessions:
             candidates = [(key, bucket.last_seen) for key, bucket in self._session_buckets.items() if key != keep_key]
             if not candidates:
                 break
             evict_key = min(candidates, key=lambda item: item[1])[0]
-            self._session_buckets.pop(evict_key, None)
+            evicted = self._session_buckets.pop(evict_key, None)
+            if evicted is not None:
+                evicted.tracker.merge_session_to_ledger()
 
     def resolve_session_key(self, headers: dict[str, str], body: dict[str, Any] | None = None) -> str:
         normalized_headers = {k.lower(): v for k, v in headers.items()}
@@ -504,11 +509,41 @@ class BridgeSession:
         )
         return f"auto:{_session_digest(seed, length=24)}"
 
+    def _auto_fingerprint(self, normalized_headers: dict[str, str]) -> str:
+        auth = normalized_headers.get("authorization") or normalized_headers.get("x-api-key", "")
+        user_agent = normalized_headers.get("user-agent", "")
+        client_hint = (
+            normalized_headers.get("x-client-pid")
+            or normalized_headers.get("x-claude-client-pid")
+            or normalized_headers.get("x-codex-client-pid")
+            or ""
+        )
+        seed = json.dumps(
+            {
+                "auth": _session_digest(auth, length=16) if auth else "",
+                "user_agent": user_agent,
+                "client_hint": client_hint,
+            },
+            sort_keys=True,
+        )
+        return f"auto_fp:{_session_digest(seed, length=24)}"
+
     def activate_session_for_request(
         self,
         headers: dict[str, str],
         body: dict[str, Any] | None = None,
     ) -> str:
+        normalized_headers = {k.lower(): v for k, v in headers.items()}
+        if body is None:
+            has_explicit_session_id = any(normalized_headers.get(header, "").strip() for header in _SESSION_ID_HEADERS)
+            if not has_explicit_session_id:
+                fingerprint = self._auto_fingerprint(normalized_headers)
+                mapped_key = self._auto_fingerprint_to_key.get(fingerprint)
+                if mapped_key is not None and mapped_key in self._session_buckets:
+                    self._cleanup_session_buckets(keep_key=mapped_key)
+                    self._activate_session_bucket(self._session_buckets[mapped_key])
+                    return mapped_key
+
         key = self.resolve_session_key(headers, body)
         bucket = self._session_buckets.get(key)
         if bucket is None:
@@ -522,6 +557,8 @@ class BridgeSession:
             else:
                 bucket = self._create_session_bucket(key)
             self._session_buckets[key] = bucket
+        if key.startswith("auto:"):
+            self._auto_fingerprint_to_key[self._auto_fingerprint(normalized_headers)] = key
         self._cleanup_session_buckets(keep_key=key)
         self._activate_session_bucket(bucket)
         return key

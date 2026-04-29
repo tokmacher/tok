@@ -117,6 +117,34 @@ class TestBridgeSessionBuckets:
         assert active_key in session._session_buckets
         assert len(session._session_buckets) == 2
 
+    def test_bucket_eviction_persists_tracker_to_ledger(self, tmp_path) -> None:
+        from tok.gateway import BridgeSession
+
+        merged: list[str] = []
+
+        class _FakeTracker:
+            def __init__(self, key: str) -> None:
+                self._key = key
+                self.savings_file = "fake.tok"
+
+            def merge_session_to_ledger(self) -> None:
+                merged.append(self._key)
+
+            def reset_session_stats(self) -> None:
+                return None
+
+            def session_summary(self) -> dict[str, int]:
+                return {"calls": 1}
+
+        session = BridgeSession(memory_dir=tmp_path / ".tok", max_sessions=1)
+        session._new_savings_tracker = lambda key: _FakeTracker(key)  # type: ignore[method-assign]
+
+        session.activate_session_for_request({"x-tok-session-id": "one"}, None)
+        session.activate_session_for_request({"x-tok-session-id": "two"}, None)
+
+        assert any(key.startswith("hdr:") for key in merged)
+        assert len(merged) == 1
+
     def test_bound_session_view_survives_parent_activation_swap(self, tmp_path) -> None:
         from tok.gateway import BridgeSession
 
