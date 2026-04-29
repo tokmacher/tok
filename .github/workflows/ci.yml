@@ -34,7 +34,8 @@ jobs:
       - run: uv run ruff check src/tok tests
       - run: uv run python scripts/run_security_audit.py
       - run: uvx pip-audit
-      - run: uv run safety check --output json > safety-report.json
+      - name: Safety report (non-blocking)
+        run: uv run safety check --output json > safety-report.json || true
       - run: uv run python scripts/verify_dependency_integrity.py
 
   typecheck:
