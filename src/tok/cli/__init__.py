@@ -9,6 +9,7 @@ import typer
 from dotenv import load_dotenv
 from rich.logging import RichHandler
 
+from ._audit_commands import register as register_audit_commands
 from ._bridge_commands import register as register_bridge_commands
 from ._cli_support import console
 from ._dev import dev_app
@@ -68,6 +69,7 @@ app.add_typer(dev_app, name="dev", hidden=True)
 register_install_commands(app)
 register_init_commands(app)
 register_bridge_commands(bridge_app)
+register_audit_commands(app)
 register_memory_commands(app)
 register_release_commands(app)
 
