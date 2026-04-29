@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -125,6 +126,20 @@ _SESSION_ID_HEADERS = (
 # Session keys only matter within a running bridge process; they do not need to be
 # stable across restarts.
 _SESSION_KEY_SECRET = secrets.token_bytes(16)
+_AUTH_TOKEN_CACHE: dict[str, str] = {}
+_AUTH_TOKEN_LOCK = threading.Lock()
+
+
+def _auth_bucket_token(auth_value: str) -> str:
+    # Do not hash password-like secrets directly; use opaque per-process tokens.
+    if not auth_value:
+        return ""
+    with _AUTH_TOKEN_LOCK:
+        token = _AUTH_TOKEN_CACHE.get(auth_value)
+        if token is None:
+            token = secrets.token_hex(12)
+            _AUTH_TOKEN_CACHE[auth_value] = token
+        return token
 
 
 def _session_digest(value: str, *, length: int) -> str:
@@ -497,7 +512,7 @@ class BridgeSession:
                 message_seed = json.dumps(first, sort_keys=True, default=str)[:2048]
         seed = json.dumps(
             {
-                "auth": _session_digest(auth, length=16) if auth else "",
+                "auth": _auth_bucket_token(auth),
                 "user_agent": user_agent,
                 "client_hint": client_hint,
                 "message_seed": message_seed,
@@ -517,7 +532,7 @@ class BridgeSession:
         )
         seed = json.dumps(
             {
-                "auth": _session_digest(auth, length=16) if auth else "",
+                "auth": _auth_bucket_token(auth),
                 "user_agent": user_agent,
                 "client_hint": client_hint,
             },
