@@ -27,10 +27,10 @@
 ### Added
 
 - **Fresh-session pointer notice**: on a new Claude Code session, a one-time runtime
-  hint is injected: "see /Users/jfj/.tok/bridge_memory.tok @pointers for recent file
-  references". This surfaces the existence of Tok's pointer registry to the agent
-  without dumping full memory state. Fires once per fresh session; not injected on
-  resumption or short sessions (under 8 turns).
+  hint is injected: "see ~/.tok/bridge_memory.tok @pointers for recent file references".
+  This surfaces the existence of Tok's pointer registry to the agent without dumping
+  full memory state. Fires once per fresh session; not injected on resumption or short
+  sessions (under 8 turns).
 - `test_bug_audit_regressions.py`: regression tests covering host-stub replay, resend
   strategy, and session state isolation.
 - `test_session_state_persistence.py`: tests for `reset_session()` state clearing,
