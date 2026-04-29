@@ -202,6 +202,7 @@ class RuntimeSession:
     _consecutive_fallback_count: int = field(default=0, init=False, repr=False)
     _baseline_only: bool = field(default=False, init=False, repr=False)
     _persistence_failures: int = field(default=0, init=False, repr=False)
+    _is_first_request: bool = field(default=True, init=False, repr=False)
     _answer_ready_repair_pending: bool = field(default=False, init=False, repr=False)
     _answer_ready_repair_active: bool = field(default=False, init=False, repr=False)
     _late_answer_assembly_repair_pending: bool = field(default=False, init=False, repr=False)
@@ -258,8 +259,8 @@ class RuntimeSession:
     _last_user_prompt_labels: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
     _request_has_tools: bool = field(default=False, init=False, repr=False)
     _runtime_hint_last_turn: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    # Fidelity overrides: paths that should bypass skeleton/truncation due to repeated reads
-    # Maps path -> turns remaining (decremented each turn, removed when <= 0)
+    # Fidelity overrides: paths that should bypass skeleton/truncation due to repeated reads.
+    # Recomputed each turn by compute_fidelity_overrides() — not a turn-counter dict.
     _fidelity_overrides: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     # Track file reads by turn number for rapid re-read detection
     _file_reads_by_turn: dict[str, int] = field(default_factory=dict, init=False, repr=False)
@@ -376,6 +377,9 @@ class RuntimeSession:
         self.family_states.clear()
         self.result_cache.clear()
         self.semantic_hash_cache.clear()
+        self.bridge_memory.hot.clear()
+        self.bridge_memory.rolling_cmds = []
+        self._is_first_request = True
         logger.info("RuntimeSession reset: all transient state cleared")
 
     def record_invalid_tool_history_recovery(self, *, blocked: bool) -> dict[str, int]:

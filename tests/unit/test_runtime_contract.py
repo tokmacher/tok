@@ -57,6 +57,18 @@ def test_response_contract_classifies_tok_native_vs_fail_open() -> None:
     assert degraded.behavior_signals.get("fail_open_compat_response", 0) == 1
 
 
+def test_response_contract_plain_text_does_not_reuse_previous_tok_mode(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._last_mode = "tok-native"
+
+    contract = response_contract_for_mode("Plain response", tool_compatible=False, session=session)
+
+    assert contract.mode == "markdown"
+    assert session._last_mode == "markdown"
+    assert contract.behavior_signals.get("non_tok_response", 0) == 1
+    assert contract.behavior_signals.get("tok_native_response", 0) == 0
+
+
 def test_response_contract_handles_tool_compatible_plain_text() -> None:
     text = "Plain response"
 
@@ -67,12 +79,50 @@ def test_response_contract_handles_tool_compatible_plain_text() -> None:
     assert "non_tok_response" not in contract.behavior_signals
 
 
+def test_response_contract_strips_visible_tok_pipe_prefixes_from_lazy_plain_text() -> None:
+    text = "Session diagnostic:\n    |#>\n    |1> 1. Fresh session: Yes.\n    |2> 2. No inherited payload."
+
+    contract = response_contract_for_mode(text, tool_compatible=False)
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "|#>" not in visible
+    assert "|1>" not in visible
+    assert "|2>" not in visible
+    assert "1. Fresh session: Yes." in visible
+    assert "2. No inherited payload." in visible
+
+
+def test_response_contract_preserves_bare_pipe_operator_prefixes() -> None:
+    text = "```elixir\n[1, 2, 3]\n|> Enum.map(fn x -> x * 2 end)\n|> Enum.filter(fn x -> x > 2 end)\n```"
+
+    contract = response_contract_for_mode(text, tool_compatible=True)
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "|> Enum.map" in visible
+    assert "|> Enum.filter" in visible
+
+
+def test_answer_deferral_heuristic_ignores_conversational_before_answering(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._answer_phase_active = True
+
+    contract = response_contract_for_mode(
+        "Let me look at the implementation before answering your question.",
+        tool_compatible=False,
+        session=session,
+    )
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "Let me look" in visible
+    assert contract.behavior_signals.get("answer_phase_non_labeled_fallback_applied", 0) == 0
+
+
 def test_response_contract_marks_malformed_hybrid_tool_blocks() -> None:
     text = '>>> turns:3|goal:tests\n@Tool(json={"command": "pytest"})\n@msg role:assistant\n  |> done'
 
     contract = response_contract_for_mode(text, tool_compatible=False)
 
-    assert contract.mode in {"tok", "tok-empty"}
+    assert contract.mode in {"tok-malformed", "tok-empty"}
     assert contract.behavior_signals.get("malformed_tok_response", 0) == 1
     assert contract.behavior_signals.get("malformed_tok_hybrid_tool", 0) == 1
     assert contract.behavior_signals.get("fail_open_compat_response", 0) == 1
@@ -317,7 +367,11 @@ def test_response_contract_quarantines_tool_intent_during_answer_phase(tmp_path)
         session=session,
     )
 
-    assert contract.behavior_signals.get("answer_phase_fallback_failed_no_anchor", 0) == 1
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "File=src/tok/gateway.py" in visible
+    assert "Verification=_response_contract_for_mode" in visible
+    assert contract.behavior_signals.get("answer_phase_tool_intent_quarantined", 0) == 1
+    assert contract.behavior_signals.get("answer_phase_fallback_failed_no_anchor", 0) == 0
 
 
 def test_response_contract_applies_non_labeled_answer_phase_fallback(tmp_path) -> None:
@@ -340,12 +394,16 @@ def test_response_contract_applies_non_labeled_answer_phase_fallback(tmp_path) -
     session._last_user_prompt_labels = ()
 
     contract = response_contract_for_mode(
-        "I will inspect one more area before answering.",
+        "I will inspect src/tok/runtime/pipeline/response_processing.py before answering.",
         tool_compatible=True,
         session=session,
     )
 
-    assert contract.behavior_signals.get("answer_phase_fallback_failed_no_anchor", 0) == 1
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "File=src/tok/runtime/pipeline/response_processing.py" in visible
+    assert "Verification=_repair_structured_answer_text" in visible
+    assert contract.behavior_signals.get("answer_phase_non_labeled_fallback_applied", 0) == 1
+    assert contract.behavior_signals.get("answer_phase_fallback_failed_no_anchor", 0) == 0
 
 
 def test_response_contract_answer_phase_fallback_fails_without_anchors(tmp_path) -> None:

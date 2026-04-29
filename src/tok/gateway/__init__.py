@@ -11,10 +11,15 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import hashlib
 import json
 import logging
 import os
 import re
+import secrets
+import threading
+import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -26,7 +31,7 @@ from tok.runtime.pipeline.request_validation import (
     summarize_message_structure,
 )
 from tok.runtime.smoothness import SmoothnessTracker
-from tok.stats import SavingsTracker
+from tok.stats import SavingsTracker, _default_savings_file
 from tok.universal_runtime import (
     RuntimeSession,
     UniversalTokRuntime,
@@ -108,6 +113,60 @@ def _env_bool(name: str, fallback: bool) -> bool:
     if raw is None:
         return fallback
     return raw == "1"
+
+
+_SESSION_ID_HEADERS = (
+    "x-tok-session-id",
+    "x-claude-session-id",
+    "x-codex-session-id",
+    "x-client-session-id",
+)
+
+# Keyed digest to avoid treating auth-like data as "password hashing" (CodeQL) and
+# to make session bucketing tokens non-brute-forceable without in-process memory.
+# Session keys only matter within a running bridge process; they do not need to be
+# stable across restarts.
+_SESSION_KEY_SECRET = secrets.token_bytes(16)
+_AUTH_TOKEN_CACHE_MAX = max(64, _env_int("TOK_AUTH_TOKEN_CACHE_MAX", 2048))
+_AUTH_TOKEN_CACHE: OrderedDict[str, str] = OrderedDict()
+_AUTH_TOKEN_LOCK = threading.Lock()
+
+
+def _auth_bucket_token(auth_value: str) -> str:
+    # Do not hash password-like secrets directly; use opaque per-process tokens.
+    if not auth_value:
+        return ""
+    with _AUTH_TOKEN_LOCK:
+        token = _AUTH_TOKEN_CACHE.get(auth_value)
+        if token is not None:
+            _AUTH_TOKEN_CACHE.move_to_end(auth_value)
+        else:
+            token = secrets.token_hex(12)
+            _AUTH_TOKEN_CACHE[auth_value] = token
+            while len(_AUTH_TOKEN_CACHE) > _AUTH_TOKEN_CACHE_MAX:
+                _AUTH_TOKEN_CACHE.popitem(last=False)
+        return token
+
+
+def _session_digest(value: str, *, length: int) -> str:
+    # Fast keyed digest for per-request in-memory bucketing. This is not a
+    # password verifier; we only need collision-resistant, process-local tokens.
+    digest_size = max(1, (length + 1) // 2)
+    h = hashlib.blake2b(
+        value.encode(),
+        key=_SESSION_KEY_SECRET,
+        digest_size=digest_size,
+    )
+    return h.hexdigest()[:length]
+
+
+@dataclass
+class _BridgeSessionBucket:
+    key: str
+    runtime_session: RuntimeSession
+    tracker: SavingsTracker
+    smoothness_tracker: SmoothnessTracker
+    last_seen: float = field(default_factory=time.time)
 
 
 def _is_sensitive_capture_key(key: str) -> bool:
@@ -334,6 +393,11 @@ class BridgeSession:
     runtime_session: RuntimeSession = field(default_factory=RuntimeSession)
     # Smoothness tracking for interaction quality
     smoothness_tracker: SmoothnessTracker = field(default_factory=SmoothnessTracker)
+    session_ttl_seconds: int = field(default_factory=lambda: _env_int("TOK_SESSION_TTL_SECONDS", 21600))
+    max_sessions: int = field(default_factory=lambda: _env_int("TOK_MAX_SESSIONS", 32))
+    _session_buckets: dict[str, _BridgeSessionBucket] = field(default_factory=dict, init=False, repr=False)
+    _active_session_key: str = field(default="default", init=False, repr=False)
+    _auto_fingerprint_to_key: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.api_base = self.api_base.strip() or ANTHROPIC_API_BASE
@@ -368,6 +432,233 @@ class BridgeSession:
         if os.getenv("TOK_RESET_SESSION", "0") == "1":
             self.tracker.reset_session_stats()
             self.runtime_session.reset_session()
+        self._session_buckets["default"] = _BridgeSessionBucket(
+            key="default",
+            runtime_session=self.runtime_session,
+            tracker=self.tracker,
+            smoothness_tracker=self.smoothness_tracker,
+        )
+
+    def _new_runtime_session(self) -> RuntimeSession:
+        runtime_session = RuntimeSession(memory_dir=self.memory_dir, keep_turns=self.keep_turns)
+        runtime_session._keep_turns_explicit = True
+        runtime_session.bridge_memory.hot.clear()
+        runtime_session.bridge_memory.rolling_cmds = []
+        if os.getenv("TOK_RESET_SESSION", "0") == "1":
+            runtime_session.reset_session()
+        return runtime_session
+
+    def _new_savings_tracker(self, key: str) -> SavingsTracker:
+        stats_dir = (self.memory_dir or TOK_DIR) / "session_stats"
+        stats_dir.mkdir(parents=True, exist_ok=True)
+        digest = _session_digest(key, length=24)
+        return SavingsTracker(savings_file=str(stats_dir / f"{digest}.tok"))
+
+    def _create_session_bucket(self, key: str) -> _BridgeSessionBucket:
+        bucket = _BridgeSessionBucket(
+            key=key,
+            runtime_session=self._new_runtime_session(),
+            tracker=self._new_savings_tracker(key),
+            smoothness_tracker=SmoothnessTracker(),
+        )
+        if os.getenv("TOK_RESET_SESSION", "0") == "1":
+            bucket.tracker.reset_session_stats()
+        logger.info("bridge_session_bucket_created: key=%s active_buckets=%d", key[:12], len(self._session_buckets) + 1)
+        return bucket
+
+    def _activate_session_bucket(self, bucket: _BridgeSessionBucket) -> _BridgeSessionBucket:
+        bucket.last_seen = time.time()
+        self._active_session_key = bucket.key
+        self.runtime_session = bucket.runtime_session
+        self.tracker = bucket.tracker
+        self.smoothness_tracker = bucket.smoothness_tracker
+        return bucket
+
+    def _cleanup_session_buckets(self, *, keep_key: str) -> None:
+        def _prune_auto_fingerprint_map_for_key(session_key: str) -> None:
+            stale = [fp for fp, mapped in self._auto_fingerprint_to_key.items() if mapped == session_key]
+            for fp in stale:
+                self._auto_fingerprint_to_key.pop(fp, None)
+
+        now = time.time()
+        ttl = max(1, int(self.session_ttl_seconds))
+        for key, bucket in list(self._session_buckets.items()):
+            if key == keep_key:
+                continue
+            if now - bucket.last_seen > ttl:
+                evicted = self._session_buckets.pop(key, None)
+                if evicted is not None:
+                    evicted.tracker.merge_session_to_ledger()
+                    _prune_auto_fingerprint_map_for_key(key)
+        max_sessions = max(1, int(self.max_sessions))
+        while len(self._session_buckets) > max_sessions:
+            candidates = [(key, bucket.last_seen) for key, bucket in self._session_buckets.items() if key != keep_key]
+            if not candidates:
+                break
+            evict_key = min(candidates, key=lambda item: item[1])[0]
+            evicted = self._session_buckets.pop(evict_key, None)
+            if evicted is not None:
+                evicted.tracker.merge_session_to_ledger()
+                _prune_auto_fingerprint_map_for_key(evict_key)
+
+    def resolve_session_key(self, headers: dict[str, str], body: dict[str, Any] | None = None) -> str:
+        normalized_headers = {k.lower(): v for k, v in headers.items()}
+        for header in _SESSION_ID_HEADERS:
+            value = normalized_headers.get(header, "").strip()
+            if value:
+                digest = _session_digest(f"{header}:{value}", length=24)
+                return f"hdr:{digest}"
+
+        auth = normalized_headers.get("authorization") or normalized_headers.get("x-api-key", "")
+        user_agent = normalized_headers.get("user-agent", "")
+        client_hint = (
+            normalized_headers.get("x-client-pid")
+            or normalized_headers.get("x-claude-client-pid")
+            or normalized_headers.get("x-codex-client-pid")
+            or ""
+        )
+        message_seed = ""
+        messages = body.get("messages") if isinstance(body, dict) else None
+        if isinstance(messages, list) and messages:
+            first = messages[0]
+            if isinstance(first, dict):
+                message_seed = json.dumps(first, sort_keys=True, default=str)[:2048]
+        seed = json.dumps(
+            {
+                "auth": _auth_bucket_token(auth),
+                "user_agent": user_agent,
+                "client_hint": client_hint,
+                "message_seed": message_seed,
+            },
+            sort_keys=True,
+        )
+        return f"auto:{_session_digest(seed, length=24)}"
+
+    def _auto_fingerprint(self, normalized_headers: dict[str, str]) -> str:
+        auth = normalized_headers.get("authorization") or normalized_headers.get("x-api-key", "")
+        user_agent = normalized_headers.get("user-agent", "")
+        client_hint = (
+            normalized_headers.get("x-client-pid")
+            or normalized_headers.get("x-claude-client-pid")
+            or normalized_headers.get("x-codex-client-pid")
+            or ""
+        )
+        seed = json.dumps(
+            {
+                "auth": _auth_bucket_token(auth),
+                "user_agent": user_agent,
+                "client_hint": client_hint,
+            },
+            sort_keys=True,
+        )
+        return f"auto_fp:{_session_digest(seed, length=24)}"
+
+    def activate_session_for_request(
+        self,
+        headers: dict[str, str],
+        body: dict[str, Any] | None = None,
+    ) -> str:
+        normalized_headers = {k.lower(): v for k, v in headers.items()}
+        if body is None:
+            has_explicit_session_id = any(normalized_headers.get(header, "").strip() for header in _SESSION_ID_HEADERS)
+            if not has_explicit_session_id:
+                fingerprint = self._auto_fingerprint(normalized_headers)
+                mapped_key = self._auto_fingerprint_to_key.get(fingerprint)
+                if mapped_key is not None and mapped_key in self._session_buckets:
+                    self._cleanup_session_buckets(keep_key=mapped_key)
+                    self._activate_session_bucket(self._session_buckets[mapped_key])
+                    return mapped_key
+
+        key = self.resolve_session_key(headers, body)
+        bucket = self._session_buckets.get(key)
+        if bucket is None:
+            default_bucket = self._session_buckets.get("default")
+            if default_bucket is not None and len(self._session_buckets) == 1:
+                self._session_buckets.pop("default", None)
+                default_bucket.key = key
+                if default_bucket.tracker.savings_file == _default_savings_file():
+                    default_bucket.tracker = self._new_savings_tracker(key)
+                bucket = default_bucket
+            else:
+                bucket = self._create_session_bucket(key)
+            self._session_buckets[key] = bucket
+        if key.startswith("auto:"):
+            self._auto_fingerprint_to_key[self._auto_fingerprint(normalized_headers)] = key
+        self._cleanup_session_buckets(keep_key=key)
+        self._activate_session_bucket(bucket)
+        return key
+
+    def bound_session_for_key(self, key: str) -> BridgeSession:
+        """Return a request-local view pinned to one session bucket."""
+        import copy
+
+        bucket = self._session_buckets[key]
+        bound = copy.copy(self)
+        bound.runtime_session = bucket.runtime_session
+        bound.tracker = bucket.tracker
+        bound.smoothness_tracker = bucket.smoothness_tracker
+        bound._active_session_key = key
+        return bound
+
+    def reporting_session(self) -> BridgeSession:
+        """Return a stable bucket view for bridge status/stat reporting."""
+        non_empty = [
+            bucket
+            for bucket in self._session_buckets.values()
+            if (bucket.tracker.session_summary() or {}).get("calls", 0)
+        ]
+        if non_empty:
+            bucket = max(non_empty, key=lambda item: item.last_seen)
+        else:
+            bucket = (
+                self._session_buckets.get(self._active_session_key)
+                or self._session_buckets.get("default")
+                or next(iter(self._session_buckets.values()), None)
+            )
+        if bucket is None:
+            return self
+        return self.bound_session_for_key(bucket.key)
+
+    def reset_active_session(self) -> None:
+        bucket = (
+            self._session_buckets.get(self._active_session_key)
+            or self._session_buckets.get("default")
+            or next(iter(self._session_buckets.values()), None)
+        )
+        if bucket is None:
+            return
+        bucket.tracker.reset_session_stats()
+        bucket.runtime_session.reset_session()
+        self._activate_session_bucket(bucket)
+
+    def reset_all_sessions(self) -> None:
+        for bucket in self._session_buckets.values():
+            bucket.tracker.reset_session_stats()
+            bucket.runtime_session.reset_session()
+            bucket.last_seen = time.time()
+        active = (
+            self._session_buckets.get(self._active_session_key)
+            or self._session_buckets.get("default")
+            or next(iter(self._session_buckets.values()), None)
+        )
+        if active is not None:
+            self._activate_session_bucket(active)
+
+    def merge_all_trackers_to_ledger(self) -> None:
+        """Merge all session trackers into the persistent lifetime ledger.
+
+        We keep per-session trackers for isolation, so shutdown persistence must not
+        capture only the original default tracker (which may later be replaced when
+        promoting the default bucket into a keyed bucket).
+        """
+        seen: set[int] = set()
+        for bucket in list(self._session_buckets.values()):
+            tracker = bucket.tracker
+            tracker_id = id(tracker)
+            if tracker_id in seen:
+                continue
+            seen.add(tracker_id)
+            tracker.merge_session_to_ledger()
 
     def capture_request(self, body: dict[str, Any]) -> None:
         """Append raw request body to capture file (strips sensitive headers)."""
@@ -574,7 +865,7 @@ def run_bridge(
         logger.exception("Failed to create bridge session: %s", exc)
         raise
 
-    atexit.register(session.tracker.merge_session_to_ledger)
+    atexit.register(session.merge_all_trackers_to_ledger)
     atexit.register(lambda: PID_FILE.unlink(missing_ok=True))
 
     try:

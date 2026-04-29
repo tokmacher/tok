@@ -647,6 +647,7 @@ def _apply_result_cache(
     bypass_cache: bool = False,
     ttl_seconds: int = 1800,
     preserve_exact_search_evidence: bool = False,
+    tool_compatible: bool = False,
 ) -> tuple[str, int]:
     """
     Apply general result cache dedup for any tool result.
@@ -738,6 +739,7 @@ def _apply_result_cache(
         compression_level,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         first_read_complete=first_read_complete,
+        tool_compatible=tool_compatible,
     )
 
 
@@ -781,6 +783,7 @@ def _process_cache_hit(
     compression_level: str,
     preserve_exact_search_evidence: bool = False,
     first_read_complete: bool = True,
+    tool_compatible: bool = False,
 ) -> tuple[str, int]:
     """Process a cache hit and return compressed result."""
     host_stub_replayed = _should_replay_host_stub(
@@ -821,6 +824,7 @@ def _process_cache_hit(
             _compression_level=compression_level,
             preserve_exact_search_evidence=preserve_exact_search_evidence,
             first_read_complete=first_read_complete,
+            tool_compatible=tool_compatible,
         )
 
     if _is_content_hash_match(raw_text, cached_raw_text):
@@ -851,6 +855,7 @@ def _process_cache_hit(
             _compression_level=compression_level,
             preserve_exact_search_evidence=preserve_exact_search_evidence,
             first_read_complete=first_read_complete,
+            tool_compatible=tool_compatible,
         )
 
     # Content changed - need to compute diff
@@ -908,7 +913,7 @@ def _store_cache_entry(
             "hash": content_hash,
             "raw": raw,
             "timestamp": time_module.time(),
-            "first_read_complete": is_file_like,
+            "first_read_complete": False,
         }
         while len(result_cache) > RESULT_CACHE_MAX_SIZE:
             try:
@@ -1013,8 +1018,9 @@ def _update_cache_after_hit(
     raw: str,
 ) -> None:
     """Update the cache entry after a cache hit."""
+    _ = entry_length
     with _result_cache_lock:
-        if host_stub_replayed and entry_length == 3:
+        if host_stub_replayed:
             result_cache[cache_key] = {
                 "hash": cached_hash,
                 "raw": cached_raw,
@@ -1127,7 +1133,7 @@ def _handle_diff_result(
         tool_context=context,
     )
     confidence, reason = _compute_confidence(None, None, is_heuristic=True)
-    header = f">>> tool:{tool_name}|delta|changed|confidence:{confidence}|reason:{reason}\n"
+    header = f">>> tool:{tool_name}|delta_overflow|changed|confidence:{confidence}|reason:{reason}\n"
     return header + compressed, len(raw_text) - (len(header) + len(compressed))
 
 
@@ -1162,9 +1168,12 @@ def _should_replay_host_stub(
         return False
     if not stub_text and cached_raw_text:
         return True
-    if "unchanged since last read" in stub_text.lower():
+    normalized_stub = stub_text.lower()
+    if "unchanged since last read" in normalized_stub or "|unchanged|cached" in normalized_stub:
         return True
-    return bool(len(raw_text) < 80 and len(cached_raw_text) > 200)
+    if len(raw_text) < 80 and len(cached_raw_text) > 200:
+        return _is_content_hash_match(raw_text, cached_raw_text)
+    return False
 
 
 def _serve_cached_content_hash_match(
@@ -1184,6 +1193,7 @@ def _serve_cached_content_hash_match(
     _compression_level: str,
     preserve_exact_search_evidence: bool = False,
     first_read_complete: bool = True,
+    tool_compatible: bool = False,
 ) -> tuple[str, int]:
     from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
 
@@ -1200,6 +1210,15 @@ def _serve_cached_content_hash_match(
         return content_to_return, 0
 
     if normalized_tool_name in FILE_LIKE_TOOLS:
+        if host_stub_replayed:
+            with _result_cache_lock:
+                result_cache[cache_key] = {
+                    "hash": cached_hash,
+                    "raw": cached_raw,
+                    "timestamp": current_time,
+                    "first_read_complete": True,
+                }
+            return cached_raw, 0
         if not first_read_complete:
             with _result_cache_lock:
                 result_cache[cache_key] = {
@@ -1230,6 +1249,8 @@ def _serve_cached_content_hash_match(
             except Exception:
                 logger.debug("Failed to build file skeleton", exc_info=True)
         stub = "\n".join(stub_parts)
+        if tool_compatible and len(raw_text) < 2000:
+            return raw_text, 0
         if len(stub) >= len(raw_text):
             return raw_text, 0
         return stub, len(raw_text) - len(stub)
@@ -1243,7 +1264,7 @@ def _serve_cached_content_hash_match(
             return raw_text, 0
         from ._tool_result_codecs import _compress_grep
 
-        compressed_search = _compress_grep(raw_text)
+        compressed_search = _compress_grep(raw_text, tool_context=context)
         if len(compressed_search) < len(raw_text):
             confidence, reason = _compute_confidence(cached_hash, cached_hash)
             return (

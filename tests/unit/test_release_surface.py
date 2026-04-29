@@ -7,7 +7,9 @@ import tok
 from tok.cli import app
 from tok.release_surface import (
     CANDIDATE_PENDING_PROOF,
+    EXPERIMENTAL_CLI_ROOT_COMMANDS,
     EXPERIMENTAL_ROOT_EXPORTS,
+    SUPPORTED_CLI_ROOT_COMMANDS,
     SUPPORTED_ROOT_EXPORTS,
     validate_release_surface,
 )
@@ -49,3 +51,21 @@ def test_experimental_root_helpers_are_not_in_the_supported_root_exports() -> No
     assert "OrchestratorAdapter" not in tok.__all__
     assert "OpenAIChatAdapter" not in tok.__all__
     assert "TextLoopAdapter" not in tok.__all__
+
+
+def test_release_surface_rejects_unregistered_visible_cli_command() -> None:
+    class _Command:
+        hidden = False
+        name = "replay"
+
+    class _RootApp:
+        registered_commands = [_Command()]
+        registered_groups = []
+
+    failures = validate_release_surface(
+        exported_names=tok.__all__,
+        cli_help_output=" ".join((*SUPPORTED_CLI_ROOT_COMMANDS, *EXPERIMENTAL_CLI_ROOT_COMMANDS)),
+        root_app=_RootApp(),
+    )
+
+    assert "unregistered_visible_cli_command:replay" in failures

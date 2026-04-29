@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -206,7 +207,8 @@ def _run_zsh_command(
     timeout_seconds: int,
     env: dict[str, str] | None = None,
 ) -> ShellCommandResult:
-    argv = ("/bin/zsh", "-lc", command)
+    shell_path = shutil.which("zsh") or shutil.which("bash") or "/bin/sh"
+    argv = (shell_path, "-lc", command)
     effective_env = dict(os.environ)
     effective_env["PYTHONDONTWRITEBYTECODE"] = "1"
     if env:

@@ -249,12 +249,20 @@ def _compress_pytest(text: str, command: str = "") -> str:
     return "\n".join(parts)
 
 
-def _compress_grep(text: str) -> str:
-    lines = text.splitlines()
+def _compress_grep(text: str, tool_context: dict[str, Any] | None = None) -> str:
+    raw_lines = text.splitlines()
+    total = len(raw_lines)
+    if total <= 3:
+        return text
+
     by_file: dict[str, list[tuple[str, str]]] = {}
     order: list[str] = []
 
-    for line in lines:
+    command = ""
+    if tool_context and isinstance(tool_context.get("args"), dict):
+        command = tool_context["args"].get("command", "")
+
+    for line in raw_lines:
         m = re.match(r"^([^\s:][^:]*):(\d+):(.*)", line)
         if m:
             path, lnum, snippet = m.group(1), m.group(2), m.group(3)
@@ -279,16 +287,46 @@ def _compress_grep(text: str) -> str:
             order.append(key)
         by_file[key].append((lnum, snippet.strip()))
 
-    total = sum(len(v) for v in by_file.values())
-    if total <= 3:
-        return text
+    single_file_mode = all(k == "__other__" or k == "" for k in order)
+    if single_file_mode and command:
+        # Avoid a complex regex on attacker-controlled strings (CodeQL flagged potential backtracking).
+        # This only tries to infer a "filename-ish" token to label grep output that lacks paths.
+        try:
+            import shlex
 
-    file_count = len([k for k in order if k != "__other__"])
+            tokens = shlex.split(command)
+        except Exception:
+            tokens = command.split()
 
-    # Scale snippet limit based on total matches:
-    # Small results (≤20) → show all; Medium (≤50) → 6/file; Large (>50) → 3/file
+        fname = ""
+        for tok in reversed(tokens):
+            tok = tok.strip()
+            if not tok or tok.startswith("-"):
+                continue
+            if any(sep in tok for sep in ("/", "\\")):
+                continue
+            # Keep it conservative: only adopt tokens that look like a file-ish identifier.
+            if "." not in tok and not tok.startswith("~"):
+                continue
+            fname = tok
+            break
+
+        if fname:
+            if "__other__" in by_file:
+                entry = by_file.pop("__other__")
+                by_file[fname] = entry
+                order = [fname] + [k for k in order if k not in (fname, "__other__")]
+            elif "" in by_file:
+                entry = by_file.pop("")
+                by_file[fname] = entry
+                order = [fname] + [k for k in order if k not in (fname, "")]
+
+    file_count = len([k for k in order if k not in ("__other__", "")])
+    if file_count == 0 and total > 0:
+        file_count = 1
+
     if total <= 20:
-        per_file_limit = 999  # effectively unlimited — show all
+        per_file_limit = 999
     elif total <= 50:
         per_file_limit = 6
     else:
@@ -309,7 +347,6 @@ def _compress_grep(text: str) -> str:
             result.append(f"{key}: ... ({remaining} more matches)")
 
     compressed = "\n".join(result)
-    # If compression doesn't save space, return original
     if len(compressed) >= len(text):
         return text
     return compressed

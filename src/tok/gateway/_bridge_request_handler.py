@@ -81,14 +81,16 @@ def _normalize_provider_safe_retry_payload(
         # that contain tool_use blocks.  Anthropic's API rejects any assistant
         # message where thinking blocks appear alongside tool_use, regardless of
         # position.
+        message_changed = False
         filtered_content: list[dict[str, Any]] = []
         for block in content:
             if isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}:
+                message_changed = True
                 changed = True
                 continue
             filtered_content.append(block)
 
-        if changed:
+        if message_changed:
             new_msg = dict(msg.items())
             new_msg["content"] = filtered_content
             normalized_messages.append(new_msg)

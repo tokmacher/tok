@@ -23,7 +23,7 @@ from tok.gateway import (
 from tok.gateway._bridge_preflight import (
     _rewrite_provider_sensitive_large_tool_use_text_interleaving,
 )
-from tok.gateway._bridge_request_handler import send_with_tok_fail_open_retry
+from tok.gateway._bridge_request_handler import _normalize_provider_safe_retry_payload, send_with_tok_fail_open_retry
 from tok.gateway._bridge_runtime_pipeline import prepare_bridge_payload
 from tok.runtime.memory.bridge_memory import MemoryEntry
 from tok.runtime.pipeline.request_validation import (
@@ -358,6 +358,7 @@ def test_health_endpoint(monkeypatch) -> None:
         "request_policy_held_by_recovery_count": 0,
         "session_quality": "clean",
         "last_degradation_reason": "",
+        "calls": 0,
         "smoothness_score": 100,
         "labour_index": 0,
         "current_mode": "FULL_TOK",
@@ -6165,6 +6166,34 @@ def test_fail_open_retry_rewrites_interleaved_assistant_thinking_between_tool_us
     ]
     # Verify the observability signal is emitted
     assert "provider_safe_removed_assistant_thinking_between_tool_use" in caplog.text
+
+
+def test_provider_safe_retry_normalization_preserves_later_unchanged_messages() -> None:
+    first_message = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "..."},
+            {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {}},
+        ],
+    }
+    later_message = {
+        "role": "assistant",
+        "content": [{"type": "tool_use", "id": "tu_2", "name": "write_file", "input": {}}],
+    }
+    body = {
+        "messages": [
+            first_message,
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "ok"}]},
+            later_message,
+        ]
+    }
+
+    result, changed = _normalize_provider_safe_retry_payload(body)
+
+    assert changed is True
+    assert result is not None
+    assert result["messages"][0] is not first_message
+    assert result["messages"][2] is later_message
 
 
 def test_gateway_fail_open_false_propagates_request_processing_error(tmp_path, monkeypatch) -> None:

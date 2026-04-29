@@ -504,7 +504,7 @@ def _select_resend_strategy(
       - first appearance of answer-bearing state forces full resend
       - other changed state may delta
     """
-    if comparable == previous_comparable and comparable:
+    if comparable == previous_comparable:
         return "suppress"
     previous_has_answer_facts = _tool_compatible_has_answer_facts(previous_comparable)
     if has_answer_facts and not previous_has_answer_facts:
@@ -517,7 +517,7 @@ def _select_resend_reason(
     previous_comparable: dict[str, list[str]],
     has_answer_facts: bool,
 ) -> str:
-    if comparable == previous_comparable and comparable:
+    if comparable == previous_comparable:
         return "verified_current_state"  # Changed from "unchanged_state" - data is verified fresh
     previous_has_answer_facts = _tool_compatible_has_answer_facts(previous_comparable)
     if has_answer_facts and not previous_has_answer_facts:

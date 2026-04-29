@@ -474,14 +474,23 @@ class TestResultCacheStablePayload:
             semantic_hash_cache=None,
         )
 
-        # Second pass should be a cache hit and now emit stable payload lines.
+        # Second pass: first cache hit — delivers verbatim and marks as fully delivered.
         result2, _breakdown2 = compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
             tool_use_id_to_context=id_to_ctx,
             result_cache=result_cache,
             semantic_hash_cache=None,
         )
-        block_content = result2[0]["content"][0]["content"]
+        assert result2[0]["content"][0]["content"] == content
+
+        # Third pass: file is now fully delivered — emits the stable stub.
+        result3, _breakdown3 = compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        block_content = result3[0]["content"][0]["content"]
         assert block_content.startswith(">>> tool:")
         assert "|unchanged|cached|" in block_content
         assert len(block_content) < len(content)
@@ -500,13 +509,22 @@ class TestResultCacheStablePayload:
             semantic_hash_cache=None,
         )
 
-        result2, _breakdown2 = compress_tool_results(
+        # Second pass delivers verbatim and marks as fully delivered.
+        compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
             tool_use_id_to_context=id_to_ctx,
             result_cache=result_cache,
             semantic_hash_cache=None,
         )
-        block_content = result2[0]["content"][0]["content"]
+
+        # Third pass emits the stub with precision recovery guidance.
+        result3, _breakdown3 = compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        block_content = result3[0]["content"][0]["content"]
         assert "@stable_hint" in block_content
         assert "offset=1" in block_content
 
@@ -640,13 +658,23 @@ class TestResultCacheStablePayload:
 
         monkeypatch.setattr(compression_module, "_compute_semantic_hash", lambda _content: "")
 
-        result2, breakdown2 = compression_module.compress_tool_results(
+        # Second pass: first cache hit delivers verbatim and marks as fully delivered.
+        result2, _ = compression_module.compress_tool_results(
             [_make_tool_result_block(tool_id, content)],
             tool_use_id_to_context=id_to_ctx,
             result_cache=result_cache,
             semantic_hash_cache=None,
         )
-        block_content = result2[0]["content"][0]["content"]
+        assert result2[0]["content"][0]["content"] == content
+
+        # Third pass: stub path — monkeypatched semantic hash may trigger validation failure.
+        result3, breakdown3 = compression_module.compress_tool_results(
+            [_make_tool_result_block(tool_id, content)],
+            tool_use_id_to_context=id_to_ctx,
+            result_cache=result_cache,
+            semantic_hash_cache=None,
+        )
+        block_content = result3[0]["content"][0]["content"]
         assert "stable_payload_validation_failed" in block_content or block_content.startswith(">>> tool:")
 
 

@@ -12,11 +12,13 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from tok.testing.benchmark_suite import BenchmarkTaskManifest, load_benchmark_catalog
+
+UTC = timezone.utc
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BENCHMARK_ROOT = ROOT / "benchmarks"

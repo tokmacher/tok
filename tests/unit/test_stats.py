@@ -274,6 +274,68 @@ class TestSavingsTracker:
         content = tracker.ledger_path.read_text()
         assert "sessions: 1" in content
 
+    def test_merge_session_to_ledger_replaces_same_session_snapshot(self, tracker) -> None:
+        stats = tracker.load_stats()
+        stats["session_start"] = "2026-04-28T12:00:00Z"
+        tracker.save_stats(stats)
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=1000,
+            actual_output=100,
+            cache_read=0,
+            cache_write=0,
+            input_saved=200,
+            output_saved=0,
+        )
+        tracker.merge_session_to_ledger()
+
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=500,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=100,
+            output_saved=0,
+        )
+        tracker.merge_session_to_ledger()
+
+        content = tracker.ledger_path.read_text()
+        assert "sessions: 1" in content
+        assert "total_turns: 2" in content
+        assert "total_prompt_tokens: 1500" in content
+        assert "total_completion_tokens: 150" in content
+        assert "total_tokens: 1650" in content
+        assert "tokens_saved: 300" in content
+        assert content.count("2026-04-28T12:00:00Z;") == 1
+
+    def test_lifetime_summary_dedupes_session_log_rows(self, tracker) -> None:
+        tracker.ledger_path.write_text(
+            "@lifetime_savings\n"
+            "  sessions: 3\n"
+            "  total_turns: 7\n"
+            "  total_tokens: 7000\n"
+            "  total_cost_usd: 0.070000\n"
+            "  estimated_baseline_cost_usd: 0.140000\n"
+            "  tokens_saved: 7000\n"
+            "  cost_saved_usd: 0.070000\n"
+            "\n"
+            "@per_session_log\n"
+            "  2026-04-28T12:00:00Z;same1111;1;1000;0.010000;0.020000;0.010000;500;0;0\n"
+            "  2026-04-28T12:00:00Z;same1111;2;2500;0.025000;0.050000;0.025000;1500;0;0\n"
+            "  2026-04-28T13:00:00Z;other222;1;1000;0.010000;0.030000;0.020000;1000;0;0\n"
+        )
+
+        summary = tracker.lifetime_summary()
+
+        assert summary is not None
+        assert summary["sessions"] == 2
+        assert summary["total_turns"] == 3
+        assert summary["actual_tokens"] == 3500
+        assert summary["baseline_tokens"] == 6000
+        assert summary["tokens_saved"] == 2500
+        assert summary["cost_saved_usd"] == pytest.approx(0.045)
+
     def test_merge_session_to_ledger_persists_malformed_tok_subtypes(self, tracker) -> None:
         tracker.record_call(
             model="claude-sonnet-4",

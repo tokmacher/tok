@@ -1,6 +1,6 @@
 from tok.compression import tok_tool_result, truncate_large_result
 from tok.compression._tool_result_codecs import _compress_file_read, _compress_grep, _detect_tool_content_type
-from tok.gateway._anthropic_optimizations import _sift_stdout, bpe_translate_request
+from tok.gateway._anthropic_optimizations import _sift_stdout, bpe_translate_request, scrub_leaked_tok_context
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
 
@@ -97,6 +97,29 @@ def test_restored_file_cache_entry_serves_one_exact_read_before_stub() -> None:
     restored_second, saved = _apply_result_cache(raw, context, cache)
     assert restored_second.startswith(">>> tool:read|unchanged|cached")
     assert saved > 0
+
+
+def test_replayed_tok_cache_stub_serves_cached_raw_content() -> None:
+    from tok.compression import _apply_result_cache
+
+    raw = "\n".join(f"line {i}: stable restored content" for i in range(80))
+    context = {"name": "read", "args": {"path": "src/example.py"}}
+    cache = {}
+
+    first, _ = _apply_result_cache(raw, context, cache)
+    assert first == raw
+    cache_key = next(iter(cache))
+    cache[cache_key]["first_read_complete"] = True
+
+    stub = (
+        ">>> tool:read|unchanged|cached|confidence:exact|reason:hash_match|path:src/example.py\n"
+        "@stable_hint |> File unchanged - summary shown to save tokens. Read offset=1 for full content."
+    )
+
+    replayed, saved = _apply_result_cache(stub, context, cache)
+
+    assert replayed == raw
+    assert saved == 0
 
 
 def test_tok_tool_result_applies_truncation() -> None:
@@ -328,6 +351,62 @@ def test_bpe_translate_request_still_translates_tok_wire() -> None:
     assert "  > ok" in translated
 
 
+def test_scrub_leaked_tok_context_removes_gitstatus_pointer_dump() -> None:
+    leaked = (
+        "gitStatus:\n"
+        "commit 65300c0 Fix bridge handling\n"
+        "@pointers\n"
+        "  *A -> src/tok/runtime/core.py\n"
+        "  *B -> tests/unit/test_gateway.py\n"
+        ">>> t:3027|g:_CLAUDE_SONNET = ModelProfile(...)|s:drift_healed|k:answer_verification:health\n"
+        "file[src/tok/runtime/core.py]:50|digest|~120\n"
+        " M src/tok/gateway/__init__.py\n"
+    )
+    body = {"system": [{"type": "text", "text": leaked}]}
+
+    result = scrub_leaked_tok_context(body)
+    cleaned = result["system"][0]["text"]
+
+    assert "commit 65300c0" in cleaned
+    assert "M src/tok/gateway/__init__.py" in cleaned
+    assert "@pointers" not in cleaned
+    assert ">>>" not in cleaned
+    assert "answer_verification" not in cleaned
+    assert "file[src/tok/runtime/core.py]" not in cleaned
+
+
+def test_scrub_leaked_tok_context_preserves_legitimate_state_without_leak_signature() -> None:
+    state = ">>> goal:fix_gateway|turns:3\n"
+    body = {"system": state}
+
+    result = scrub_leaked_tok_context(body)
+
+    assert result["system"] == state
+
+
+def test_scrub_leaked_tok_context_removes_isolated_state_leak() -> None:
+    leaked = ">>> t:3027|g:_CLAUDE_SONNET|s:drift_healed|k:answer_file:src/tok/gateway.py\n"
+    body = {"system": leaked}
+
+    result = scrub_leaked_tok_context(body)
+
+    assert ">>>" not in result["system"]
+    assert "answer_file" not in result["system"]
+
+
+def test_scrub_leaked_tok_context_drops_empty_text_blocks() -> None:
+    body = {
+        "system": [
+            {"type": "text", "text": "@pointers\n  *A -> src/tok/runtime/core.py\n"},
+            {"type": "text", "text": "normal instructions"},
+        ]
+    }
+
+    result = scrub_leaked_tok_context(body)
+
+    assert result["system"] == [{"type": "text", "text": "normal instructions"}]
+
+
 def test_cache_hit_preserves_small_files() -> None:
     """First read stays verbatim; repeat read emits guided stable stub."""
     from tok.compression import _apply_result_cache
@@ -346,17 +425,18 @@ def test_cache_hit_preserves_small_files() -> None:
 
     # First call — populates cache
     first_result, _first_saved = _apply_result_cache(small_file, context, cache)
-    # Second call — cache hit path
+    # Second call — first cache hit delivers verbatim and marks as fully delivered.
     second_result, _second_saved = _apply_result_cache(small_file, context, cache)
+    # Third call — file is now fully delivered; emits the stable guided stub.
+    third_result, _third_saved = _apply_result_cache(small_file, context, cache)
 
-    # First read is verbatim content.
     assert first_result == small_file
-    # Repeat read should be a stable guided stub with explicit recovery hints.
-    assert second_result.startswith(">>> tool:view_file|unchanged|cached|")
-    assert "Read offset=1 for full content" in second_result
-    assert "@stable_skeleton |>" in second_result
     assert ">>>" not in first_result
-    assert ">>> tool:view_file|unchanged|cached|" in second_result
+    assert second_result == small_file
+    assert ">>>" not in second_result
+    assert third_result.startswith(">>> tool:view_file|unchanged|cached|")
+    assert "Read offset=1 for full content" in third_result
+    assert "@stable_skeleton |>" in third_result
 
 
 def test_compress_file_read_preserves_medium_small_slices() -> None:

@@ -88,6 +88,16 @@ class TestSelectResendStrategy:
 
         assert result == "full"
 
+    def test_empty_comparable_dicts_suppress(self) -> None:
+        """Verify identical empty dicts suppress (truth inversion fix)."""
+        result = _select_resend_strategy({}, {}, has_answer_facts=False)
+        assert result == "suppress"
+
+    def test_empty_comparable_reason_verified(self) -> None:
+        """Verify identical empty dicts return verified_current_state reason."""
+        result = _select_resend_reason({}, {}, has_answer_facts=False)
+        assert result == "verified_current_state"
+
 
 class TestToolCompatibleHasAnswerFacts:
     """Test suite for _tool_compatible_has_answer_facts function."""

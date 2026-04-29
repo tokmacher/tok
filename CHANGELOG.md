@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.1.6 (2026-04-29)
+
+### Fixes
+
+- **Stats labels**: "est. no caching" corrected to "est. no Tok" across all stats
+  panels.
+- **Current-session stats fallback**: when no active session is running, stats now falls
+  back to the live bridge health endpoint instead of showing stale or empty data.
+- **Host-stub replay guard regression**: replay logic restored for cases where both
+  `stub_text` and `cached_raw_text` are absent; regression tests added.
+
+### Improved
+
+- **Multi-session bucket isolation**: `BridgeSession` now supports per-client session
+  isolation via `x-tok-session-id` header, preventing cross-conversation state bleed
+  when multiple clients connect to the same bridge.
+- **Env var restoration on exit**: `TOK_CAPTURE` and `TOK_RESET_SESSION` are now
+  properly restored after `run_bridge` exits, fixing state pollution into parent shell.
+- **Release surface validation**: the validator now catches unregistered visible CLI
+  commands that bypass the known-command allowlist, preventing accidental exposure of
+  experimental commands.
+- **Bridge request handler refactor**: handler and response processing paths
+  consolidated for clarity and reduced duplication.
+
+### Added
+
+- **Fresh-session pointer notice**: on a new Claude Code session, a one-time runtime
+  hint is injected: "see ~/.tok/bridge_memory.tok @pointers for recent file references".
+  This surfaces the existence of Tok's pointer registry to the agent without dumping
+  full memory state. Fires once per fresh session; not injected on resumption or short
+  sessions (under 8 turns).
+- `test_bug_audit_regressions.py`: regression tests covering host-stub replay, resend
+  strategy, and session state isolation.
+- `test_session_state_persistence.py`: tests for `reset_session()` state clearing,
+  bucket lifecycle, and fresh-session pointer injection.
+- `test_release_surface.py`: CLI surface validation tests.
+- `test_stats.py`: coverage for current-session fallback and label accuracy.
+
+### Removed
+
+- `tok _legacy-commands` hidden command and `src/tok/cli/_legacy_commands.py` (293
+  lines): functionality superseded by the current bridge-first CLI structure.
+
 ## 0.1.5 (2026-04-28)
 
 ### Fixes

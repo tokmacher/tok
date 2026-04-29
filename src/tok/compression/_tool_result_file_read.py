@@ -566,8 +566,7 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
         if ast_skeleton is not None:
             original_chars = len(text)
             skeleton_lines = ast_skeleton.count("\n") + 1
-            # Build a better section map from the AST skeleton
-            section_map = _build_section_map(text.splitlines())
+            section_map = _build_section_map(ast_skeleton.splitlines())
             # Track skeleton delivery for edit interception
             if session and hasattr(session, "_skeleton_delivered_paths") and tool_context:
                 args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}

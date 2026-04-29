@@ -141,4 +141,9 @@ def validate_release_surface(
         elif f" {command} " in normalized_help:
             failures.append(f"experimental_cli_command_exposed:{command}")
 
+    if root_app is not None:
+        known_cli_names = set(SUPPORTED_CLI_ROOT_COMMANDS) | set(EXPERIMENTAL_CLI_ROOT_COMMANDS)
+        for command in sorted(visible_cli_names - known_cli_names):
+            failures.append(f"unregistered_visible_cli_command:{command}")
+
     return failures
