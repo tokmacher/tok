@@ -2324,6 +2324,7 @@ def test_run_catalog_benchmark_suite_pairs_baseline_and_tok(tmp_path: Path) -> N
 
 
 def test_live_benchmark_cli_program_both_writes_separate_artifacts(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
     catalog = BenchmarkCatalog(root=str(tmp_path), lanes=(_production_lane(),), tasks=tuple())
     report = build_benchmark_report(
         catalog,
