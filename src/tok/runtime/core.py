@@ -376,6 +376,8 @@ class RuntimeSession:
         self.family_states.clear()
         self.result_cache.clear()
         self.semantic_hash_cache.clear()
+        self.bridge_memory.hot.clear()
+        self.bridge_memory.rolling_cmds = []
         logger.info("RuntimeSession reset: all transient state cleared")
 
     def record_invalid_tool_history_recovery(self, *, blocked: bool) -> dict[str, int]:

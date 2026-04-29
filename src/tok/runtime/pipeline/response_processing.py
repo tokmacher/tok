@@ -90,6 +90,31 @@ def _visible_text_from_content_blocks(
     ).strip()
 
 
+def _strip_visible_tok_pipe_prefixes(text: str) -> str:
+    text = re.sub(r"(?m)^\s*\|(?:#|\d+)>\s?", "", text)
+    # Strip bare |> only when the block contains Tok protocol markers; preserve
+    # |> as a language operator (Elixir, F#, LiveScript) in plain responses.
+    if ">>>" in text:
+        text = re.sub(r"(?m)^\s*\|>\s?", "", text)
+    return text.strip()
+
+
+def _normalize_visible_text_blocks(content_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for block in content_blocks:
+        if block.get("type") != "text":
+            normalized.append(block)
+            continue
+        text = str(block.get("text", ""))
+        cleaned = _strip_visible_tok_pipe_prefixes(text)
+        if not cleaned:
+            continue
+        new_block = dict(block)
+        new_block["text"] = cleaned
+        normalized.append(new_block)
+    return normalized
+
+
 def _is_answer_like_visible_text(text: str) -> bool:
     if not text.strip():
         return False
@@ -128,6 +153,25 @@ def _answer_phase_fallback_allowed(session: RuntimeSession | None) -> bool:
 
 def _looks_like_tool_intent_text(text: str) -> bool:
     return bool(text.strip() and _TOOL_INTENT_TEXT_RE.search(text))
+
+
+def _looks_like_answer_deferral_text(text: str) -> bool:
+    lowered = text.lower()
+    if not lowered.strip():
+        return False
+    if not re.search(r"\b(inspect|check|look|read|search|investigate)\b", lowered):
+        return False
+    if not re.search(r"\bbefore\s+answer", lowered):
+        return False
+    # Exclude conversational phrases: "before answering your/this/that/the <noun>"
+    if re.search(r"before\s+answer\w*\s+(your|this|that|the)\b", lowered):
+        return False
+    # Require a structural signal: a repo path prefix, a file.ext pattern, or grep/path keyword
+    return bool(
+        re.search(r"\b(?:src|tests|docs|scripts|tok|pyproject|readme|claude)\S*", lowered)
+        or re.search(r"[a-z_][a-z0-9_]*\.[a-z]{1,4}\b", lowered)
+        or re.search(r"\bgrep\b|\bpath\b", lowered)
+    )
 
 
 def is_safe_visible_contract_output(
@@ -569,13 +613,31 @@ def _repair_structured_answer_text(
 def _synthesize_answer_phase_fallback_text(
     session: RuntimeSession | None,
 ) -> str:
-    """Placeholder for answer-phase fallback text synthesis.
+    """Synthesize a final answer from bridge memory anchors during answer phase."""
+    if session is None:
+        return ""
 
-    Returns empty string by design. Callers check for truthiness before
-    using the result. This will be wired to bridge memory anchors in a
-    future release.
-    """
-    return ""
+    known_files, known_verifications = _extract_session_answer_anchors(session)
+    if not known_files and not known_verifications:
+        return ""
+
+    lines: list[str] = []
+    expected_labels = _expected_structured_labels(session)
+    if expected_labels:
+        for label in expected_labels:
+            if label == "file" and known_files:
+                lines.append(f"File={known_files[0]}")
+            elif label == "verification" and known_verifications:
+                verification = ", ".join(known_verifications[:2])
+                lines.append(f"Verification={verification}")
+        if lines:
+            return "\n".join(lines)
+
+    if known_files:
+        lines.append(f"File={known_files[0]}")
+    if known_verifications:
+        lines.append(f"Verification={', '.join(known_verifications[:2])}")
+    return "\n".join(lines)
 
 
 def _tool_compatible_mixed_turn_signals(
@@ -1124,7 +1186,13 @@ def response_contract_for_mode(
         answer_phase_active
         and fallback_allowed
         and not expected_labels
-        and (bool(malformed_signals) or not _is_answer_like_visible_text(visible_text))
+        and (
+            bool(malformed_signals)
+            or _looks_like_tool_intent_text(visible_text)
+            or _looks_like_tool_intent_text(text)
+            or _looks_like_answer_deferral_text(visible_text)
+            or _looks_like_answer_deferral_text(text)
+        )
     ):
         synthesized = _synthesize_answer_phase_fallback_text(session)
         if synthesized:
@@ -1136,6 +1204,9 @@ def response_contract_for_mode(
 
     if session and hasattr(session, "_last_mode"):
         session._last_mode = mode
+
+    content_blocks = _normalize_visible_text_blocks(content_blocks)
+    visible_text = _visible_text_from_content_blocks(content_blocks)
 
     # Note: SemanticValidator is applied in universal_runtime.py process_response
 
@@ -1212,6 +1283,6 @@ def _standard_fallback_path(
         elif malformed_signals.get("malformed_tok_markdown_fallback"):
             mode = "tok-empty"
         else:
-            mode = "tok"
+            mode = "tok-malformed"
 
     return visible_text, signals, content_blocks, mode

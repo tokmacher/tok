@@ -35,6 +35,15 @@ logger = logging.getLogger("tok.gateway.anthropic")
 _DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"
 
 _CACHE_MIN_CHARS = 800
+_LEAKED_POINTERS_RE = re.compile(
+    r"(?ms)^@pointers\s*\n.*?(?=^\S|\Z)",
+)
+_LEAKED_TOK_STATE_RE = re.compile(
+    r"(?m)^>>>\s.*(?:\n(?!\s*(?:commit|Author:|Date:|diff --git|[MADRCU?!]{1,2}\s|\Z)).*)*",
+)
+_LEAKED_TOK_FACT_RE = re.compile(
+    r"(?m)^\s*(?:[a-z]:)?(?:answer_file|answer_verification|file\[[^\]\n]+\]|is_skeleton|s:drift_healed|k:answer_[^\n]+)(?!\s*=)[^\n]*\n?",
+)
 
 
 def split_system_for_caching(body: dict[str, Any]) -> dict[str, Any]:
@@ -87,6 +96,83 @@ def split_system_for_caching(body: dict[str, Any]) -> dict[str, Any]:
             len(system),
         )
 
+    return body
+
+
+def _scrub_leaked_tok_context_text(text: str) -> tuple[str, int]:
+    if not text:
+        return text, 0
+    has_state_leak = ">>>" in text and any(
+        marker in text
+        for marker in (
+            "g:_CLAUDE",
+            "s:drift_healed",
+            "k:answer_",
+            "answer_file",
+            "answer_verification",
+            "file[",
+            "is_skeleton",
+        )
+    )
+    if not any(marker in text for marker in ("gitStatus", "@pointers")) and not has_state_leak:
+        return text, 0
+
+    cleaned = _LEAKED_POINTERS_RE.sub("", text)
+    cleaned = _LEAKED_TOK_STATE_RE.sub("", cleaned)
+    cleaned = _LEAKED_TOK_FACT_RE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip("\n")
+    return cleaned, max(0, len(text) - len(cleaned))
+
+
+def scrub_leaked_tok_context(body: dict[str, Any]) -> dict[str, Any]:
+    """Remove leaked Tok control state from client-provided context blocks."""
+    total_saved_chars = 0
+
+    def _clean_value(value: Any) -> Any:
+        nonlocal total_saved_chars
+        if not isinstance(value, str):
+            return value
+        cleaned, saved = _scrub_leaked_tok_context_text(value)
+        total_saved_chars += saved
+        return cleaned
+
+    system = body.get("system")
+    if isinstance(system, str):
+        body["system"] = _clean_value(system)
+    elif isinstance(system, list):
+        cleaned_system = []
+        for block in system:
+            if isinstance(block, dict) and block.get("type") == "text":
+                block["text"] = _clean_value(block.get("text", ""))
+                if not str(block.get("text", "")).strip():
+                    continue
+            cleaned_system.append(block)
+        body["system"] = cleaned_system
+
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                msg["content"] = _clean_value(content)
+            elif isinstance(content, list):
+                cleaned_content = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        block["text"] = _clean_value(block.get("text", ""))
+                        if not str(block.get("text", "")).strip():
+                            continue
+                    cleaned_content.append(block)
+                msg["content"] = cleaned_content
+
+    if total_saved_chars > 0:
+        logger.info(
+            "anthropic_opt: scrubbed leaked Tok context, saved ~%d chars (~%d tokens)",
+            total_saved_chars,
+            total_saved_chars // 4,
+        )
     return body
 
 
@@ -201,15 +287,10 @@ def _looks_like_tok_wire(text: str) -> bool:
     """Return True only for actual Tok wire syntax, not stray snippets."""
     if not text or len(text) < 10:
         return False
-    if _TOK_HEADER_RE.search(text) or _TOK_KNOWN_BLOCK_RE.search(text):
-        return True
-    # Pipe-only text is too ambiguous for request-side mutation. Require at
-    # least two inverted lines and no traceback/error context before treating it
-    # as lazy Tok.
-    pipe_lines = _TOK_PIPE_RE.findall(text)
-    if len(pipe_lines) >= 2 and "traceback" not in text.lower() and "attributeerror" not in text.lower():
-        return True
-    return False
+    # Only classify as Tok wire when an unambiguous protocol marker is present.
+    # Bare |> lines alone are insufficient — they are valid Elixir/F#/LiveScript
+    # pipeline operators and must not be translated.
+    return bool(_TOK_HEADER_RE.search(text) or _TOK_KNOWN_BLOCK_RE.search(text))
 
 
 def _translate_bpe(text: str) -> str:
@@ -316,6 +397,7 @@ def apply_anthropic_optimizations(
     if not is_claude_bridge:
         return body
     try:
+        body = scrub_leaked_tok_context(body)
         body = split_system_for_caching(body)
         body = sift_tool_results(body)
         body = bpe_translate_request(body)

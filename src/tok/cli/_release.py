@@ -88,6 +88,45 @@ def stats_command(
         except Exception:
             pass
 
+    # When the bridge is running it writes per-bucket stats to key-specific files
+    # that the default SavingsTracker path doesn't see.  Fall back to health endpoint
+    # data so "Current Session" always reflects the live bucket.
+    # Only apply when showing the default view — not when --last-session or --total
+    # were requested, which expect a different data source.
+    if (
+        session_summary is None
+        and not last_session
+        and not total
+        and health_payload
+        and int(health_payload.get("actual_tokens", 0)) > 0
+    ):
+        session_summary = {
+            "actual_tokens": int(health_payload.get("actual_tokens", 0)),
+            "baseline_tokens": int(health_payload.get("baseline_tokens", 0)),
+            "tokens_saved": int(health_payload.get("session_tokens_saved", 0)),
+            "savings_pct": float(health_payload.get("session_savings_pct", 0.0)),
+            "actual_cost_usd": float(health_payload.get("actual_cost_usd", 0.0)),
+            "baseline_cost_usd": float(health_payload.get("baseline_cost_usd", 0.0)),
+            "cost_saved_usd": float(health_payload.get("cost_saved_usd", 0.0)),
+            "baseline_only": bool(health_payload.get("baseline_only", False)),
+            "fallback_count": int(health_payload.get("fallback_count", 0)),
+            "calls": int(health_payload.get("calls", 0)),
+            "session_quality": str(health_payload.get("session_quality", "clean")),
+            "last_degradation_reason": str(health_payload.get("last_degradation_reason", "")),
+            "request_policy": str(health_payload.get("request_policy", "")),
+            "baseline_prompt_tokens": int(health_payload.get("baseline_prompt_tokens", 0)),
+            "prepared_prompt_tokens": int(health_payload.get("prepared_prompt_tokens", 0)),
+            "saved_prompt_tokens": int(health_payload.get("saved_prompt_tokens", 0)),
+            "preflight_block_original_payload_count": int(
+                health_payload.get("preflight_block_original_payload_count", 0)
+            ),
+            "preflight_block_rewritten_payload_count": int(
+                health_payload.get("preflight_block_rewritten_payload_count", 0)
+            ),
+            "stream_recovery_empty_success_count": int(health_payload.get("stream_recovery_empty_success_count", 0)),
+            "stream_recovery_read_error_count": int(health_payload.get("stream_recovery_read_error_count", 0)),
+        }
+
     if not total:
         if session_summary:
             pct = float(session_summary["savings_pct"])

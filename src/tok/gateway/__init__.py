@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import hashlib
 import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -26,7 +28,7 @@ from tok.runtime.pipeline.request_validation import (
     summarize_message_structure,
 )
 from tok.runtime.smoothness import SmoothnessTracker
-from tok.stats import SavingsTracker
+from tok.stats import SavingsTracker, _default_savings_file
 from tok.universal_runtime import (
     RuntimeSession,
     UniversalTokRuntime,
@@ -108,6 +110,23 @@ def _env_bool(name: str, fallback: bool) -> bool:
     if raw is None:
         return fallback
     return raw == "1"
+
+
+_SESSION_ID_HEADERS = (
+    "x-tok-session-id",
+    "x-claude-session-id",
+    "x-codex-session-id",
+    "x-client-session-id",
+)
+
+
+@dataclass
+class _BridgeSessionBucket:
+    key: str
+    runtime_session: RuntimeSession
+    tracker: SavingsTracker
+    smoothness_tracker: SmoothnessTracker
+    last_seen: float = field(default_factory=time.time)
 
 
 def _is_sensitive_capture_key(key: str) -> bool:
@@ -334,6 +353,10 @@ class BridgeSession:
     runtime_session: RuntimeSession = field(default_factory=RuntimeSession)
     # Smoothness tracking for interaction quality
     smoothness_tracker: SmoothnessTracker = field(default_factory=SmoothnessTracker)
+    session_ttl_seconds: int = field(default_factory=lambda: _env_int("TOK_SESSION_TTL_SECONDS", 21600))
+    max_sessions: int = field(default_factory=lambda: _env_int("TOK_MAX_SESSIONS", 32))
+    _session_buckets: dict[str, _BridgeSessionBucket] = field(default_factory=dict, init=False, repr=False)
+    _active_session_key: str = field(default="default", init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.api_base = self.api_base.strip() or ANTHROPIC_API_BASE
@@ -368,6 +391,174 @@ class BridgeSession:
         if os.getenv("TOK_RESET_SESSION", "0") == "1":
             self.tracker.reset_session_stats()
             self.runtime_session.reset_session()
+        self._session_buckets["default"] = _BridgeSessionBucket(
+            key="default",
+            runtime_session=self.runtime_session,
+            tracker=self.tracker,
+            smoothness_tracker=self.smoothness_tracker,
+        )
+
+    def _new_runtime_session(self) -> RuntimeSession:
+        runtime_session = RuntimeSession(memory_dir=self.memory_dir, keep_turns=self.keep_turns)
+        runtime_session._keep_turns_explicit = True
+        runtime_session.bridge_memory.hot.clear()
+        runtime_session.bridge_memory.rolling_cmds = []
+        if os.getenv("TOK_RESET_SESSION", "0") == "1":
+            runtime_session.reset_session()
+        return runtime_session
+
+    def _new_savings_tracker(self, key: str) -> SavingsTracker:
+        stats_dir = (self.memory_dir or TOK_DIR) / "session_stats"
+        stats_dir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256(key.encode()).hexdigest()[:24]
+        return SavingsTracker(savings_file=str(stats_dir / f"{digest}.tok"))
+
+    def _create_session_bucket(self, key: str) -> _BridgeSessionBucket:
+        bucket = _BridgeSessionBucket(
+            key=key,
+            runtime_session=self._new_runtime_session(),
+            tracker=self._new_savings_tracker(key),
+            smoothness_tracker=SmoothnessTracker(),
+        )
+        if os.getenv("TOK_RESET_SESSION", "0") == "1":
+            bucket.tracker.reset_session_stats()
+        logger.info("bridge_session_bucket_created: key=%s active_buckets=%d", key[:12], len(self._session_buckets) + 1)
+        return bucket
+
+    def _activate_session_bucket(self, bucket: _BridgeSessionBucket) -> _BridgeSessionBucket:
+        bucket.last_seen = time.time()
+        self._active_session_key = bucket.key
+        self.runtime_session = bucket.runtime_session
+        self.tracker = bucket.tracker
+        self.smoothness_tracker = bucket.smoothness_tracker
+        return bucket
+
+    def _cleanup_session_buckets(self, *, keep_key: str) -> None:
+        now = time.time()
+        ttl = max(1, int(self.session_ttl_seconds))
+        for key, bucket in list(self._session_buckets.items()):
+            if key == keep_key:
+                continue
+            if now - bucket.last_seen > ttl:
+                self._session_buckets.pop(key, None)
+        max_sessions = max(1, int(self.max_sessions))
+        while len(self._session_buckets) > max_sessions:
+            candidates = [(key, bucket.last_seen) for key, bucket in self._session_buckets.items() if key != keep_key]
+            if not candidates:
+                break
+            evict_key = min(candidates, key=lambda item: item[1])[0]
+            self._session_buckets.pop(evict_key, None)
+
+    def resolve_session_key(self, headers: dict[str, str], body: dict[str, Any] | None = None) -> str:
+        normalized_headers = {k.lower(): v for k, v in headers.items()}
+        for header in _SESSION_ID_HEADERS:
+            value = normalized_headers.get(header, "").strip()
+            if value:
+                digest = hashlib.sha256(f"{header}:{value}".encode()).hexdigest()[:24]
+                return f"hdr:{digest}"
+
+        auth = normalized_headers.get("authorization") or normalized_headers.get("x-api-key", "")
+        user_agent = normalized_headers.get("user-agent", "")
+        client_hint = (
+            normalized_headers.get("x-client-pid")
+            or normalized_headers.get("x-claude-client-pid")
+            or normalized_headers.get("x-codex-client-pid")
+            or ""
+        )
+        message_seed = ""
+        messages = body.get("messages") if isinstance(body, dict) else None
+        if isinstance(messages, list) and messages:
+            first = messages[0]
+            if isinstance(first, dict):
+                message_seed = json.dumps(first, sort_keys=True, default=str)[:2048]
+        seed = json.dumps(
+            {
+                "auth": hashlib.sha256(auth.encode()).hexdigest()[:16] if auth else "",
+                "user_agent": user_agent,
+                "client_hint": client_hint,
+                "message_seed": message_seed,
+            },
+            sort_keys=True,
+        )
+        return f"auto:{hashlib.sha256(seed.encode()).hexdigest()[:24]}"
+
+    def activate_session_for_request(
+        self,
+        headers: dict[str, str],
+        body: dict[str, Any] | None = None,
+    ) -> str:
+        key = self.resolve_session_key(headers, body)
+        bucket = self._session_buckets.get(key)
+        if bucket is None:
+            default_bucket = self._session_buckets.get("default")
+            if default_bucket is not None and len(self._session_buckets) == 1:
+                self._session_buckets.pop("default", None)
+                default_bucket.key = key
+                if default_bucket.tracker.savings_file == _default_savings_file():
+                    default_bucket.tracker = self._new_savings_tracker(key)
+                bucket = default_bucket
+            else:
+                bucket = self._create_session_bucket(key)
+            self._session_buckets[key] = bucket
+        self._cleanup_session_buckets(keep_key=key)
+        self._activate_session_bucket(bucket)
+        return key
+
+    def bound_session_for_key(self, key: str) -> BridgeSession:
+        """Return a request-local view pinned to one session bucket."""
+        import copy
+
+        bucket = self._session_buckets[key]
+        bound = copy.copy(self)
+        bound.runtime_session = bucket.runtime_session
+        bound.tracker = bucket.tracker
+        bound.smoothness_tracker = bucket.smoothness_tracker
+        bound._active_session_key = key
+        return bound
+
+    def reporting_session(self) -> BridgeSession:
+        """Return a stable bucket view for bridge status/stat reporting."""
+        non_empty = [
+            bucket
+            for bucket in self._session_buckets.values()
+            if (bucket.tracker.session_summary() or {}).get("calls", 0)
+        ]
+        if non_empty:
+            bucket = max(non_empty, key=lambda item: item.last_seen)
+        else:
+            bucket = (
+                self._session_buckets.get(self._active_session_key)
+                or self._session_buckets.get("default")
+                or next(iter(self._session_buckets.values()), None)
+            )
+        if bucket is None:
+            return self
+        return self.bound_session_for_key(bucket.key)
+
+    def reset_active_session(self) -> None:
+        bucket = (
+            self._session_buckets.get(self._active_session_key)
+            or self._session_buckets.get("default")
+            or next(iter(self._session_buckets.values()), None)
+        )
+        if bucket is None:
+            return
+        bucket.tracker.reset_session_stats()
+        bucket.runtime_session.reset_session()
+        self._activate_session_bucket(bucket)
+
+    def reset_all_sessions(self) -> None:
+        for bucket in self._session_buckets.values():
+            bucket.tracker.reset_session_stats()
+            bucket.runtime_session.reset_session()
+            bucket.last_seen = time.time()
+        active = (
+            self._session_buckets.get(self._active_session_key)
+            or self._session_buckets.get("default")
+            or next(iter(self._session_buckets.values()), None)
+        )
+        if active is not None:
+            self._activate_session_bucket(active)
 
     def capture_request(self, body: dict[str, Any]) -> None:
         """Append raw request body to capture file (strips sensitive headers)."""

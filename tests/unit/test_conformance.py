@@ -118,7 +118,7 @@ def test_response_contract_rejects_hybrid_tool_json_text_pattern() -> None:
     )
     contract = response_contract_for_mode(text, tool_compatible=False)
 
-    assert contract.mode == "tok"
+    assert contract.mode == "tok-malformed"
     assert contract.behavior_signals["malformed_tok_response"] == 1
     assert contract.behavior_signals["fail_open_compat_response"] == 1
     assert contract.behavior_signals["malformed_tok_hybrid_tool"] == 1
@@ -128,7 +128,7 @@ def test_response_contract_rejects_non_inverted_assistant_message() -> None:
     text = ">>> t:1|usr:test|agt:reply|state:active\n@msg role:assistant\nPlain text without inversion"
     contract = response_contract_for_mode(text, tool_compatible=False)
 
-    assert contract.mode == "tok"
+    assert contract.mode == "tok-malformed"
     assert contract.behavior_signals["malformed_tok_response"] == 1
     assert contract.behavior_signals["malformed_tok_non_inverted_msg"] == 1
     assert contract.behavior_signals["fail_open_compat_response"] == 1
@@ -148,7 +148,7 @@ def test_response_contract_rejects_bad_tok_header_shape() -> None:
     text = ">>> turns|goal:fix\n@msg role:assistant\n  |> ok"
     contract = response_contract_for_mode(text, tool_compatible=False)
 
-    assert contract.mode == "tok"
+    assert contract.mode == "tok-malformed"
     assert contract.behavior_signals["malformed_tok_response"] == 1
     assert contract.behavior_signals["malformed_tok_bad_header"] == 1
     assert contract.behavior_signals["fail_open_compat_response"] == 1

@@ -109,17 +109,29 @@ def bridge_start(
     if foreground:
         from tok.gateway import run_bridge
 
+        previous_capture = os.environ.get("TOK_CAPTURE")
+        previous_reset = os.environ.get("TOK_RESET_SESSION")
         if capture:
             os.environ["TOK_CAPTURE"] = "1"
         os.environ["TOK_RESET_SESSION"] = "1"
 
-        run_bridge(
-            port=port,
-            keep_turns=keep_turns,
-            debug=debug,
-            fail_open=fail_open,
-            _api_base=api_base,
-        )
+        try:
+            run_bridge(
+                port=port,
+                keep_turns=keep_turns,
+                debug=debug,
+                fail_open=fail_open,
+                _api_base=api_base,
+            )
+        finally:
+            if previous_capture is None:
+                os.environ.pop("TOK_CAPTURE", None)
+            else:
+                os.environ["TOK_CAPTURE"] = previous_capture
+            if previous_reset is None:
+                os.environ.pop("TOK_RESET_SESSION", None)
+            else:
+                os.environ["TOK_RESET_SESSION"] = previous_reset
     else:
         env = os.environ.copy()
         env["TOK_BRIDGE_PORT"] = str(port)
