@@ -1,0 +1,9 @@
+--- utils_v1.py
++++ utils_v2.py
+@@ -1,5 +1,5 @@
+ def normalize_name(value: str) -> str:
+-    return value.strip().lower()
++    return value.strip().casefold()
+
+
+ def is_enabled(flag: bool) -> bool:

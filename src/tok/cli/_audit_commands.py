@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from tok.spec.trace_v0_1 import audit_fixture_file
+from tok.spec.trace_v0_1 import audit_trace_file
 
 from ._cli_support import console
 
@@ -28,7 +28,7 @@ def register(app: typer.Typer) -> None:
             console.print(f"[red]Fixture file not found: {fixture_file}[/red]")
             raise typer.Exit(5)
 
-        results = audit_fixture_file(fixture_file)
+        results = audit_trace_file(fixture_file)
         payload = [
             {
                 "id": result.id,

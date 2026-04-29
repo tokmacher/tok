@@ -385,12 +385,14 @@ def _resolve_effective_tool_compatible(
         behavior_signals["short_session_baseline_mode"] = 1
         return False, ["short_session"]
 
-    structured_tool_loop = any(
+    # Use session's persisted repeat-target records to detect stuck loops across turns.
+    # repeat_target_* signals aren't in behavior_signals yet at policy-decision time
+    # (they're populated by _capture_repeat_target_snapshots, which runs later),
+    # so we query the session state directly instead.
+    has_stuck_target = any(r.stuck_promotion_turn > 0 for r in getattr(session, "_hot_summary_records", {}).values())
+    structured_tool_loop = has_stuck_target or any(
         behavior_signals.get(key, 0) > 0
         for key in (
-            "repeat_file_read",
-            "repeat_search",
-            "repeat_command",
             "repeated_tool_call",
             "stream_recovery_reacquisition_suppressed",
         )
@@ -1251,14 +1253,12 @@ def prepare_request_impl(
             session_memory = session.refresh_hot_memory("", model=request.model)
 
         if session._is_first_request:
-            if session.bridge_memory.pointers.map:
-                # Don't hard-code a developer machine path; derive from the active session memory dir.
-                try:
-                    memory_path = bridge_memory_file(session)
-                    pointer_hint = f"see {memory_path} @pointers for recent file references"
-                except Exception:
-                    pointer_hint = "see ~/.tok/bridge_memory.tok @pointers for recent file references"
-                runtime_hints = [pointer_hint] + runtime_hints
+            try:
+                memory_path = bridge_memory_file(session)
+                if memory_path.exists():
+                    runtime_hints = [f"[tok] Session memory: {memory_path}"] + runtime_hints
+            except Exception:
+                pass
             session._is_first_request = False
 
         if effective_tool_compatible:

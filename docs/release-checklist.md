@@ -27,6 +27,8 @@ Steps for cutting a Tok release.
   artifact
 - [ ] Run the clean-room install verification from the README
 - [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.x`
+- [ ] For `0.1.7`, confirm Tok Trace remains draft-only: `tok audit` is hidden, live
+  trace emission is opt-in via `TOK_TRACE=1`, and `uv run pytest tests/spec -q` passes
 - [ ] Run live Claude bridge validation on the supported path: `tok install`,
   `tok bridge start`, `ANTHROPIC_BASE_URL=http://localhost:9090 claude`,
   `tok bridge status`, `tok doctor`, `tok stats`, then exit Claude and run

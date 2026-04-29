@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,13 @@ class AuditResult:
     summary: str = ""
 
 
+@dataclass(frozen=True)
+class AuditContext:
+    """Filesystem context for fixture-local audit resolution."""
+
+    fixture_dir: Path | None = None
+
+
 def audit_fixture_file(path: Path) -> list[AuditResult]:
     """Audit a JSON fixture file containing draft trace fixture objects."""
     fixtures = json.loads(path.read_text())
@@ -72,22 +80,77 @@ def audit_fixture_file(path: Path) -> list[AuditResult]:
             results.append(AuditResult(id=fixture_id, status="fail", errors=("missing_or_invalid_block",)))
             continue
 
-        results.append(audit_block(block, fixture_id=fixture_id))
+        results.append(audit_block(block, fixture_id=fixture_id, context=AuditContext(path.parent)))
 
     return results
 
 
-def audit_block(block: dict[str, Any], *, fixture_id: str = "trace-block") -> AuditResult:
+def audit_trace_file(path: Path) -> list[AuditResult]:
+    """Audit either a fixture JSON array or live JSONL trace file."""
+    text = path.read_text()
+    if text.lstrip().startswith("["):
+        return audit_fixture_file(path)
+
+    results: list[AuditResult] = []
+    context = AuditContext(path.parent)
+    for index, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            results.append(AuditResult(id=f"line:{index}", status="fail", errors=("invalid_jsonl_line",)))
+            continue
+        if not isinstance(record, dict):
+            results.append(AuditResult(id=f"line:{index}", status="fail", errors=("jsonl_line_not_object",)))
+            continue
+        block = record.get("block") if "block" in record else record
+        if not isinstance(block, dict):
+            results.append(AuditResult(id=f"line:{index}", status="fail", errors=("missing_or_invalid_block",)))
+            continue
+        block_id = str(record.get("id") or block.get("envelope", {}).get("block_id") or f"line:{index}")
+        results.append(audit_block(block, fixture_id=block_id, context=context))
+    if not results:
+        return [AuditResult(id=str(path), status="fail", errors=("trace_file_empty",))]
+    return results
+
+
+def audit_block(
+    block: dict[str, Any],
+    *,
+    fixture_id: str = "trace-block",
+    context: AuditContext | None = None,
+) -> AuditResult:
     """Return pass/warn/fail status for a draft trace block."""
     errors = validate_block(block)
     if errors:
         return AuditResult(id=fixture_id, status="fail", errors=tuple(errors))
 
+    warnings: list[str] = []
+    digest_errors = _audit_payload_digest(block, warnings)
+    if digest_errors:
+        return AuditResult(id=fixture_id, status="fail", errors=tuple(digest_errors))
+    artifact_errors = _audit_artifacts(block, context or AuditContext())
+    if artifact_errors:
+        return AuditResult(id=fixture_id, status="fail", errors=tuple(artifact_errors))
+
     resolver_state = block["audit"]["resolver_state"]
     if resolver_state in {"missing_identifiable", "unresolvable_fallback_required"}:
-        return AuditResult(id=fixture_id, status="warn")
+        warnings.append(resolver_state)
+
+    if warnings:
+        return AuditResult(id=fixture_id, status="warn", errors=tuple(warnings))
 
     return AuditResult(id=fixture_id, status="pass")
+
+
+def canonical_payload_digest(block: dict[str, Any]) -> str:
+    """Return the draft canonical digest for stable semantic payload fields."""
+    payload = {key: block[key] for key in ("observation", "content", "audit")}
+    if "extensions" in block:
+        payload["extensions"] = block["extensions"]
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "sha256:" + sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def validate_block(block: dict[str, Any]) -> list[str]:
@@ -192,6 +255,10 @@ def _validate_audit(
         errors.append("invalid_expectation")
     if expectation == "reject_malformed" and result != "rejected":
         errors.append("reject_fixture_must_have_rejected_result")
+    if expectation == "accept_exact" and content.get("exact") is not True:
+        errors.append("accept_exact_requires_exact_content")
+    if content.get("exact") is False and expectation == "accept_exact":
+        errors.append("non_exact_content_claims_exact_expectation")
 
     needs_reason = (
         action == "fallback"
@@ -215,3 +282,168 @@ def _require_content_identity(content: dict[str, Any], errors: list[str]) -> Non
 def is_hash(value: object) -> bool:
     """Return whether a value is a lowercase sha256 digest string."""
     return isinstance(value, str) and HASH_RE.match(value) is not None
+
+
+def _audit_payload_digest(block: dict[str, Any], warnings: list[str]) -> list[str]:
+    payload_digest = block["envelope"].get("payload_digest")
+    if payload_digest == "draft-uncomputed":
+        warnings.append("draft_payload_digest_uncomputed")
+        return []
+
+    if payload_digest != canonical_payload_digest(block):
+        return ["payload_digest_mismatch"]
+    return []
+
+
+def _audit_artifacts(block: dict[str, Any], context: AuditContext) -> list[str]:
+    errors: list[str] = []
+    resolver_state = block["audit"]["resolver_state"]
+    content = block["content"]
+
+    if resolver_state != "available_local":
+        return errors
+
+    resolved = _resolve_fixture_uri(content.get("resolver_uri"), context)
+    if resolved is None:
+        errors.append("available_local_unresolved_content_uri")
+        return errors
+
+    _verify_artifact_identity(
+        resolved,
+        expected_hash=content.get("hash"),
+        expected_size=content.get("size_bytes"),
+        label="content",
+        errors=errors,
+    )
+
+    if block["observation"]["action"] == "delta":
+        _audit_delta(block, context, errors)
+
+    return errors
+
+
+def _audit_delta(block: dict[str, Any], context: AuditContext, errors: list[str]) -> None:
+    content = block["content"]
+    if content.get("delta_algorithm") != "unified_diff":
+        errors.append("unsupported_delta_algorithm_for_audit")
+        return
+
+    base_path = _resolve_fixture_uri(content.get("base_uri"), context)
+    delta_path = _resolve_fixture_uri(content.get("delta_uri"), context)
+    final_path = _resolve_fixture_uri(content.get("resolver_uri"), context)
+    if base_path is None:
+        errors.append("missing_or_unresolved_base_uri")
+    if delta_path is None:
+        errors.append("missing_or_unresolved_delta_uri")
+    if final_path is None:
+        errors.append("missing_or_unresolved_final_uri")
+    if base_path is None or delta_path is None or final_path is None:
+        return
+
+    _verify_artifact_identity(
+        base_path, expected_hash=content.get("base_hash"), expected_size=None, label="base", errors=errors
+    )
+    _verify_artifact_identity(
+        delta_path,
+        expected_hash=content.get("delta_hash"),
+        expected_size=None,
+        label="delta",
+        errors=errors,
+    )
+
+    try:
+        replayed = _apply_unified_diff(
+            base_path.read_text().splitlines(keepends=True), delta_path.read_text().splitlines(keepends=True)
+        )
+    except ValueError as exc:
+        errors.append(f"delta_replay_failed:{exc}")
+        return
+
+    final_bytes = final_path.read_bytes()
+    if "".join(replayed).encode("utf-8") != final_bytes:
+        errors.append("delta_replay_final_mismatch")
+
+
+def _verify_artifact_identity(
+    path: Path,
+    *,
+    expected_hash: object,
+    expected_size: object,
+    label: str,
+    errors: list[str],
+) -> None:
+    data = path.read_bytes()
+    actual_hash = "sha256:" + sha256(data).hexdigest()
+    if expected_hash != actual_hash:
+        errors.append(f"{label}_hash_mismatch")
+    if expected_size is not None and expected_size != len(data):
+        errors.append(f"{label}_size_mismatch")
+
+
+def _resolve_fixture_uri(uri: object, context: AuditContext) -> Path | None:
+    if not isinstance(uri, str) or context.fixture_dir is None:
+        return None
+    fixture_dir = context.fixture_dir.resolve()
+    if uri.startswith("tok-fixture://"):
+        relative = uri.removeprefix("tok-fixture://")
+        path = (fixture_dir / relative).resolve()
+    else:
+        path = (fixture_dir / uri).resolve()
+
+    try:
+        path.relative_to(fixture_dir)
+    except ValueError:
+        return None
+    return path if path.exists() and path.is_file() else None
+
+
+def _apply_unified_diff(base_lines: list[str], diff_lines: list[str]) -> list[str]:
+    output: list[str] = []
+    base_index = 0
+    index = 0
+
+    while index < len(diff_lines):
+        line = diff_lines[index]
+        if line.startswith("--- ") or line.startswith("+++ "):
+            index += 1
+            continue
+        if not line.startswith("@@ "):
+            index += 1
+            continue
+
+        old_start = _parse_hunk_old_start(line)
+        hunk_start = old_start - 1
+        output.extend(base_lines[base_index:hunk_start])
+        base_index = hunk_start
+        index += 1
+
+        while index < len(diff_lines) and not diff_lines[index].startswith("@@ "):
+            hunk_line = diff_lines[index]
+            if hunk_line.startswith(" "):
+                expected = hunk_line[1:]
+                if base_index >= len(base_lines) or base_lines[base_index] != expected:
+                    raise ValueError("context_mismatch")
+                output.append(base_lines[base_index])
+                base_index += 1
+            elif hunk_line.startswith("-"):
+                expected = hunk_line[1:]
+                if base_index >= len(base_lines) or base_lines[base_index] != expected:
+                    raise ValueError("removal_mismatch")
+                base_index += 1
+            elif hunk_line.startswith("+"):
+                output.append(hunk_line[1:])
+            elif hunk_line.startswith("\\"):
+                pass
+            else:
+                raise ValueError("invalid_hunk_line")
+            index += 1
+
+    output.extend(base_lines[base_index:])
+    return output
+
+
+def _parse_hunk_old_start(header: str) -> int:
+    match = re.match(r"@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@", header)
+    if match is None:
+        raise ValueError("invalid_hunk_header")
+    return int(match.group(1))

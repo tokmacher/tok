@@ -785,7 +785,7 @@ class SavingsTracker:
             f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
             f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
             f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
-            f"- cost saved: ${float(summary['cost_saved_usd']):.4f}\n"
+            f"- est. cost saved: ~${float(summary['cost_saved_usd']):.4f}\n"
             f"- fallback count: {int(summary['fallback_count'])}\n"
             f"- baseline-only: {'yes' if bool(summary['baseline_only']) else 'no'}\n"
             f"- session quality: {summary['session_quality']}\n"
@@ -832,7 +832,7 @@ class SavingsTracker:
             f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
             f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
             f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
-            f"- cost saved: ${float(summary['cost_saved_usd']):.4f}\n"
+            f"- est. cost saved: ~${float(summary['cost_saved_usd']):.4f}\n"
             f"- fallback count: {int(summary['fallback_count'])}\n"
             f"- baseline-only requests: {int(summary['baseline_only_requests'])}"
         )
@@ -944,7 +944,7 @@ class SavingsTracker:
             f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
             f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
             f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
-            f"- cost saved: ${float(summary['cost_saved_usd']):.4f}\n"
+            f"- est. cost saved: ~${float(summary['cost_saved_usd']):.4f}\n"
             f"- session quality: {summary['session_quality']}\n"
             f"- degradation reason: {summary['last_degradation_reason'] or 'none'}"
         )

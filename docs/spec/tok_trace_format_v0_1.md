@@ -25,7 +25,9 @@ The first milestone is fixture validation:
   recoverable?
 - Can malformed blocks be rejected before any runtime integration exists?
 
-Runtime trace emission and `tok audit` CLI behavior are intentionally future work.
+Artifact-capturing runtime trace emission is intentionally future work. A hidden
+experimental `tok audit` command may validate draft fixtures and metadata-only live
+JSONL traces, but it is not part of the supported public CLI surface.
 
 ## Core Concepts
 
@@ -80,18 +82,38 @@ Resolver state is explicit:
 A hash proves identity, not availability. A resolver URI is a recovery attempt, not a
 guarantee that the receiver has the bytes.
 
-## Proposed `tok audit` Behavior
+## Experimental `tok audit` Behavior
 
-A future `tok audit` command should:
+The hidden experimental `tok audit` command validates draft fixture files. It should:
 
 1. Parse trace fixture files.
 1. Validate required fields and enum values.
-1. Recompute payload digests once canonicalization is implemented.
-1. Resolve local fixture/cache artifacts when available.
-1. Verify content hashes and delta relationships.
+1. Recompute payload digests for the stable semantic payload.
+1. Warn on `draft-uncomputed` payload digests.
+1. Resolve local `tok-fixture://` artifacts when available.
+1. Verify content hashes and byte sizes.
+1. Replay `unified_diff` deltas in fixture-local audit.
 1. Report missing resolver/cache states separately from hash mismatches.
 1. Treat fallback as a valid safety outcome when the trace explains why.
 
-The first 0.1.7 implementation only validates fixture structure. Runtime protocol
-compliance should not be claimed until audit behavior exists and passes the fixture
-corpus.
+The first 0.1.7 implementation validates fixture structure and fixture-local artifacts.
+It can also emit opt-in metadata-only live traces with `TOK_TRACE=1`. Runtime protocol
+compliance should not be claimed until artifact-backed bridge emission exists and passes
+the fixture corpus.
+
+## Opt-in Live Trace Emission
+
+Set `TOK_TRACE=1` before starting the bridge to write metadata-only JSONL trace blocks
+under `.tok/traces/`. These records are sidecar audit data only. They are never sent to
+the model or provider, and they do not change compression decisions.
+
+The live trace surface is intentionally small in 0.1.7:
+
+- `request_prepared`
+- `fallback`
+- `response_processed`
+- `audit_warning` for trace-emission issues
+
+Live traces do not store raw prompts, responses, or tool outputs by default. Since exact
+bytes are not captured, `tok audit` reports metadata-only live traces as warnings rather
+than exact replay proof.

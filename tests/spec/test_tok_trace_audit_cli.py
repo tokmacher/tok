@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -48,6 +49,7 @@ def test_audit_command_passes_clean_fixture_subset(tmp_path: Path) -> None:
         }
     ]
     clean_path = tmp_path / "clean_trace_fixtures.json"
+    shutil.copytree(FIXTURE_PATH.parent / "artifacts", tmp_path / "artifacts")
     clean_path.write_text(json.dumps(clean_fixtures))
 
     result = runner.invoke(app, ["audit", str(clean_path)])

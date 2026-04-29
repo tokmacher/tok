@@ -313,6 +313,7 @@ def test_health_endpoint(monkeypatch) -> None:
         "prepared_prompt_tokens": 0,
         "saved_prompt_tokens": 0,
         "session_savings_pct": 0.0,
+        "session_cost_savings_pct": 0.0,
         "actual_cost_usd": 0.0,
         "baseline_cost_usd": 0.0,
         "cost_saved_usd": 0.0,

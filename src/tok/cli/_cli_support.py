@@ -398,7 +398,7 @@ def savings_headline(
     return (
         f"Saved {tokens_saved:,} tokens",
         f"{pct:.1f}% saved",
-        f"{savings_verdict(pct)} • ${saved_usd:.4f} cost saved ({cost_pct:.1f}% cost)",
+        f"{savings_verdict(pct)} • ~${saved_usd:.4f} est. cost saved ({cost_pct:.1f}% cost)",
     )
 
 

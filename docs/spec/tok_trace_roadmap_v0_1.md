@@ -15,7 +15,7 @@ version is a small verifier-friendly trace format for bridge sessions.
 1. Stable fixture corpus
    - Other implementations can test their readers against documented examples.
 1. Experimental audit command
-   - `tok audit` can validate fixtures and trace files before runtime emission is
+   - Hidden `tok audit` can validate fixtures and trace files before runtime emission is
      considered stable.
 1. Resolver/cache layer
    - Agents and tools can share exact content by hash when bytes are available.
@@ -58,8 +58,9 @@ Bridge/runtime emission should wait until the docs and verifier agree on:
 - resolver states
 - delta requirements
 - fallback requirements
-- hidden or experimental audit CLI behavior
+- hidden experimental audit CLI behavior
 - release-surface boundaries
 
-Once that gate is met, runtime emission should be opt-in and file-based before any
-streaming or provider-neutral transport work begins.
+0.1.7 may emit metadata-only live traces behind `TOK_TRACE=1`. Artifact-backed runtime
+emission should remain opt-in and file-based before any streaming or provider-neutral
+transport work begins.

@@ -333,6 +333,22 @@ def _record_fallback_once(session: BridgeSession, request_state: dict[str, bool]
         return
     session.runtime_session.record_fallback_event()
     request_state["fallback_recorded"] = True
+    try:
+        from tok.spec.live_trace import emit_live_trace
+
+        emit_live_trace(
+            session,
+            "fallback",
+            trace_class="system",
+            action="fallback",
+            result="degraded",
+            expectation="accept_fallback",
+            reason="bridge recorded fail-open fallback for this request",
+            direction="request",
+            metadata={"fallback_recorded": True},
+        )
+    except Exception:
+        logger.debug("tok_trace_fallback_emit_failed", exc_info=True)
 
 
 def _has_visible_content_block(content_blocks: list[dict[str, Any]]) -> bool:
@@ -618,6 +634,46 @@ class BridgeSession:
         if bucket is None:
             return self
         return self.bound_session_for_key(bucket.key)
+
+    def aggregate_session_summary(self) -> dict[str, int | float | bool | str] | None:
+        """Merge session_summary() across all live buckets into one aggregate view."""
+        summaries = [
+            s for bucket in self._session_buckets.values() if (s := bucket.tracker.session_summary()) is not None
+        ]
+        if not summaries:
+            return None
+        if len(summaries) == 1:
+            return summaries[0]
+
+        int_keys = {k for k, v in summaries[0].items() if isinstance(v, int)}
+        float_keys = {
+            k for k, v in summaries[0].items() if isinstance(v, float) and k not in ("savings_pct", "cost_savings_pct")
+        }
+        merged: dict[str, int | float | bool | str] = {}
+        for key in int_keys:
+            merged[key] = sum(int(s.get(key, 0)) for s in summaries)
+        for key in float_keys:
+            merged[key] = sum(float(s.get(key, 0.0)) for s in summaries)
+
+        # Recompute derived ratios from merged totals
+        baseline_tokens = int(merged.get("baseline_tokens", 0))
+        tokens_saved = int(merged.get("tokens_saved", 0))
+        baseline_cost = float(merged.get("baseline_cost_usd", 0.0))
+        actual_cost = float(merged.get("actual_cost_usd", 0.0))
+        cost_saved = baseline_cost - actual_cost
+        merged["cost_saved_usd"] = cost_saved
+        merged["savings_pct"] = round(tokens_saved / baseline_tokens * 100, 1) if baseline_tokens > 0 else 0.0
+        merged["cost_savings_pct"] = round(cost_saved / baseline_cost * 100, 1) if baseline_cost > 0 else 0.0
+
+        # Non-numeric fields: take from the most-recently-seen bucket with calls
+        non_empty = [b for b in self._session_buckets.values() if (b.tracker.session_summary() or {}).get("calls", 0)]
+        representative = max(non_empty, key=lambda b: b.last_seen) if non_empty else None
+        rep_summary = representative.tracker.session_summary() if representative else summaries[-1]
+        for key in ("session_quality", "last_degradation_reason"):
+            if key in rep_summary:
+                merged[key] = rep_summary[key]
+
+        return merged
 
     def reset_active_session(self) -> None:
         bucket = (

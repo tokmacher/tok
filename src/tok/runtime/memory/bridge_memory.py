@@ -555,7 +555,7 @@ class BridgeMemoryState:
 
         file_values = []
         for e in files:
-            val = self.pointers.get_pointer(e.value)
+            val = self.pointers.get_pointer(e.value, score=e.score)
             file_values.append(val)
 
         f_key = TOK_FIELD_ALIAS.get("files", "files")
@@ -606,7 +606,7 @@ class BridgeMemoryState:
             if ":" in val:
                 fk, fv = val.split(":", 1)
                 if fk in {"answer_file", "answer_verification"}:
-                    fv = self.pointers.get_pointer(fv)
+                    fv = self.pointers.get_pointer(fv, score=fact.score)
                     val = f"{fk}:{fv}"
             state_parts.append(val)
 
@@ -629,7 +629,7 @@ class BridgeMemoryState:
             if field == "facts" and ":" in v:
                 fk, fv = v.split(":", 1)
                 if fk in {"answer_file", "answer_verification"}:
-                    fv = self.pointers.get_pointer(fv)
+                    fv = self.pointers.get_pointer(fv, score=e.score)
                     v = f"{fk}:{fv}"
             values.append(v)
         serialized = f"{alias}:" + ",".join(values)

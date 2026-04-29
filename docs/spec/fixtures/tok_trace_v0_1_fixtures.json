@@ -10,7 +10,7 @@
         "turn": 0,
         "step": 0,
         "direction": "request",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:1645f60c323e8aea451c0101553e4fb48ff82aa14bea7c934db86a09a059d970"
       },
       "observation": {
         "class": "file",
@@ -20,9 +20,9 @@
       },
       "content": {
         "exact": true,
-        "hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "size_bytes": 1247,
-        "resolver_uri": "tok-cache://sha256/1111111111111111111111111111111111111111111111111111111111111111"
+        "hash": "sha256:cff3d818f11e8c1cd2f60bdb988c9bc49e7f8b14b30f11e68f1ab0483b54e4b0",
+        "size_bytes": 132,
+        "resolver_uri": "tok-fixture://artifacts/utils_v1.py"
       },
       "audit": {
         "resolver_state": "available_local",
@@ -41,7 +41,7 @@
         "turn": 1,
         "step": 0,
         "direction": "request",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:2e3e73b8d462502bf301f64ca095dbcdc3fdfcd106b151049995f2039379d0c9"
       },
       "observation": {
         "class": "tool",
@@ -51,9 +51,9 @@
       },
       "content": {
         "exact": true,
-        "hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "size_bytes": 1247,
-        "resolver_uri": "tok-cache://sha256/1111111111111111111111111111111111111111111111111111111111111111"
+        "hash": "sha256:cff3d818f11e8c1cd2f60bdb988c9bc49e7f8b14b30f11e68f1ab0483b54e4b0",
+        "size_bytes": 132,
+        "resolver_uri": "tok-fixture://artifacts/utils_v1.py"
       },
       "audit": {
         "resolver_state": "available_local",
@@ -72,7 +72,7 @@
         "turn": 2,
         "step": 0,
         "direction": "request",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:fa66d5be06b83a0f9da226be06e559ca598ddc4dcca0ceb42d926aaa34519a39"
       },
       "observation": {
         "class": "file",
@@ -82,13 +82,14 @@
       },
       "content": {
         "exact": true,
-        "hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-        "size_bytes": 1298,
-        "resolver_uri": "tok-cache://sha256/3333333333333333333333333333333333333333333333333333333333333333",
-        "base_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "delta_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-        "delta_uri": "tok-cache://sha256/2222222222222222222222222222222222222222222222222222222222222222",
-        "delta_algorithm": "unified_diff"
+        "hash": "sha256:8d89f0c8e9dd31e2981bdc2a0422219f038e56bc9849b125d9d46f79874700c2",
+        "size_bytes": 135,
+        "resolver_uri": "tok-fixture://artifacts/utils_v2.py",
+        "base_hash": "sha256:cff3d818f11e8c1cd2f60bdb988c9bc49e7f8b14b30f11e68f1ab0483b54e4b0",
+        "delta_hash": "sha256:f9c7a6f36d54c72223aa18ed95d99df8bd74ba00bba915dae2cfe487d84b329f",
+        "delta_uri": "tok-fixture://artifacts/utils_v1_to_v2.diff",
+        "delta_algorithm": "unified_diff",
+        "base_uri": "tok-fixture://artifacts/utils_v1.py"
       },
       "audit": {
         "resolver_state": "available_local",
@@ -107,7 +108,7 @@
         "turn": 3,
         "step": 0,
         "direction": "response",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:eb92be9a0b250835679407d2df37dec407f3f0c9da633a8d0456d295f419d4e6"
       },
       "observation": {
         "class": "tool",
@@ -117,9 +118,9 @@
       },
       "content": {
         "exact": true,
-        "hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
-        "size_bytes": 981,
-        "resolver_uri": "tok-cache://sha256/4444444444444444444444444444444444444444444444444444444444444444"
+        "hash": "sha256:aadb12610e431e9b6cecae641f6d7b1549d6e30794cc0a62691bb6d1d0738755",
+        "size_bytes": 53,
+        "resolver_uri": "tok-fixture://artifacts/bash_output.txt"
       },
       "audit": {
         "resolver_state": "available_local",
@@ -139,7 +140,7 @@
         "turn": 4,
         "step": 0,
         "direction": "request",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:0069e3a66b1a7b99b25c3240f0702d980a89666b8eec03d78d71a2fab964c258"
       },
       "observation": {
         "class": "file",
@@ -170,7 +171,7 @@
         "turn": 5,
         "step": 0,
         "direction": "request",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:f77187b386d65f88172539807ffd0f39b3835652f1e768b07bc637e126ba2728"
       },
       "observation": {
         "class": "message",
@@ -199,7 +200,7 @@
         "turn": 6,
         "step": 0,
         "direction": "request",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:35ddcc94947570d55aafe8f432bfb9fc2eaa27af7253d185f77cc5e50291b5ee"
       },
       "observation": {
         "class": "search",
@@ -209,9 +210,9 @@
       },
       "content": {
         "exact": true,
-        "hash": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
-        "size_bytes": 412,
-        "resolver_uri": "tok-cache://sha256/7777777777777777777777777777777777777777777777777777777777777777"
+        "hash": "sha256:38d7eaaf52f506788444dce138407b193942b251df8d34073c6ada48f1879580",
+        "size_bytes": 99,
+        "resolver_uri": "tok-fixture://artifacts/search_todo.txt"
       },
       "audit": {
         "resolver_state": "available_local",
@@ -230,7 +231,7 @@
         "turn": 7,
         "step": 0,
         "direction": "request",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:b286cdb1c8d1ede9bec4f00d3dee077e9bfd35b2a154b90d105b30f073c2a6af"
       },
       "observation": {
         "class": "file",
@@ -240,9 +241,9 @@
       },
       "content": {
         "exact": false,
-        "hash": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
-        "size_bytes": 903,
-        "resolver_uri": "tok-cache://sha256/8888888888888888888888888888888888888888888888888888888888888888"
+        "hash": "sha256:73f47092220c964bd5112b2f275c1d8a10451c7c31df46cfe8d2d4dbcd688d30",
+        "size_bytes": 113,
+        "resolver_uri": "tok-fixture://artifacts/runtime_skeleton.txt"
       },
       "audit": {
         "resolver_state": "available_local",
@@ -261,7 +262,7 @@
         "turn": 8,
         "step": 0,
         "direction": "response",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:6ed95fd375143b22b741d976285848cea0e29a4c7a70f80ee7d3d529403fd640"
       },
       "observation": {
         "class": "response",
@@ -271,9 +272,9 @@
       },
       "content": {
         "exact": false,
-        "hash": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
-        "size_bytes": 588,
-        "resolver_uri": "tok-cache://sha256/9999999999999999999999999999999999999999999999999999999999999999"
+        "hash": "sha256:9f0a11311632ef82c08010137b3ee74c4e37653b2a100722d9ae9fe86686e525",
+        "size_bytes": 92,
+        "resolver_uri": "tok-fixture://artifacts/response_summary.txt"
       },
       "audit": {
         "resolver_state": "resolvable_remote",
@@ -292,7 +293,7 @@
         "turn": 9,
         "step": 0,
         "direction": "sideways",
-        "payload_digest": "draft-uncomputed"
+        "payload_digest": "sha256:221302d39b26d54fb9e4a8c64074fa739b8a38e51f80c5b55d9a97d18d0de355"
       },
       "observation": {
         "class": "file",

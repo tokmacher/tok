@@ -32,9 +32,10 @@ envelope := {
 }
 ```
 
-`payload_digest` may be `draft-uncomputed` in 0.1.7 fixtures until canonical digest
-rules are implemented. Production audit must replace that placeholder with a
-deterministic digest.
+`payload_digest` is computed over the stable semantic payload: `observation`, `content`,
+`audit`, and optional `extensions`, serialized as sorted-key compact JSON.
+`draft-uncomputed` is accepted only as a draft placeholder and produces an audit
+warning.
 
 ## Observation
 
@@ -63,6 +64,7 @@ content := {
   size_bytes?: integer,
   resolver_uri?: string,
   base_hash?: "sha256:<64 lowercase hex>",
+  base_uri?: string,
   delta_hash?: "sha256:<64 lowercase hex>",
   delta_uri?: string,
   delta_algorithm?: "line" | "unified_diff" | "json_patch" | "binary"
@@ -71,7 +73,11 @@ content := {
 
 Exact content requires `hash`, `size_bytes`, and either `resolver_uri` or an audit state
 that explains why the content is unavailable. Delta actions additionally require
-`base_hash`, `delta_hash`, `delta_uri`, and `delta_algorithm`.
+`base_hash`, `base_uri`, `delta_hash`, `delta_uri`, and `delta_algorithm`.
+
+The draft fixture auditor resolves `tok-fixture://...` URIs relative to the fixture
+directory. For 0.1.7, only `unified_diff` delta replay is audited; other algorithms are
+schema-reserved.
 
 ## Audit
 

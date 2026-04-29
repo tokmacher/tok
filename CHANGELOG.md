@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.7 (unreleased)
+
+### Added
+
+- **Tok Trace v0.1 draft groundwork**: added draft trace docs, fixture corpus, expected
+  audit outcomes, fixture-local artifacts, and an internal validator for bridge-session
+  trace records.
+- **Experimental hidden `tok audit`**: validates draft trace fixtures with
+  pass/warn/fail outcomes, canonical payload digest checks, local artifact hash/size
+  verification, and unified-diff delta replay. This command is hidden and not part of
+  the supported public CLI surface.
+- **Opt-in live trace sidecar**: `TOK_TRACE=1` writes metadata-only JSONL trace blocks
+  under `.tok/traces/` for `request_prepared`, `fallback`, and `response_processed`
+  events. These traces are never sent to the model/provider and audit as warnings unless
+  exact artifacts are captured in a future release.
+
+### Notes
+
+- This release does not add artifact-backed runtime trace replay, capability handshakes,
+  binary trace encodings, or agent-to-agent protocol behavior. The supported workflow
+  remains the Claude Code bridge path.
+
 ## 0.1.6 (2026-04-29)
 
 ### Fixes

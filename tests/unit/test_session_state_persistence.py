@@ -409,6 +409,8 @@ class TestFreshSessionPointerInjection:
         rs.bridge_memory.turn = 100
         rs.bridge_memory.pointers.get_pointer("/repo/src/foo.py")
         rs.bridge_memory.durable["facts"] = [MemoryEntry(value="answer_file:/repo/src/foo.py")]
+        (tmp_path / ".tok").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".tok" / "bridge_memory.tok").write_text("@mem v:b1 t:100\n")
         assert rs._is_first_request is True
 
         runtime = UniversalTokRuntime()
@@ -430,8 +432,8 @@ class TestFreshSessionPointerInjection:
             with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
                 prepare_request_impl(runtime, req, rs)
 
-        assert any("bridge_memory.tok @pointers" in h for h in captured_hints), (
-            f"Pointer hint not found in runtime_hints: {captured_hints}"
+        assert any("[tok] Session memory:" in h and "bridge_memory.tok" in h for h in captured_hints), (
+            f"Memory hint not found in runtime_hints: {captured_hints}"
         )
         assert rs._is_first_request is False
 
@@ -469,8 +471,8 @@ class TestFreshSessionPointerInjection:
             with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
                 prepare_request_impl(runtime, req, rs)
 
-        assert not any("bridge_memory.tok @pointers" in h for h in captured_hints), (
-            f"Pointer hint unexpectedly found in runtime_hints on second request: {captured_hints}"
+        assert not any("[tok] Session memory:" in h for h in captured_hints), (
+            f"Memory hint unexpectedly found in runtime_hints on second request: {captured_hints}"
         )
 
     def test_short_session_no_injection(self, tmp_path) -> None:
@@ -505,8 +507,8 @@ class TestFreshSessionPointerInjection:
             with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
                 prepare_request_impl(runtime, req, rs)
 
-        assert not any("bridge_memory.tok @pointers" in h for h in captured_hints), (
-            f"Pointer hint unexpectedly found for short session: {captured_hints}"
+        assert not any("[tok] Session memory:" in h for h in captured_hints), (
+            f"Memory hint unexpectedly found for short session: {captured_hints}"
         )
         assert rs._is_first_request is False
 

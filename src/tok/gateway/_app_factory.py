@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 
 from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
 from tok.runtime.smoothness import SmoothnessEventType
+from tok.spec.live_trace import emit_live_trace
 
 from . import (
     _RUNTIME,
@@ -237,7 +238,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
     @app.api_route("/health", methods=["GET", "HEAD"])
     async def health() -> dict[str, Any]:
         report_session = session.reporting_session()
-        session_summary = report_session.tracker.session_summary() or {}
+        session_summary = session.aggregate_session_summary() or {}
         signals = dict(report_session.tracker.behavior_signals())
         for (
             key,
@@ -266,6 +267,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "prepared_prompt_tokens": int(session_summary.get("prepared_prompt_tokens", 0)),
             "saved_prompt_tokens": int(session_summary.get("saved_prompt_tokens", 0)),
             "session_savings_pct": float(session_summary.get("savings_pct", 0.0)),
+            "session_cost_savings_pct": float(
+                session_summary.get("cost_savings_pct", session_summary.get("savings_pct", 0.0))
+            ),
             "actual_cost_usd": float(session_summary.get("actual_cost_usd", 0.0)),
             "baseline_cost_usd": float(session_summary.get("baseline_cost_usd", 0.0)),
             "cost_saved_usd": float(session_summary.get("cost_saved_usd", 0.0)),
@@ -577,6 +581,30 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     if not behavior_signals.get("plan_finalization_passthrough", 0):
                         body = apply_anthropic_optimizations(body)
                     body_bytes = json.dumps(body).encode()
+                    emit_live_trace(
+                        active_session,
+                        "request_prepared",
+                        trace_class="message",
+                        action="summary_reference" if compressed else "pass_through",
+                        result="ok",
+                        expectation="accept_non_exact_reference" if compressed else "accept_fallback",
+                        reason=(
+                            "live metadata-only trace; request artifacts are not captured"
+                            if compressed
+                            else "request passed through without live artifact capture"
+                        ),
+                        direction="request",
+                        metadata={
+                            "compressed": bool(compressed),
+                            "input_saved_tokens": int(saved_toks if compressed else 0),
+                            "request_policy": request_policy,
+                            "mode": _request_policy_mode_label(request_policy),
+                            "tool_compatible": bool(request_tool_compatible),
+                            "behavior_signals": behavior_signals,
+                            "prompt_metrics": prompt_metrics,
+                            "prepared_body_bytes": len(body_bytes),
+                        },
+                    )
 
                     if tool_breakdown:
                         logger.info(
@@ -1029,6 +1057,27 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                     (active_session.tracker.session_summary() or {}).get("last_degradation_reason", "")
                                 ),
                             }
+                        )
+                        emit_live_trace(
+                            active_session,
+                            "response_processed",
+                            trace_class="response",
+                            action="summary_reference" if total_output_saved else "pass_through",
+                            result="ok",
+                            expectation="accept_non_exact_reference" if total_output_saved else "accept_fallback",
+                            reason=(
+                                "live metadata-only trace; response artifacts are not captured"
+                                if total_output_saved
+                                else "response passed through without live artifact capture"
+                            ),
+                            direction="response",
+                            metadata={
+                                "output_saved_tokens": int(total_output_saved),
+                                "behavior_signals": response_signals or {},
+                                "request_policy": request_policy,
+                                "tool_compatible": bool(request_tool_compatible),
+                                "baseline_only": bool(active_session.runtime_session._baseline_only),
+                            },
                         )
                     content = json.dumps(resp_json).encode()
                 except Exception as exc:

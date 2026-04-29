@@ -93,18 +93,23 @@ def stats_command(
     # data so "Current Session" always reflects the live bucket.
     # Only apply when showing the default view — not when --last-session or --total
     # were requested, which expect a different data source.
+    local_calls = int(session_summary["calls"]) if session_summary else 0
+    health_calls = int(health_payload.get("calls", 0)) if health_payload else 0
     if (
-        session_summary is None
-        and not last_session
+        not last_session
         and not total
         and health_payload
         and int(health_payload.get("actual_tokens", 0)) > 0
+        and health_calls >= local_calls
     ):
         session_summary = {
             "actual_tokens": int(health_payload.get("actual_tokens", 0)),
             "baseline_tokens": int(health_payload.get("baseline_tokens", 0)),
             "tokens_saved": int(health_payload.get("session_tokens_saved", 0)),
             "savings_pct": float(health_payload.get("session_savings_pct", 0.0)),
+            "cost_savings_pct": float(
+                health_payload.get("session_cost_savings_pct", health_payload.get("session_savings_pct", 0.0))
+            ),
             "actual_cost_usd": float(health_payload.get("actual_cost_usd", 0.0)),
             "baseline_cost_usd": float(health_payload.get("baseline_cost_usd", 0.0)),
             "cost_saved_usd": float(health_payload.get("cost_saved_usd", 0.0)),

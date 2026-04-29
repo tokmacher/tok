@@ -610,6 +610,7 @@ class TestCLI:
         )
         monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: None)
 
         result = runner.invoke(app, ["stats"])
         assert result.exit_code == 0

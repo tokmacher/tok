@@ -884,8 +884,22 @@ def test_reset_invalid_tool_history_recovery_clears_counter() -> None:
 def test_natural_first_escalates_on_repeated_tool_loop_signal(
     tmp_path,
 ) -> None:
+    """Escalates when a target is marked stuck across prior turns (cross-turn loop)."""
+    from tok.runtime.repeat_targets import HotSummaryRecord
+
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    # Seed the session with a stuck target (simulates a prior-turn loop being detected)
+    session._hot_summary_records["file_read:src/tok/runtime/core.py"] = HotSummaryRecord(
+        tool_family="file_read",
+        logical_target="src/tok/runtime/core.py",
+        display_target="src/tok/runtime/core.py",
+        summary="",
+        token_cost=0,
+        result_digest="",
+        last_seen_turn=3,
+        stuck_promotion_turn=3,
+    )
     request = RuntimeRequest(
         model="claude-sonnet-4-6",
         request_policy="natural_first",
@@ -900,12 +914,6 @@ def test_natural_first_escalates_on_repeated_tool_loop_signal(
                         "name": "view_file",
                         "input": {"path": "src/tok/runtime/core.py"},
                     },
-                    {
-                        "type": "tool_use",
-                        "id": "t2",
-                        "name": "view_file",
-                        "input": {"path": "src/tok/runtime/core.py"},
-                    },
                 ],
             },
             {
@@ -914,11 +922,6 @@ def test_natural_first_escalates_on_repeated_tool_loop_signal(
                     {
                         "type": "tool_result",
                         "tool_use_id": "t1",
-                        "content": "runtime core",
-                    },
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "t2",
                         "content": "runtime core",
                     },
                 ],
