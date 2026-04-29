@@ -128,18 +128,15 @@ _SESSION_KEY_SECRET = secrets.token_bytes(16)
 
 
 def _session_digest(value: str, *, length: int) -> str:
-    # Use a password-hard KDF for sensitive header values (for example API keys)
-    # before deriving an in-memory session bucket key.
-    dklen = max(1, (length + 1) // 2)
-    h = hashlib.scrypt(
+    # Fast keyed digest for per-request in-memory bucketing. This is not a
+    # password verifier; we only need collision-resistant, process-local tokens.
+    digest_size = max(1, (length + 1) // 2)
+    h = hashlib.blake2b(
         value.encode(),
-        salt=_SESSION_KEY_SECRET,
-        n=2**14,
-        r=8,
-        p=1,
-        dklen=dklen,
+        key=_SESSION_KEY_SECRET,
+        digest_size=digest_size,
     )
-    return h.hex()[:length]
+    return h.hexdigest()[:length]
 
 
 @dataclass

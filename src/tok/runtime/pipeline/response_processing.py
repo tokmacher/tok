@@ -91,12 +91,13 @@ def _visible_text_from_content_blocks(
 
 
 def _strip_visible_tok_pipe_prefixes(text: str) -> str:
-    text = re.sub(r"(?m)^\s*\|(?:#|\d+)>\s?", "", text)
+    original = text
+    text = re.sub(r"(?m)^(\s*)\|(?:#|\d+)>\s?", r"\1", text)
     # Strip bare |> only when the block contains Tok protocol markers; preserve
     # |> as a language operator (Elixir, F#, LiveScript) in plain responses.
     if ">>>" in text:
-        text = re.sub(r"(?m)^\s*\|>\s?", "", text)
-    return text.strip()
+        text = re.sub(r"(?m)^(\s*)\|>\s?", r"\1", text)
+    return text.strip() if text != original else text
 
 
 def _normalize_visible_text_blocks(content_blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
