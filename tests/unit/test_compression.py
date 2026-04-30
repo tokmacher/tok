@@ -2221,6 +2221,15 @@ class TestFindPathPreservation:
         assert preserved > 0, f"No paths preserved for 150-path find: {result[:300]}"
         assert "file_" in result, f"All paths lost in 150-path find: {result[:300]}"
 
+    def test_find_with_realistic_long_paths_not_truncated_again(self) -> None:
+        long_base = "/Users/jfj/Desktop/tok/src/tok/compression/workers/jobs"
+        paths = [f"{long_base}/subpkg_{i}/module_{j}.py" for i in range(10) for j in range(20)]
+        text = "\n".join(paths)
+        assert all(len(p) > 60 for p in paths), "test requires 60+ char paths"
+        result = tok_tool_result(text)
+        preserved = sum(1 for p in paths if p in result)
+        assert preserved > 0, f"No long paths preserved; result[:500]: {result[:500]}"
+
 
 # ---------------------------------------------------------------------------
 # Bug 0.1.5-2: Python skeleton must preserve top-level constant values

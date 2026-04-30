@@ -332,7 +332,7 @@ def _compress_grep(text: str, tool_context: dict[str, Any] | None = None) -> str
     else:
         per_file_limit = 3
 
-    result = [f">>> tool:grep|matches:{total}|files:{file_count}"]
+    result = [f">>> tool:grep|lines:{total}|files:{file_count}"]
     for key in order:
         snippets = by_file[key]
         limit = min(per_file_limit, len(snippets))
