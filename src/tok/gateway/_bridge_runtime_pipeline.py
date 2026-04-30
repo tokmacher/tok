@@ -16,9 +16,14 @@ from ._bridge_preflight import _run_bridge_preflight
 
 
 def _plan_finalization_min_saved_tokens() -> int:
+    raw = os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "32")
     try:
-        return max(0, int(os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "32")))
+        return max(0, int(raw))
     except ValueError:
+        logger.warning(
+            "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS=%r; using fallback 32",
+            raw,
+        )
         return 32
 
 
@@ -324,6 +329,8 @@ def prepare_bridge_payload(
     )
     retry_forbidden = retry_forbidden or prepared_retry_forbidden
     if behavior_signals.get("tok_bridge_pairing_degraded_to_provider_safe", 0):
+        if saved_toks > 0:
+            behavior_signals["tok_compression_worked_before_pairing_degraded"] = 1
         compressed = False
         saved_toks = 0
         tool_breakdown = {}

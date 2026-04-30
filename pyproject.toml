@@ -102,8 +102,8 @@ max-complexity = 10
 
 [tool.vulture]
 min_confidence = 80
-ignore_names = ["model_config", "_*"]
-exclude = ["typings", ".git", "benchmarks/assets", "tmp", "tests/unit/test_gateway.py"]
+ignore_names = ["model_config", "_*", "UnlinkDeniedPath"]
+exclude = ["typings", ".git", "benchmarks/assets", "tmp", "tests/unit/test_gateway.py", "tests/unit/test_cli.py"]
 ignore_decorators = []
 
 [tool.pyright]

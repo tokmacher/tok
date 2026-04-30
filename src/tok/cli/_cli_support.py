@@ -43,8 +43,20 @@ def bridge_url(port: int | None = None, path: str = "") -> str:
     """Build the bridge server URL."""
     host = os.getenv("TOK_BRIDGE_HOST", "localhost")
     if port is None:
-        port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+        port = env_int("TOK_BRIDGE_PORT", 9090)
     return f"http://{host}:{port}{path}"
+
+
+def env_int(name: str, fallback: int) -> int:
+    """Read an integer environment variable, warning and falling back when malformed."""
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        console.print(f"[yellow]Invalid integer config {name}={raw!r}; using fallback {fallback}.[/yellow]")
+        return fallback
 
 
 def _normalize_host(host: str) -> str:
@@ -61,7 +73,7 @@ def bridge_health_urls(port: int | None = None, path: str = "/health") -> list[s
     """Build bridge health probe URLs with loopback fallbacks for local hosts."""
     configured_host = os.getenv("TOK_BRIDGE_HOST", "localhost").strip() or "localhost"
     if port is None:
-        port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+        port = env_int("TOK_BRIDGE_PORT", 9090)
 
     if _normalize_host(configured_host) in _LOOPBACK_HOST_ALIASES:
         host_candidates = ["127.0.0.1", "localhost", "::1"]
@@ -116,7 +128,7 @@ def get_bridge_health_response(
 def collector_url(path: str = "") -> str:
     """Build the collector server URL."""
     host = os.getenv("TOK_COLLECTOR_HOST", "localhost")
-    port = int(os.getenv("TOK_COLLECTOR_PORT", "8000"))
+    port = env_int("TOK_COLLECTOR_PORT", 8000)
     return f"http://{host}:{port}{path}"
 
 

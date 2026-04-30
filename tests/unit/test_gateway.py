@@ -31,6 +31,7 @@ from tok.runtime.pipeline.request_validation import (
     summarize_message_structure,
     validate_anthropic_outgoing_bridge_body,
 )
+from tok.spec.trace_v0_1 import audit_trace_file
 from tok.stats import SavingsTracker
 from tok.universal_runtime import PreparedRuntimeRequest
 
@@ -954,6 +955,20 @@ def test_record_fallback_once_only_counts_first_event() -> None:
 
     assert session.runtime_session._consecutive_fallback_count == 1
     assert request_state["fallback_recorded"] is True
+
+
+def test_record_fallback_once_emits_auditable_live_trace(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = BridgeSession(memory_dir=tmp_path / ".tok")
+    request_state = {"fallback_recorded": False}
+
+    _record_fallback_once(session, request_state)
+
+    trace_file = next((tmp_path / ".tok" / "traces").glob("*.jsonl"))
+    record = json.loads(trace_file.read_text())
+    assert record["observation"]["key"] == "live:fallback"
+    assert audit_trace_file(trace_file)[0].status == "pass"
 
 
 def test_root_endpoint() -> None:
@@ -3388,6 +3403,123 @@ def test_tool_compatible_system_injection_present_when_tools_used(tmp_path, monk
     system = body.get("system", "")
     assert "TOK-NATIVE" not in system
     assert "Plain text. Tool calls only. Omit all headers." not in system
+
+
+def test_bridge_request_path_emits_auditable_live_trace(monkeypatch, tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "Continue."}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    trace_file = next((memory_dir / "traces").glob("*.jsonl"))
+    records = [json.loads(line) for line in trace_file.read_text().splitlines()]
+    keys = {record["observation"]["key"] for record in records}
+    assert "live:request_prepared" in keys
+    assert "live:response_processed" in keys
+    assert {result.status for result in audit_trace_file(trace_file)} == {"pass"}
+
+
+def test_bridge_live_trace_disabled_by_default(monkeypatch, tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    monkeypatch.delenv("TOK_TRACE", raising=False)
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "Continue."}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert not (memory_dir / "traces").exists()
+
+
+def test_bridge_live_trace_write_failure_does_not_fail_request(monkeypatch, tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_FILE", str(tmp_path))
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "Continue."}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
 
 
 def test_response_contract_ignores_python_repl_noise_in_tool_compatible_mode() -> None:

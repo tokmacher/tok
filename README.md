@@ -52,13 +52,14 @@ tok bridge status         # check bridge health
 tok doctor                # session diagnostics
 tok bridge stop           # stop cleanly
 tok stats                 # view savings
+tok audit --latest        # inspect the newest Tok Trace sidecar, if tracing is enabled
 ```
 
 Default behavior is explicit. Tok does not override `claude` unless you opt in with
 `tok install --wrap-claude`.
 
 The main CLI commands for `0.1.x` are: `tok init`, `tok install`,
-`tok bridge start|status|logs|stop`, `tok doctor`, and `tok stats`.
+`tok bridge start|status|logs|stop`, `tok doctor`, `tok stats`, and `tok audit`.
 
 ### Optional Wrapper Mode
 
@@ -89,6 +90,23 @@ Fallbacks              0
 
 If you see `Degraded to baseline: yes` or fallback counts rising, Tok protected the
 session by serving requests without compression.
+
+### Trace Audit
+
+Tok can write a sidecar trace of bridge behavior so you can inspect what happened
+without changing the Claude Code workflow:
+
+```bash
+TOK_TRACE=1 TOK_TRACE_CAPTURE_ARTIFACTS=1 tok bridge start
+ANTHROPIC_BASE_URL=http://localhost:9090 claude
+tok audit --latest
+```
+
+`TOK_TRACE=1` writes draft Tok Trace JSONL files under `~/.tok/traces/`.
+`TOK_TRACE_CAPTURE_ARTIFACTS=1` adds sanitized metadata artifacts so `tok audit` can
+verify trace hashes and byte sizes locally. Tok does not capture raw prompts, responses,
+or tool outputs in this mode. `tok audit` is for inspecting what Tok did during a bridge
+run; it is not a universal protocol compliance certificate.
 
 If you enabled wrapper mode and `claude` is still not found, reload your shell with
 `source ~/.zshrc` or `source ~/.bashrc` before debugging Tok itself.

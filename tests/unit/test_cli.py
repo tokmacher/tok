@@ -210,6 +210,40 @@ class TestCLI:
         assert "tok doctor" in result.output
         assert "tok bridge logs 100" in result.output
 
+    def test_bridge_status_invalid_port_config_falls_back_without_traceback(self, monkeypatch) -> None:
+        monkeypatch.setenv("TOK_BRIDGE_PORT", "bad")
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: None)
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 1
+        assert "Invalid integer config TOK_BRIDGE_PORT='bad'; using fallback 9090." in result.output
+        assert "Bridge not running" in result.output
+        assert "Traceback" not in result.output
+
+    def test_bridge_status_reports_malformed_health_payload_honestly(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "session_tokens_saved": "not-an-int",
+                    "session_savings_pct": "not-a-float",
+                }
+
+        monkeypatch.setattr("tok.cli._bridge.get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 1
+        assert "health payload is malformed" in result.output
+        assert "not responding" not in result.output
+        assert "Traceback" not in result.output
+
     def test_bridge_status_shows_watch_session_verdict(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
         monkeypatch.setenv("TOK_SAVINGS_FILE", "/tmp/test-empty-watch-status.tok")
@@ -836,6 +870,42 @@ class TestCLI:
 
         assert "Bridge stopped" in output
 
+    def test_bridge_stop_pid_file_permission_error_does_not_traceback(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+
+        class UnlinkDeniedPath:
+            def unlink(self, *, missing_ok: bool = False) -> None:
+                raise PermissionError("permission denied")
+
+            def __str__(self) -> str:
+                return str(tmp_path / "bridge.pid")
+
+            def _print(self, *args, **kwargs) -> None:
+                pass
+
+        calls = {"checked": False}
+
+        def fake_kill(pid, sig) -> None:
+            assert pid == 123
+            if sig == signal.SIGTERM:
+                return
+            if sig == 0 and not calls["checked"]:
+                calls["checked"] = True
+                raise ProcessLookupError
+            return
+
+        monkeypatch.setattr(_bridge, "PID_FILE", UnlinkDeniedPath())
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+
+        result = runner.invoke(app, ["bridge", "stop"])
+
+        assert result.exit_code == 0
+        assert "Could not remove bridge PID file" in result.output
+        assert "Traceback" not in result.output
+
     def test_savings_breakdown_shows_behavior_signals(self, tmp_path, monkeypatch) -> None:
         tracker = SavingsTracker(
             savings_file=str(tmp_path / "tok_savings.tok"),
@@ -1433,6 +1503,21 @@ class TestCLI:
         assert "baseline" in result.output
         assert "Recommendation:" in result.output
         assert "investigate degradation before trusting this session" in result.output
+
+    def test_doctor_invalid_port_config_falls_back_without_traceback(self, monkeypatch) -> None:
+        monkeypatch.setenv("TOK_BRIDGE_PORT", "bad")
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: None)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
+        monkeypatch.setattr(
+            "tok.cli._release.memory_root",
+            lambda: Path("/tmp/nonexistent_tok"),
+        )
+
+        result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 1
+        assert "Invalid integer config TOK_BRIDGE_PORT='bad'; using fallback 9090." in result.output
+        assert "Traceback" not in result.output
 
     def test_doctor_surfaces_request_shape_and_stream_attribution(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)

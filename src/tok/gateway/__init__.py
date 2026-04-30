@@ -98,13 +98,21 @@ def _default_bind_host() -> str:
 
 def _env_int(name: str, fallback: int, *, legacy_name: str | None = None) -> int:
     raw = os.getenv(name)
+    source_name = name
     if raw is None and legacy_name is not None:
         raw = os.getenv(legacy_name)
+        source_name = legacy_name
     if raw is None:
         return fallback
     try:
         return int(raw)
     except ValueError:
+        logger.warning(
+            "Invalid integer config %s=%r; using fallback %d",
+            source_name,
+            raw,
+            fallback,
+        )
         return fallback
 
 

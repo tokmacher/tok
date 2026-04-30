@@ -18,6 +18,7 @@ tok bridge status
 tok doctor [--report]
 tok bridge stop
 tok stats
+tok audit --latest
 ```
 
 `tok install` is a setup/migration helper. To opt into legacy auto-routing, use
@@ -53,12 +54,44 @@ Use:
 tok doctor
 tok stats [--session | --total | --last-session | --recent N | --since DATE]
 tok stats [--breakdown] [--trends] [--window N]
+tok audit [TRACE_FILE | --latest] [--json]
 ```
 
 Use:
 
 - `tok doctor` as the first troubleshooting command after install
 - `tok stats` for current, last-session, recent, and lifetime savings views
+- `tok audit` to validate Tok Trace v0.1 draft fixture files or live bridge sidecars
+
+## Trace Audit
+
+```bash
+TOK_TRACE=1 tok bridge start
+TOK_TRACE=1 TOK_TRACE_CAPTURE_ARTIFACTS=1 tok bridge start
+tok audit --latest
+tok audit ~/.tok/traces/20260430_061100_live_example.jsonl
+tok audit --latest --json
+```
+
+`TOK_TRACE=1` enables opt-in sidecar traces under `~/.tok/traces/`.
+`TOK_TRACE_CAPTURE_ARTIFACTS=1` writes sanitized metadata artifacts next to the trace so
+audit can verify local hashes and byte sizes. This does not capture raw prompts,
+responses, or tool outputs.
+
+`tok audit` is a draft trace-audit feature for inspecting what Tok did. It is not a
+universal protocol compliance certificate.
+
+Audit output uses three statuses:
+
+- `PASS`: the trace block shape, digest, and available local artifact checks passed
+- `WARN`: the trace is structurally valid, but exact bytes are missing or unavailable
+- `FAIL`: the trace is malformed, has a digest mismatch, or failed a local artifact
+  check
+
+Metadata-only live traces commonly produce `WARN` because Tok can identify what happened
+without storing original prompt, response, or tool-result bytes. Artifact-backed
+metadata mode can produce `PASS`, but it still verifies sanitized trace metadata rather
+than raw session content.
 
 Advanced maintainer utilities remain available, but they are intentionally hidden from
 the default help surface in `0.1.x` so new users land on one clear workflow. Hidden

@@ -44,6 +44,13 @@ FORBIDDEN_TRACKED_ROOT_ARTIFACTS = frozenset(
     }
 )
 
+FORBIDDEN_ROOT_REPORT_PATTERNS = (
+    "audit-report",
+    "audit_report",
+    "campaign-findings",
+    "campaign_findings",
+)
+
 
 def load_tracked_files(repo_root: Path | None = None) -> list[str]:
     cwd = repo_root or Path.cwd()
@@ -78,6 +85,8 @@ def find_violations(tracked_files: Iterable[str]) -> list[str]:
             violations.append(f"tracked temporary artifact under tmp/: {path}")
         if path in FORBIDDEN_TRACKED_ROOT_ARTIFACTS:
             violations.append(f"tracked runtime artifact in repo root: {path}")
+        if "/" not in path and any(pattern in path.lower() for pattern in FORBIDDEN_ROOT_REPORT_PATTERNS):
+            violations.append(f"tracked release report artifact in repo root: {path}")
         if "/" not in path and path not in ALLOWED_TOP_LEVEL_FILES:
             violations.append(f"unexpected tracked top-level file: {path}")
     return violations

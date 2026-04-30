@@ -27,6 +27,7 @@ from tok.stats import SavingsTracker
 
 from ._cli_support import (
     console,
+    env_int,
     get_bridge_health_response,
     get_running_bridge_pid,
     interaction_quality_rows,
@@ -77,7 +78,7 @@ def stats_command(
     recent_completed = tracker.recent_summary(recent) if recent else None
     since_completed = tracker.since_summary(since) if since else None
 
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+    port = env_int("TOK_BRIDGE_PORT", 9090)
     pid = get_running_bridge_pid(port)
     health_payload = None
     if pid:
@@ -563,7 +564,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
     console.print("=" * 52)
 
     issues = False
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+    port = env_int("TOK_BRIDGE_PORT", 9090)
     pid = get_running_bridge_pid(port)
     tracker = SavingsTracker()
     session_summary = tracker.session_summary()

@@ -7,10 +7,9 @@
 - **Tok Trace v0.1 draft groundwork**: added draft trace docs, fixture corpus, expected
   audit outcomes, fixture-local artifacts, and an internal validator for bridge-session
   trace records.
-- **Experimental hidden `tok audit`**: validates draft trace fixtures with
+- **`tok audit` draft trace validation**: validates draft trace fixtures with
   pass/warn/fail outcomes, canonical payload digest checks, local artifact hash/size
-  verification, and unified-diff delta replay. This command is hidden and not part of
-  the supported public CLI surface.
+  verification, unified-diff delta replay, `--latest`, and JSON output.
 - **Opt-in live trace sidecar**: `TOK_TRACE=1` writes metadata-only JSONL trace blocks
   under `.tok/traces/` for `request_prepared`, `fallback`, and `response_processed`
   events. These traces are never sent to the model/provider and audit as warnings unless
@@ -18,12 +17,21 @@
 - **Sanitized metadata artifact capture**: `TOK_TRACE_CAPTURE_ARTIFACTS=1` writes
   sidecar metadata artifacts for live trace blocks so `tok audit` can verify hash/size
   locally without storing raw prompts, responses, or tool outputs.
+- **Protocol hardening roadmap**: documented Tok Trace as the first layer in a broader
+  protocol family, added L0-L5 conformance levels, and started adversarial verifier
+  coverage for forged/escaped/out-of-order trace cases.
+- **Synthetic adversarial bridge-pressure coverage**: added offline scenario tests for
+  Claude-Code-like usage-spike and overcompression risk patterns, including large
+  parallel reads, broad audit turns, repeat-read evidence safety, final-answer repair
+  guards, skeleton/edit protection, recent-result pressure, and provider-sensitive tool
+  pairing repair signals.
 
 ### Notes
 
 - This release does not add artifact-backed runtime trace replay, capability handshakes,
   binary trace encodings, or agent-to-agent protocol behavior. The supported workflow
-  remains the Claude Code bridge path.
+  remains the Claude Code bridge path. The release claim is draft bridge trace/audit
+  groundwork, not universal protocol stability.
 
 ## 0.1.6 (2026-04-29)
 
