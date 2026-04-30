@@ -15,6 +15,9 @@
   under `.tok/traces/` for `request_prepared`, `fallback`, and `response_processed`
   events. These traces are never sent to the model/provider and audit as warnings unless
   exact artifacts are captured in a future release.
+- **Sanitized metadata artifact capture**: `TOK_TRACE_CAPTURE_ARTIFACTS=1` writes
+  sidecar metadata artifacts for live trace blocks so `tok audit` can verify hash/size
+  locally without storing raw prompts, responses, or tool outputs.
 
 ### Notes
 

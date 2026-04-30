@@ -117,3 +117,8 @@ The live trace surface is intentionally small in 0.1.7:
 Live traces do not store raw prompts, responses, or tool outputs by default. Since exact
 bytes are not captured, `tok audit` reports metadata-only live traces as warnings rather
 than exact replay proof.
+
+For a stronger local audit, set `TOK_TRACE_CAPTURE_ARTIFACTS=1` together with
+`TOK_TRACE=1`. This writes sanitized metadata artifacts next to the trace file and lets
+`tok audit` verify the trace block hash and byte size. This still does not capture raw
+prompt, response, or tool-result payloads.

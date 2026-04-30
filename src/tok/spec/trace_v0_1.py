@@ -419,7 +419,13 @@ def _apply_unified_diff(base_lines: list[str], diff_lines: list[str]) -> list[st
 
         while index < len(diff_lines) and not diff_lines[index].startswith("@@ "):
             hunk_line = diff_lines[index]
-            if hunk_line.startswith(" "):
+            if hunk_line in {"\n", "\r\n"}:
+                expected = hunk_line
+                if base_index >= len(base_lines) or base_lines[base_index] != expected:
+                    raise ValueError("context_mismatch")
+                output.append(base_lines[base_index])
+                base_index += 1
+            elif hunk_line.startswith(" "):
                 expected = hunk_line[1:]
                 if base_index >= len(base_lines) or base_lines[base_index] != expected:
                     raise ValueError("context_mismatch")

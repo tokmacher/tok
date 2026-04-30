@@ -21,6 +21,11 @@ def trace_enabled() -> bool:
     return os.getenv("TOK_TRACE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def trace_artifact_capture_enabled() -> bool:
+    """Return whether sanitized live trace metadata artifacts should be captured."""
+    return os.getenv("TOK_TRACE_CAPTURE_ARTIFACTS", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def emit_live_trace(
     session: Any,
     event: str,
@@ -38,6 +43,7 @@ def emit_live_trace(
         return
 
     try:
+        path = live_trace_path(session)
         block = build_live_trace_block(
             session,
             event,
@@ -48,8 +54,8 @@ def emit_live_trace(
             reason=reason,
             direction=direction,
             metadata=metadata or {},
+            trace_file=path,
         )
-        path = live_trace_path(session)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(block, sort_keys=True, separators=(",", ":")) + "\n")
@@ -68,14 +74,16 @@ def build_live_trace_block(
     reason: str,
     direction: str,
     metadata: dict[str, Any],
+    trace_file: Path | None = None,
 ) -> dict[str, Any]:
-    """Build a metadata-only Tok Trace block for live bridge auditing."""
+    """Build a Tok Trace block for live bridge auditing."""
     session_id = _session_id(session)
     runtime_session = getattr(session, "runtime_session", None)
     bridge_memory = getattr(runtime_session, "bridge_memory", None)
     turn = int(getattr(bridge_memory, "turn", 0) or 0)
     clean_metadata = _json_safe(metadata)
     payload_bytes = json.dumps(clean_metadata, sort_keys=True, default=str).encode("utf-8")
+    artifact_uri = _write_metadata_artifact(trace_file, event, payload_bytes)
     block = {
         "envelope": {
             "trace_version": TRACE_VERSION,
@@ -98,9 +106,9 @@ def build_live_trace_block(
             "size_bytes": len(payload_bytes),
         },
         "audit": {
-            "resolver_state": "missing_identifiable",
+            "resolver_state": "available_local" if artifact_uri is not None else "missing_identifiable",
             "expectation": expectation,
-            "reason": reason,
+            "reason": reason if artifact_uri is None else f"{reason}; sanitized metadata artifact captured",
         },
         "extensions": {
             "tok.live": {
@@ -109,6 +117,8 @@ def build_live_trace_block(
             }
         },
     }
+    if artifact_uri is not None:
+        cast(dict[str, Any], block["content"])["resolver_uri"] = artifact_uri
     cast(dict[str, Any], block["envelope"])["payload_digest"] = canonical_payload_digest(block)
     return block
 
@@ -140,6 +150,18 @@ def _session_id(session: Any) -> str:
 
 def _safe_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "default"
+
+
+def _write_metadata_artifact(trace_file: Path | None, event: str, payload_bytes: bytes) -> str | None:
+    if trace_file is None or not trace_artifact_capture_enabled():
+        return None
+    artifact_dir = trace_file.parent / "artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    digest = sha256(payload_bytes).hexdigest()
+    artifact_name = f"{_safe_name(event)}_{digest[:16]}.json"
+    artifact_path = artifact_dir / artifact_name
+    artifact_path.write_bytes(payload_bytes)
+    return f"artifacts/{artifact_name}"
 
 
 def _json_safe(value: Any) -> Any:

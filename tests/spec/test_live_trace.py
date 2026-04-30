@@ -96,6 +96,58 @@ def test_audit_command_accepts_live_jsonl_with_warnings(monkeypatch, tmp_path: P
     assert payload[0]["status"] == "warn"
 
 
+def test_live_trace_artifact_capture_produces_pass(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = _Session(tmp_path)
+
+    emit_live_trace(
+        session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact test",
+        metadata={"compressed": True, "input_saved_tokens": 11},
+    )
+
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+    record = json.loads(trace_file.read_text())
+    artifact_uri = record["content"]["resolver_uri"]
+    assert artifact_uri.startswith("artifacts/")
+    assert (trace_file.parent / artifact_uri).exists()
+
+    results = audit_trace_file(trace_file)
+    assert len(results) == 1
+    assert results[0].status == "pass"
+
+
+def test_audit_command_accepts_artifact_backed_live_jsonl(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = _Session(tmp_path)
+
+    emit_live_trace(
+        session,
+        "response_processed",
+        trace_class="response",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact response trace",
+        direction="response",
+        metadata={"output_saved_tokens": 13},
+    )
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+
+    result = runner.invoke(app, ["audit", str(trace_file), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload[0]["status"] == "pass"
+
+
 def test_live_trace_write_failure_is_non_fatal(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TOK_TRACE", "1")
     monkeypatch.setenv("TOK_TRACE_FILE", str(tmp_path))

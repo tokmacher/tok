@@ -6,6 +6,7 @@ The current draft is `tok-trace/v0.1-draft`, an audit format for Tok bridge sess
 is fixture and live-audit groundwork only:
 
 - opt-in metadata-only runtime trace emission via `TOK_TRACE=1`
+- optional sanitized metadata artifacts via `TOK_TRACE_CAPTURE_ARTIFACTS=1`
 - hidden experimental `tok audit` only; not part of the supported CLI surface
 - no change to the supported Claude Code bridge path
 - no promotion of experimental protocol/parser, macro, pointer, or SDK surfaces
@@ -19,5 +20,5 @@ Start with:
 - `fixtures/tok_trace_v0_1_expected.json` for expected audit outcomes
 
 The first implementation milestone is fixture validation plus metadata-only live trace
-validation. Runtime artifact capture comes after the draft survives schema, audit-shape,
-and fixture-content review.
+validation. Sanitized metadata artifact capture can make live trace audits pass locally;
+raw prompt/response/tool artifact capture remains deferred.
