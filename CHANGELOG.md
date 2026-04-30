@@ -20,6 +20,9 @@
 - **Protocol hardening roadmap**: documented Tok Trace as the first layer in a broader
   protocol family, added L0-L5 conformance levels, and started adversarial verifier
   coverage for forged/escaped/out-of-order trace cases.
+- **Routing-aware protocol roadmap**: documented routing as a future Resolver/Capability
+  design axis with local-first defaults, explicit configuration, and no 0.1.x routing
+  implementation.
 - **Synthetic adversarial bridge-pressure coverage**: added offline scenario tests for
   Claude-Code-like usage-spike and overcompression risk patterns, including large
   parallel reads, broad audit turns, repeat-read evidence safety, final-answer repair

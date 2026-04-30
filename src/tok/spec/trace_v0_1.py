@@ -271,7 +271,7 @@ def _validate_content(observation: dict[str, Any], content: dict[str, Any], erro
     if "resolver_uri" in content and not isinstance(content["resolver_uri"], str):
         errors.append("invalid_resolver_uri")
 
-    if action in {"store", "reference", "fallback"} and exact:
+    if exact:
         _require_content_identity(content, errors)
     if action == "delta":
         _require_content_identity(content, errors)

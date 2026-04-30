@@ -123,6 +123,33 @@ def test_live_trace_artifact_capture_produces_pass(monkeypatch, tmp_path: Path) 
     assert results[0].status == "pass"
 
 
+def test_live_trace_steps_are_monotonic_across_timestamp_wrap(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    session = _Session(tmp_path)
+    times = iter([1_999_999, 1_000_000])
+    monkeypatch.setattr("tok.spec.live_trace.time.time_ns", lambda: next(times))
+
+    for event in ("request_prepared", "response_processed"):
+        emit_live_trace(
+            session,
+            event,
+            trace_class="message",
+            action="summary_reference",
+            result="ok",
+            expectation="accept_non_exact_reference",
+            reason="metadata-only test",
+            metadata={"event": event},
+        )
+
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+    records = [json.loads(line) for line in trace_file.read_text().splitlines()]
+    steps = [record["envelope"]["step"] for record in records]
+    assert steps == sorted(steps)
+
+    results = audit_trace_file(trace_file)
+    assert not any(result.errors == ("out_of_order_trace_block",) for result in results)
+
+
 def test_audit_command_accepts_artifact_backed_live_jsonl(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TOK_TRACE", "1")
     monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")

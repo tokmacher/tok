@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from hashlib import sha256
@@ -14,6 +15,8 @@ from typing import Any, cast
 from .trace_v0_1 import TRACE_VERSION, canonical_payload_digest
 
 _TRACE_START = time.strftime("%Y%m%d_%H%M%S")
+_STEP_LOCK = threading.Lock()
+_LAST_STEP_BY_SESSION: dict[str, int] = {}
 
 
 def trace_enabled() -> bool:
@@ -90,7 +93,7 @@ def build_live_trace_block(
             "block_id": f"live-{uuid.uuid4().hex}",
             "session_id": session_id,
             "turn": max(0, turn),
-            "step": int(time.time_ns() % 1_000_000),
+            "step": _next_trace_step(session_id),
             "direction": direction,
             "payload_digest": "draft-uncomputed",
         },
@@ -121,6 +124,15 @@ def build_live_trace_block(
         cast(dict[str, Any], block["content"])["resolver_uri"] = artifact_uri
     cast(dict[str, Any], block["envelope"])["payload_digest"] = canonical_payload_digest(block)
     return block
+
+
+def _next_trace_step(session_id: str) -> int:
+    raw_step = time.time_ns()
+    with _STEP_LOCK:
+        previous = _LAST_STEP_BY_SESSION.get(session_id, -1)
+        step = raw_step if raw_step > previous else previous + 1
+        _LAST_STEP_BY_SESSION[session_id] = step
+        return step
 
 
 def live_trace_path(session: Any) -> Path:

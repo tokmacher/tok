@@ -6381,6 +6381,40 @@ def test_thinking_preserved_in_history_before_tool_use_blocks() -> None:
     assert len(current_thinking) == 0
 
 
+def test_provider_safe_retry_normalization_uses_block_position_for_duplicate_thinking() -> None:
+    duplicate_thinking = {"type": "thinking", "thinking": "same thought"}
+    history_message = {
+        "role": "assistant",
+        "content": [
+            dict(duplicate_thinking),
+            {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {}},
+            dict(duplicate_thinking),
+            {"type": "tool_use", "id": "tu_2", "name": "read_file", "input": {}},
+        ],
+    }
+    body = {
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            history_message,
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "ok"}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_2", "content": "ok"}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "tu_3", "name": "read_file", "input": {}}],
+            },
+        ],
+    }
+
+    result, changed = _normalize_provider_safe_retry_payload(body)
+
+    assert changed is True
+    assert result is not None
+    history_content = result["messages"][1]["content"]
+    thinking_blocks = [block for block in history_content if block.get("type") == "thinking"]
+    assert thinking_blocks == [duplicate_thinking]
+    assert [block["id"] for block in history_content if block.get("type") == "tool_use"] == ["tu_1", "tu_2"]
+
+
 def test_gateway_fail_open_false_propagates_request_processing_error(tmp_path, monkeypatch) -> None:
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()

@@ -91,12 +91,12 @@ def bridge_start(
         ),
     ] = False,
     api_base: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--api-base",
             help="Target API base URL (e.g., https://api.anthropic.com)",
         ),
-    ] = "https://api.anthropic.com",
+    ] = None,
 ) -> None:
     """Start the Tok bridge server."""
     existing = get_running_bridge_pid(port)
@@ -140,7 +140,8 @@ def bridge_start(
         env["TOK_DEBUG"] = "1" if debug else "0"
         env["TOK_FAIL_OPEN"] = "1" if fail_open else "0"
         env["TOK_CAPTURE"] = "1" if capture else env.get("TOK_CAPTURE", "0")
-        env["TOK_API_BASE"] = api_base
+        if api_base is not None:
+            env["TOK_API_BASE"] = api_base
         env["TOK_RESET_SESSION"] = "1"
 
         log_file = open(LOG_FILE, "a")

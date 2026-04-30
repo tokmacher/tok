@@ -9,6 +9,11 @@ Tok should become a layered protocol family rather than one overloaded file form
 that family, Tok Trace is the audit-evidence layer. Tok Resolver, Tok Capability, and
 Tok Session are future layers described in `tok_protocol_layers_v0_1.md`.
 
+Routing is a future design axis, not a 0.1.x layer. It should grow from resolver use
+cases: where a runtime is allowed to ask for missing bytes or state. Tok should avoid
+global routing, DHTs, and ambient public discovery unless a later resolver design proves
+they are necessary.
+
 ## Ladder
 
 1. Invisible local bridge
@@ -40,6 +45,9 @@ credible if audit and fixtures stay strict.
 | L1    | Audit live bridge traces.                                         | Covered by `tok audit` and live JSONL tests. |
 | L2    | Verify local artifacts, digests, exactness, and supported deltas. | Covered for local files and `unified_diff`.  |
 | L3    | Resolve exact content by hash across cache boundaries.            | Deferred.                                    |
+| L3a   | Resolve exact content from a local resolver only.                 | Deferred.                                    |
+| L3b   | Resolve from explicitly configured remote resolvers.              | Deferred.                                    |
+| L3c   | Follow resolver referrals with loop detection.                    | Deferred.                                    |
 | L4    | Negotiate capabilities with another runtime.                      | Deferred.                                    |
 | L5    | Exchange compact verified state agent-to-agent.                   | Deferred.                                    |
 
@@ -61,6 +69,16 @@ stable interoperability surface:
 - out-of-order turns
 - unknown required field or version
 - extension attempting to override core semantics
+
+Future L3+ hardening should add routing-specific cases:
+
+- resolver referral loop
+- unauthorized resolver request
+- hash exists but capability missing
+- resolver returns wrong bytes
+- resolver leaks path or session metadata in an error
+- remote unavailable but trace remains valid
+- conflicting resolver manifests
 
 0.1.7 includes local tests for the subset the draft verifier can defend now. Later
 releases should promote this into a named adversarial fixture pack with expected audit
@@ -102,3 +120,18 @@ Bridge/runtime emission should wait until the docs and verifier agree on:
 0.1.7 may emit metadata-only live traces behind `TOK_TRACE=1`. Artifact-backed runtime
 emission should remain opt-in and file-based before any streaming or provider-neutral
 transport work begins.
+
+## Release Sketch
+
+- **0.1.7:** draft bridge trace/audit only; no Resolver, Routing, Capability, or Session
+  implementation.
+- **0.1.8:** adversarial fixture packs, audit UX, conformance docs, and
+  standalone-reader preparation.
+- **0.1.9:** standalone reference reader and Resolver design; Routing remains
+  design-only.
+- **0.2.0:** local Tok Resolver with content-addressed local store, resolver manifest,
+  explicit missing/available/referral states, and no global network routing.
+- **0.2.x:** scoped resolver routing: local -> configured peer -> configured gateway; no
+  DHT, no ambient discovery, and every remote resolution capability-aware.
+- **0.3+:** capability documents, resolver authorization, session state roots, and
+  peer-to-peer compact state exchange.

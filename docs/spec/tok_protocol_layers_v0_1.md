@@ -20,6 +20,32 @@ Tok Trace is evidence. Tok Resolver is availability. Tok Capability is negotiati
 Session is exchange. Keeping those roles separate prevents v0.1 trace blocks from
 becoming a dumping ground for every future protocol concern.
 
+## Routing Design Axis
+
+Tok Routing is a cross-cutting concern, not a 0.1.x protocol layer. It should answer
+where a runtime is allowed to ask for missing content, trace blocks, session roots, or
+capability documents. It should not adopt TCP/IP-style packet routing, global routing
+tables, a DHT, or ambient public discovery.
+
+Routing decisions belong at the boundary between Resolver, Capability, and Session:
+
+- resolver routing: where to ask for missing content
+- capability routing: whether the requester is allowed to ask
+- session routing: which peer or session owns a state chain
+- privacy routing: whether the lookup itself leaks sensitive metadata
+
+The default route is local-only. Remote routing requires explicit configuration and,
+once capabilities exist, capability checks.
+
+Routing asks four questions:
+
+| Question                 | Examples                                                               |
+| ------------------------ | ---------------------------------------------------------------------- |
+| What is being requested? | content hash, trace block, session root, capability document           |
+| Who is asking?           | local user, local runtime, configured peer, remote agent               |
+| Who may know?            | local cache only, same project/session, trusted peer, explicit gateway |
+| What may be returned?    | full bytes, metadata only, referral, denial, fallback required         |
+
 ## Conformance Levels
 
 | Level | Meaning                                                                                   |
@@ -28,6 +54,9 @@ becoming a dumping ground for every future protocol concern.
 | L1    | Audit live bridge JSONL traces with pass/warn/fail outcomes.                              |
 | L2    | Verify local artifacts, canonical payload digests, exactness rules, and supported deltas. |
 | L3    | Resolve exact content by hash across cache boundaries.                                    |
+| L3a   | Resolve exact content from a local resolver only.                                         |
+| L3b   | Resolve from explicitly configured remote resolvers.                                      |
+| L3c   | Follow resolver referrals with loop detection.                                            |
 | L4    | Negotiate capabilities with another runtime.                                              |
 | L5    | Exchange compact verified state agent-to-agent.                                           |
 
@@ -50,6 +79,16 @@ availability, order, exactness, and semantics. The first roadmap set is:
 - out-of-order turns
 - unknown required field or version
 - extension attempting to override core semantics
+
+Future Resolver and Routing fixture packs should add:
+
+- resolver referral loop
+- unauthorized resolver request
+- hash exists but capability missing
+- resolver returns wrong bytes
+- resolver leaks path or session metadata in an error
+- remote unavailable but trace remains valid
+- conflicting resolver manifests
 
 0.1.7 includes tests for the cases the current draft verifier can defend locally. Future
 releases should promote this list into a named adversarial fixture pack before making

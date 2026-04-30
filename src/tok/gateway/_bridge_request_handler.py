@@ -98,12 +98,12 @@ def _normalize_provider_safe_retry_payload(
             )
             message_changed = False
             filtered_content = []
-            for block in content:
+            for block_index, block in enumerate(content):
                 if (
                     isinstance(block, dict)
                     and block.get("type") in {"thinking", "redacted_thinking"}
                     and first_tool_index is not None
-                    and content.index(block) > first_tool_index
+                    and block_index > first_tool_index
                 ):
                     message_changed = True
                     changed = True
