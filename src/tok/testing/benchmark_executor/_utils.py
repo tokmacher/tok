@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -157,6 +158,22 @@ def _normalize_pytest_command(command: str) -> str | None:
     return None
 
 
+def _pytest_execution_command(normalized_command: str) -> str:
+    """Return an executable pytest command while preserving the public command contract."""
+    raw = normalized_command.strip()
+    for pattern in _PYTEST_PREFIX_PATTERNS:
+        match = pattern.match(raw)
+        if not match:
+            continue
+        tail = str(match.group("tail") or "").strip()
+        pytest_bin = shutil.which("pytest")
+        if pytest_bin:
+            quoted = shlex.quote(pytest_bin)
+            return f"{quoted} {tail}".strip()
+        return raw
+    return raw
+
+
 def _file_mentioned(path: str, text: str) -> bool:
     if path in text:
         return True
@@ -211,6 +228,8 @@ def _run_zsh_command(
     argv = (shell_path, "-lc", command)
     effective_env = dict(os.environ)
     effective_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    existing_pythonpath = effective_env.get("PYTHONPATH", "")
+    effective_env["PYTHONPATH"] = str(cwd) if not existing_pythonpath else f"{cwd}{os.pathsep}{existing_pythonpath}"
     if env:
         effective_env.update(env)
     try:

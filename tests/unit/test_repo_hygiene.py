@@ -24,6 +24,7 @@ def test_find_violations_accepts_canonical_root_files() -> None:
     violations = module.find_violations(
         [
             "README.md",
+            ".editorconfig",
             "LICENSE",
             "pyproject.toml",
             "roadmap.md",

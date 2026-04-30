@@ -260,7 +260,7 @@ CLEAN_INSTALL_IMPORT_CHECK = (
     "with tempfile.TemporaryDirectory(prefix='tok-clean-import-') as td:\n"
     "    tmp = Path(td); dist_dir = tmp / 'dist'; dist_dir.mkdir(parents=True, exist_ok=True)\n"
     "    expected_version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']\n"
-    "    subprocess.run([sys.executable, '-m', 'build', '--wheel', '--sdist', '--outdir', str(dist_dir)], cwd=root, check=True)\n"
+    "    subprocess.run(['uv', 'run', '--with', 'build', '--with', 'hatchling', 'python', '-m', 'build', '--wheel', '--sdist', '--outdir', str(dist_dir)], cwd=root, check=True)\n"
     "    wheels = sorted(dist_dir.glob('*.whl')); assert wheels, 'no wheel'; wheel = wheels[-1]\n"
     "    sdists = sorted(dist_dir.glob('*.tar.gz')); assert sdists, 'no sdist'\n"
     "    venv_dir = tmp / 'venv'; venv.EnvBuilder(with_pip=True).create(venv_dir)\n"

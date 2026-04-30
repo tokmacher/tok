@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 ALLOWED_TOP_LEVEL_FILES = frozenset(
     {
         ".gitignore",
+        ".editorconfig",
         ".pre-commit-config.yaml",
         ".python-version",
         "CHANGELOG.md",

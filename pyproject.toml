@@ -1,110 +1,129 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = [ "hatchling" ]
+
 [project]
 name = "tok-protocol"
 version = "0.1.6"
 description = "Bridge-first CLI and runtime for Claude Code that compresses conversations and exposes savings and fallback health"
-authors = [
-    { name = "tokmacher", email = "tokmacher@protonmail.com" }
-]
-license = { text = "Apache-2.0" }
 readme = "README.md"
+keywords = [ "bridge", "claude-code", "compression", "developer-tools", "llm", "tokens" ]
+license = { text = "Apache-2.0" }
+authors = [ { name = "tokmacher", email = "tokmacher@protonmail.com" } ]
 requires-python = ">=3.10,<3.13"
-keywords = ["claude-code", "bridge", "compression", "llm", "developer-tools", "tokens"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
-    "Operating System :: MacOS",
-    "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "openai>=1.0.0,<3.0.0",
-    "tiktoken>=0.12.0,<1.0.0",
-    "python-dotenv>=1.0.0,<2.0.0",
-    "pydantic>=2.0.0,<3.0.0",
-    "typer>=0.9.0,<1.0.0",
-    "rich>=13.0.0,<16.0.0",
-    "fastapi>=0.110.0,<1.0.0",
-    "uvicorn[standard]>=0.27.0,<1.0.0",
-    "httpx>=0.27.0,<1.0.0",
+  "fastapi>=0.110,<1",
+  "httpx>=0.27,<1",
+  "openai>=1,<3",
+  "pydantic>=2,<3",
+  "python-dotenv>=1,<2",
+  "rich>=13,<16",
+  "tiktoken>=0.12,<1",
+  "typer>=0.9,<1",
+  "uvicorn[standard]>=0.27,<1",
 ]
+optional-dependencies.dev = [
+  "build>=1.2.1",
+  "hatchling>=1.25",
+  "hypothesis>=6",
+  "mypy>=1",
+  "pre-commit>=3",
+  "pytest>=8.3,<9.1",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=4",
+  "requests>=2.33",
+  "ruff>=0.1",
+  "safety>=2",
+  "vulture>=2,<3",
+]
+urls.Documentation = "https://github.com/tokmacher/tok#readme"
+urls.Homepage = "https://github.com/tokmacher/tok"
+urls.Issues = "https://github.com/tokmacher/tok/issues"
+urls.Repository = "https://github.com/tokmacher/tok"
+scripts.tok = "tok.cli:app"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "build>=1.2.1",
-    "hatchling>=1.25.0",
-    "pytest>=8.3.0,<9.1.0",
-    "pytest-cov>=4.0",
-    "pytest-asyncio>=0.23.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0",
-    "pre-commit>=3.0",
-    "hypothesis>=6.0",
-    "safety>=2.0.0",
-    "requests>=2.33.0",
-    "vulture>=2.0.0,<3.0.0",
+  "hypothesis>=6.151.9",
+  "pre-commit>=4.5.1",
 ]
 
-[project.urls]
-Homepage = "https://github.com/tokmacher/tok"
-Documentation = "https://github.com/tokmacher/tok#readme"
-Issues = "https://github.com/tokmacher/tok/issues"
-Repository = "https://github.com/tokmacher/tok"
-
-[project.scripts]
-tok = "tok.cli:app"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/tok"]
-exclude = [
-    "archive/",
-    "research/",
-    "results/",
-    "tests/",
-    "scripts/",
-    "examples/",
-    "docs/maintainers/",
-    "CLAUDE.md",
+[tool.hatch]
+build.targets.sdist.exclude = [
+  "archive/",
+  ".claude/",
+  ".hypothesis/",
+  ".mypy_cache/",
+  ".ruff_cache/",
+  "dist/",
+  "tmp/"
 ]
-
-[tool.hatch.build.targets.sdist]
-exclude = ["archive/", ".claude/", ".hypothesis/", ".mypy_cache/", ".ruff_cache/", "dist/", "tmp/"]
+build.targets.wheel.packages = [ "src/tok" ]
+build.targets.wheel.exclude = [
+  "archive/",
+  "research/",
+  "results/",
+  "tests/",
+  "scripts/",
+  "examples/",
+  "docs/maintainers/",
+  "CLAUDE.md",
+]
 
 [tool.ruff]
 line-length = 120
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B"]
+lint.select = [ "B", "E", "F", "I", "UP", "W" ]
 # Ignore rules that conflict with formatter and other incompatible rules
-ignore = [
-    "D203", "D212",      # Incompatible with D211, D213
-    "E501",              # Line too long
-    "E402",              # Module level import not at top of file
-    "SLF001",            # Private member accessed
-    "ANN001",            # Missing type annotation for function argument
+lint.ignore = [
+  "ANN001", # Missing type annotation for function argument
+  "D203",
+  "D212",   # Incompatible with D211, D213
+  "E402",   # Module level import not at top of file
+  "E501",   # Line too long
+  "SLF001", # Private member accessed
 ]
+lint.per-file-ignores."examples/*" = [
+  "D103",
+  "E501",
+  "S101"
+]  # Examples can have long lines, asserts, missing docstrings
+lint.per-file-ignores."scripts/*" = [ "S101" ]  # Scripts can use asserts
+lint.per-file-ignores."tests/*" = [ "D102", "D103", "S101" ]  # Tests can use asserts, have missing docstrings
+lint.per-file-ignores."tests/fixtures/**" = [ "I001" ]  # Fixture workspaces have their own import conventions
+lint.mccabe.max-complexity = 10
 
-[tool.ruff.lint.per-file-ignores]
-"examples/*" = ["E501", "S101", "D103"]  # Examples can have long lines, asserts, missing docstrings
-"tests/*" = ["S101", "D103", "D102"]     # Tests can use asserts, have missing docstrings
-"tests/fixtures/**" = ["I001"]           # Fixture workspaces have their own import conventions
-"scripts/*" = ["S101"]                    # Scripts can use asserts
-
-[tool.ruff.lint.mccabe]
-max-complexity = 10
-
-[tool.vulture]
-min_confidence = 80
-ignore_names = ["model_config", "_*", "UnlinkDeniedPath"]
-exclude = ["typings", ".git", "benchmarks/assets", "tmp", "tests/unit/test_gateway.py", "tests/unit/test_cli.py"]
-ignore_decorators = []
+[tool.mypy]
+python_version = "3.10"
+strict = false
+exclude = [ "src/tok/gateway.py" ]
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_calls = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = false
+strict_optional = false
+disable_error_code = [ "unreachable" ]
+warn_unreachable = true
+implicit_reexport = true
+ignore_missing_imports = true
+overrides = [ { module = "tok.gateway", ignore_errors = true }, { module = "tok.gateway.*", ignore_errors = true } ]
 
 [tool.pyright]
 typeCheckingMode = "off"
@@ -119,97 +138,67 @@ reportOptionalMemberAccess = "warning"
 reportOptionalSubscript = "warning"
 reportOptionalCall = "warning"
 stubPath = "typings"
-extraPaths = ["src"]
+extraPaths = [ "src" ]
 exclude = [
-    "archive",
-    "examples",
-    "scripts",
-    "tests",
+  "archive",
+  "examples",
+  "scripts",
+  "tests",
 ]
 
-[tool.mypy]
-python_version = "3.10"
-strict = false
-exclude = ["src/tok/gateway.py"]
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_calls = false
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-check_untyped_defs = true
-disallow_untyped_decorators = false
-warn_redundant_casts = true
-warn_unused_ignores = true
-no_implicit_optional = false
-strict_optional = false
-disable_error_code = ["unreachable"]
-warn_unreachable = true
-implicit_reexport = true
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "tok.gateway"
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = "tok.gateway.*"
-ignore_errors = true
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-pythonpath = ["src"]
-testpaths = [
-    "tests/unit",
-    "tests/unit/test_runtime_contract.py",
-    "tests/integration",
+[tool.pytest]
+ini_options.asyncio_mode = "auto"
+ini_options.asyncio_default_fixture_loop_scope = "function"
+ini_options.pythonpath = [ "src" ]
+ini_options.testpaths = [
+  "tests/unit",
+  "tests/unit/test_runtime_contract.py",
+  "tests/integration",
 ]
-norecursedirs = ["tests/fixtures", ".hypothesis", ".git", ".tox", "dist", "build", "*.egg"]
-markers = [
-    "live: tests that hit real APIs (deselect with -m 'not live')",
-    "benchmark: performance benchmarks (deselect with -m 'not benchmark')",
+ini_options.norecursedirs = [ "tests/fixtures", ".hypothesis", ".git", ".tox", "dist", "build", "*.egg" ]
+ini_options.markers = [
+  "live: tests that hit real APIs (deselect with -m 'not live')",
+  "benchmark: performance benchmarks (deselect with -m 'not benchmark')",
 ]
-addopts = "-m 'not live and not benchmark'"
+ini_options.addopts = "-m 'not live and not benchmark'"
 
-[tool.coverage.run]
-source = ["src/tok"]
-omit = [
-    "src/tok/analysis/*",
-    "src/tok/monitoring/*",
-    "src/tok/macros/*",
-    "src/tok/testing/*",
-    "src/tok/adapters/*",
-    "src/tok/cli/_dev.py",
-    "src/tok/cli/_protocol_tools.py",
-    "src/tok/evidence_review.py",
-    "src/tok/fixture_generator.py",
-    "src/tok/gateway/__main__.py",
-    "src/tok/gateway/pricing.py",
-    "src/tok/gateway/telemetry.py",
-    "src/tok/gateway/utils.py",
-    "src/tok/gateway/stats.py",
-    "src/tok/live_benchmark.py",
-    "src/tok/live_runner.py",
-    "src/tok/prompt.py",
-    "src/tok/prompt_analyzer.py",
-    "src/tok/replay_metrics.py",
-    "src/tok/stress_harness.py",
-    "src/tok/telemetry.py",
-    "src/tok/utils/batch_transform.py",
-    "src/tok/utils/delta.py",
-    "src/tok/utils/tok_linter.py",
-    "src/tok/utils/tok_registry.py",
+[tool.coverage]
+run.omit = [
+  "src/tok/adapters/*",
+  "src/tok/analysis/*",
+  "src/tok/cli/_dev.py",
+  "src/tok/cli/_protocol_tools.py",
+  "src/tok/evidence_review.py",
+  "src/tok/fixture_generator.py",
+  "src/tok/gateway/__main__.py",
+  "src/tok/gateway/pricing.py",
+  "src/tok/gateway/stats.py",
+  "src/tok/gateway/telemetry.py",
+  "src/tok/gateway/utils.py",
+  "src/tok/live_benchmark.py",
+  "src/tok/live_runner.py",
+  "src/tok/macros/*",
+  "src/tok/monitoring/*",
+  "src/tok/prompt.py",
+  "src/tok/prompt_analyzer.py",
+  "src/tok/replay_metrics.py",
+  "src/tok/stress_harness.py",
+  "src/tok/telemetry.py",
+  "src/tok/testing/*",
+  "src/tok/utils/batch_transform.py",
+  "src/tok/utils/delta.py",
+  "src/tok/utils/tok_linter.py",
+  "src/tok/utils/tok_registry.py",
 ]
+run.source = [ "src/tok" ]
+report.show_missing = true
+report.skip_covered = false
 
-[tool.coverage.report]
-show_missing = true
-skip_covered = false
-
-[dependency-groups]
-dev = [
-    "hypothesis>=6.151.9",
-    "pre-commit>=4.5.1",
-]
+[tool.vulture]
+min_confidence = 80
+ignore_names = [ "model_config", "_*", "UnlinkDeniedPath" ]
+exclude = [ "typings", ".git", "benchmarks/assets", "tmp", "tests/unit/test_gateway.py", "tests/unit/test_cli.py" ]
+ignore_decorators = []
 
 [tool.commitizen]
 name = "cz_conventional_commits"

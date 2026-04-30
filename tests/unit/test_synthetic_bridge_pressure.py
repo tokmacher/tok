@@ -364,6 +364,59 @@ def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
     ]
 
 
+def _red_team_high_fanout_messages(*, batches: int = 4, tools_per_batch: int = 12) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Red-team Tok: push high fan-out tool batches, repeated evidence, and interleaved notes.",
+                }
+            ],
+        }
+    ]
+    for batch in range(batches):
+        tool_uses: list[dict[str, Any]] = []
+        tool_results: list[dict[str, Any]] = []
+        for index in range(tools_per_batch):
+            tool_id = f"toolu_red_{batch}_{index}"
+            path = f"src/tok/red_team/{batch}_{index}.py"
+            tool_uses.append(_tool_use(tool_id, "read_file", path=path))
+            repeated_payload = "\n".join(
+                [
+                    f"{path}:{line}: repeated pressure marker {line % 7}"
+                    for line in range(90 + ((batch + index) % 4) * 35)
+                ]
+            )
+            tool_results.append(_tool_result(tool_id, repeated_payload))
+        messages.extend(
+            [
+                {"role": "assistant", "content": tool_uses},
+                {"role": "user", "content": tool_results},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": f"Batch {batch} evidence retained; continue pressure."}],
+                },
+                {"role": "user", "content": [{"type": "text", "text": f"Escalate batch {batch + 1}."}]},
+            ]
+        )
+    return messages
+
+
+def _malformed_tool_result_flood_messages(*, count: int = 20) -> list[dict[str, Any]]:
+    return [
+        {"role": "user", "content": [{"type": "text", "text": "Here is an invalid flood from a broken client."}]},
+        {
+            "role": "user",
+            "content": [
+                _tool_result(f"unknown_toolu_{index}", f"orphaned tool result payload {index}")
+                for index in range(count)
+            ],
+        },
+    ]
+
+
 def test_large_parallel_reads_do_not_expand_prepared_prompt_unboundedly(tmp_path) -> None:
     messages = _parallel_file_read_messages(count=16, lines=90)
 
@@ -381,6 +434,70 @@ def test_varied_parallel_reads_are_bounded_or_visibly_degraded(tmp_path) -> None
     _assert_bounded_or_signaled(metrics, multiplier=1.08, slack=96)
     assert metrics.outgoing_failures == []
     assert metrics.behavior_signals.get("broad_audit_tool_result_compression_skipped") == 1
+
+
+def test_red_team_high_fanout_history_stays_provider_valid_and_spike_visible(tmp_path) -> None:
+    messages = _red_team_high_fanout_messages(batches=4, tools_per_batch=12)
+
+    metrics = _prepare_bridge_pressure(messages, tmp_path)
+
+    assert metrics.outgoing_failures == []
+    assert metrics.baseline_prompt_tokens > 12000
+    assert (
+        metrics.prepared_prompt_tokens <= int(metrics.baseline_prompt_tokens * 1.18) + 384
+        or metrics.has_visible_risk_signal
+    )
+    assert metrics.retained_tool_result_bytes < _tool_result_bytes(messages) or metrics.has_visible_risk_signal
+
+
+def test_red_team_repeated_runtime_preparation_does_not_accumulate_hidden_overhead(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    running_messages: list[dict[str, Any]] = []
+    observed: list[PressureMetrics] = []
+    for batch in range(10):
+        tool_id = f"toolu_runtime_spike_{batch}"
+        path = f"src/tok/runtime_spike_{batch}.py"
+        running_messages.extend(
+            [
+                {"role": "user", "content": [{"type": "text", "text": f"Pressure turn {batch}: inspect {path}."}]},
+                {"role": "assistant", "content": [_tool_use(tool_id, "read_file", path=path)]},
+                {"role": "user", "content": [_tool_result(tool_id, _file_text(path, lines=110 + batch * 8))]},
+            ]
+        )
+        metrics, session = _prepare_runtime_pressure(running_messages, tmp_path, session=session)
+        observed.append(metrics)
+
+    assert all(metrics.outgoing_failures == [] for metrics in observed)
+    peak_overhead = max(metrics.tok_overhead_tokens for metrics in observed)
+    final = observed[-1]
+    assert peak_overhead <= 768 or final.has_visible_risk_signal
+    assert (
+        final.prepared_prompt_tokens <= int(final.baseline_prompt_tokens * 1.15) + 256 or final.has_visible_risk_signal
+    )
+
+
+def test_red_team_orphaned_tool_result_flood_blocks_locally_before_upstream(tmp_path) -> None:
+    session = BridgeSession(memory_dir=tmp_path / ".tok", fail_open=False)
+    body = {
+        "model": "claude-sonnet-4",
+        "max_tokens": 8192,
+        "messages": _malformed_tool_result_flood_messages(count=24),
+        "stream": False,
+    }
+
+    payload, response = prepare_bridge_payload(
+        session=session,
+        body=body,
+        headers={"x-api-key": "test"},
+        path="v1/messages",
+        tok_tool_header="1",
+    )
+
+    assert response is not None
+    assert payload.retry_forbidden is True
+    assert payload.behavior_signals.get("tok_bridge_preflight_failed_local") == 1
+    assert payload.behavior_signals.get("tok_bridge_invalid_tool_history_blocked") == 1
+    assert payload.behavior_signals.get("tok_fallback_activated") == 1
 
 
 def test_broad_audit_turn_preserves_exact_evidence_before_compression(tmp_path) -> None:

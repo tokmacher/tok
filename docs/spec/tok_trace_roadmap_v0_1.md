@@ -12,7 +12,8 @@ Tok Session are future layers described in `tok_protocol_layers_v0_1.md`.
 Routing is a future design axis, not a 0.1.x layer. It should grow from resolver use
 cases: where a runtime is allowed to ask for missing bytes or state. Tok should avoid
 global routing, DHTs, and ambient public discovery unless a later resolver design proves
-they are necessary.
+they are necessary. For 0.1.7 release claims, this means no DHT, no ambient discovery,
+and no routing layer.
 
 ## Ladder
 

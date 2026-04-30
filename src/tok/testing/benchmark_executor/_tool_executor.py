@@ -10,6 +10,7 @@ from ._models import ToolExecutionRecord
 from ._utils import (
     _git,
     _normalize_pytest_command,
+    _pytest_execution_command,
     _resolved_path,
     _run_zsh_command,
     _safe_relative_path,
@@ -207,8 +208,9 @@ class BenchmarkToolExecutor:
         normalized_command = _normalize_pytest_command(command)
         if normalized_command is None:
             return "ERROR: only pytest commands are allowed in run_tests", True, "invalid_tool"
+        execution_command = _pytest_execution_command(normalized_command)
         command_result = _run_zsh_command(
-            normalized_command,
+            execution_command,
             cwd=self.workspace_root,
             timeout_seconds=self.timeout_seconds,
         )
