@@ -6202,10 +6202,51 @@ def test_provider_safe_retry_normalization_preserves_later_unchanged_messages() 
 
     result, changed = _normalize_provider_safe_retry_payload(body)
 
+    assert result is not None
+    assert result["messages"][2] is later_message
+    assert result["messages"][0]["content"][0]["type"] == "thinking"
+
+
+def test_thinking_preserved_in_history_before_tool_use_blocks() -> None:
+    """Pre-tool_use thinking in history turns is preserved; only post-tool_use thinking is stripped."""
+    history_message = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "Early reasoning about the codebase."},
+            {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {}},
+            {"type": "tool_use", "id": "tu_2", "name": "read_file", "input": {}},
+        ],
+    }
+    current_message = {
+        "role": "assistant",
+        "content": [
+            {"type": "tool_use", "id": "tu_3", "name": "grep_search", "input": {}},
+            {"type": "thinking", "thinking": "Interleaved thinking should be stripped."},
+            {"type": "tool_use", "id": "tu_4", "name": "grep_search", "input": {}},
+        ],
+    }
+    body = {
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            history_message,
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "ok"}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_2", "content": "ok"}]},
+            current_message,
+        ],
+    }
+
+    result, changed = _normalize_provider_safe_retry_payload(body)
+
     assert changed is True
     assert result is not None
-    assert result["messages"][0] is not first_message
-    assert result["messages"][2] is later_message
+    history_content = result["messages"][1]["content"]
+    thinking_blocks = [b for b in history_content if b.get("type") in {"thinking", "redacted_thinking"}]
+    assert len(thinking_blocks) == 1
+    assert thinking_blocks[0]["thinking"] == "Early reasoning about the codebase."
+
+    current_content = result["messages"][4]["content"]
+    current_thinking = [b for b in current_content if b.get("type") in {"thinking", "redacted_thinking"}]
+    assert len(current_thinking) == 0
 
 
 def test_gateway_fail_open_false_propagates_request_processing_error(tmp_path, monkeypatch) -> None:

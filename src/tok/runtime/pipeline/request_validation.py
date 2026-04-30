@@ -78,6 +78,7 @@ _NON_BLOCKING_OUTGOING_FAILURES = frozenset(
 _PROVIDER_SENSITIVE_FAILURES = frozenset(
     {
         "provider_sensitive_large_tool_use_text_interleaving",
+        "provider_sensitive_large_tool_use_batch_unterminated",
         "provider_sensitive_assistant_tool_use_text_interleaving",
     }
 )
@@ -1534,6 +1535,8 @@ def validate_anthropic_outgoing_bridge_body(body: dict[str, Any]) -> list[str]:
     provider_risks = _collect_bridge_provider_sensitivity_risks(messages)
     if provider_risks.get("provider_sensitive_large_tool_use_text_interleaving", 0):
         failures.append("provider_sensitive_large_tool_use_text_interleaving")
+    if provider_risks.get("provider_sensitive_large_tool_use_batch_unterminated", 0):
+        failures.append("provider_sensitive_large_tool_use_batch_unterminated")
     if provider_risks.get("assistant_tool_use_text_interleaving", 0):
         failures.append("provider_sensitive_assistant_tool_use_text_interleaving")
 

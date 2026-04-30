@@ -483,6 +483,10 @@ async def buffer_strip_restream_impl(
             or block.get("type") == "redacted_thinking"
             for block in translated_blocks
         )
+        if has_visible_blocks and all(
+            block.get("type") == "text" and not str(block.get("text", "")).strip() for block in translated_blocks
+        ):
+            has_visible_blocks = False
         recovery_required = not has_visible_blocks and (read_error is not None or len(translated_blocks) == 0)
         _cost_recorded_by_fallback = False
         if recovery_required:

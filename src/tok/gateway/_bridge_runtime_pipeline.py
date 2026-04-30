@@ -87,9 +87,12 @@ def _apply_plan_finalization_spend_guard(
 
     original_prompt_tokens = int(prompt_metrics.get("baseline_prompt_tokens", 0))
     prepared_prompt_tokens = int(prompt_metrics.get("prepared_prompt_tokens", 0))
-    if original_prompt_tokens <= 0:
+    if original_prompt_tokens <= 0 and prepared_prompt_tokens <= 0:
         original_prompt_tokens = session.runtime_session.prepared_prompt_tokens(provider_safe_original_body)
-    if prepared_prompt_tokens <= 0:
+        prepared_prompt_tokens = original_prompt_tokens
+    elif original_prompt_tokens <= 0:
+        original_prompt_tokens = session.runtime_session.prepared_prompt_tokens(provider_safe_original_body)
+    elif prepared_prompt_tokens <= 0:
         prepared_prompt_tokens = session.runtime_session.prepared_prompt_tokens(prepared_body)
     observed_saved_tokens = max(0, original_prompt_tokens - prepared_prompt_tokens)
     minimum_saved_tokens = max(0, _PLAN_FINALIZATION_MIN_SAVED_TOKENS)
@@ -199,6 +202,10 @@ def prepare_bridge_payload(
     )
     if preflight_response is not None:
         return payload, preflight_response
+
+    cooldown_remaining = getattr(session.runtime_session, "_stream_recovery_cooldown_remaining", 0)
+    if cooldown_remaining > 0:
+        session.runtime_session._stream_recovery_cooldown_remaining = max(0, cooldown_remaining - 1)
 
     if path != "v1/messages":
         return payload, None

@@ -808,6 +808,60 @@ def test_request_policy_is_not_held_by_recovery_when_only_cooldown_is_active(
     assert session._stream_recovery_cooldown_suppressed is False
 
 
+def test_stream_recovery_cooldown_decremented_on_count_tokens(
+    tmp_path,
+) -> None:
+    """Cooldown should be decremented even on count_tokens path (non-v1/messages)."""
+    from tok.gateway import BridgeSession
+    from tok.gateway._bridge_runtime_pipeline import prepare_bridge_payload
+
+    session = BridgeSession()
+    session.runtime_session._stream_recovery_cooldown_remaining = 1
+
+    body = {
+        "model": "claude-sonnet-4",
+        "max_tokens": 8192,
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+    payload, _ = prepare_bridge_payload(
+        session=session,
+        body=body,
+        headers={},
+        path="v1/messages/count_tokens",
+    )
+    assert session.runtime_session._stream_recovery_cooldown_remaining == 0
+
+    payload, _ = prepare_bridge_payload(
+        session=session,
+        body=body,
+        headers={},
+        path="v1/messages",
+    )
+    assert session.runtime_session._stream_recovery_cooldown_remaining == 0
+
+
+def test_late_answer_mode_signal_priority_when_both_active() -> None:
+    """When toolless_fresh_answer_event and mixed_answer_tool_event are both set,
+    tool_only wins and mixed_answer_tool_event is suppressed (not silently dropped)."""
+    from tok.runtime.policy.answer_repair import (
+        _late_answer_assembly_repair_mode,
+        _mark_late_answer_assembly_suppressed_mixed_signal,
+    )
+
+    signals = {
+        "payload_pressure_ready": 1,
+        "toolless_fresh_answer_event": 1,
+        "mixed_answer_tool_event": 1,
+    }
+    mode = _late_answer_assembly_repair_mode(signals)
+    assert mode == "tool_only"
+
+    suppressed_counter: dict[str, int] = {}
+    _mark_late_answer_assembly_suppressed_mixed_signal(suppressed_counter, signals)
+    assert suppressed_counter.get("late_answer_assembly_mixed_signal_suppressed", 0) == 1
+
+
 def test_natural_first_escalates_on_invalid_tool_history_recovery(
     tmp_path,
 ) -> None:

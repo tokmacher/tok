@@ -533,6 +533,31 @@ def test_strict_bridge_validation_accepts_alternating_multi_turn_tool_pairs() ->
     assert timeline[1]["next_tool_result_ids"] == ["tool_b1"]
 
 
+def test_collect_provider_sensitivity_risks_flags_terminal_large_tool_batch() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Inspect concurrency path."}],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "Read", "input": {"path": "a.py"}},
+                {"type": "text", "text": "Reading"},
+                {"type": "tool_use", "id": "toolu_2", "name": "Read", "input": {"path": "b.py"}},
+            ],
+        },
+    ]
+
+    from tok.runtime.pipeline.bridge_message_validation import (
+        collect_provider_sensitivity_risks,
+    )
+
+    risks = collect_provider_sensitivity_risks(messages, large_tool_batch_threshold=2)
+    assert risks.get("provider_sensitive_large_tool_use_batch_unterminated", 0) == 1
+    assert risks.get("provider_sensitive_large_tool_use_text_interleaving", 0) == 0
+
+
 def test_outgoing_bridge_validation_flags_large_interleaved_tool_use_batch() -> None:
     body = {
         "model": "claude-sonnet-4",
