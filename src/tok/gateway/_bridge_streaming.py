@@ -30,7 +30,19 @@ if TYPE_CHECKING:
 
 __all__ = ["buffer_strip_restream_impl", "passthrough_stream_impl"]
 
-_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = int(os.getenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", "2"))
+
+def _env_int(name: str, fallback: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+        return fallback
+
+
+_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = _env_int("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", 2)
 
 
 def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:

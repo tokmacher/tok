@@ -523,3 +523,53 @@ src/main.py:5:from errors import ValueError
     compressed, _ = _apply_result_cache(grep_output, context, result_cache)
     assert "|err:value_error|" not in compressed
     assert "ValueError" in compressed  # Original content preserved
+
+
+def test_legacy_1tuple_cache_entry_requires_verbatim_first_read() -> None:
+    """Legacy 1-tuple cache entries (hashonly) must have first_read_complete=False.
+
+    This ensures that old cache files with 1-tuple entries still grant
+    the first-read guarantee and deliver content verbatim before serving stubs.
+    """
+    from tok.compression import _unpack_cache_entry
+
+    entry_1tuple = ("abc123def456",)
+    hash_val, raw_val, ts, first_read_complete, version = _unpack_cache_entry(entry_1tuple)
+
+    assert hash_val == "abc123def456"
+    assert raw_val == ""
+    assert first_read_complete is False, (
+        "Legacy 1-tuple entries must require verbatim first read (first_read_complete=False)"
+    )
+    assert version == 1
+
+
+def test_legacy_2tuple_cache_entry_requires_verbatim_first_read() -> None:
+    """Legacy 2-tuple cache entries must have first_read_complete=False."""
+    from tok.compression import _unpack_cache_entry
+
+    entry_2tuple = ("abc123def456", "raw file content here")
+    hash_val, raw_val, ts, first_read_complete, version = _unpack_cache_entry(entry_2tuple)
+
+    assert hash_val == "abc123def456"
+    assert raw_val == "raw file content here"
+    assert first_read_complete is False, (
+        "Legacy 2-tuple entries must require verbatim first read (first_read_complete=False)"
+    )
+    assert version == 2
+
+
+def test_legacy_3tuple_cache_entry_requires_verbatim_first_read() -> None:
+    """Legacy 3-tuple cache entries must have first_read_complete=False."""
+    from tok.compression import _unpack_cache_entry
+
+    entry_3tuple = ("abc123def456", "raw file content here", 1234567890.0)
+    hash_val, raw_val, ts, first_read_complete, version = _unpack_cache_entry(entry_3tuple)
+
+    assert hash_val == "abc123def456"
+    assert raw_val == "raw file content here"
+    assert ts == 1234567890.0
+    assert first_read_complete is False, (
+        "Legacy 3-tuple entries must require verbatim first read (first_read_complete=False)"
+    )
+    assert version == 3

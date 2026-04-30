@@ -5,6 +5,10 @@ Status: draft for 0.1.7
 Tok Trace should grow from audit evidence, not from protocol ambition. The first useful
 version is a small verifier-friendly trace format for bridge sessions.
 
+Tok should become a layered protocol family rather than one overloaded file format. In
+that family, Tok Trace is the audit-evidence layer. Tok Resolver, Tok Capability, and
+Tok Session are future layers described in `tok_protocol_layers_v0_1.md`.
+
 ## Ladder
 
 1. Invisible local bridge
@@ -15,8 +19,8 @@ version is a small verifier-friendly trace format for bridge sessions.
 1. Stable fixture corpus
    - Other implementations can test their readers against documented examples.
 1. Experimental audit command
-   - Hidden `tok audit` can validate fixtures and trace files before runtime emission is
-     considered stable.
+   - Visible `tok audit` validates draft fixtures and trace files while keeping the
+     trace format draft-scoped.
 1. Resolver/cache layer
    - Agents and tools can share exact content by hash when bytes are available.
 1. Capability handshake
@@ -27,6 +31,40 @@ version is a small verifier-friendly trace format for bridge sessions.
 
 The early milestones are deliberately local and boring. The later milestones only become
 credible if audit and fixtures stay strict.
+
+## Conformance Levels
+
+| Level | Meaning                                                           | 0.1.7 status                                 |
+| ----- | ----------------------------------------------------------------- | -------------------------------------------- |
+| L0    | Read documented fixture files.                                    | Covered by fixture tests.                    |
+| L1    | Audit live bridge traces.                                         | Covered by `tok audit` and live JSONL tests. |
+| L2    | Verify local artifacts, digests, exactness, and supported deltas. | Covered for local files and `unified_diff`.  |
+| L3    | Resolve exact content by hash across cache boundaries.            | Deferred.                                    |
+| L4    | Negotiate capabilities with another runtime.                      | Deferred.                                    |
+| L5    | Exchange compact verified state agent-to-agent.                   | Deferred.                                    |
+
+0.1.7 should only claim L1/L2 draft trace audit. Stable protocol or agent-to-agent
+claims require L3+ design and independent conformance testing.
+
+## Adversarial Fixture Roadmap
+
+The protocol needs fixtures that try to lie or confuse readers before it can become a
+stable interoperability surface:
+
+- forged payload digest
+- resolver URI path escape
+- exactness lie
+- resolver-state lie
+- unsupported delta algorithm
+- malformed JSONL line
+- duplicate block IDs
+- out-of-order turns
+- unknown required field or version
+- extension attempting to override core semantics
+
+0.1.7 includes local tests for the subset the draft verifier can defend now. Later
+releases should promote this into a named adversarial fixture pack with expected audit
+outcomes.
 
 ## Compatibility Policy
 
@@ -58,7 +96,7 @@ Bridge/runtime emission should wait until the docs and verifier agree on:
 - resolver states
 - delta requirements
 - fallback requirements
-- hidden experimental audit CLI behavior
+- visible draft audit CLI behavior
 - release-surface boundaries
 
 0.1.7 may emit metadata-only live traces behind `TOK_TRACE=1`. Artifact-backed runtime

@@ -4,7 +4,14 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-from tok.spec.trace_v0_1 import AuditContext, audit_block, audit_fixture_file, canonical_payload_digest, validate_block
+from tok.spec.trace_v0_1 import (
+    AuditContext,
+    audit_block,
+    audit_fixture_file,
+    audit_trace_file,
+    canonical_payload_digest,
+    validate_block,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "tok_trace_v0_1_fixtures.json"
@@ -93,6 +100,17 @@ def test_fixture_file_audit_uses_local_artifacts() -> None:
     assert results["malformed_block_rejection"].status == "fail"
 
 
+def test_malformed_fixture_json_is_audit_failure_not_exception(tmp_path: Path) -> None:
+    path = tmp_path / "bad_fixture.json"
+    path.write_text("[bad json")
+
+    results = audit_fixture_file(path)
+
+    assert len(results) == 1
+    assert results[0].status == "fail"
+    assert results[0].errors == ("invalid_fixture_json",)
+
+
 def test_payload_digest_matches_canonical_payload() -> None:
     for fixture in load_fixtures():
         block = fixture["block"]
@@ -145,3 +163,80 @@ def test_non_exact_content_cannot_claim_exact_expectation() -> None:
     block["audit"]["expectation"] = "accept_exact"
 
     assert "accept_exact_requires_exact_content" in validate_block(block)
+
+
+def test_available_local_resolver_path_escape_fails() -> None:
+    fixture = next(fixture for fixture in load_fixtures() if fixture["id"] == "first_exact_file_observation")
+    block = deepcopy(fixture["block"])
+    assert isinstance(block, dict)
+    block["content"]["resolver_uri"] = "tok-fixture://../outside.py"
+    block["envelope"]["payload_digest"] = canonical_payload_digest(block)
+
+    result = audit_block(block, fixture_id="path-escape", context=AuditContext(FIXTURE_PATH.parent))
+
+    assert result.status == "fail"
+    assert "available_local_unresolved_content_uri" in result.errors
+
+
+def test_extension_cannot_override_core_sections() -> None:
+    fixture = next(fixture for fixture in load_fixtures() if fixture["id"] == "first_exact_file_observation")
+    block = deepcopy(fixture["block"])
+    assert isinstance(block, dict)
+    block["extensions"] = {"audit": {"expectation": "accept_exact"}}
+
+    assert "extension_namespace_overrides_core" in validate_block(block)
+
+
+def test_reserved_delta_algorithm_fails_audit_until_supported() -> None:
+    fixture = next(fixture for fixture in load_fixtures() if fixture["id"] == "delta_result")
+    block = deepcopy(fixture["block"])
+    assert isinstance(block, dict)
+    block["content"]["delta_algorithm"] = "json_patch"
+    block["envelope"]["payload_digest"] = canonical_payload_digest(block)
+
+    result = audit_block(block, fixture_id="reserved-delta", context=AuditContext(FIXTURE_PATH.parent))
+
+    assert result.status == "fail"
+    assert "unsupported_delta_algorithm_for_audit" in result.errors
+
+
+def test_jsonl_malformed_line_is_audit_failure(tmp_path: Path) -> None:
+    trace_path = tmp_path / "bad.jsonl"
+    trace_path.write_text("{bad json\n")
+
+    results = audit_trace_file(trace_path)
+
+    assert len(results) == 1
+    assert results[0].status == "fail"
+    assert results[0].errors == ("invalid_jsonl_line",)
+
+
+def test_trace_file_duplicate_block_ids_fail(tmp_path: Path) -> None:
+    fixture = next(fixture for fixture in load_fixtures() if fixture["id"] == "first_exact_file_observation")
+    block = fixture["block"]
+    trace_path = tmp_path / "duplicate.jsonl"
+    trace_path.write_text(json.dumps(block) + "\n" + json.dumps(block) + "\n")
+
+    results = audit_trace_file(trace_path)
+
+    assert any(result.errors == ("duplicate_block_id",) for result in results)
+
+
+def test_trace_file_out_of_order_turns_fail(tmp_path: Path) -> None:
+    fixture = next(fixture for fixture in load_fixtures() if fixture["id"] == "first_exact_file_observation")
+    first = deepcopy(fixture["block"])
+    second = deepcopy(fixture["block"])
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+    first["envelope"]["block_id"] = "later"
+    first["envelope"]["turn"] = 2
+    first["envelope"]["payload_digest"] = canonical_payload_digest(first)
+    second["envelope"]["block_id"] = "earlier"
+    second["envelope"]["turn"] = 1
+    second["envelope"]["payload_digest"] = canonical_payload_digest(second)
+    trace_path = tmp_path / "out_of_order.jsonl"
+    trace_path.write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n")
+
+    results = audit_trace_file(trace_path)
+
+    assert any(result.errors == ("out_of_order_trace_block",) for result in results)

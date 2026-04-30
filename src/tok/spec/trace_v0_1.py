@@ -43,6 +43,7 @@ ALLOWED_EXPECTATIONS = {
     "accept_non_exact_reference",
 }
 ALLOWED_DELTA_ALGORITHMS = {"line", "unified_diff", "json_patch", "binary"}
+CORE_SECTION_NAMES = {"envelope", "observation", "content", "audit"}
 
 
 @dataclass(frozen=True)
@@ -64,11 +65,15 @@ class AuditContext:
 
 def audit_fixture_file(path: Path) -> list[AuditResult]:
     """Audit a JSON fixture file containing draft trace fixture objects."""
-    fixtures = json.loads(path.read_text())
+    try:
+        fixtures = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return [AuditResult(id=str(path), status="fail", errors=("invalid_fixture_json",))]
     if not isinstance(fixtures, list):
         return [AuditResult(id=str(path), status="fail", errors=("fixture_file_not_list",))]
 
     results: list[AuditResult] = []
+    sequence_blocks: list[dict[str, Any]] = []
     for index, fixture in enumerate(fixtures):
         if not isinstance(fixture, dict):
             results.append(AuditResult(id=f"fixture[{index}]", status="fail", errors=("fixture_not_object",)))
@@ -81,7 +86,9 @@ def audit_fixture_file(path: Path) -> list[AuditResult]:
             continue
 
         results.append(audit_block(block, fixture_id=fixture_id, context=AuditContext(path.parent)))
+        sequence_blocks.append(block)
 
+    results.extend(_audit_sequence_consistency(sequence_blocks))
     return results
 
 
@@ -93,6 +100,7 @@ def audit_trace_file(path: Path) -> list[AuditResult]:
 
     results: list[AuditResult] = []
     context = AuditContext(path.parent)
+    sequence_blocks: list[dict[str, Any]] = []
     for index, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
@@ -110,8 +118,10 @@ def audit_trace_file(path: Path) -> list[AuditResult]:
             continue
         block_id = str(record.get("id") or block.get("envelope", {}).get("block_id") or f"line:{index}")
         results.append(audit_block(block, fixture_id=block_id, context=context))
+        sequence_blocks.append(block)
     if not results:
         return [AuditResult(id=str(path), status="fail", errors=("trace_file_empty",))]
+    results.extend(_audit_sequence_consistency(sequence_blocks))
     return results
 
 
@@ -177,7 +187,45 @@ def validate_block(block: dict[str, Any]) -> list[str]:
     _validate_observation(observation, errors)
     _validate_content(observation, content, errors)
     _validate_audit(observation, content, audit, errors)
+    _validate_extensions(block.get("extensions"), errors)
     return errors
+
+
+def _audit_sequence_consistency(blocks: list[dict[str, Any]]) -> list[AuditResult]:
+    results: list[AuditResult] = []
+    seen_block_ids: set[str] = set()
+    last_position_by_session: dict[str, tuple[int, int]] = {}
+
+    for index, block in enumerate(blocks, start=1):
+        envelope = block.get("envelope")
+        if not isinstance(envelope, dict):
+            continue
+
+        block_id = envelope.get("block_id")
+        if isinstance(block_id, str) and block_id:
+            if block_id in seen_block_ids:
+                results.append(AuditResult(id=block_id, status="fail", errors=("duplicate_block_id",)))
+            seen_block_ids.add(block_id)
+
+        session_id = envelope.get("session_id")
+        turn = envelope.get("turn")
+        step = envelope.get("step")
+        if not isinstance(session_id, str) or not isinstance(turn, int) or not isinstance(step, int):
+            continue
+
+        position = (turn, step)
+        previous = last_position_by_session.get(session_id)
+        if previous is not None and position < previous:
+            results.append(
+                AuditResult(
+                    id=str(block_id or f"line:{index}"),
+                    status="fail",
+                    errors=("out_of_order_trace_block",),
+                )
+            )
+        last_position_by_session[session_id] = position
+
+    return results
 
 
 def _validate_envelope(envelope: dict[str, Any], errors: list[str]) -> None:
@@ -270,6 +318,22 @@ def _validate_audit(
 
     if resolver_state == "available_local" and content.get("exact") and not content.get("resolver_uri"):
         errors.append("available_local_missing_resolver")
+
+
+def _validate_extensions(extensions: object, errors: list[str]) -> None:
+    if extensions is None:
+        return
+    if not isinstance(extensions, dict):
+        errors.append("invalid_extensions")
+        return
+    for namespace, value in extensions.items():
+        if not isinstance(namespace, str) or not namespace:
+            errors.append("invalid_extension_namespace")
+            continue
+        if namespace in CORE_SECTION_NAMES:
+            errors.append("extension_namespace_overrides_core")
+        if not isinstance(value, dict):
+            errors.append("invalid_extension_payload")
 
 
 def _require_content_identity(content: dict[str, Any], errors: list[str]) -> None:

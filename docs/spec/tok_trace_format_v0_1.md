@@ -16,6 +16,10 @@ Tok 0.1.x remains bridge-first. The supported path is Claude Code routed through
 local Tok bridge. The trace format sits beside the live bridge contract in
 `docs/bridge-standard.md` and describes audit records for bridge behavior.
 
+Tok Trace is the first layer in a larger protocol roadmap. It is not the resolver,
+capability-handshake, or session-exchange layer. See `tok_protocol_layers_v0_1.md` for
+the future layering model.
+
 The first milestone is fixture validation:
 
 - Can a trace block be parsed as a structured record?
@@ -25,9 +29,9 @@ The first milestone is fixture validation:
   recoverable?
 - Can malformed blocks be rejected before any runtime integration exists?
 
-Artifact-capturing runtime trace emission is intentionally future work. A hidden
-experimental `tok audit` command may validate draft fixtures and metadata-only live
-JSONL traces, but it is not part of the supported public CLI surface.
+Raw artifact-capturing runtime trace emission is intentionally future work. The visible
+`tok audit` command validates draft fixtures and live JSONL traces, but it does not
+certify universal protocol compliance.
 
 ## Core Concepts
 
@@ -41,6 +45,9 @@ Each trace block has four top-level sections:
 
 An optional `extensions` object may carry namespaced experimental data. Extensions must
 not change the meaning of core fields in v0.1.
+
+Extension namespaces must not reuse the core section names `envelope`, `observation`,
+`content`, or `audit`.
 
 ## Actions
 
@@ -82,9 +89,15 @@ Resolver state is explicit:
 A hash proves identity, not availability. A resolver URI is a recovery attempt, not a
 guarantee that the receiver has the bytes.
 
-## Experimental `tok audit` Behavior
+For live 0.1.7 traces, `available_local` can refer to a sanitized metadata artifact
+written next to the trace file. That proves the audit record's metadata hash and byte
+size, not the original prompt, response, or tool-result bytes unless the block also
+marks `content.exact: true`.
 
-The hidden experimental `tok audit` command validates draft fixture files. It should:
+## `tok audit` Behavior
+
+The visible `tok audit` command validates draft fixture files and live trace sidecars.
+It should:
 
 1. Parse trace fixture files.
 1. Validate required fields and enum values.
@@ -113,6 +126,10 @@ The live trace surface is intentionally small in 0.1.7:
 - `fallback`
 - `response_processed`
 - `audit_warning` for trace-emission issues
+
+Non-streaming bridge requests emit request and response trace blocks. Streaming bridge
+trace coverage is intentionally limited in 0.1.7; streaming behavior remains governed by
+the bridge fallback/recovery code and should not be treated as full trace replay proof.
 
 Live traces do not store raw prompts, responses, or tool outputs by default. Since exact
 bytes are not captured, `tok audit` reports metadata-only live traces as warnings rather

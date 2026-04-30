@@ -110,4 +110,5 @@ extensions := {
 ```
 
 Extensions are optional, namespaced, and non-normative in v0.1. They must not override
-core action, result, resolver, exactness, or hash semantics.
+core action, result, resolver, exactness, or hash semantics. Extension namespaces must
+not be `envelope`, `observation`, `content`, or `audit`.

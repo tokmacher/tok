@@ -546,6 +546,11 @@ def _repair_structured_answer_text(
     if session is None:
         return visible_text, {}
     if not fields:
+        if _looks_like_tool_intent_text(visible_text) or _looks_like_answer_deferral_text(visible_text):
+            return visible_text, {
+                "structured_answer_deferral_rejected": 1,
+                "structured_answer_repair_failed": 1,
+            }
         known_files, known_verifications = _extract_session_answer_anchors(session)
         signals = {"structured_answer_visible_preserved": 1}
         if known_files or known_verifications:
