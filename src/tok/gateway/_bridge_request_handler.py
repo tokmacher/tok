@@ -174,7 +174,7 @@ async def send_with_tok_fail_open_retry(
         return (
             httpx.Response(
                 429,
-                json={"error": {"type": "rate_limit_error", "message": "Tok cooldown active"}},
+                json={"type": "error", "error": {"type": "rate_limit_error", "message": "Tok cooldown active"}},
                 headers={"Retry-After": str(max(1, int(math.ceil(remaining))))},
             ),
             False,

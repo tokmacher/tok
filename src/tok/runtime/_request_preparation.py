@@ -527,6 +527,21 @@ def _restore_latest_assistant_thinking(
     return False
 
 
+def _is_first_turn_broad_audit_batch(
+    request: RuntimeRequest,
+    session: RuntimeSession,
+    normalized_tool_events: list[Any],
+) -> bool:
+    if request.adapter_kind != "claude-bridge" or session.bridge_memory.turn > 1:
+        return False
+    if session._stream_recovery_reacquisition_budget > 0 or session._stream_recovery_history_floor_budget > 0:
+        return False
+    file_read_count = sum(1 for event in normalized_tool_events if event.compressibility_class == "file_read")
+    if file_read_count < 8:
+        return False
+    return not any(event.name.lower() in EDIT_LIKE_TOOLS for event in normalized_tool_events)
+
+
 def prepare_request_impl(
     runtime_self: UniversalTokRuntime,
     request: RuntimeRequest,
@@ -660,6 +675,11 @@ def prepare_request_impl(
         session.bridge_memory._upsert(session.bridge_memory.hot, "questions", hypothesis, score_delta=2)
 
     normalized_tool_events = normalize_tool_events(translated_messages)
+    broad_audit_batch = (
+        not suppress_reacquisition_once
+        and not stream_recovery_history_floor_active
+        and _is_first_turn_broad_audit_batch(request, session, normalized_tool_events)
+    )
     runtime_hints: list[str] = []
     injected_state_payload = ""
     history_skip_reason = ""
@@ -668,6 +688,8 @@ def prepare_request_impl(
     for event in normalized_tool_events:
         if event.name.lower() in EDIT_LIKE_TOOLS and event.path:
             session.bridge_memory.bump_file_heat(event.path, weight=2.0)
+    if broad_audit_batch:
+        behavior_signals["broad_audit_tok_additions_suppressed"] = 1
 
     mode, policy = session.policy_snapshot(request.model)
     saved_tokens = 0
@@ -953,7 +975,10 @@ def prepare_request_impl(
             session._last_elevated_path = ""
         elif fidelity_overrides and current_path:
             session._last_elevated_path = current_path
-        if stream_recovery_history_floor_active:
+        if broad_audit_batch:
+            body["messages"] = translated_messages
+            behavior_signals["broad_audit_tool_result_compression_skipped"] = 1
+        elif stream_recovery_history_floor_active:
             body["messages"] = translated_messages
         elif plan_finalization_turn:
             body["messages"] = translated_messages
@@ -1009,7 +1034,12 @@ def prepare_request_impl(
             keep_turns = 0
             session._tok_memory_snap_triggered = 0
 
-        if preserve_exact_search_evidence:
+        if broad_audit_batch:
+            should_skip_history = True
+            skip_reason = "broad_audit"
+            history_skip_reason = skip_reason
+            behavior_signals["broad_audit_history_skipped"] = 1
+        elif preserve_exact_search_evidence:
             should_skip_history = True
             skip_reason = "answer_ready_exact_search_evidence"
             history_skip_reason = skip_reason
@@ -1262,9 +1292,9 @@ def prepare_request_impl(
             session._is_first_request = False
 
         if effective_tool_compatible:
-            if skip_reason == "short_session":
-                # Short session: skip ALL Tok additions to avoid overhead
-                behavior_signals["short_session_system_additions_skipped"] = 1
+            if skip_reason in {"short_session", "broad_audit"}:
+                # Skip all Tok additions when overhead would dominate the turn.
+                behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
             else:
                 (
                     injected_state_payload,
@@ -1307,9 +1337,9 @@ def prepare_request_impl(
                     session=session,
                 )
             has_answer_anchor = bool(behavior_signals.get("answer_anchor_present", 0))
-        elif skip_reason == "short_session":
-            # Short session: skip ALL Tok additions to avoid overhead
-            behavior_signals["short_session_system_additions_skipped"] = 1
+        elif skip_reason in {"short_session", "broad_audit"}:
+            # Skip all Tok additions when overhead would dominate the turn.
+            behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
         else:
             max_runtime_hints = RUNTIME_HINTS_MAX_PER_TURN
             if len(runtime_hints) > max_runtime_hints:

@@ -70,6 +70,31 @@ def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
     ]
 
 
+def _broad_audit_file_read_messages(count: int = 8) -> list[dict[str, Any]]:
+    tool_uses = [
+        {
+            "type": "tool_use",
+            "id": f"toolu_audit_{index}",
+            "name": "read_file",
+            "input": {"path": f"src/tok/audit_{index}.py"},
+        }
+        for index in range(count)
+    ]
+    tool_results = [
+        {
+            "type": "tool_result",
+            "tool_use_id": f"toolu_audit_{index}",
+            "content": f"def marker_{index}():\n    return {index}\n",
+        }
+        for index in range(count)
+    ]
+    return [
+        {"role": "user", "content": [{"type": "text", "text": "Audit the bridge implementation."}]},
+        {"role": "assistant", "content": tool_uses},
+        {"role": "user", "content": tool_results},
+    ]
+
+
 def test_top_level_tool_result_is_rewritten_and_merged_into_user_blocks() -> None:
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Inspect the bridge."},
@@ -1284,6 +1309,33 @@ def test_stream_recovery_history_floor_leaves_safe_outgoing_body(
         isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") == "toolu_tail_1"
         for block in kept[2].get("content", [])
     )
+
+
+def test_first_turn_broad_audit_suppresses_tok_additions_and_preserves_tool_results(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    runtime = UniversalTokRuntime()
+    messages = _broad_audit_file_read_messages()
+
+    prepared = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            messages=messages,
+            system="System context",
+            adapter_kind="claude-bridge",
+            tool_compatible=True,
+            request_policy="natural_first",
+            request_has_tools=True,
+        ),
+        session,
+    )
+
+    assert prepared.behavior_signals["broad_audit_tok_additions_suppressed"] == 1
+    assert prepared.behavior_signals["broad_audit_tool_result_compression_skipped"] == 1
+    assert prepared.behavior_signals["broad_audit_history_skipped"] == 1
+    assert prepared.behavior_signals["broad_audit_system_additions_skipped"] == 1
+    assert prepared.body["system"] == "System context"
+    assert prepared.body["messages"] == messages
+    assert prepared.compressed is False
 
 
 def test_canonicalization_preserves_thinking_blocks_in_assistant_message() -> None:

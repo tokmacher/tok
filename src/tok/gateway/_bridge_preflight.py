@@ -167,6 +167,20 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
             rewritten_messages.append(copy.deepcopy(message))
             index += 1
             continue
+        expected_ids = [
+            str(tool.get("id", "")).strip()
+            for segment in segments
+            for tool in segment["tool_uses"]
+            if isinstance(tool, dict)
+        ]
+        actual_ids = [str(block.get("tool_use_id", "")).strip() for block in user_tool_result_blocks]
+        if expected_ids != actual_ids:
+            rewritten_messages.append(copy.deepcopy(message))
+            index += 1
+            signals["tok_bridge_large_file_read_burst_rewrite_skipped_id_mismatch"] = (
+                signals.get("tok_bridge_large_file_read_burst_rewrite_skipped_id_mismatch", 0) + 1
+            )
+            continue
 
         changed = True
         signals["tok_bridge_large_file_read_burst_rewritten"] = (

@@ -228,6 +228,17 @@ def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
     ]
 
 
+def test_provider_sensitive_large_file_read_rewrite_skips_reversed_result_ids() -> None:
+    body = {"messages": _provider_sensitive_large_tool_batch_messages()}
+    body["messages"][2]["content"] = list(reversed(body["messages"][2]["content"]))
+
+    rewritten, changed, signals = _rewrite_provider_sensitive_large_tool_use_text_interleaving(body)
+
+    assert changed is False
+    assert rewritten == body
+    assert signals["tok_bridge_large_file_read_burst_rewrite_skipped_id_mismatch"] == 1
+
+
 def _interleaved_tool_batch_messages() -> list[dict[str, Any]]:
     return [
         {
@@ -6385,6 +6396,9 @@ class TestRateLimitThunderingHerd:
                 )
             assert response.status_code == 429
             assert "Retry-After" in response.headers
+            body = response.json()
+            assert body["type"] == "error"
+            assert body["error"]["type"] == "rate_limit_error"
             assert signals.get("rate_limit_cooldown_skipped") == 1
 
         asyncio.run(_run())
