@@ -926,10 +926,6 @@ def prepare_request_impl(
 
         runtime_hints = []
         if session.consume_loop_detected():
-            runtime_hints.append(
-                "@tok_terminate_loop You appear to be in a loop of repeated actions. "
-                "Choose the most likely answer and provide a final response now."
-            )
             behavior_signals["loop_terminated"] = 1
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
             behavior_signals["repeat_command_suppression_hint_injected"] = 0

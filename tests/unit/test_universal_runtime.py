@@ -3567,6 +3567,25 @@ def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
     assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
 
 
+def test_prepare_request_records_loop_detection_without_final_answer_steering(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._loop_detected = True
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=[{"role": "user", "content": "Continue the investigation."}],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.behavior_signals.get("loop_terminated", 0) == 1
+    assert "@tok_terminate_loop" not in prepared.body["system"]
+    assert "provide a final response now" not in prepared.body["system"]
+
+
 def test_prepare_request_tool_results_only_do_not_trigger_answer_ready(
     tmp_path,
 ) -> None:

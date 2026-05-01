@@ -891,6 +891,38 @@ def compress_tool_results_impl(
             return
         session.record_exact_evidence(key, digest=_compute_semantic_hash(raw))
 
+    def _looks_like_failure_evidence(raw: str) -> bool:
+        lowered = raw.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "traceback",
+                "assertionerror",
+                "exception",
+                "error:",
+                " failed",
+                "failed ",
+                " failures ",
+                " failed in ",
+            )
+        )
+
+    def _preserve_first_failure_observation(context: dict[str, Any] | None, raw: str) -> bool:
+        if first_exact_evidence_seen is None or not _looks_like_failure_evidence(raw):
+            return False
+        key = _evidence_key_for_context(context)
+        if not key and isinstance(context, dict):
+            args = context.get("args") if isinstance(context.get("args"), dict) else {}
+            command = str(args.get("command") or args.get("cmd") or "").strip()
+            tool_name = str(context.get("name", "")).strip().lower()
+            if tool_name and command:
+                key = f"tool_result|{tool_name}|cmd:{command}"
+        if not key or key in first_exact_evidence_seen:
+            return False
+        first_exact_evidence_seen.add(key)
+        _record_exact_observation(context, raw)
+        return True
+
     def _record_non_exact_observation(
         context: dict[str, Any] | None,
         raw: str,
@@ -1116,6 +1148,9 @@ def compress_tool_results_impl(
             if ctx:
                 norm_path = _extract_normalized_path(ctx)
                 if _should_preserve_exact_search_observation(ctx, raw):
+                    block["content"] = raw
+                    continue
+                if _preserve_first_failure_observation(ctx, raw):
                     block["content"] = raw
                     continue
                 if _preserve_first_exact_observation(ctx, raw, norm_path):

@@ -227,6 +227,49 @@ class TestFirstGrepSearchObservationContract:
         assert evidence_key in first_exact_evidence_seen
 
 
+class TestNovelFailureObservationContract:
+    """Test that novel failures reach the model before any summary/truncation."""
+
+    def test_first_large_pytest_failure_is_exact_repeat_can_compress(self) -> None:
+        failure_output = (
+            "============================= test session starts ==============================\n"
+            "collected 1 item\n\n"
+            "tests/test_widget.py::test_widget FAILED\n\n"
+            "=================================== FAILURES ===================================\n"
+            "_______________________________ test_widget ________________________________\n"
+            "Traceback (most recent call last):\n"
+            '  File "tests/test_widget.py", line 12, in test_widget\n'
+            "    assert render_widget() == 'ready'\n"
+            "AssertionError: assert 'broken' == 'ready'\n"
+            + "\n".join(f"debug line {i}: retained novel context" for i in range(250))
+            + "\n=========================== 1 failed in 0.42s ===========================\n"
+        )
+        messages = [
+            _tool_use("t1", "bash", command="uv run pytest tests/test_widget.py -q"),
+            _tool_result("t1", failure_output),
+            _tool_use("t2", "bash", command="uv run pytest tests/test_widget.py -q"),
+            _tool_result("t2", failure_output),
+        ]
+        tool_use_id_to_context = build_tool_use_id_to_context(messages)
+        first_exact_evidence_seen: set[str] = set()
+
+        compressed, breakdown = compress_tool_results_impl(
+            messages,
+            tool_use_id_to_context=tool_use_id_to_context,
+            compression_level="balanced",
+            first_exact_evidence_seen=first_exact_evidence_seen,
+        )
+
+        first_result = compressed[1]["content"][0]["content"]
+        second_result = compressed[3]["content"][0]["content"]
+
+        assert first_result == failure_output
+        assert "TRUNCATED" not in first_result
+        assert second_result != failure_output
+        assert "TRUNCATED" in second_result or second_result.startswith(">>>")
+        assert breakdown
+
+
 class TestEvidenceIdentityKey:
     """Test evidence identity key generation for different evidence types."""
 

@@ -16,14 +16,7 @@ _GREP_PATH_RE = re.compile(r"^([^:\s][^:]+\.[a-zA-Z]{1,8}):\d+:")
 from pydantic import BaseModel, ConfigDict
 
 from tok.compression import FILE_LIKE_TOOLS, inject_system_additions, text_of
-from tok.runtime.config import (
-    _TOOL_REQUIRED_PROMPT_PATTERNS,
-    ANSWER_READY_REPAIR_HINT,
-    ANSWER_READY_RUNTIME_HINT,
-    LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
-    LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT,
-    LATE_ANSWER_FOLLOWTHROUGH_HINT,
-)
+from tok.runtime.config import _TOOL_REQUIRED_PROMPT_PATTERNS
 
 if TYPE_CHECKING:
     from tok.runtime.core import RuntimeSession
@@ -338,33 +331,23 @@ def _is_answer_ready_turn(
 
 
 def _answer_ready_runtime_hints(*, answer_ready: bool) -> list[str]:
-    """Return hints for turns where an answer is expected."""
-    if not answer_ready:
-        return []
-    return [ANSWER_READY_RUNTIME_HINT]
+    """Return no model-facing hints for answer-ready diagnostics."""
+    return []
 
 
-def _answer_ready_repair_hints(*, repair_active: bool) -> list[str]:
-    """Return hints for turns where an answer repair is requested."""
-    if not repair_active:
-        return []
-    return [ANSWER_READY_REPAIR_HINT]
+def _answer_ready_repair_hints(*, _repair_active: bool) -> list[str]:
+    """Return no model-facing hints for answer repair diagnostics."""
+    return []
 
 
 def _late_answer_assembly_repair_hints(*, repair_mode: str) -> list[str]:
-    """Return hints for late-session answer assembly repairs."""
-    if repair_mode == "tool_only":
-        return [LATE_ANSWER_ASSEMBLY_TOOL_ONLY_REPAIR_HINT]
-    if repair_mode == "answer_only":
-        return [LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT]
+    """Return no model-facing hints for late answer assembly diagnostics."""
     return []
 
 
 def _late_answer_followthrough_hints(*, active: bool) -> list[str]:
-    """Return hints for late-session followthrough turns."""
-    if not active:
-        return []
-    return [LATE_ANSWER_FOLLOWTHROUGH_HINT]
+    """Return no model-facing hints for late answer followthrough diagnostics."""
+    return []
 
 
 def _runtime_hints_for_turn(
