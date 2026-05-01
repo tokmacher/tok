@@ -60,7 +60,9 @@ tok audit [TRACE_FILE | --latest] [--json]
 Use:
 
 - `tok doctor` as the first troubleshooting command after install
-- `tok stats` for current, last-session, recent, and lifetime savings views
+- `tok stats` for current, last-session, recent, and lifetime savings views, including
+  low-savings notes for short sessions, baseline mode, fallback, or evidence-safety
+  blocks
 - `tok audit` to validate Tok Trace v0.1 draft fixture files or live bridge sidecars
 
 ## Trace Audit
@@ -93,6 +95,14 @@ without storing original prompt, response, or tool-result bytes. Artifact-backed
 metadata mode can produce `PASS`, but it still verifies sanitized trace metadata rather
 than raw session content.
 
+Exactness terms:
+
+- `exact`: Tok observed exact evidence before treating that evidence identity as
+  compressible.
+- `non-exact`: Tok emitted a reference, summary, or skeleton rather than original bytes.
+- `safe-block`: Tok blocked compression because exactness mattered more than savings.
+- `fallback`: Tok used raw/baseline behavior because compact representation was unsafe.
+
 Advanced maintainer utilities remain available, but they are intentionally hidden from
 the default help surface in `0.1.x` so new users land on one clear workflow. Hidden
 commands such as capture review, release gating, conversion helpers, and developer tools
@@ -107,3 +117,5 @@ as public onboarding material.
 - [`docs/bridge.md`](./bridge.md)
 - [`docs/troubleshooting.md`](./troubleshooting.md)
 - [`docs/production-readiness.md`](./production-readiness.md)
+- [`docs/claude-compaction-comparison.md`](./claude-compaction-comparison.md)
+- [`docs/positioning-context-tools.md`](./positioning-context-tools.md)

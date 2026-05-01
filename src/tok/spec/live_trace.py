@@ -120,6 +120,10 @@ def build_live_trace_block(
             }
         },
     }
+    if runtime_session is not None and hasattr(runtime_session, "evidence_safety_audit_summary"):
+        cast(dict[str, Any], block["extensions"])["tok.evidence_safety"] = (
+            runtime_session.evidence_safety_audit_summary()
+        )
     if artifact_uri is not None:
         cast(dict[str, Any], block["content"])["resolver_uri"] = artifact_uri
     cast(dict[str, Any], block["envelope"])["payload_digest"] = canonical_payload_digest(block)

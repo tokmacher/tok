@@ -1680,6 +1680,11 @@ class TestCLI:
                     "thinking_mutation_events": 0,
                     "task_score": 100,
                     "repeated_active_file_reads": 0,
+                    "evidence_exact_observed_count": 4,
+                    "evidence_non_exact_reference_count": 2,
+                    "evidence_exact_reacquisition_required_count": 1,
+                    "evidence_exact_reacquisition_satisfied_count": 1,
+                    "evidence_compression_blocked_for_safety_count": 1,
                 }
 
         monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
@@ -1691,6 +1696,11 @@ class TestCLI:
         assert "env_OPENAI_API_KEY=set" in result.output
         assert "env_OPENROUTER_API_KEY=set" in result.output
         assert "env_TOK_PROJECT_DIR=set" in result.output
+        assert "evidence_exact_observed=4" in result.output
+        assert "evidence_non_exact_reference=2" in result.output
+        assert "evidence_exact_reacquisition_required=1" in result.output
+        assert "evidence_exact_reacquisition_satisfied=1" in result.output
+        assert "evidence_compression_blocked_for_safety=1" in result.output
         assert "sk-secret-123" not in result.output
         assert "or-secret-456" not in result.output
 

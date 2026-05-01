@@ -95,6 +95,11 @@ The bridge must keep inversion semantics stable:
 - cold starts prefer structured projected memory
 - malformed or non-inverted output must not be mistaken for Tok-native success
 - file readability must not be sacrificed for local compression ratio
+- compact skeletons, summaries, and stable references are non-exact evidence and must
+  not authorize edit-like work unless exact content has been observed again
+- the bridge may audit exact/non-exact evidence safety, but this remains bridge fidelity
+  infrastructure rather than graph memory, OpenCode commands, or a context packing
+  product surface
 
 ## Conformance Targets
 
@@ -105,3 +110,5 @@ Conformance tests should lock down:
 - Tok-native success detection
 - fail-open compatibility detection
 - malformed/non-inverted response handling
+- exact evidence before non-exact compression
+- exact reacquisition before edit-like work after skeleton/summary delivery

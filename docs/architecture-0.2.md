@@ -85,9 +85,9 @@ large sets of local variables through one function.
 
 ### Behavior-Signal Registry
 
-Behavior signals are still free-form strings in 0.1.7. For 0.2, new release-critical
-signals should be registered before use so health, stats, tests, and trace audit do not
-drift apart.
+Behavior signals remain accepted as free-form strings for experimental work. For 0.2,
+new release-critical signals should be registered before use so runtime behavior,
+doctor/status diagnostics, stats, trace audit, and release gates do not drift apart.
 
 The registry should cover at least:
 
@@ -99,7 +99,26 @@ The registry should cover at least:
 - release-gate and trace-audit signals.
 
 The first 0.2 implementation step should be additive: introduce the registry and tests,
-then migrate call sites gradually.
+then migrate call sites gradually. Unknown signals may continue to exist as internal or
+experimental details, but anything used for a release decision, user-visible diagnostic,
+or evidence-safety proof should have category, severity, display label, and health-gate
+metadata in the registry.
+
+### Bridge-Local Observability
+
+0.2 trace work should strengthen Tok's bridge promise without turning Tok into a hosted
+agent observability product. The target is a local, privacy-preserving summary for each
+turn that can explain:
+
+- compression decision and request policy;
+- exact, non-exact, reacquisition, and safety-block state;
+- fallback/degradation reason, if any;
+- input-token delta and estimated savings;
+- whether the trace is metadata-only or artifact-backed.
+
+OpenTelemetry GenAI compatibility may be useful for bridge health summaries later, but
+Tok should not export full prompts, tool outputs, hidden reasoning, or general agent
+workflow spans as part of the 0.2 bridge architecture.
 
 ### Config Strictness Table
 
@@ -140,6 +159,11 @@ edits or conclusions.
   must see exact content again first.
 - Novel failures, provider-sensitive tool pairing failures, and fresh traceback details
   must not be silently compressed away.
+- Evidence safety is Tok's bridge-fidelity proof layer, not graph memory, OpenCode
+  command integration, or context-pack product expansion.
+- Live trace and audit summaries should distinguish exact observations from non-exact
+  model-facing references so compression can be defended without claiming summaries are
+  original bytes.
 
 0.1.7 should document this contract and preserve existing tests. 0.2 should enforce it
 mechanically with a narrow evidence-safety test suite.

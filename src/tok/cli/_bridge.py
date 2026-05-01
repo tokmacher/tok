@@ -301,6 +301,19 @@ def bridge_status() -> None:
                 "stream_recovery_empty_success_count": int(payload.get("stream_recovery_empty_success_count", 0)),
                 "stream_recovery_read_error_count": int(payload.get("stream_recovery_read_error_count", 0)),
                 "request_policy_held_by_recovery_count": int(payload.get("request_policy_held_by_recovery_count", 0)),
+                "evidence_exact_observed_count": int(payload.get("evidence_exact_observed_count", 0)),
+                "evidence_non_exact_reference_count": int(payload.get("evidence_non_exact_reference_count", 0)),
+                "evidence_non_exact_summary_count": int(payload.get("evidence_non_exact_summary_count", 0)),
+                "evidence_non_exact_skeleton_count": int(payload.get("evidence_non_exact_skeleton_count", 0)),
+                "evidence_exact_reacquisition_required_count": int(
+                    payload.get("evidence_exact_reacquisition_required_count", 0)
+                ),
+                "evidence_exact_reacquisition_satisfied_count": int(
+                    payload.get("evidence_exact_reacquisition_satisfied_count", 0)
+                ),
+                "evidence_compression_blocked_for_safety_count": int(
+                    payload.get("evidence_compression_blocked_for_safety_count", 0)
+                ),
             }
             baseline_only = bool(payload.get("baseline_only"))
             fallback_count = int(payload.get("fallback_count", 0))

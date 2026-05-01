@@ -1388,6 +1388,7 @@ def compress_tool_results(
     preserve_exact_search_evidence: bool = False,
     recently_edited_files: dict[str, int] | None = None,
     file_heat: dict[str, float] | None = None,
+    session: Any | None = None,
     model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
@@ -1409,6 +1410,7 @@ def compress_tool_results(
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         recently_edited_files=recently_edited_files,
         file_heat=file_heat,
+        session=session,
         model_profile=model_profile,
     )
 

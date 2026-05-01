@@ -59,7 +59,12 @@ Default behavior is explicit. Tok does not override `claude` unless you opt in w
 `tok install --wrap-claude`.
 
 The main CLI commands for `0.1.x` are: `tok init`, `tok install`,
-`tok bridge start|status|logs|stop`, `tok doctor`, `tok stats`, and `tok audit`.
+`tok bridge start|status|logs|stop`, `tok doctor`, `tok stats`, and `tok audit`. Tok is
+not a graph-memory product, repo indexer, prompt-compression API, MCP server
+marketplace, or general agent platform. For comparisons with native Claude Code
+compaction and adjacent context tools, see
+[`docs/claude-compaction-comparison.md`](docs/claude-compaction-comparison.md) and
+[`docs/positioning-context-tools.md`](docs/positioning-context-tools.md).
 
 ### Optional Wrapper Mode
 
@@ -460,6 +465,10 @@ Start here, then go deeper only if you need it:
 - [`docs/cli-reference.md`](docs/cli-reference.md): command reference
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): fallback, degraded sessions,
   logs, savings interpretation
+- [`docs/claude-compaction-comparison.md`](docs/claude-compaction-comparison.md): how to
+  compare Tok with Claude Code `/compact`, auto-compaction, and baseline mode
+- [`docs/positioning-context-tools.md`](docs/positioning-context-tools.md): adjacent
+  memory, context, compression, MCP, code-indexing, and observability tools
 - [`docs/production-readiness.md`](docs/production-readiness.md): advanced runtime
   defaults and release posture
 - [`docs/release-checklist.md`](docs/release-checklist.md): maintainer release checklist

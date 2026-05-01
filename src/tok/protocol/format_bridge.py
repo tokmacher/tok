@@ -9,8 +9,8 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from typing import Any, cast
 
-from .encoder import TokEncoder
 from .models import TokNode
+from .parser import serialize
 from .protocol import SerializationProtocol
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,7 @@ class Bridge(SerializationProtocol):
             return TokNode(type=name, text=str(value))
 
         root = _to_nodes("data", data)
-        return TokEncoder.encode([root])
+        return serialize([root])
 
     @staticmethod
     def xml(xml_str: str) -> str:
@@ -210,7 +210,7 @@ class Bridge(SerializationProtocol):
                         text=child.text or "",
                     )
                 )
-            return TokEncoder.encode([node])
+            return serialize([node])
         except Exception:
             return ""
 
@@ -224,7 +224,7 @@ class Bridge(SerializationProtocol):
         for line in lines[2:]:
             rows.append([c.strip() for c in line.split("|") if c.strip()])
         node = TokNode(type=table_name, headers=headers, rows=rows)
-        return TokEncoder.encode([node])
+        return serialize([node])
 
     @staticmethod
     def markdown(md_str: str, table_name: str = "result") -> str:

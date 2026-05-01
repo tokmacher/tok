@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -102,6 +103,9 @@ _DEFAULT_JIT_HIT_THRESHOLD = 3
 _DEFAULT_SPECULATIVE_HIT_THRESHOLD = 2
 _BRIDGE_CUT_SEARCH_MAX_EXTRA_TURNS = 4
 _BRIDGE_CUT_SEARCH_MIN_SAVED_TOKENS = 16
+_EVIDENCE_PATH_RE = re.compile(
+    r"(?<!\w)([\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|yaml|yml|sh|txt|css|html|sql|rs|go|rb))(?!\w)"
+)
 
 
 def _tool_result_only_suffix_has_safe_pairing(messages: list[dict[str, Any]]) -> bool:
@@ -120,6 +124,39 @@ def _has_exact_search_evidence(evidence_keys: set[str]) -> bool:
         if str(key).startswith("search|"):
             return True
     return False
+
+
+def _edit_events_requiring_exact_reacquisition(
+    session: RuntimeSession,
+    normalized_tool_events: list[Any],
+) -> dict[str, int]:
+    signals: dict[str, int] = {}
+    for event in normalized_tool_events:
+        if not session._is_edit_tool_event(event):
+            continue
+        file_path = session._extract_file_path_from_event(event)
+        if not file_path:
+            continue
+        exact_key = evidence_identity_key(
+            "read_file",
+            path=file_path,
+            args=event.args if isinstance(event.args, dict) else None,
+        )
+        if not exact_key or not session.evidence_requires_reacquisition(exact_key):
+            continue
+        for key, value in session.require_exact_reacquisition(exact_key).items():
+            signals[key] = signals.get(key, 0) + value
+    return signals
+
+
+def _record_non_exact_history_evidence(session: RuntimeSession, tok_state: str) -> None:
+    if not tok_state:
+        return
+    for match in _EVIDENCE_PATH_RE.finditer(tok_state):
+        path = match.group(1)
+        exact_key = evidence_identity_key("read_file", path=path, args={"path": path})
+        if exact_key:
+            session.record_non_exact_evidence(exact_key, form="summary")
 
 
 def _record_structured_answer_expectation(
@@ -688,6 +725,13 @@ def prepare_request_impl(
     for event in normalized_tool_events:
         if event.name.lower() in EDIT_LIKE_TOOLS and event.path:
             session.bridge_memory.bump_file_heat(event.path, weight=2.0)
+    edit_reacquisition_signals = _edit_events_requiring_exact_reacquisition(session, normalized_tool_events)
+    if edit_reacquisition_signals:
+        for key, value in edit_reacquisition_signals.items():
+            behavior_signals[key] = behavior_signals.get(key, 0) + value
+        should_skip_history = True
+        skip_reason = "evidence_exact_reacquisition"
+        history_skip_reason = skip_reason
     if broad_audit_batch:
         behavior_signals["broad_audit_tok_additions_suppressed"] = 1
 
@@ -978,6 +1022,9 @@ def prepare_request_impl(
         if broad_audit_batch:
             body["messages"] = translated_messages
             behavior_signals["broad_audit_tool_result_compression_skipped"] = 1
+        elif edit_reacquisition_signals:
+            body["messages"] = translated_messages
+            behavior_signals["evidence_tool_result_compression_skipped"] = 1
         elif stream_recovery_history_floor_active:
             body["messages"] = translated_messages
         elif plan_finalization_turn:
@@ -1004,6 +1051,7 @@ def prepare_request_impl(
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
                 recently_edited_files=dict(session._recently_edited_files),
                 file_heat=dict(session.bridge_memory._file_heat),
+                session=session,
                 model_profile=session.model_profile,
             )
             tool_saved = sum(type_breakdown.values()) // 4
@@ -1039,6 +1087,11 @@ def prepare_request_impl(
             skip_reason = "broad_audit"
             history_skip_reason = skip_reason
             behavior_signals["broad_audit_history_skipped"] = 1
+        elif edit_reacquisition_signals:
+            should_skip_history = True
+            skip_reason = "evidence_exact_reacquisition"
+            history_skip_reason = skip_reason
+            behavior_signals["evidence_history_compression_skipped"] = 1
         elif preserve_exact_search_evidence:
             should_skip_history = True
             skip_reason = "answer_ready_exact_search_evidence"
@@ -1230,6 +1283,7 @@ def prepare_request_impl(
 
         if not should_skip_history:
             if tok_state:
+                _record_non_exact_history_evidence(session, tok_state)
                 logger.info(f"HISTORY WINNOWING SUCCESS: msgs {len(body['messages'])} -> {len(recent)}")
                 _in_active_tool_loop = any(
                     behavior_signals.get(k, 0) > 0

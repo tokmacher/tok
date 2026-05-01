@@ -63,6 +63,15 @@ def test_experimental_root_helpers_are_not_in_the_supported_root_exports() -> No
     assert "TextLoopAdapter" not in tok.__all__
 
 
+def test_evidence_safety_diagnostics_do_not_add_root_commands() -> None:
+    help_output = runner.invoke(app, ["--help"]).output
+
+    assert "evidence" not in SUPPORTED_CLI_ROOT_COMMANDS
+    assert "signals" not in SUPPORTED_CLI_ROOT_COMMANDS
+    assert " evidence " not in f" {help_output} "
+    assert " signals " not in f" {help_output} "
+
+
 def test_release_surface_rejects_unregistered_visible_cli_command() -> None:
     class _Command:
         hidden = False

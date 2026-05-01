@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._cache_control import _cache_control_counts_for_messages, _cache_control_counts_for_tools
+
 
 def _get_header_value(headers: dict[str, str], name: str) -> str:
     """Read a header from a plain dict with case-insensitive lookup."""
@@ -54,24 +56,6 @@ def _system_fingerprint(system: object) -> dict[str, int | str]:
     }
 
 
-def _cache_control_counts_for_messages(messages: object) -> dict[str, int]:
-    """Count cache_control placement by Anthropic message block type."""
-    from ._cache_control import (
-        _cache_control_counts_for_messages as _counts_helper,
-    )
-
-    return _counts_helper(messages)
-
-
-def _cache_control_counts_for_tools(tools: object) -> int:
-    """Count cache_control markers on the top-level tools array."""
-    from ._cache_control import (
-        _cache_control_counts_for_tools as _tools_helper,
-    )
-
-    return _tools_helper(tools)
-
-
 def _request_body_fingerprint(headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
     """Build a redacted request fingerprint for prompt-caching diagnostics."""
     system = _system_fingerprint(body.get("system"))
@@ -79,7 +63,7 @@ def _request_body_fingerprint(headers: dict[str, str], body: dict[str, Any]) -> 
     cache_counts["system_blocks"] = int(system["cache_control_blocks"])
     cache_counts["tools"] = _cache_control_counts_for_tools(body.get("tools"))
     cache_counts["total"] = (
-        _cache_control_counts_for_messages(body.get("messages"))["message_text_blocks"]
+        cache_counts["message_text_blocks"]
         + cache_counts["message_tool_result_blocks"]
         + cache_counts["message_tool_use_blocks"]
         + cache_counts["system_blocks"]
@@ -102,10 +86,3 @@ def _request_body_fingerprint(headers: dict[str, str], body: dict[str, Any]) -> 
         "system": system,
         "cache_control": cache_counts,
     }
-
-
-def _body_has_cache_control(value: object) -> bool:
-    """Return True if cache_control appears anywhere in a body subtree."""
-    from ._cache_control import _body_has_cache_control as _cache_check
-
-    return _cache_check(value)

@@ -9,6 +9,10 @@ This document explains the key health and recovery signals you may see in:
 The goal is to help you distinguish normal, self-contained recovery (expected under
 stress) from a real degradation that should be reported as a bug.
 
+For comparisons with native Claude Code context management and adjacent context tools,
+see [`docs/claude-compaction-comparison.md`](./claude-compaction-comparison.md) and
+[`docs/positioning-context-tools.md`](./positioning-context-tools.md).
+
 ## What Is "Supported" For 0.1.x
 
 The supported product path for `0.1.x` is Claude Code routed through the local Tok
@@ -81,6 +85,43 @@ stress test that repeats reads/searches will increase it quickly.
 
 High `reacq` is usually a sign that Tok has useful dedup/delta opportunities, not a
 problem by itself.
+
+### Low Or Zero Savings
+
+`tok stats`, `tok doctor`, and `tok bridge status` may show a `Savings note` when Tok is
+active but savings are low or absent.
+
+Common explanations:
+
+- the session is too short for bridge compression to amortize overhead;
+- `TOK_MODE=baseline` is intentionally disabling compression;
+- provider caching or a low-repetition task limits incremental savings;
+- MCP servers, file reads, searches, or tools are producing fresh large payloads rather
+  than repeated payloads;
+- `safe-block` means Tok chose exactness over savings;
+- fallback or degraded baseline means Tok protected fidelity and needs log inspection.
+
+Low savings is not automatically a Tok failure. Treat it as a prompt to inspect
+`Session signals`, fallback counts, exactness labels, and `tok audit --latest`.
+
+### Evidence-safety labels
+
+You may see compact labels such as `exact=N`, `nonexact=N`, `reacq-safe=X/Y`, or
+`safe-block=N` in `tok bridge status`, `tok doctor`, or `tok stats` session panels.
+
+Meaning:
+
+- `exact` means Tok observed exact evidence before treating that evidence identity as
+  compressible.
+- `nonexact` means Tok emitted a summary, skeleton, or reference for already observed
+  evidence.
+- `reacq-safe` means an exact reacquisition requirement existed and was satisfied before
+  edit-critical use.
+- `safe-block` means Tok preserved fidelity by blocking compression for that evidence.
+
+These labels are evidence that Tok preserved the bridge contract. They are not failures
+unless they appear alongside actual degradation such as `Fallbacks > 0`,
+`Degraded to baseline: yes`, or user-visible tool breakage.
 
 ## Interpreting "Response signals" Bundles in Logs
 
