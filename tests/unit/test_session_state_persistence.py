@@ -373,6 +373,32 @@ class TestResetSessionEndpoint:
         assert payload["session_tokens_saved"] > 0
         assert payload["session_savings_pct"] > 0
 
+    @pytest.mark.asyncio
+    async def test_health_explicit_session_header_reports_that_bucket(self, test_client: tuple) -> None:  # type: ignore[no-untyped-def]
+        client, session = test_client
+        session.activate_session_for_request({"x-tok-session-id": "alpha"}, None)
+        session.tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=10,
+            cache_read=0,
+            cache_write=0,
+            input_saved=25,
+            output_saved=0,
+        )
+        session.activate_session_for_request({"x-tok-session-id": "beta"}, None)
+        session.runtime_session._baseline_only = True
+        session.runtime_session._bump_signals({"tok_fallback_activated": 1})
+
+        async with client:
+            resp = await client.get("/health", headers={"x-tok-session-id": "beta"})
+            assert resp.status_code == 200
+
+        payload = resp.json()
+        assert payload["baseline_only"] is True
+        assert payload["fallback_count"] == 1
+        assert payload["session_tokens_saved"] == 0
+
 
 class TestIsFirstRequestFlag:
     """RuntimeSession._is_first_request tracks fresh session start vs resumption."""

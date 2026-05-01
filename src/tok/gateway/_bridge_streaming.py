@@ -433,8 +433,10 @@ async def buffer_strip_restream_impl(
             logger.info("Raw text sample: %s", full_text[:200])
 
         stream_behavior_signals = dict(behavior_signals or {})
+        response_signals: dict[str, Any] = dict(stream_behavior_signals)
         if read_error:
             stream_behavior_signals["stream_buffer_read_error"] = 1
+            response_signals["stream_buffer_read_error"] = 1
 
         processed: Any | None = None  # Will hold ProcessedRuntimeResponse when available
 
@@ -526,6 +528,17 @@ async def buffer_strip_restream_impl(
             if request_content and request_url:
                 stream_behavior_signals["stream_recovery_started"] = 1
                 stream_behavior_signals["stream_recovery_retry"] = 1
+                session._bump_signals(
+                    {
+                        "stream_empty_after_success": stream_behavior_signals.get("stream_empty_after_success", 0),
+                        "stream_recovery_empty_success": stream_behavior_signals.get(
+                            "stream_recovery_empty_success", 0
+                        ),
+                        "stream_recovery_read_error": stream_behavior_signals.get("stream_recovery_read_error", 0),
+                        "stream_recovery_started": 1,
+                        "stream_recovery_retry": 1,
+                    }
+                )
                 logger.warning(
                     "stream_recovery_retry_started: empty streamed success detected; retrying upstream non-stream"
                 )
@@ -784,6 +797,8 @@ async def buffer_strip_restream_impl(
             else:
                 output_saved = 0
                 response_signals = stream_behavior_signals or {}
+            if response_signals:
+                session._bump_signals(response_signals)
 
             session.tracker.record_call(
                 model=sse_model,

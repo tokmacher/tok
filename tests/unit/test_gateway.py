@@ -3875,7 +3875,9 @@ def test_streaming_empty_success_without_read_error_records_empty_counter(monkey
     signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
     assert signals["stream_empty_after_success"] >= 1
     assert signals["stream_recovery_empty_success"] >= 1
-    assert "stream_recovery_read_error" not in signals
+    assert signals["stream_recovery_started"] >= 1
+    assert signals["stream_recovery_retry"] >= 1
+    assert signals.get("stream_recovery_read_error", 0) == 0
     assert "stream_recovery_retry_started" in caplog.text
     assert "stream_recovery_succeeded_text" in caplog.text
 

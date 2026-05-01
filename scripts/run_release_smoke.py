@@ -319,6 +319,12 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
         "-q",
     ),
     _pytest_step("Claude live smoke matrix", "tests/smoke/test_live_claude_smoke_matrix.py", "-q"),
+    _pytest_step(
+        "Ugly path matrix smoke",
+        "tests/unit/test_synthetic_bridge_pressure.py",
+        "tests/smoke/test_live_claude_smoke_matrix.py",
+        "-q",
+    ),
     # Ledger-promoted boundaries, in promotion order.
     _pytest_step(
         "Primary non-streaming bridge smoke",

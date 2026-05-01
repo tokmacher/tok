@@ -10,6 +10,7 @@ import pytest
 
 from tok.spec.trace import (
     AuditContext,
+    _apply_unified_diff,
     audit_block,
     audit_fixture_file,
     audit_trace_file,
@@ -145,6 +146,25 @@ def test_invalid_enum_and_digest_shapes_are_rejected(section: str, field: str, v
     assert expected_error in result.errors
 
 
+@pytest.mark.parametrize(
+    ("section", "field", "value", "expected_error"),
+    [
+        ("envelope", "turn", True, "invalid_turn"),
+        ("envelope", "step", False, "invalid_step"),
+        ("content", "size_bytes", True, "invalid_size_bytes"),
+    ],
+)
+def test_integer_fields_reject_bool_values(section: str, field: str, value: bool, expected_error: str) -> None:
+    block = _fixture_block("first_exact_file_observation")
+    block[section][field] = value
+    block["envelope"]["payload_digest"] = canonical_payload_digest(block)
+
+    result = audit_block(block, fixture_id="attack", context=AuditContext(FIXTURE_DIR))
+
+    assert result.status == "fail"
+    assert expected_error in result.errors
+
+
 def test_forged_payload_digest_after_semantic_mutation_fails() -> None:
     block = _fixture_block("first_exact_file_observation")
     block["observation"]["key"] = "file:src/other.py"
@@ -201,6 +221,22 @@ def test_available_local_resolver_directory_or_missing_file_fails(resolver_uri: 
     assert "available_local_unresolved_content_uri" in errors
 
 
+def test_available_local_unreadable_artifact_fails_without_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    block = _fixture_block("first_exact_file_observation")
+    original_read_bytes = Path.read_bytes
+
+    def fake_read_bytes(path: Path) -> bytes:
+        if path.name == "utils_v1.py":
+            raise OSError("permission denied")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", fake_read_bytes)
+
+    errors = _audit_mutated(block)
+
+    assert "content_artifact_unreadable" in errors
+
+
 def test_duplicate_block_ids_fail_for_fixture_json_arrays(tmp_path: Path) -> None:
     _copy_fixture_artifacts(tmp_path)
     block = _fixture_block("first_exact_file_observation")
@@ -221,6 +257,11 @@ def test_duplicate_block_ids_fail_for_jsonl_traces(tmp_path: Path) -> None:
     results = audit_trace_file(trace_file)
 
     assert any(result.errors == ("duplicate_block_id",) for result in results)
+
+
+def test_unified_diff_rejects_zero_based_old_start() -> None:
+    with pytest.raises(ValueError, match="invalid_hunk_header"):
+        _apply_unified_diff(["alpha\n"], ["@@ -0,0 +1 @@\n", "+alpha\n"])
 
 
 def test_out_of_order_step_within_same_turn_fails(tmp_path: Path) -> None:

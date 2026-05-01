@@ -215,7 +215,6 @@ def prepare_bridge_payload(
     if path != "v1/messages":
         return payload, None
 
-    source_behavior_signals = dict(behavior_signals)
     if tok_tool_header.lower() in {"0", "false", "off", "no"}:
         request_tool_compatible = False
         request_policy = "forced_baseline" if session.request_policy_default == "forced_baseline" else "natural_first"
@@ -228,6 +227,7 @@ def prepare_bridge_payload(
     else:
         request_tool_compatible = True
         request_policy = session.request_policy_default
+    source_behavior_signals = dict(behavior_signals)
 
     logger.info(
         "Request mode: model=%s, request_policy=%s, tool_compatible_allowed=%s (tools present: %s, header=%s)",

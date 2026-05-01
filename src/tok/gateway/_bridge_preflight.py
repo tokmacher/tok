@@ -629,7 +629,6 @@ def _run_bridge_preflight(
             )
             behavior_signals["tok_bridge_preflight_failed_local"] = 1
             behavior_signals["tok_bridge_invalid_tool_history_blocked"] = 1
-            session._bump_signals(behavior_signals)
             session.capture_event(
                 {
                     "event": _preflight_event_name("bridge_preflight_rejected_blocked_local", path),
@@ -639,6 +638,7 @@ def _run_bridge_preflight(
             )
             behavior_signals["tok_fallback_activated"] = 1
             _record_fallback_once(session, request_state)
+            session._bump_signals(behavior_signals)
             return (
                 canonical_body,
                 behavior_signals,

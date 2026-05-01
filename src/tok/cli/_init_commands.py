@@ -23,6 +23,15 @@ def _ensure_gitignore_entries(gitignore_path: Path, *, entries: list[str]) -> bo
         return False
 
     lines = list(existing)
+    tok_header_index = next((index for index, line in enumerate(lines) if line.strip() == "# Tok"), None)
+    if tok_header_index is not None:
+        insert_at = tok_header_index + 1
+        while insert_at < len(lines) and lines[insert_at].strip():
+            insert_at += 1
+        lines[insert_at:insert_at] = to_add
+        gitignore_path.write_text("\n".join(lines) + "\n")
+        return True
+
     if lines and lines[-1].strip() != "":
         lines.append("")
     lines.append("# Tok")

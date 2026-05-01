@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from tok.compression._history_pipeline import compress_tool_results_impl
 from tok.exceptions import TokSafetyError
 from tok.gateway import BridgeSession
@@ -35,6 +37,17 @@ RISK_SIGNALS = {
     "tok_history_compression_skipped",
     "tok_skip_broad_audit",
 }
+
+UGLY_PATH_SCENARIOS = (
+    "high_fanout_tool_burst",
+    "repeated_evidence_loop",
+    "final_answer_after_compression",
+    "malformed_tool_history",
+    "streaming_path_damage",
+    "provider_sensitive_shape",
+    "baseline_degradation",
+    "long_session_retention",
+)
 
 
 @dataclass(frozen=True)
@@ -417,6 +430,47 @@ def _malformed_tool_result_flood_messages(*, count: int = 20) -> list[dict[str, 
     ]
 
 
+def _near_neighbor_retention_messages(*, turns: int = 14) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": [{"type": "text", "text": "Seed the oldest anchor with exact evidence."}]},
+        {"role": "assistant", "content": [_tool_use("toolu_anchor_oldest", "read_file", path="src/tok/gateway.py")]},
+        {
+            "role": "user",
+            "content": [_tool_result("toolu_anchor_oldest", "src/tok/gateway.py:238: async def health()")],
+        },
+    ]
+    for index in range(turns):
+        path = f"src/tok/near_neighbor_{index}.py"
+        messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": f"Retaining anchor while checking {path}."}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"Differentiate this from the gateway health anchor {index}."}
+                    ],
+                },
+                {"role": "assistant", "content": [_tool_use(f"toolu_neighbor_{index}", "read_file", path=path)]},
+                {"role": "user", "content": [_tool_result(f"toolu_neighbor_{index}", _file_text(path, lines=35))]},
+            ]
+        )
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Return the oldest anchor only, not a near neighbor. File=src/tok/gateway.py Verification=health",
+                }
+            ],
+        }
+    )
+    return messages
+
+
 def test_large_parallel_reads_do_not_expand_prepared_prompt_unboundedly(tmp_path) -> None:
     messages = _parallel_file_read_messages(count=16, lines=90)
 
@@ -426,6 +480,90 @@ def test_large_parallel_reads_do_not_expand_prepared_prompt_unboundedly(tmp_path
     assert metrics.retained_tool_result_bytes == _tool_result_bytes(messages)
     assert metrics.behavior_signals.get("broad_audit_tool_result_compression_skipped") == 1
     assert metrics.behavior_signals.get("broad_audit_history_skipped") == 1
+
+
+def test_ugly_path_unit_matrix_declares_all_supported_scenarios() -> None:
+    assert UGLY_PATH_SCENARIOS == (
+        "high_fanout_tool_burst",
+        "repeated_evidence_loop",
+        "final_answer_after_compression",
+        "malformed_tool_history",
+        "streaming_path_damage",
+        "provider_sensitive_shape",
+        "baseline_degradation",
+        "long_session_retention",
+    )
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "messages", "multiplier", "slack"),
+    [
+        ("high_fanout_tool_burst", _red_team_high_fanout_messages(batches=3, tools_per_batch=10), 1.18, 384),
+        ("repeated_evidence_loop", _long_alternating_history_messages(turns=10), 1.14, 256),
+        ("final_answer_after_compression", _final_answer_after_evidence_messages(), 1.15, 180),
+        ("provider_sensitive_shape", _provider_sensitive_large_tool_batch_messages(), 1.18, 384),
+        ("long_session_retention", _near_neighbor_retention_messages(turns=12), 1.16, 320),
+    ],
+)
+def test_ugly_path_unit_matrix_transport_behavior_and_economics(
+    tmp_path,
+    scenario_id: str,
+    messages: list[dict[str, Any]],
+    multiplier: float,
+    slack: int,
+) -> None:
+    del scenario_id
+    metrics = _prepare_bridge_pressure(messages, tmp_path)
+
+    assert metrics.outgoing_failures == []
+    _assert_bounded_or_signaled(metrics, multiplier=multiplier, slack=slack)
+    assert metrics.retained_tool_result_bytes <= _tool_result_bytes(messages) or metrics.has_visible_risk_signal
+
+
+def test_ugly_path_unit_matrix_malformed_tool_history_blocks_before_send(tmp_path) -> None:
+    session = BridgeSession(memory_dir=tmp_path / ".tok", fail_open=False)
+    body = {
+        "model": "claude-sonnet-4",
+        "max_tokens": 8192,
+        "messages": _malformed_tool_result_flood_messages(count=18),
+        "stream": False,
+    }
+
+    payload, response = prepare_bridge_payload(
+        session=session,
+        body=body,
+        headers={"x-api-key": "test"},
+        path="v1/messages",
+        tok_tool_header="1",
+    )
+
+    assert response is not None
+    assert payload.retry_forbidden is True
+    assert payload.behavior_signals.get("tok_bridge_invalid_tool_history_blocked") == 1
+    assert payload.behavior_signals.get("tok_fallback_activated") == 1
+
+
+def test_ugly_path_unit_matrix_baseline_degradation_is_visible(tmp_path) -> None:
+    session = BridgeSession(memory_dir=tmp_path / ".tok", fail_open=True)
+    session.runtime_session._baseline_only = True
+
+    payload, response = prepare_bridge_payload(
+        session=session,
+        body={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": _parallel_file_read_messages(count=3, lines=20),
+            "stream": False,
+        },
+        headers={"x-api-key": "test"},
+        path="v1/messages",
+        tok_tool_header="1",
+    )
+
+    assert response is None
+    assert validate_anthropic_outgoing_bridge_body(payload.body) == []
+    assert payload.behavior_signals.get("tok_fallback_activated") == 1
+    assert payload.prompt_metrics["saved_prompt_tokens"] == 0
 
 
 def test_varied_parallel_reads_are_bounded_or_visibly_degraded(tmp_path) -> None:

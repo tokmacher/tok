@@ -254,9 +254,9 @@ def _validate_envelope(envelope: dict[str, Any], errors: list[str]) -> None:
         errors.append("invalid_block_id")
     if not isinstance(envelope.get("session_id"), str) or not envelope["session_id"]:
         errors.append("invalid_session_id")
-    if not isinstance(envelope.get("turn"), int) or envelope["turn"] < 0:
+    if not _is_nonnegative_int(envelope.get("turn")):
         errors.append("invalid_turn")
-    if not isinstance(envelope.get("step"), int) or envelope["step"] < 0:
+    if not _is_nonnegative_int(envelope.get("step")):
         errors.append("invalid_step")
     if envelope.get("direction") not in ALLOWED_DIRECTIONS:
         errors.append("invalid_direction")
@@ -285,7 +285,7 @@ def _validate_content(observation: dict[str, Any], content: dict[str, Any], erro
         errors.append("invalid_exact")
     if "hash" in content and not is_hash(content["hash"]):
         errors.append("invalid_hash")
-    if "size_bytes" in content and (not isinstance(content["size_bytes"], int) or content["size_bytes"] < 0):
+    if "size_bytes" in content and not _is_nonnegative_int(content["size_bytes"]):
         errors.append("invalid_size_bytes")
     if "resolver_uri" in content and not isinstance(content["resolver_uri"], str):
         errors.append("invalid_resolver_uri")
@@ -358,13 +358,17 @@ def _validate_extensions(extensions: object, errors: list[str]) -> None:
 def _require_content_identity(content: dict[str, Any], errors: list[str]) -> None:
     if not is_hash(content.get("hash")):
         errors.append("missing_or_invalid_content_hash")
-    if not isinstance(content.get("size_bytes"), int):
+    if not _is_nonnegative_int(content.get("size_bytes")):
         errors.append("missing_or_invalid_content_size")
 
 
 def is_hash(value: object) -> bool:
     """Return whether a value is a lowercase sha256 digest string."""
     return isinstance(value, str) and HASH_RE.match(value) is not None
+
+
+def _is_nonnegative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _audit_payload_digest(block: dict[str, Any], warnings: list[str]) -> list[str]:
@@ -435,14 +439,23 @@ def _audit_delta(block: dict[str, Any], context: AuditContext, errors: list[str]
     )
 
     try:
-        replayed = _apply_unified_diff(
-            base_path.read_text().splitlines(keepends=True), delta_path.read_text().splitlines(keepends=True)
-        )
+        base_lines = base_path.read_text().splitlines(keepends=True)
+        delta_lines = delta_path.read_text().splitlines(keepends=True)
+    except OSError:
+        errors.append("delta_artifact_unreadable")
+        return
+
+    try:
+        replayed = _apply_unified_diff(base_lines, delta_lines)
     except ValueError as exc:
         errors.append(f"delta_replay_failed:{exc}")
         return
 
-    final_bytes = final_path.read_bytes()
+    try:
+        final_bytes = final_path.read_bytes()
+    except OSError:
+        errors.append("final_artifact_unreadable")
+        return
     if "".join(replayed).encode("utf-8") != final_bytes:
         errors.append("delta_replay_final_mismatch")
 
@@ -455,7 +468,11 @@ def _verify_artifact_identity(
     label: str,
     errors: list[str],
 ) -> None:
-    data = path.read_bytes()
+    try:
+        data = path.read_bytes()
+    except OSError:
+        errors.append(f"{label}_artifact_unreadable")
+        return
     actual_hash = "sha256:" + sha256(data).hexdigest()
     if expected_hash != actual_hash:
         errors.append(f"{label}_hash_mismatch")
@@ -535,4 +552,7 @@ def _parse_hunk_old_start(header: str) -> int:
     match = re.match(r"@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@", header)
     if match is None:
         raise ValueError("invalid_hunk_header")
-    return int(match.group(1))
+    old_start = int(match.group(1))
+    if old_start < 1:
+        raise ValueError("invalid_hunk_header")
+    return old_start

@@ -236,9 +236,19 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         return {"status": "ok", "bridge": "tok"}
 
     @app.api_route("/health", methods=["GET", "HEAD"])
-    async def health() -> dict[str, Any]:
-        report_session = session.reporting_session()
-        session_summary = session.aggregate_session_summary() or {}
+    async def health(request: Request) -> dict[str, Any]:
+        explicit_session_key = ""
+        if any(
+            request.headers.get(header, "").strip()
+            for header in ("x-tok-session-id", "x-claude-session-id", "x-codex-session-id", "x-client-session-id")
+        ):
+            explicit_session_key = session.activate_session_for_request(dict(request.headers), None)
+        report_session = (
+            session.bound_session_for_key(explicit_session_key) if explicit_session_key else session.reporting_session()
+        )
+        session_summary = (
+            report_session.tracker.session_summary() if explicit_session_key else session.aggregate_session_summary()
+        ) or {}
         signals = dict(report_session.tracker.behavior_signals())
         for (
             key,
@@ -254,11 +264,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "request_policy": session.request_policy_default,
             "baseline_only": report_session.runtime_session._baseline_only,
             "persistence_failures": report_session.runtime_session._persistence_failures,
-            "fallback_count": int(
-                session_summary.get(
-                    "fallback_count",
-                    report_session.tracker.behavior_signals().get("tok_fallback_activated", 0),
-                )
+            "fallback_count": max(
+                int(session_summary.get("fallback_count", 0)),
+                int(signals.get("tok_fallback_activated", 0)),
             ),
             "actual_tokens": int(session_summary.get("actual_tokens", 0)),
             "baseline_tokens": int(session_summary.get("baseline_tokens", 0)),
@@ -309,7 +317,15 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "state_resend_full_count": int(signals.get("state_resend_full_turn", 0)),
             "state_resend_delta_count": int(signals.get("state_resend_delta_turn", 0)),
             "state_resend_suppressed_count": int(signals.get("state_resend_suppressed_turn", 0)),
-            "stream_recovery_attempt_count": int(session_summary.get("stream_recovery_attempt_count", 0)),
+            "stream_recovery_attempt_count": max(
+                int(session_summary.get("stream_recovery_attempt_count", 0)),
+                int(signals.get("stream_recovery_started", 0)),
+                sum(
+                    v
+                    for k, v in report_session.runtime_session.smoothness_event_counts.items()
+                    if "stream_recovery" in k.lower()
+                ),
+            ),
             "stream_recovery_success_text_count": int(session_summary.get("stream_recovery_success_text_count", 0)),
             "stream_recovery_success_tool_use_count": int(
                 session_summary.get("stream_recovery_success_tool_use_count", 0)
@@ -330,7 +346,10 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "tool_history_repaired_count": int(session_summary.get("tool_history_repaired_count", 0)),
             "tool_history_pairing_repaired_count": int(session_summary.get("tool_history_pairing_repaired_count", 0)),
             "tool_history_quarantined_count": int(session_summary.get("tool_history_quarantined_count", 0)),
-            "tool_history_blocked_count": int(session_summary.get("tool_history_blocked_count", 0)),
+            "tool_history_blocked_count": max(
+                int(session_summary.get("tool_history_blocked_count", 0)),
+                int(signals.get("tok_bridge_invalid_tool_history_blocked", 0)),
+            ),
             "invalid_tool_history_session_reset_count": int(
                 session_summary.get("invalid_tool_history_session_reset_count", 0)
             ),
@@ -513,7 +532,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     raise ValueError(msg)
                 tok_tool_header = request.headers.get("x-tok-tool-compatible", "")
                 bridge_payload, preflight_response = prepare_bridge_payload(
-                    session=session,
+                    session=active_session,
                     body=body,
                     headers=headers,
                     path=path,
