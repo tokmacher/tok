@@ -18,8 +18,10 @@ Start with:
 - `tok_trace_schema_v0_1.tok.md` for the compact data model
 - `tok_trace_roadmap_v0_1.md` for compatibility and adoption gates
 - `tok_protocol_layers_v0_1.md` for the layered protocol-family roadmap
+- `tok_trace_conformance_v0_1.md` for L0-L2 reader requirements
 - `fixtures/tok_trace_v0_1_fixtures.json` for draft fixture blocks
 - `fixtures/tok_trace_v0_1_expected.json` for expected audit outcomes
+- `fixtures/tok_trace_v0_1_adversarial_packs.json` for named adversarial packs
 
 The first implementation milestone is fixture validation plus metadata-only live trace
 validation. Sanitized metadata artifact capture can make live trace audits pass locally;
@@ -28,3 +30,6 @@ raw prompt/response/tool artifact capture remains deferred.
 Tok 0.1.7 targets trace-audit conformance only. Resolver networking, capability
 handshakes, session exchange, signed provenance, and agent-to-agent behavior are future
 layers.
+
+The current bridge grammar is adapter-local. `>>>` working-memory lines, Tok markers,
+Markdown recovery, and Claude Code bridge shaping are not Tok Session core semantics.

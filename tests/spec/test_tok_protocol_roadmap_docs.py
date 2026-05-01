@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 LAYERS_DOC = ROOT / "docs" / "spec" / "tok_protocol_layers_v0_1.md"
 ROADMAP_DOC = ROOT / "docs" / "spec" / "tok_trace_roadmap_v0_1.md"
+FORMAT_DOC = ROOT / "docs" / "spec" / "tok_trace_format_v0_1.md"
+CONFORMANCE_DOC = ROOT / "docs" / "spec" / "tok_trace_conformance_v0_1.md"
+BRIDGE_STANDARD_DOC = ROOT / "docs" / "bridge-standard.md"
+ADVERSARIAL_PACKS = ROOT / "docs" / "spec" / "fixtures" / "tok_trace_v0_1_adversarial_packs.json"
 
 
 def test_protocol_layers_document_routing_as_design_axis_not_0_1_layer() -> None:
@@ -54,3 +59,79 @@ def test_trace_roadmap_lists_routing_adversarial_cases() -> None:
         "conflicting resolver manifests",
     ):
         assert phrase in text
+
+
+def test_protocol_docs_name_adversarial_pack_manifest_and_release_ladder() -> None:
+    layers = LAYERS_DOC.read_text()
+    roadmap = ROADMAP_DOC.read_text()
+
+    assert "fixtures/tok_trace_v0_1_adversarial_packs.json" in layers
+    assert "fixtures/tok_trace_v0_1_adversarial_packs.json" in roadmap
+    assert "trace-l1-l2-core-adversarial" in layers
+    assert "trace-l1-l2-core-adversarial" in roadmap
+    assert "**0.1.8:** named adversarial fixture packs" in roadmap
+    assert "**0.1.9:** standalone reference reader and Resolver design" in roadmap
+    assert "**0.2.0:** local Tok Resolver beta" in roadmap
+
+
+def test_bridge_profile_boundary_keeps_sigils_out_of_session_core() -> None:
+    bridge = BRIDGE_STANDARD_DOC.read_text()
+    trace_format = FORMAT_DOC.read_text()
+
+    for phrase in (
+        "The bridge grammar is a profile-local adapter contract",
+        "must not be treated as Tok Session core semantics",
+    ):
+        assert phrase in bridge
+
+    for phrase in (
+        "Bridge syntax is not part of the trace core",
+        "without canonizing the current text sigils",
+    ):
+        assert phrase in trace_format
+
+
+def test_conformance_doc_defines_l0_l2_reader_boundary_without_future_claims() -> None:
+    text = CONFORMANCE_DOC.read_text()
+
+    for phrase in (
+        "without importing Tok gateway, runtime, compression, CLI, benchmark, or analysis internals",
+        "JSON is the first fixture encoding, not the protocol identity",
+        "| L0 |",
+        "| L1 |",
+        "| L2 |",
+        "L3, L4, and L5 remain out of scope",
+        "must not claim cross-cache resolution",
+        "must not claim",
+        "agent-to-agent compact-state exchange",
+    ):
+        assert phrase in text
+
+
+def test_adversarial_pack_manifest_groups_local_and_future_cases() -> None:
+    manifest = json.loads(ADVERSARIAL_PACKS.read_text())
+    packs = {pack["id"]: pack for pack in manifest["packs"]}
+
+    local = packs["trace-l1-l2-core-adversarial"]
+    future = packs["resolver-routing-future-adversarial"]
+
+    assert local["status"] == "implemented-local"
+    assert local["conformance_levels"] == ["L0", "L1", "L2"]
+    assert future["status"] == "future-design-only"
+    assert future["conformance_levels"] == ["L3", "L4", "L5"]
+
+    local_cases = {case["id"]: case for case in local["cases"]}
+    for case_id in (
+        "forged_payload_digest",
+        "resolver_uri_path_escape",
+        "exactness_lie",
+        "resolver_state_lie",
+        "unsupported_delta_algorithm",
+        "malformed_jsonl_line",
+        "duplicate_block_ids",
+        "out_of_order_turns",
+        "unknown_required_field_or_version",
+        "extension_override_core_semantics",
+    ):
+        assert local_cases[case_id]["expected_status"] == "fail"
+        assert local_cases[case_id]["expected_error"]

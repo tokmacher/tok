@@ -64,10 +64,14 @@ Tok 0.1.7 targets L1/L2 only. L3 and above require new design work, adversarial
 fixtures, and at least one reader that validates fixtures without importing Tok runtime
 internals.
 
-## Adversarial Fixture Roadmap
+## Named Adversarial Packs
 
-The protocol should be hardened by fixture packs that try to lie about identity,
-availability, order, exactness, and semantics. The first roadmap set is:
+The protocol should be hardened by named fixture packs that try to lie about identity,
+availability, order, exactness, and semantics. The current machine-readable pack
+manifest is `fixtures/tok_trace_v0_1_adversarial_packs.json`.
+
+The first locally defensible pack is `trace-l1-l2-core-adversarial`. It covers cases the
+0.1.x verifier can judge without Resolver, Capability, or Session implementations:
 
 - forged payload digest
 - resolver URI path escape
@@ -93,6 +97,10 @@ Future Resolver and Routing fixture packs should add:
 0.1.7 includes tests for the cases the current draft verifier can defend locally. Future
 releases should promote this list into a named adversarial fixture pack before making
 stable protocol or interoperability claims.
+
+L3+ cases must remain documented as future packs until Tok implements the corresponding
+Resolver, Capability, or Session semantics. They should not be fake-passed by the L1/L2
+audit verifier.
 
 ## Stability Bar
 

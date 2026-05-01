@@ -6,6 +6,18 @@ disagrees with this one, this document wins.
 It defines the current bridge contract, not the future universal communication contract.
 That broader ambition remains later-stage work.
 
+## Bridge Profile Boundary
+
+The bridge grammar is a profile-local adapter contract. The `>>>` working-memory line,
+Tok-native markers, Markdown recovery rules, and Claude Code request/response shaping
+are part of this bridge profile only and must not be treated as Tok Session core
+semantics.
+
+The protocol core that may later outlive this bridge is the smaller audit/state
+discipline documented under `docs/spec/`: exact content identity, exact versus non-exact
+references, explicit resolver availability states, and explicit fallback/degradation
+outcomes.
+
 ## Scope
 
 Tok is standardized around the bridge-first runtime in `src/tok/gateway/__init__.py`.

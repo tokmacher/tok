@@ -55,10 +55,14 @@ credible if audit and fixtures stay strict.
 0.1.7 should only claim L1/L2 draft trace audit. Stable protocol or agent-to-agent
 claims require L3+ design and independent conformance testing.
 
-## Adversarial Fixture Roadmap
+## Named Adversarial Packs
 
-The protocol needs fixtures that try to lie or confuse readers before it can become a
-stable interoperability surface:
+The protocol needs named fixture packs that try to lie or confuse readers before it can
+become a stable interoperability surface. The current machine-readable manifest is
+`fixtures/tok_trace_v0_1_adversarial_packs.json`.
+
+The first pack is `trace-l1-l2-core-adversarial`, covering cases the draft verifier can
+defend locally:
 
 - forged payload digest
 - resolver URI path escape
@@ -71,7 +75,7 @@ stable interoperability surface:
 - unknown required field or version
 - extension attempting to override core semantics
 
-Future L3+ hardening should add routing-specific cases:
+Future L3+ hardening should add `resolver-routing-future-adversarial` cases:
 
 - resolver referral loop
 - unauthorized resolver request
@@ -126,12 +130,12 @@ transport work begins.
 
 - **0.1.7:** draft bridge trace/audit only; no Resolver, Routing, Capability, or Session
   implementation.
-- **0.1.8:** adversarial fixture packs, audit UX, conformance docs, and
-  standalone-reader preparation.
+- **0.1.8:** named adversarial fixture packs, audit UX, conformance docs, bridge-profile
+  boundary docs, and standalone-reader preparation.
 - **0.1.9:** standalone reference reader and Resolver design; Routing remains
   design-only.
-- **0.2.0:** local Tok Resolver with content-addressed local store, resolver manifest,
-  explicit missing/available/referral states, and no global network routing.
+- **0.2.0:** local Tok Resolver beta with content-addressed local store, resolver
+  manifest, explicit missing/available/referral states, and no global network routing.
 - **0.2.x:** scoped resolver routing: local -> configured peer -> configured gateway; no
   DHT, no ambient discovery, and every remote resolution capability-aware.
 - **0.3+:** capability documents, resolver authorization, session state roots, and

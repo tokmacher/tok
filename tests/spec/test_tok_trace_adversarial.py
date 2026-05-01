@@ -19,6 +19,7 @@ from tok.spec.trace_v0_1 import (
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "tok_trace_v0_1_fixtures.json"
 FIXTURE_DIR = FIXTURE_PATH.parent
+ADVERSARIAL_PACKS = FIXTURE_DIR / "tok_trace_v0_1_adversarial_packs.json"
 
 
 def _fixture_block(fixture_id: str) -> dict[str, Any]:
@@ -40,6 +41,14 @@ def _audit_mutated(block: dict[str, Any]) -> tuple[str, ...]:
 
 def _copy_fixture_artifacts(tmp_path: Path) -> None:
     shutil.copytree(FIXTURE_DIR / "artifacts", tmp_path / "artifacts")
+
+
+def _implemented_pack_cases() -> dict[str, dict[str, str]]:
+    manifest = json.loads(ADVERSARIAL_PACKS.read_text())
+    for pack in manifest["packs"]:
+        if pack["id"] == "trace-l1-l2-core-adversarial":
+            return {case["id"]: case for case in pack["cases"]}
+    raise AssertionError("trace-l1-l2-core-adversarial pack not found")
 
 
 @pytest.mark.parametrize("field", ["hash", "size_bytes"])
@@ -299,3 +308,21 @@ def test_extension_semantic_mutation_is_covered_by_payload_digest() -> None:
 
     assert result.status == "fail"
     assert "payload_digest_mismatch" in result.errors
+
+
+def test_named_adversarial_pack_expected_errors_are_exercised_by_current_tests() -> None:
+    cases = _implemented_pack_cases()
+    exercised_errors = {
+        "payload_digest_mismatch",
+        "available_local_unresolved_content_uri",
+        "non_exact_reference_marked_exact",
+        "unsupported_delta_algorithm_for_audit",
+        "invalid_jsonl_line",
+        "duplicate_block_id",
+        "out_of_order_trace_block",
+        "invalid_trace_version",
+        "extension_namespace_overrides_core",
+    }
+
+    assert {case["expected_error"] for case in cases.values()} <= exercised_errors
+    assert cases["resolver_state_lie"]["expected_error"] == "available_local_unresolved_content_uri"

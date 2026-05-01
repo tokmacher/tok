@@ -33,6 +33,11 @@ Raw artifact-capturing runtime trace emission is intentionally future work. The 
 `tok audit` command validates draft fixtures and live JSONL traces, but it does not
 certify universal protocol compliance.
 
+Bridge syntax is not part of the trace core. `>>>` working-memory records, Tok-native
+markers, Markdown recovery, and Claude Code request/response grammar are bridge-profile
+details. Future Tok Session work should preserve the exactness, resolver-state,
+fallback, and audit semantics here without canonizing the current text sigils.
+
 ## Core Concepts
 
 Each trace block has four top-level sections:
@@ -113,6 +118,10 @@ The first 0.1.7 implementation validates fixture structure and fixture-local art
 It can also emit opt-in metadata-only live traces with `TOK_TRACE=1`. Runtime protocol
 compliance should not be claimed until artifact-backed bridge emission exists and passes
 the fixture corpus.
+
+Standalone readers should be able to validate the L0-L2 fixture corpus from this
+document, the schema, expected outcomes, and the conformance page without importing Tok
+gateway or runtime internals.
 
 ## Opt-in Live Trace Emission
 
