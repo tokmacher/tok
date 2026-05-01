@@ -26,6 +26,7 @@ class TestCLI:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "bridge" in result.output
+        assert "claude" in result.output
         assert "stats" in result.output
         assert "install" in result.output
         assert "doctor" in result.output
@@ -112,8 +113,8 @@ class TestCLI:
 
         assert result.exit_code == 0
         assert "Tok install complete." in result.output
-        assert "Default mode is explicit" in result.output
-        assert "ANTHROPIC_BASE_URL=http://localhost:9090 claude" in result.output
+        assert "Default mode is explicit and shell-safe" in result.output
+        assert "tok claude" in result.output
         assert "tok install --wrap-claude" in result.output
 
     def test_install_default_mode_removes_legacy_wrapper_when_present(self, monkeypatch, tmp_path) -> None:
@@ -128,7 +129,120 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Removed legacy `claude()` Tok wrapper from:" in result.output
         assert ".zshrc" in result.output
-        assert "Default mode is explicit" in result.output
+        assert "Default mode is explicit and shell-safe" in result.output
+
+    def test_claude_starts_bridge_and_launches_with_bridge_env(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        calls: dict[str, Any] = {}
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: None)
+
+        def fake_bridge_start(**kwargs) -> None:
+            calls["bridge_start"] = kwargs
+
+        class FakeCompleted:
+            returncode = 0
+
+        def fake_run(argv, *, env, check):
+            calls["argv"] = argv
+            calls["env"] = env
+            calls["check"] = check
+            return FakeCompleted()
+
+        monkeypatch.setattr(_claude._bridge, "bridge_start", fake_bridge_start)
+        monkeypatch.setattr(_claude.subprocess, "run", fake_run)
+
+        result = runner.invoke(app, ["claude", "--port", "9191", "--api-base", "https://api.example.test", "--debug"])
+
+        assert result.exit_code == 0
+        assert calls["bridge_start"]["port"] == 9191
+        assert calls["bridge_start"]["api_base"] == "https://api.example.test"
+        assert calls["bridge_start"]["debug"] is True
+        assert calls["argv"] == ["claude"]
+        assert calls["env"]["ANTHROPIC_BASE_URL"] == "http://localhost:9191"
+        assert calls["env"]["TOK_SELF_BRIDGED_SESSION"] == "1"
+        assert calls["env"]["TOK_BRIDGE_PORT"] == "9191"
+        assert calls["check"] is False
+
+    def test_claude_reuses_existing_bridge_without_starting_new_one(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        calls: dict[str, Any] = {}
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: 4321)
+        monkeypatch.setattr(
+            _claude._bridge,
+            "bridge_start",
+            lambda **kwargs: (_ for _ in ()).throw(AssertionError("bridge_start should not be called")),
+        )
+
+        class FakeCompleted:
+            returncode = 0
+
+        def fake_run(argv, *, env, check):
+            calls["argv"] = argv
+            calls["env"] = env
+            return FakeCompleted()
+
+        monkeypatch.setattr(_claude.subprocess, "run", fake_run)
+
+        result = runner.invoke(app, ["claude"])
+
+        assert result.exit_code == 0
+        assert "Using existing Tok bridge on :9090 (PID 4321)." in result.output
+        assert calls["argv"] == ["claude"]
+        assert calls["env"]["ANTHROPIC_BASE_URL"] == "http://localhost:9090"
+
+    def test_claude_passes_trailing_args_unchanged(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        calls: dict[str, Any] = {}
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: 4321)
+
+        class FakeCompleted:
+            returncode = 0
+
+        def fake_run(argv, *, env, check):
+            calls["argv"] = argv
+            return FakeCompleted()
+
+        monkeypatch.setattr(_claude.subprocess, "run", fake_run)
+
+        result = runner.invoke(app, ["claude", "--", "--model", "sonnet", "hello"])
+
+        assert result.exit_code == 0
+        assert calls["argv"] == ["claude", "--model", "sonnet", "hello"]
+
+    def test_claude_returns_subprocess_exit_code(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: 4321)
+
+        class FakeCompleted:
+            returncode = 42
+
+        monkeypatch.setattr(_claude.subprocess, "run", lambda *args, **kwargs: FakeCompleted())
+
+        result = runner.invoke(app, ["claude"])
+
+        assert result.exit_code == 42
+
+    def test_claude_reports_missing_claude_executable(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: 4321)
+        monkeypatch.setattr(
+            _claude.subprocess,
+            "run",
+            lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()),
+        )
+
+        result = runner.invoke(app, ["claude"])
+
+        assert result.exit_code == 127
+        assert "Claude Code executable not found" in result.output
 
     def test_install_wrap_claude_uses_shell_integration_backend(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr("tok.utils.shell_integration.install", lambda: tmp_path / ".zshrc")

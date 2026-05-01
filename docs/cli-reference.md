@@ -10,6 +10,7 @@ If you are new to Tok, start with [`README.md`](../README.md) or the full workfl
 ## Core Workflow
 
 ```bash
+tok claude
 tok install
 tok init
 tok bridge start
@@ -21,8 +22,19 @@ tok stats
 tok audit --latest
 ```
 
+`tok claude` is the easiest path: it starts the bridge if needed, launches Claude Code
+with `ANTHROPIC_BASE_URL=http://localhost:9090`, and does not modify shell rc files.
+
 `tok install` is a setup/migration helper. To opt into legacy auto-routing, use
 `tok install --wrap-claude`.
+
+For advanced routing or compatibility checks, you can still run the bridge and route a
+client explicitly:
+
+```bash
+tok bridge start
+ANTHROPIC_BASE_URL=http://localhost:9090 <your-client-command>
+```
 
 `tok init` creates a project-local `.tok/` workspace and optional `.env` / `.gitignore`
 entries. Run it once per project before starting the bridge.

@@ -11,9 +11,7 @@ The first public release supports exactly this workflow:
 
 1. `pip install tok-protocol`
 1. `tok install` (setup/migration helper; no wrapper by default)
-1. `tok bridge start`
-1. Run Claude Code with explicit bridge routing
-   (`ANTHROPIC_BASE_URL=http://localhost:9090 claude`)
+1. Run Claude Code through Tok (`tok claude`)
 1. `tok bridge status` / `tok doctor` / `tok stats` to monitor
 1. `tok bridge stop` to end the session
 
@@ -23,6 +21,7 @@ default release posture is explicit bridge routing.
 The default CLI help surface should reinforce that path by centering:
 
 - `tok install`
+- `tok claude`
 - `tok bridge start|status|logs|stop`
 - `tok doctor`
 - `tok stats`
