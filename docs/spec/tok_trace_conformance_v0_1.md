@@ -16,6 +16,10 @@ semantics. In other words, a reader should be able to validate L0-L2 fixture out
 without importing Tok gateway, runtime, compression, CLI, benchmark, or analysis
 internals.
 
+The conformance boundary is deliberately narrow: an independent reader must validate
+documented trace fixtures without importing Tok gateway, runtime, compression, CLI,
+benchmark, or analysis internals.
+
 JSON is the first fixture encoding, not the protocol identity. Future encodings must
 preserve the same envelope, observation, content, audit, exactness, resolver-state, and
 fallback meanings.
@@ -31,6 +35,9 @@ fallback meanings.
 L3, L4, and L5 remain out of scope for this conformance draft. A reader must not claim
 cross-cache resolution, capability negotiation, or agent-to-agent compact-state exchange
 from L0-L2 fixture success.
+
+L0-L2 fixture success must not claim cross-cache resolution, capability negotiation, or
+agent-to-agent compact-state exchange.
 
 ## L0-L2 Invariants
 

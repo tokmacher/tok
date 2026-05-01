@@ -13,6 +13,9 @@ Tok-native markers, Markdown recovery rules, and Claude Code request/response sh
 are part of this bridge profile only and must not be treated as Tok Session core
 semantics.
 
+These bridge-profile sigils and recovery rules must not be treated as Tok Session core
+semantics.
+
 The protocol core that may later outlive this bridge is the smaller audit/state
 discipline documented under `docs/spec/`: exact content identity, exact versus non-exact
 references, explicit resolver availability states, and explicit fallback/degradation
