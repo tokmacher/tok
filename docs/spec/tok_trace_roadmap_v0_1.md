@@ -59,7 +59,7 @@ claims require L3+ design and independent conformance testing.
 
 The protocol needs named fixture packs that try to lie or confuse readers before it can
 become a stable interoperability surface. The current machine-readable manifest is
-`fixtures/tok_trace_v0_1_adversarial_packs.json`.
+`fixtures/adversarial_packs.json`.
 
 The first pack is `trace-l1-l2-core-adversarial`, covering cases the draft verifier can
 defend locally:

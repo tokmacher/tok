@@ -31,7 +31,7 @@ from tok.runtime.pipeline.request_validation import (
     summarize_message_structure,
     validate_anthropic_outgoing_bridge_body,
 )
-from tok.spec.trace_v0_1 import audit_trace_file
+from tok.spec.trace import audit_trace_file
 from tok.stats import SavingsTracker
 from tok.universal_runtime import PreparedRuntimeRequest
 

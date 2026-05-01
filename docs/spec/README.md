@@ -19,9 +19,9 @@ Start with:
 - `tok_trace_roadmap_v0_1.md` for compatibility and adoption gates
 - `tok_protocol_layers_v0_1.md` for the layered protocol-family roadmap
 - `tok_trace_conformance_v0_1.md` for L0-L2 reader requirements
-- `fixtures/tok_trace_v0_1_fixtures.json` for draft fixture blocks
-- `fixtures/tok_trace_v0_1_expected.json` for expected audit outcomes
-- `fixtures/tok_trace_v0_1_adversarial_packs.json` for named adversarial packs
+- `fixtures/trace_fixtures.json` for draft fixture blocks
+- `fixtures/expected_audit_results.json` for expected audit outcomes
+- `fixtures/adversarial_packs.json` for named adversarial packs
 
 The first implementation milestone is fixture validation plus metadata-only live trace
 validation. Sanitized metadata artifact capture can make live trace audits pass locally;

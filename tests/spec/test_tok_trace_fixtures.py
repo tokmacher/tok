@@ -4,7 +4,7 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-from tok.spec.trace_v0_1 import (
+from tok.spec.trace import (
     AuditContext,
     audit_block,
     audit_fixture_file,
@@ -14,8 +14,8 @@ from tok.spec.trace_v0_1 import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "tok_trace_v0_1_fixtures.json"
-EXPECTED_PATH = ROOT / "docs" / "spec" / "fixtures" / "tok_trace_v0_1_expected.json"
+FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "trace_fixtures.json"
+EXPECTED_PATH = ROOT / "docs" / "spec" / "fixtures" / "expected_audit_results.json"
 
 
 def load_fixtures() -> list[dict[str, object]]:

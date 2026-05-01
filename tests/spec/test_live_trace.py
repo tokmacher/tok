@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from tok.cli import app
 from tok.spec.live_trace import emit_live_trace
-from tok.spec.trace_v0_1 import audit_trace_file
+from tok.spec.trace import audit_trace_file
 
 runner = CliRunner()
 

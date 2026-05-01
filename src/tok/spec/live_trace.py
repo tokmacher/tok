@@ -12,7 +12,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
-from .trace_v0_1 import TRACE_VERSION, canonical_payload_digest
+from .trace import TRACE_VERSION, canonical_payload_digest
 
 _TRACE_START = time.strftime("%Y%m%d_%H%M%S")
 _STEP_LOCK = threading.Lock()

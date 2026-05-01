@@ -68,7 +68,7 @@ internals.
 
 The protocol should be hardened by named fixture packs that try to lie about identity,
 availability, order, exactness, and semantics. The current machine-readable pack
-manifest is `fixtures/tok_trace_v0_1_adversarial_packs.json`.
+manifest is `fixtures/adversarial_packs.json`.
 
 The first locally defensible pack is `trace-l1-l2-core-adversarial`. It covers cases the
 0.1.x verifier can judge without Resolver, Capability, or Session implementations:

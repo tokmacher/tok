@@ -299,6 +299,11 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
         "Release-surface gate",
         SURFACE_GATE_CHECK,
     ),
+    _pytest_step(
+        "Tok Trace spec contract smoke",
+        "tests/spec",
+        "-q",
+    ),
     # Focused baseline regression cluster.
     _pytest_step(
         "Focused bridge/runtime/compression smoke",

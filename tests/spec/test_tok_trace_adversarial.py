@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from tok.spec.trace_v0_1 import (
+from tok.spec.trace import (
     AuditContext,
     audit_block,
     audit_fixture_file,
@@ -17,9 +17,9 @@ from tok.spec.trace_v0_1 import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "tok_trace_v0_1_fixtures.json"
+FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "trace_fixtures.json"
 FIXTURE_DIR = FIXTURE_PATH.parent
-ADVERSARIAL_PACKS = FIXTURE_DIR / "tok_trace_v0_1_adversarial_packs.json"
+ADVERSARIAL_PACKS = FIXTURE_DIR / "adversarial_packs.json"
 
 
 def _fixture_block(fixture_id: str) -> dict[str, Any]:

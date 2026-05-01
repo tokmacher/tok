@@ -10,7 +10,9 @@ from typer.testing import CliRunner
 from tok.cli import app
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "tok_trace_v0_1_fixtures.json"
+FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "trace_fixtures.json"
+CLEAN_FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "clean_trace_fixtures.json"
+ADVERSARIAL_PACKS_PATH = ROOT / "docs" / "spec" / "fixtures" / "adversarial_packs.json"
 
 runner = CliRunner()
 
@@ -57,6 +59,21 @@ def test_audit_command_passes_clean_fixture_subset(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "PASS first_exact_file_observation" in result.output
+
+
+def test_audit_command_passes_checked_in_clean_fixture_pack() -> None:
+    result = runner.invoke(app, ["audit", str(CLEAN_FIXTURE_PATH)])
+
+    assert result.exit_code == 0
+    assert "PASS first_exact_file_observation" in result.output
+
+
+def test_audit_command_rejects_adversarial_pack_manifest_with_clear_error() -> None:
+    result = runner.invoke(app, ["audit", str(ADVERSARIAL_PACKS_PATH)])
+
+    assert result.exit_code == 1
+    assert "adversarial_pack_manifest_not_a_trace_fixture" in result.output
+    assert "invalid_jsonl_line" not in result.output
 
 
 def test_audit_latest_reports_missing_trace_file(monkeypatch, tmp_path: Path) -> None:

@@ -9,7 +9,11 @@ ROADMAP_DOC = ROOT / "docs" / "spec" / "tok_trace_roadmap_v0_1.md"
 FORMAT_DOC = ROOT / "docs" / "spec" / "tok_trace_format_v0_1.md"
 CONFORMANCE_DOC = ROOT / "docs" / "spec" / "tok_trace_conformance_v0_1.md"
 BRIDGE_STANDARD_DOC = ROOT / "docs" / "bridge-standard.md"
-ADVERSARIAL_PACKS = ROOT / "docs" / "spec" / "fixtures" / "tok_trace_v0_1_adversarial_packs.json"
+ADVERSARIAL_PACKS = ROOT / "docs" / "spec" / "fixtures" / "adversarial_packs.json"
+
+
+def _squash_ws(text: str) -> str:
+    return " ".join(text.split())
 
 
 def test_protocol_layers_document_routing_as_design_axis_not_0_1_layer() -> None:
@@ -65,8 +69,8 @@ def test_protocol_docs_name_adversarial_pack_manifest_and_release_ladder() -> No
     layers = LAYERS_DOC.read_text()
     roadmap = ROADMAP_DOC.read_text()
 
-    assert "fixtures/tok_trace_v0_1_adversarial_packs.json" in layers
-    assert "fixtures/tok_trace_v0_1_adversarial_packs.json" in roadmap
+    assert "fixtures/adversarial_packs.json" in layers
+    assert "fixtures/adversarial_packs.json" in roadmap
     assert "trace-l1-l2-core-adversarial" in layers
     assert "trace-l1-l2-core-adversarial" in roadmap
     assert "**0.1.8:** named adversarial fixture packs" in roadmap
@@ -75,8 +79,8 @@ def test_protocol_docs_name_adversarial_pack_manifest_and_release_ladder() -> No
 
 
 def test_bridge_profile_boundary_keeps_sigils_out_of_session_core() -> None:
-    bridge = BRIDGE_STANDARD_DOC.read_text()
-    trace_format = FORMAT_DOC.read_text()
+    bridge = _squash_ws(BRIDGE_STANDARD_DOC.read_text())
+    trace_format = _squash_ws(FORMAT_DOC.read_text())
 
     for phrase in (
         "The bridge grammar is a profile-local adapter contract",
@@ -93,18 +97,19 @@ def test_bridge_profile_boundary_keeps_sigils_out_of_session_core() -> None:
 
 def test_conformance_doc_defines_l0_l2_reader_boundary_without_future_claims() -> None:
     text = CONFORMANCE_DOC.read_text()
+    prose = _squash_ws(text)
 
     for phrase in (
         "without importing Tok gateway, runtime, compression, CLI, benchmark, or analysis internals",
         "JSON is the first fixture encoding, not the protocol identity",
-        "| L0 |",
-        "| L1 |",
-        "| L2 |",
         "L3, L4, and L5 remain out of scope",
         "must not claim cross-cache resolution",
         "must not claim",
         "agent-to-agent compact-state exchange",
     ):
+        assert phrase in prose
+
+    for phrase in ("| L0", "| L1", "| L2"):
         assert phrase in text
 
 

@@ -73,6 +73,15 @@ def audit_fixture_file(path: Path) -> list[AuditResult]:
         return [AuditResult(id=str(path), status="fail", errors=("trace_file_unreadable",))]
     except json.JSONDecodeError:
         return [AuditResult(id=str(path), status="fail", errors=("invalid_fixture_json",))]
+    if isinstance(fixtures, dict) and fixtures.get("schema") == "tok-trace-adversarial-packs/v0.1-draft":
+        return [
+            AuditResult(
+                id=str(path),
+                status="fail",
+                errors=("adversarial_pack_manifest_not_a_trace_fixture",),
+                summary="Run tests/spec for adversarial pack coverage; this manifest is not an audit input.",
+            )
+        ]
     if not isinstance(fixtures, list):
         return [AuditResult(id=str(path), status="fail", errors=("fixture_file_not_list",))]
 
@@ -104,7 +113,8 @@ def audit_trace_file(path: Path) -> list[AuditResult]:
         return [AuditResult(id=str(path), status="fail", errors=("trace_file_not_utf8",))]
     except OSError:
         return [AuditResult(id=str(path), status="fail", errors=("trace_file_unreadable",))]
-    if text.lstrip().startswith("["):
+    stripped = text.lstrip()
+    if path.suffix != ".jsonl" and (stripped.startswith("[") or stripped.startswith("{")):
         return audit_fixture_file(path)
 
     results: list[AuditResult] = []

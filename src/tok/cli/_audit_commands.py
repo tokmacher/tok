@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from tok.spec.trace_v0_1 import audit_trace_file
+from tok.spec.trace import audit_trace_file
 
 from ._cli_support import console
 
