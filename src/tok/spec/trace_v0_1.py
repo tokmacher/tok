@@ -67,6 +67,10 @@ def audit_fixture_file(path: Path) -> list[AuditResult]:
     """Audit a JSON fixture file containing draft trace fixture objects."""
     try:
         fixtures = json.loads(path.read_text())
+    except UnicodeDecodeError:
+        return [AuditResult(id=str(path), status="fail", errors=("trace_file_not_utf8",))]
+    except OSError:
+        return [AuditResult(id=str(path), status="fail", errors=("trace_file_unreadable",))]
     except json.JSONDecodeError:
         return [AuditResult(id=str(path), status="fail", errors=("invalid_fixture_json",))]
     if not isinstance(fixtures, list):
@@ -94,7 +98,12 @@ def audit_fixture_file(path: Path) -> list[AuditResult]:
 
 def audit_trace_file(path: Path) -> list[AuditResult]:
     """Audit either a fixture JSON array or live JSONL trace file."""
-    text = path.read_text()
+    try:
+        text = path.read_text()
+    except UnicodeDecodeError:
+        return [AuditResult(id=str(path), status="fail", errors=("trace_file_not_utf8",))]
+    except OSError:
+        return [AuditResult(id=str(path), status="fail", errors=("trace_file_unreadable",))]
     if text.lstrip().startswith("["):
         return audit_fixture_file(path)
 

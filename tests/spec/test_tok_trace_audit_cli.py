@@ -110,3 +110,25 @@ def test_audit_malformed_fixture_json_reports_failure_without_traceback(tmp_path
     assert result.exit_code == 1
     assert "invalid_fixture_json" in result.output
     assert "Traceback" not in result.output
+
+
+def test_audit_non_utf8_trace_reports_failure_without_traceback(tmp_path: Path) -> None:
+    trace_file = tmp_path / "bad_trace.jsonl"
+    trace_file.write_bytes(b"\xff\xfe")
+
+    result = runner.invoke(app, ["audit", str(trace_file)])
+
+    assert result.exit_code == 1
+    assert "trace_file_not_utf8" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_audit_directory_path_reports_failure_without_traceback(tmp_path: Path) -> None:
+    trace_dir = tmp_path / "trace_dir"
+    trace_dir.mkdir()
+
+    result = runner.invoke(app, ["audit", str(trace_dir)])
+
+    assert result.exit_code == 1
+    assert "trace_file_unreadable" in result.output
+    assert "Traceback" not in result.output

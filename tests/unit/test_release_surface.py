@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import tomllib
 from typer.testing import CliRunner
 
 import tok
@@ -15,6 +18,13 @@ from tok.release_surface import (
 )
 
 runner = CliRunner()
+
+
+def test_package_metadata_version_matches_runtime_version() -> None:
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    metadata = tomllib.loads(pyproject.read_text())
+
+    assert metadata["project"]["version"] == tok.__version__
 
 
 def test_release_surface_gate_passes_for_supported_bridge_story() -> None:
