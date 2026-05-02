@@ -12,6 +12,8 @@ Steps for cutting a Tok release.
   `uv run pre-commit run --all-files && uv run ruff check src/tok tests`
 - [ ] Run type check: `uv run mypy src/tok/`
 - [ ] Run maintainer release smoke: `uv run python scripts/run_release_smoke.py`
+- [ ] Regenerate release metadata artifacts:
+  `uv run python scripts/generate_spdx_sbom.py`
 - [ ] Confirm the release-surface gate passes and no experimental root exports are
   advertised as canonical
 - [ ] Reconcile pricing claims via `docs/pricing_verification.md`
@@ -38,6 +40,8 @@ Steps for cutting a Tok release.
 - [ ] Update `CHANGELOG.md` with release date
 - [ ] Update `__version__` in `src/tok/__init__.py`
 - [ ] Update version in `pyproject.toml`
+- [ ] Confirm `pyproject.toml`, `src/tok/__init__.py`, `sbom.spdx`, and security utility
+  User-Agents all report the same release version
 - [ ] Confirm README badges and repository URLs resolve publicly
 - [ ] Confirm the deferred `0.1.x` follow-ups are documented: CLI decomposition and
   dependency upper-bound policy
@@ -46,6 +50,7 @@ Recommended local gate sequence for the exact release candidate:
 
 ```bash
 uv sync --frozen --extra dev
+uv run python scripts/generate_spdx_sbom.py
 uv run python scripts/run_release_smoke.py
 uv run pre-commit run --all-files
 uv run ruff check src/tok tests
