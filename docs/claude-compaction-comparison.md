@@ -29,10 +29,12 @@ conversation-management behavior.
 Run the same kind of work with Tok active, then compare with baseline mode:
 
 ```bash
-tok bridge start
-ANTHROPIC_BASE_URL=http://localhost:9090 claude
+tok claude
 tok stats
 ```
+
+For the control run, start the bridge in baseline mode and route Claude Code through it
+explicitly:
 
 ```bash
 TOK_MODE=baseline tok bridge start

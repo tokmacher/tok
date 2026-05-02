@@ -7,21 +7,21 @@ validation, but they do not define the public default behavior.
 
 ## Supported Workflows
 
-The first public release supports exactly this workflow:
+The first public release centers this default workflow:
 
 1. `pip install tok-protocol`
-1. `tok install` (setup/migration helper; no wrapper by default)
-1. Run Claude Code through Tok (`tok claude`)
+1. Run Claude Code through Tok with `tok claude`
 1. `tok bridge status` / `tok doctor` / `tok stats` to monitor
 1. `tok bridge stop` to end the session
 
+`tok install` remains a setup/migration helper and does not wrap `claude` by default.
 Optional legacy behavior is still available via `tok install --wrap-claude`, but the
-default release posture is explicit bridge routing.
+default release posture is `tok claude`.
 
 The default CLI help surface should reinforce that path by centering:
 
-- `tok install`
 - `tok claude`
+- `tok install`
 - `tok bridge start|status|logs|stop`
 - `tok doctor`
 - `tok stats`

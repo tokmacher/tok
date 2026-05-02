@@ -21,14 +21,12 @@ Last updated: **2026-04-08**.
 
 Manual operator checks remain required for a real Claude session:
 
-1. `tok install`
-1. `tok bridge start`
-1. run `ANTHROPIC_BASE_URL=http://localhost:9090 claude` on a real task
+1. `tok claude` on a real task
 1. `tok bridge status`
 1. `tok doctor`
 1. `tok stats`
 1. exit Claude, then `tok bridge stop` (or `tok bridge stop --force` if stopping
    in-band)
 
-Manual pass criterion: bridge-first workflow completes without hidden fallback or
+Manual pass criterion: `tok claude` workflow completes without hidden fallback or
 wrong-target behavior.

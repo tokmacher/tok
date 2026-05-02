@@ -10,15 +10,12 @@ If you are new to Tok, start with [`README.md`](../README.md) or the full workfl
 ## Core Workflow
 
 ```bash
+pip install tok-protocol
 tok claude
-tok install
-tok init
-tok bridge start
-ANTHROPIC_BASE_URL=http://localhost:9090 claude
 tok bridge status
 tok doctor [--report]
-tok bridge stop
 tok stats
+tok bridge stop
 tok audit --latest
 ```
 
@@ -28,6 +25,10 @@ with `ANTHROPIC_BASE_URL=http://localhost:9090`, and does not modify shell rc fi
 `tok install` is a setup/migration helper. To opt into legacy auto-routing, use
 `tok install --wrap-claude`.
 
+`tok init` creates a project-local `.tok/` workspace and optional `.env` / `.gitignore`
+entries. It is useful for projects that want local Tok workspace files, but it is not
+required before `tok claude`.
+
 For advanced routing or compatibility checks, you can still run the bridge and route a
 client explicitly:
 
@@ -35,9 +36,6 @@ client explicitly:
 tok bridge start
 ANTHROPIC_BASE_URL=http://localhost:9090 <your-client-command>
 ```
-
-`tok init` creates a project-local `.tok/` workspace and optional `.env` / `.gitignore`
-entries. Run it once per project before starting the bridge.
 
 ## Bridge Commands
 

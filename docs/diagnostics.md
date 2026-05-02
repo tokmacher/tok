@@ -19,11 +19,11 @@ The supported product path for `0.1.x` is Claude Code routed through the local T
 bridge:
 
 ```bash
-tok bridge start
-ANTHROPIC_BASE_URL=http://localhost:9090 claude
+tok claude
 ```
 
-All guidance below assumes this workflow.
+`tok claude` starts the bridge if needed and routes only that Claude Code process
+through Tok. All guidance below assumes this workflow.
 
 ## Quick Triage: GO vs "Something Is Wrong"
 

@@ -1,6 +1,6 @@
 # Release Claims Matrix
 
-Last updated: **2026-04-28** (0.1.6 CLI cleanup; 0.1.5 additions recorded below).
+Last updated: **2026-05-02** (0.1.7 docs alignment; 0.1.5-0.1.6 evidence retained).
 
 This matrix is the release input for pricing/benchmark/savings claims.
 
