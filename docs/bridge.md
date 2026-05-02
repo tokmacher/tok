@@ -34,7 +34,7 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 
 ## Prerequisites
 
-- Python `3.10`-`3.12` (tested for `0.1.x`)
+- Python `3.10` or newer
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - provider/API configuration that already works with Claude Code

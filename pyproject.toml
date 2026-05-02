@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = [ "bridge", "claude-code", "compression", "developer-tools", "llm", "tokens" ]
 license = { text = "Apache-2.0" }
 authors = [ { name = "tokmacher", email = "tokmacher@protonmail.com" } ]
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10"
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -21,6 +21,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Libraries",
 ]
 dependencies = [

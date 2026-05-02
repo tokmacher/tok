@@ -148,7 +148,7 @@ Pricing estimates depend on provider/model rates. See
 
 ## Prerequisites
 
-- Python `3.10`-`3.12`
+- Python `3.10` or newer
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - Claude Code already configured with provider credentials

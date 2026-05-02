@@ -4,7 +4,7 @@ Runtime defaults and release posture for Tok.
 
 ## Supported Platforms
 
-- Python 3.10, 3.11, 3.12
+- Python 3.10 or newer
 - macOS and Linux
 
 ## Runtime Defaults
