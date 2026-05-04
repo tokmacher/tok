@@ -9,10 +9,6 @@ This document explains the key health and recovery signals you may see in:
 The goal is to help you distinguish normal, self-contained recovery (expected under
 stress) from a real degradation that should be reported as a bug.
 
-For comparisons with native Claude Code context management and adjacent context tools,
-see [`docs/claude-compaction-comparison.md`](./claude-compaction-comparison.md) and
-[`docs/positioning-context-tools.md`](./positioning-context-tools.md).
-
 ## What Is "Supported" For 0.1.x
 
 The supported product path for `0.1.x` is Claude Code routed through the local Tok

@@ -8,6 +8,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from tok.cli import app
+from tok.spec.live_trace import emit_live_trace
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "trace_fixtures.json"
@@ -15,6 +16,22 @@ CLEAN_FIXTURE_PATH = ROOT / "docs" / "spec" / "fixtures" / "clean_trace_fixtures
 ADVERSARIAL_PACKS_PATH = ROOT / "docs" / "spec" / "fixtures" / "adversarial_packs.json"
 
 runner = CliRunner()
+
+
+class _BridgeMemory:
+    turn = 4
+
+
+class _RuntimeSession:
+    bridge_memory = _BridgeMemory()
+
+
+class _Session:
+    _active_session_key = "audit-receipt-test"
+
+    def __init__(self, memory_dir: Path) -> None:
+        self.memory_dir = memory_dir
+        self.runtime_session = _RuntimeSession()
 
 
 def test_audit_command_is_in_public_help() -> None:
@@ -66,6 +83,48 @@ def test_audit_command_passes_checked_in_clean_fixture_pack() -> None:
 
     assert result.exit_code == 0
     assert "PASS first_exact_file_observation" in result.output
+
+
+def test_audit_human_output_includes_live_trace_receipt(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.delenv("TOK_TRACE_CAPTURE_ARTIFACTS", raising=False)
+    session = _Session(tmp_path)
+    emit_live_trace(
+        session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata-only request trace",
+        metadata={"input_saved_tokens": 17},
+    )
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    emit_live_trace(
+        session,
+        "response_processed",
+        trace_class="response",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact response trace",
+        direction="response",
+        metadata={"output_saved_tokens": 5},
+    )
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+
+    result = runner.invoke(app, ["audit", str(trace_file)])
+
+    assert result.exit_code == 2
+    assert "Trace receipt" in result.output
+    assert "Blocks: 2" in result.output
+    assert "Pass: 1" in result.output
+    assert "Warn: 1" in result.output
+    assert "Fail: 0" in result.output
+    assert "Exact: 0" in result.output
+    assert "Non-exact: 2" in result.output
+    assert "Artifacts: 1/2" in result.output
+    assert "metadata-only request trace" in result.output
 
 
 def test_audit_command_rejects_adversarial_pack_manifest_with_clear_error() -> None:

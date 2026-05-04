@@ -127,5 +127,3 @@ as public onboarding material.
 - [`docs/bridge.md`](./bridge.md)
 - [`docs/troubleshooting.md`](./troubleshooting.md)
 - [`docs/production-readiness.md`](./production-readiness.md)
-- [`docs/claude-compaction-comparison.md`](./claude-compaction-comparison.md)
-- [`docs/positioning-context-tools.md`](./positioning-context-tools.md)

@@ -32,6 +32,17 @@ fallback meanings.
 | L1    | Validate required fields, enum values, extension namespace rules, canonical payload digests, and pass/warn/fail audit outcomes.                                                |
 | L2    | Verify local artifacts, exact content hashes and sizes, exact versus non-exact rules, fallback/degradation reasons, sequence consistency, and supported `unified_diff` deltas. |
 
+For 0.1.8, Tok validates exactly this L0-L2 set:
+
+- L0: parse JSON fixture arrays and JSONL traces, reject malformed JSON or malformed
+  fixture structure, and preserve block order.
+- L1: validate required fields, enum values, extension namespace rules, canonical
+  payload digests, and pass/warn/fail audit outcomes.
+- L2: verify local artifact hashes and sizes, exact versus non-exact content claims,
+  fallback/degradation reasons, sequence consistency, and supported unified_diff deltas.
+
+Everything above L2 is documentation-only in 0.1.8.
+
 L3, L4, and L5 remain out of scope for this conformance draft. A reader must not claim
 cross-cache resolution, capability negotiation, or agent-to-agent compact-state exchange
 from L0-L2 fixture success.

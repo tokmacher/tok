@@ -195,17 +195,6 @@ Experimental Python submodule APIs and internal compression features exist, but 
 not part of the supported `0.1.x` contract and may change without compatibility
 guarantees.
 
-## How Tok Compares
-
-- Claude Code `/compact` and auto-compaction are native conversation-management tools;
-  Tok is a local bridge that compresses repeated machine-facing context before it
-  reaches the model. See
-  [`docs/claude-compaction-comparison.md`](docs/claude-compaction-comparison.md).
-- Memory tools, code indexers, MCP servers, observability products, and prompt
-  compressors solve adjacent problems. Tok's narrow job is deterministic bridge-layer
-  context compression. See
-  [`docs/positioning-context-tools.md`](docs/positioning-context-tools.md).
-
 ## Troubleshooting
 
 | Symptom                                           | Check first                                                 | Likely fix                                                                                 |
@@ -251,10 +240,6 @@ Start here:
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): fallback, logs, degraded
   sessions, savings interpretation
 - [`docs/diagnostics.md`](docs/diagnostics.md): detailed bridge health signals
-- [`docs/claude-compaction-comparison.md`](docs/claude-compaction-comparison.md): Tok vs
-  Claude Code compaction and baseline mode
-- [`docs/positioning-context-tools.md`](docs/positioning-context-tools.md): Tok's place
-  among memory, context, MCP, indexing, and observability tools
 
 For release and architecture context:
 
