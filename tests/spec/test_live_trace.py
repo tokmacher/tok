@@ -175,6 +175,62 @@ def test_audit_command_accepts_artifact_backed_live_jsonl(monkeypatch, tmp_path:
     assert payload[0]["status"] == "pass"
 
 
+def test_audit_does_not_claim_full_session_coverage_for_partial_trace(monkeypatch, tmp_path: Path) -> None:
+    """Guard: a trace starting at turn > 0 must not produce a full-session coverage claim.
+
+    TOK_TRACE enabled mid-session writes records only from that turn onward.
+    Audit must pass (records are individually valid) but must never emit
+    'full_session_coverage' or similar misleading signal in errors or summary.
+    """
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+
+    class _LateBridgeMemory:
+        turn = 5  # tracing started mid-session; turns 0-4 are absent
+
+    class _LateRuntimeSession:
+        bridge_memory = _LateBridgeMemory()
+
+    class _LateSession:
+        _active_session_key = "late-trace-session"
+
+        def __init__(self, memory_dir: Path) -> None:
+            self.memory_dir = memory_dir
+            self.runtime_session = _LateRuntimeSession()
+
+    session = _LateSession(tmp_path)
+    emit_live_trace(
+        session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="mid-session trace start",
+        metadata={"turn_at_trace_start": 5},
+    )
+
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+    record = json.loads(trace_file.read_text())
+    assert record["envelope"]["turn"] == 5, "fixture must start mid-session"
+
+    results = audit_trace_file(trace_file)
+    assert all(r.status in {"pass", "warn"} for r in results)
+
+    # Guard against future code adding a misleading full-session coverage claim
+    for r in results:
+        assert "full_session_coverage" not in r.errors
+        assert "full_session_coverage" not in r.summary
+
+    # Guard: CLI --json output must not add full-session coverage signal either
+    result = runner.invoke(app, ["audit", str(trace_file), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    for entry in payload:
+        assert "full_session_coverage" not in entry.get("errors", [])
+        assert "full_session_coverage" not in (entry.get("summary") or "")
+
+
 def test_live_trace_write_failure_is_non_fatal(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TOK_TRACE", "1")
     monkeypatch.setenv("TOK_TRACE_FILE", str(tmp_path))
