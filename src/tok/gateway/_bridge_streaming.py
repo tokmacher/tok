@@ -528,17 +528,6 @@ async def buffer_strip_restream_impl(
             if request_content and request_url:
                 stream_behavior_signals["stream_recovery_started"] = 1
                 stream_behavior_signals["stream_recovery_retry"] = 1
-                session._bump_signals(
-                    {
-                        "stream_empty_after_success": stream_behavior_signals.get("stream_empty_after_success", 0),
-                        "stream_recovery_empty_success": stream_behavior_signals.get(
-                            "stream_recovery_empty_success", 0
-                        ),
-                        "stream_recovery_read_error": stream_behavior_signals.get("stream_recovery_read_error", 0),
-                        "stream_recovery_started": 1,
-                        "stream_recovery_retry": 1,
-                    }
-                )
                 logger.warning(
                     "stream_recovery_retry_started: empty streamed success detected; retrying upstream non-stream"
                 )

@@ -76,7 +76,7 @@ def _normalize_provider_safe_retry_payload(
             normalized_messages.append(msg)
             continue
 
-        is_current_turn = all(m.get("role") != "assistant" for m in messages[msg_idx + 1 :])
+        is_current_turn = all(not isinstance(m, dict) or m.get("role") != "assistant" for m in messages[msg_idx + 1 :])
 
         if is_current_turn:
             message_changed = False

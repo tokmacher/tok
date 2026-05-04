@@ -683,6 +683,20 @@ class BridgeSession:
 
         return merged
 
+    def aggregate_behavior_signals(self) -> dict[str, int]:
+        """Merge tracked and pending behavior signals across all live buckets."""
+        merged: dict[str, int] = {}
+        seen_trackers: set[int] = set()
+        for bucket in self._session_buckets.values():
+            tracker_id = id(bucket.tracker)
+            if tracker_id not in seen_trackers:
+                seen_trackers.add(tracker_id)
+                for key, value in bucket.tracker.behavior_signals().items():
+                    merged[key] = merged.get(key, 0) + int(value)
+            for key, value in bucket.runtime_session.pending_behavior_signals.items():
+                merged[key] = merged.get(key, 0) + int(value)
+        return merged
+
     def reset_active_session(self) -> None:
         bucket = (
             self._session_buckets.get(self._active_session_key)

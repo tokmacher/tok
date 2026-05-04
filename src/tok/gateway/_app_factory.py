@@ -245,12 +245,15 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         session_summary = (
             report_session.tracker.session_summary() if explicit_session_key else session.aggregate_session_summary()
         ) or {}
-        signals = dict(report_session.tracker.behavior_signals())
-        for (
-            key,
-            value,
-        ) in report_session.runtime_session.pending_behavior_signals.items():
-            signals[key] = signals.get(key, 0) + int(value)
+        if explicit_session_key:
+            signals = dict(report_session.tracker.behavior_signals())
+            for (
+                key,
+                value,
+            ) in report_session.runtime_session.pending_behavior_signals.items():
+                signals[key] = signals.get(key, 0) + int(value)
+        else:
+            signals = session.aggregate_behavior_signals()
         return {
             "status": "ok",
             "bridge": "tok",

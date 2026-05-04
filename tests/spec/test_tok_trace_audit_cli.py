@@ -78,15 +78,17 @@ def test_audit_command_rejects_adversarial_pack_manifest_with_clear_error() -> N
 
 def test_audit_latest_reports_missing_trace_file(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TOK_PROJECT_DIR", raising=False)
 
     result = runner.invoke(app, ["audit", "--latest"])
 
     assert result.exit_code == 5
-    assert "No trace files found in ~/.tok/traces" in result.output
+    assert "No trace files found in the active .tok/traces directory" in result.output
 
 
 def test_audit_latest_uses_newest_trace(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TOK_PROJECT_DIR", raising=False)
     trace_dir = tmp_path / ".tok" / "traces"
     trace_dir.mkdir(parents=True)
     old_trace = trace_dir / "old.jsonl"
@@ -103,8 +105,32 @@ def test_audit_latest_uses_newest_trace(monkeypatch, tmp_path: Path) -> None:
     assert payload[0]["id"].endswith("new.jsonl")
 
 
+def test_audit_latest_uses_project_trace_dir_when_configured(monkeypatch, tmp_path: Path) -> None:
+    home_dir = tmp_path / "home"
+    project_dir = tmp_path / "project"
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("TOK_PROJECT_DIR", str(project_dir))
+    home_trace_dir = home_dir / ".tok" / "traces"
+    project_trace_dir = project_dir / ".tok" / "traces"
+    home_trace_dir.mkdir(parents=True)
+    project_trace_dir.mkdir(parents=True)
+    home_trace = home_trace_dir / "home.jsonl"
+    project_trace = project_trace_dir / "project.jsonl"
+    home_trace.write_text("")
+    project_trace.write_text("")
+    os.utime(home_trace, (5, 5))
+    os.utime(project_trace, (1, 1))
+
+    result = runner.invoke(app, ["audit", "--latest", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload[0]["id"].endswith("project.jsonl")
+
+
 def test_audit_rejects_path_and_latest_together(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TOK_PROJECT_DIR", raising=False)
     trace_dir = tmp_path / ".tok" / "traces"
     trace_dir.mkdir(parents=True)
     explicit_trace = tmp_path / "explicit.jsonl"

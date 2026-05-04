@@ -9,11 +9,11 @@ import typer
 
 from tok.spec.trace import audit_trace_file
 
-from ._cli_support import console
+from ._cli_support import console, memory_root
 
 FIXTURE_FILE_ARG = typer.Argument(None, help="Path to a Tok Trace v0.1 fixture or live JSONL trace file.")
 JSON_OUTPUT_OPT = typer.Option(False, "--json", help="Emit machine-readable audit results.")
-LATEST_OPT = typer.Option(False, "--latest", help="Audit the newest trace in ~/.tok/traces.")
+LATEST_OPT = typer.Option(False, "--latest", help="Audit the newest trace in the active .tok/traces directory.")
 
 
 def register(app: typer.Typer) -> None:
@@ -29,7 +29,7 @@ def register(app: typer.Typer) -> None:
         trace_file = _resolve_audit_path(fixture_file, latest=latest)
         if trace_file is None:
             if latest:
-                console.print("[red]No trace files found in ~/.tok/traces.[/red]")
+                console.print("[red]No trace files found in the active .tok/traces directory.[/red]")
             else:
                 console.print("[red]Provide a trace file path or use --latest.[/red]")
             raise typer.Exit(5)
@@ -77,7 +77,7 @@ def _resolve_audit_path(fixture_file: Path | None, *, latest: bool) -> Path | No
         console.print("[red]Use either a trace file path or --latest, not both.[/red]")
         raise typer.Exit(5)
     if latest:
-        trace_dir = Path.home() / ".tok" / "traces"
+        trace_dir = memory_root() / "traces"
         candidates = sorted(trace_dir.glob("*.jsonl"), key=lambda path: path.stat().st_mtime, reverse=True)
         return candidates[0] if candidates else None
     return fixture_file

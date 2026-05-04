@@ -881,6 +881,55 @@ def test_health_endpoint_reports_recovery_and_repair_counters(
     assert payload["last_degradation_reason"] == "request-shape incompatibility"
 
 
+def test_health_endpoint_aggregates_behavior_signals_across_sessions(tmp_path) -> None:
+    session = BridgeSession(port=9191, memory_dir=tmp_path / ".tok")
+    alpha_key = session.activate_session_for_request({"x-tok-session-id": "alpha"}, None)
+    beta_key = session.activate_session_for_request({"x-tok-session-id": "beta"}, None)
+    alpha_session = session.bound_session_for_key(alpha_key)
+    beta_session = session.bound_session_for_key(beta_key)
+    alpha_session.tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=100,
+        actual_output=20,
+        cache_read=0,
+        cache_write=0,
+        input_saved=50,
+        output_saved=10,
+        behavior_signals={"repeat_search": 2, "repeat_file_read": 1},
+    )
+    beta_session.tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=80,
+        actual_output=10,
+        cache_read=0,
+        cache_write=0,
+        input_saved=40,
+        output_saved=5,
+        behavior_signals={"repeat_search": 3, "repeat_target_hot": 1},
+    )
+    beta_session._bump_signals({"stream_recovery_started": 1})
+    app = create_app(session)
+    client = TestClient(app)
+
+    aggregate_response = client.get("/health")
+    alpha_response = client.get("/health", headers={"x-tok-session-id": "alpha"})
+
+    assert aggregate_response.status_code == 200
+    aggregate = aggregate_response.json()
+    assert aggregate["actual_tokens"] == 210
+    assert aggregate["repeat_search_count"] == 5
+    assert aggregate["repeat_file_read_count"] == 1
+    assert aggregate["repeat_target_hot_count"] == 1
+    assert aggregate["stream_recovery_attempt_count"] == 1
+
+    assert alpha_response.status_code == 200
+    alpha = alpha_response.json()
+    assert alpha["actual_tokens"] == 120
+    assert alpha["repeat_search_count"] == 2
+    assert alpha["repeat_target_hot_count"] == 0
+    assert alpha["stream_recovery_attempt_count"] == 0
+
+
 def test_clean_system_context_uses_top_level_prompt_compressor(
     monkeypatch,
 ) -> None:
@@ -3753,6 +3802,8 @@ def test_streaming_empty_success_recovers_via_non_stream_text(monkeypatch, caplo
     assert signals["stream_recovery_retry"] >= 1
     assert signals["stream_recovery_success_text"] >= 1
     assert signals["tool_compatible_response"] == 1
+    assert session.tracker.record_call.call_args.kwargs["behavior_signals"]["stream_recovery_started"] == 1
+    assert session.tracker.record_call.call_args.kwargs["behavior_signals"]["stream_recovery_retry"] == 1
     assert "stream_recovery_retry_started" in caplog.text
     assert "stream_recovery_succeeded_text" in caplog.text
     assert client.closed is True
@@ -6538,6 +6589,31 @@ def test_provider_safe_retry_normalization_preserves_later_unchanged_messages() 
     assert result is not None
     assert result["messages"][2] is later_message
     assert result["messages"][0]["content"][0]["type"] == "thinking"
+
+
+def test_provider_safe_retry_normalization_ignores_non_dict_later_messages() -> None:
+    current_message = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "remove this"},
+            {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {}},
+        ],
+    }
+    body = {
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            current_message,
+            "malformed-later-message",
+        ]
+    }
+
+    result, changed = _normalize_provider_safe_retry_payload(body)
+
+    assert changed is True
+    assert result is not None
+    assert result["messages"][2] == "malformed-later-message"
+    current_content = result["messages"][1]["content"]
+    assert [block.get("type") for block in current_content] == ["tool_use"]
 
 
 def test_thinking_preserved_in_history_before_tool_use_blocks() -> None:
