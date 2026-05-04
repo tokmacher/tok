@@ -3,9 +3,9 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "tok-protocol-dependencies",
-  "documentNamespace": "https://tok-protocol.dev/sbom/441fbf27-4e30-440d-a46c-4cf30426c346",
+  "documentNamespace": "https://tok-protocol.dev/sbom/d71efad2-6234-4ade-ba37-c60b26a04551",
   "creationInfo": {
-    "created": "2026-05-02T18:24:08.491656Z",
+    "created": "2026-05-04T06:51:55.508140Z",
     "creators": [
       "Tool: tok-security-pipeline-1.0.0",
       "Organization: tokmacher"
