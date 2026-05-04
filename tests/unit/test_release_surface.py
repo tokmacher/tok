@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import tomllib
 from typer.testing import CliRunner
 
 import tok
@@ -16,6 +15,11 @@ from tok.release_surface import (
     SUPPORTED_ROOT_EXPORTS,
     validate_release_surface,
 )
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
 
 runner = CliRunner()
 
