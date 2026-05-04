@@ -30,7 +30,19 @@ if TYPE_CHECKING:
 
 __all__ = ["buffer_strip_restream_impl", "passthrough_stream_impl"]
 
-_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = int(os.getenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", "2"))
+
+def _env_int(name: str, fallback: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+        return fallback
+
+
+_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = _env_int("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", 2)
 
 
 def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
@@ -421,8 +433,10 @@ async def buffer_strip_restream_impl(
             logger.info("Raw text sample: %s", full_text[:200])
 
         stream_behavior_signals = dict(behavior_signals or {})
+        response_signals: dict[str, Any] = dict(stream_behavior_signals)
         if read_error:
             stream_behavior_signals["stream_buffer_read_error"] = 1
+            response_signals["stream_buffer_read_error"] = 1
 
         processed: Any | None = None  # Will hold ProcessedRuntimeResponse when available
 
@@ -483,6 +497,10 @@ async def buffer_strip_restream_impl(
             or block.get("type") == "redacted_thinking"
             for block in translated_blocks
         )
+        if has_visible_blocks and all(
+            block.get("type") == "text" and not str(block.get("text", "")).strip() for block in translated_blocks
+        ):
+            has_visible_blocks = False
         recovery_required = not has_visible_blocks and (read_error is not None or len(translated_blocks) == 0)
         _cost_recorded_by_fallback = False
         if recovery_required:
@@ -768,6 +786,8 @@ async def buffer_strip_restream_impl(
             else:
                 output_saved = 0
                 response_signals = stream_behavior_signals or {}
+            if response_signals:
+                session._bump_signals(response_signals)
 
             session.tracker.record_call(
                 model=sse_model,

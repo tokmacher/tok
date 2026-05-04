@@ -193,10 +193,47 @@ def test_response_contract_repairs_structured_answer_from_session_anchors(tmp_pa
     )
 
     visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert "[memory-derived]" not in visible
     assert "File=src/tok/parser.py" in visible
     assert "Verification=parse_error" in visible
     assert contract.behavior_signals.get("structured_answer_repaired", 0) == 1
     assert contract.behavior_signals.get("structured_answer_backfilled", 0) == 1
+
+
+def test_response_contract_preserves_natural_answer_when_labels_are_missing(tmp_path) -> None:
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/gateway/_bridge_streaming.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:_update_cache_after_hit",
+        score_delta=3,
+    )
+    session._last_user_prompt_text = (
+        "Based on the conversation so far, respond in exactly two lines:\n"
+        "File=<the primary file that answered the question>\n"
+        "Verification=<the function, class, or finding that supports the answer>"
+    )
+    session._last_user_prompt_labels = ("file", "verification")
+
+    natural = (
+        "The usage jumped because I read a broad set of files up front, and those tool "
+        "results were still part of the context before compression could help much."
+    )
+    contract = response_contract_for_mode(natural, tool_compatible=False, session=session)
+
+    visible = "\n".join(block.get("text", "") for block in contract.content_blocks if block.get("type") == "text")
+    assert visible == natural
+    assert "[memory-derived]" not in visible
+    assert "File=" not in visible
+    assert "Verification=" not in visible
+    assert contract.behavior_signals.get("structured_answer_backfilled", 0) == 1
+    assert contract.behavior_signals.get("structured_answer_visible_preserved", 0) == 1
 
 
 def test_response_behavior_signals_exempts_expected_strict_structured_answer(tmp_path) -> None:

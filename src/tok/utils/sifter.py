@@ -13,10 +13,10 @@ def extract_args_info(args: ast.arguments) -> list[str]:
         result.append(arg.arg)
     for arg in args.args:
         result.append(arg.arg)
-    for arg in args.kwonlyargs:
-        result.append(arg.arg)
     if args.vararg:
         result.append(f"*{args.vararg.arg}")
+    for arg in args.kwonlyargs:
+        result.append(arg.arg)
     if args.kwarg:
         result.append(f"**{args.kwarg.arg}")
     return result

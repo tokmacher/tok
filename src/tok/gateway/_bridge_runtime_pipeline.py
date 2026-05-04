@@ -16,9 +16,14 @@ from ._bridge_preflight import _run_bridge_preflight
 
 
 def _plan_finalization_min_saved_tokens() -> int:
+    raw = os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "32")
     try:
-        return max(0, int(os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "32")))
+        return max(0, int(raw))
     except ValueError:
+        logger.warning(
+            "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS=%r; using fallback 32",
+            raw,
+        )
         return 32
 
 
@@ -87,9 +92,12 @@ def _apply_plan_finalization_spend_guard(
 
     original_prompt_tokens = int(prompt_metrics.get("baseline_prompt_tokens", 0))
     prepared_prompt_tokens = int(prompt_metrics.get("prepared_prompt_tokens", 0))
-    if original_prompt_tokens <= 0:
+    if original_prompt_tokens <= 0 and prepared_prompt_tokens <= 0:
         original_prompt_tokens = session.runtime_session.prepared_prompt_tokens(provider_safe_original_body)
-    if prepared_prompt_tokens <= 0:
+        prepared_prompt_tokens = original_prompt_tokens
+    elif original_prompt_tokens <= 0:
+        original_prompt_tokens = session.runtime_session.prepared_prompt_tokens(provider_safe_original_body)
+    elif prepared_prompt_tokens <= 0:
         prepared_prompt_tokens = session.runtime_session.prepared_prompt_tokens(prepared_body)
     observed_saved_tokens = max(0, original_prompt_tokens - prepared_prompt_tokens)
     minimum_saved_tokens = max(0, _PLAN_FINALIZATION_MIN_SAVED_TOKENS)
@@ -200,10 +208,13 @@ def prepare_bridge_payload(
     if preflight_response is not None:
         return payload, preflight_response
 
+    cooldown_remaining = getattr(session.runtime_session, "_stream_recovery_cooldown_remaining", 0)
+    if cooldown_remaining > 0:
+        session.runtime_session._stream_recovery_cooldown_remaining = max(0, cooldown_remaining - 1)
+
     if path != "v1/messages":
         return payload, None
 
-    source_behavior_signals = dict(behavior_signals)
     if tok_tool_header.lower() in {"0", "false", "off", "no"}:
         request_tool_compatible = False
         request_policy = "forced_baseline" if session.request_policy_default == "forced_baseline" else "natural_first"
@@ -216,6 +227,7 @@ def prepare_bridge_payload(
     else:
         request_tool_compatible = True
         request_policy = session.request_policy_default
+    source_behavior_signals = dict(behavior_signals)
 
     logger.info(
         "Request mode: model=%s, request_policy=%s, tool_compatible_allowed=%s (tools present: %s, header=%s)",
@@ -317,6 +329,8 @@ def prepare_bridge_payload(
     )
     retry_forbidden = retry_forbidden or prepared_retry_forbidden
     if behavior_signals.get("tok_bridge_pairing_degraded_to_provider_safe", 0):
+        if saved_toks > 0:
+            behavior_signals["tok_compression_worked_before_pairing_degraded"] = 1
         compressed = False
         saved_toks = 0
         tool_breakdown = {}

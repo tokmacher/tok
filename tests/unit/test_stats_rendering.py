@@ -5,11 +5,110 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from tok.cli import app
+from tok.cli._cli_support import savings_diagnostic_note, session_signals_text, session_status_rows
 
 runner = CliRunner()
 
 
 class TestStatsRendering:
+    def test_clean_session_omits_evidence_safety_noise(self) -> None:
+        rows = session_status_rows(
+            summary={
+                "tokens_saved": 10,
+                "actual_tokens": 100,
+                "baseline_tokens": 110,
+                "actual_cost_usd": 0.001,
+                "baseline_cost_usd": 0.002,
+                "cost_saved_usd": 0.001,
+                "fallback_count": 0,
+                "baseline_only": False,
+                "session_quality": "clean",
+                "last_degradation_reason": "",
+            },
+            tok_active=True,
+            baseline_only=False,
+            session_signals=session_signals_text({}),
+        )
+
+        assert ("Session signals", "clean") in rows
+        assert not any(label == "Evidence safety" for label, _ in rows)
+        assert not any(label == "Exact reacquisition" for label, _ in rows)
+
+    def test_zero_savings_session_explains_short_session(self) -> None:
+        rows = session_status_rows(
+            summary={
+                "tokens_saved": 0,
+                "savings_pct": 0.0,
+                "actual_tokens": 100,
+                "baseline_tokens": 100,
+                "actual_cost_usd": 0.001,
+                "baseline_cost_usd": 0.001,
+                "cost_saved_usd": 0.0,
+                "fallback_count": 0,
+                "calls": 1,
+                "baseline_only": False,
+                "session_quality": "clean",
+                "last_degradation_reason": "",
+            },
+            tok_active=True,
+            baseline_only=False,
+            mode="tool-compatible",
+            session_signals=session_signals_text({}),
+        )
+
+        assert (
+            "Savings note",
+            "Very short sessions often show no savings; recheck after sustained Claude Code work.",
+        ) in rows
+
+    def test_safe_block_zero_savings_explains_evidence_safety(self) -> None:
+        note = savings_diagnostic_note(
+            summary={
+                "tokens_saved": 0,
+                "savings_pct": 0.0,
+                "calls": 6,
+                "fallback_count": 0,
+                "evidence_compression_blocked_for_safety_count": 2,
+            },
+            baseline_only=False,
+            mode="tool-compatible",
+        )
+
+        assert note == "Tok blocked compression for evidence safety; exactness won over token savings."
+
+    def test_non_exact_reacquisition_session_shows_evidence_safety_rows(self) -> None:
+        summary = {
+            "tokens_saved": 10,
+            "actual_tokens": 100,
+            "baseline_tokens": 110,
+            "actual_cost_usd": 0.001,
+            "baseline_cost_usd": 0.002,
+            "cost_saved_usd": 0.001,
+            "fallback_count": 0,
+            "baseline_only": False,
+            "session_quality": "clean",
+            "last_degradation_reason": "",
+            "evidence_exact_observed_count": 3,
+            "evidence_non_exact_reference_count": 2,
+            "evidence_non_exact_summary_count": 1,
+            "evidence_non_exact_skeleton_count": 1,
+            "evidence_exact_reacquisition_required_count": 2,
+            "evidence_exact_reacquisition_satisfied_count": 2,
+            "evidence_compression_blocked_for_safety_count": 1,
+        }
+
+        rows = session_status_rows(
+            summary=summary,
+            tok_active=True,
+            baseline_only=False,
+            session_signals=session_signals_text(summary),
+        )
+
+        assert ("Session signals", "exact=3, nonexact=2, reacq-safe=2/2, safe-block=1") in rows
+        assert ("Evidence safety", "exact=3, non-exact=2, summaries=1, skeletons=1") in rows
+        assert ("Exact reacquisition", "required=2, satisfied=2") in rows
+        assert ("Compression safety blocks", "1") in rows
+
     def test_doctor_renders_interaction_quality_panel(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
         monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")

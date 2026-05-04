@@ -136,8 +136,13 @@ def tok_tool_result_impl(
 
     # git_diff is already content-aware compressed (context lines stripped, only +/- kept).
     # Truncating it further would remove actual diff lines — the content that matters.
-    already_compressed = (kind == "file" and ("|> [" in compressed or "lines]" in compressed)) or kind == "git_diff"
-    compressed = truncate_large_result(compressed, already_compressed=already_compressed)
+    # find preserves all paths up to 200 and groups deeper outputs; re-truncating would
+    # destroy navigation evidence the user needs.
+    already_compressed = (kind == "file" and ("|> [" in compressed or "lines]" in compressed)) or kind in (
+        "git_diff",
+        "find",
+    )
+    compressed = truncate_large_result(compressed, already_compressed=already_compressed, result_type=kind)
 
     saved = original_chars - len(compressed)
     if saved <= 0:

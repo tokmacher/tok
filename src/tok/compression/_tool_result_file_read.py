@@ -560,6 +560,16 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
     if _is_observability_file(tool_context):
         return text
 
+    # Resolve path to pointer alias (*A etc.) for compressed output headers
+    _path_label: str = ""
+    if tool_context and session is not None:
+        _args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+        _raw_path = str(
+            _args.get("path") or _args.get("file_path") or _args.get("AbsolutePath") or _args.get("TargetFile") or ""
+        ).strip()
+        if _raw_path and hasattr(session, "bridge_memory"):
+            _path_label = session.bridge_memory.pointers.reverse_map.get(_raw_path, "")
+
     # Try AST-based skeleton extraction for Python files
     if _is_python_file(text, tool_context):
         ast_skeleton = _extract_python_skeleton(text)
@@ -586,10 +596,11 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|ast_skeleton:true|"
                 "is_skeleton:true|fidelity:summary|lossy:true" + (f"|sections:{section_map}" if section_map else "")
             )
+            _path_hint = _path_label or "..."
             return (
                 header
                 + "\n# [tok optimized] File unchanged — showing structure to save tokens\n"
-                + "# Full content: Read path=... offset=1 (adds limit=N for specific section)\n"
+                + f"# Full content: Read path={_path_hint} offset=1 (adds limit=N for specific section)\n"
                 + ast_skeleton
             )
 
@@ -717,9 +728,10 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
         f"skeleton_lines:{len(result)}|retained_skeleton_lines:{len(trimmed_result)}|"
         "is_skeleton:true|fidelity:summary|lossy:true" + (f"|sections:{section_map}" if section_map else "")
     )
+    _path_hint = _path_label or "..."
     return (
         header
         + "\n# [tok optimized] File unchanged — showing structure to save tokens\n"
-        + "# Full content: Read path=... offset=1 (adds limit=N for specific section)\n"
+        + f"# Full content: Read path={_path_hint} offset=1 (adds limit=N for specific section)\n"
         + compressed
     )

@@ -19,6 +19,7 @@ from ._cli_support import (
     PID_FILE,
     TOK_DIR,
     console,
+    env_int,
     get_bridge_health_response,
     get_running_bridge_pid,
     memory_root,
@@ -90,12 +91,12 @@ def bridge_start(
         ),
     ] = False,
     api_base: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--api-base",
             help="Target API base URL (e.g., https://api.anthropic.com)",
         ),
-    ] = "https://api.anthropic.com",
+    ] = None,
 ) -> None:
     """Start the Tok bridge server."""
     existing = get_running_bridge_pid(port)
@@ -139,7 +140,8 @@ def bridge_start(
         env["TOK_DEBUG"] = "1" if debug else "0"
         env["TOK_FAIL_OPEN"] = "1" if fail_open else "0"
         env["TOK_CAPTURE"] = "1" if capture else env.get("TOK_CAPTURE", "0")
-        env["TOK_API_BASE"] = api_base
+        if api_base is not None:
+            env["TOK_API_BASE"] = api_base
         env["TOK_RESET_SESSION"] = "1"
 
         log_file = open(LOG_FILE, "a")
@@ -195,7 +197,7 @@ def bridge_start(
 
 def bridge_stop(force: bool = False) -> None:
     """Stop the Tok bridge server."""
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+    port = env_int("TOK_BRIDGE_PORT", 9090)
     pid = get_running_bridge_pid(port)
     tracker = SavingsTracker()
 
@@ -231,7 +233,10 @@ def bridge_stop(force: bool = False) -> None:
         except (ProcessLookupError, PermissionError):
             console.print(f"[yellow]Failed to stop PID {p} (gone or permission denied)[/yellow]")
 
-    PID_FILE.unlink(missing_ok=True)
+    try:
+        PID_FILE.unlink(missing_ok=True)
+    except PermissionError as exc:
+        console.print(f"[yellow]Could not remove bridge PID file {PID_FILE}: {exc}[/yellow]")
 
     session_summary = tracker.session_summary()
     if session_summary:
@@ -259,7 +264,7 @@ def bridge_stop(force: bool = False) -> None:
 
 def bridge_status() -> None:
     """Check bridge status."""
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+    port = env_int("TOK_BRIDGE_PORT", 9090)
     pid = get_running_bridge_pid(port)
     if pid is None:
         console.print("[yellow]Bridge not running[/yellow]")
@@ -268,7 +273,15 @@ def bridge_status() -> None:
 
     try:
         r = get_bridge_health_response(port, timeout=2.0, attempts=2, backoff_seconds=0.2)
-        if r.status_code == 200:
+    except Exception:
+        console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
+        console.print(
+            "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
+        )
+        return
+
+    if r.status_code == 200:
+        try:
             payload = r.json()
             session_summary: dict[str, Any] = {
                 "actual_tokens": int(payload.get("actual_tokens", 0)),
@@ -288,6 +301,19 @@ def bridge_status() -> None:
                 "stream_recovery_empty_success_count": int(payload.get("stream_recovery_empty_success_count", 0)),
                 "stream_recovery_read_error_count": int(payload.get("stream_recovery_read_error_count", 0)),
                 "request_policy_held_by_recovery_count": int(payload.get("request_policy_held_by_recovery_count", 0)),
+                "evidence_exact_observed_count": int(payload.get("evidence_exact_observed_count", 0)),
+                "evidence_non_exact_reference_count": int(payload.get("evidence_non_exact_reference_count", 0)),
+                "evidence_non_exact_summary_count": int(payload.get("evidence_non_exact_summary_count", 0)),
+                "evidence_non_exact_skeleton_count": int(payload.get("evidence_non_exact_skeleton_count", 0)),
+                "evidence_exact_reacquisition_required_count": int(
+                    payload.get("evidence_exact_reacquisition_required_count", 0)
+                ),
+                "evidence_exact_reacquisition_satisfied_count": int(
+                    payload.get("evidence_exact_reacquisition_satisfied_count", 0)
+                ),
+                "evidence_compression_blocked_for_safety_count": int(
+                    payload.get("evidence_compression_blocked_for_safety_count", 0)
+                ),
             }
             baseline_only = bool(payload.get("baseline_only"))
             fallback_count = int(payload.get("fallback_count", 0))
@@ -350,8 +376,12 @@ def bridge_status() -> None:
                     "[dim]Next step: keep working for a few turns, then run `tok stats --last-session` if savings are still unclear.[/dim]"
                 )
             return
-    except Exception:
-        pass
+        except (TypeError, ValueError, KeyError):
+            console.print(f"[yellow]Bridge process alive (PID {pid}) but health payload is malformed[/yellow]")
+            console.print(
+                "[dim]Next step: inspect `tok bridge logs 100` and restart with `tok bridge start --foreground`.[/dim]"
+            )
+            raise typer.Exit(1) from None
 
     console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
     console.print(

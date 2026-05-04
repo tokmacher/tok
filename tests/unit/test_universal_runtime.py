@@ -808,6 +808,60 @@ def test_request_policy_is_not_held_by_recovery_when_only_cooldown_is_active(
     assert session._stream_recovery_cooldown_suppressed is False
 
 
+def test_stream_recovery_cooldown_decremented_on_count_tokens(
+    tmp_path,
+) -> None:
+    """Cooldown should be decremented even on count_tokens path (non-v1/messages)."""
+    from tok.gateway import BridgeSession
+    from tok.gateway._bridge_runtime_pipeline import prepare_bridge_payload
+
+    session = BridgeSession()
+    session.runtime_session._stream_recovery_cooldown_remaining = 1
+
+    body = {
+        "model": "claude-sonnet-4",
+        "max_tokens": 8192,
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+    payload, _ = prepare_bridge_payload(
+        session=session,
+        body=body,
+        headers={},
+        path="v1/messages/count_tokens",
+    )
+    assert session.runtime_session._stream_recovery_cooldown_remaining == 0
+
+    payload, _ = prepare_bridge_payload(
+        session=session,
+        body=body,
+        headers={},
+        path="v1/messages",
+    )
+    assert session.runtime_session._stream_recovery_cooldown_remaining == 0
+
+
+def test_late_answer_mode_signal_priority_when_both_active() -> None:
+    """When toolless_fresh_answer_event and mixed_answer_tool_event are both set,
+    tool_only wins and mixed_answer_tool_event is suppressed (not silently dropped)."""
+    from tok.runtime.policy.answer_repair import (
+        _late_answer_assembly_repair_mode,
+        _mark_late_answer_assembly_suppressed_mixed_signal,
+    )
+
+    signals = {
+        "payload_pressure_ready": 1,
+        "toolless_fresh_answer_event": 1,
+        "mixed_answer_tool_event": 1,
+    }
+    mode = _late_answer_assembly_repair_mode(signals)
+    assert mode == "tool_only"
+
+    suppressed_counter: dict[str, int] = {}
+    _mark_late_answer_assembly_suppressed_mixed_signal(suppressed_counter, signals)
+    assert suppressed_counter.get("late_answer_assembly_mixed_signal_suppressed", 0) == 1
+
+
 def test_natural_first_escalates_on_invalid_tool_history_recovery(
     tmp_path,
 ) -> None:
@@ -884,8 +938,22 @@ def test_reset_invalid_tool_history_recovery_clears_counter() -> None:
 def test_natural_first_escalates_on_repeated_tool_loop_signal(
     tmp_path,
 ) -> None:
+    """Escalates when a target is marked stuck across prior turns (cross-turn loop)."""
+    from tok.runtime.repeat_targets import HotSummaryRecord
+
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    # Seed the session with a stuck target (simulates a prior-turn loop being detected)
+    session._hot_summary_records["file_read:src/tok/runtime/core.py"] = HotSummaryRecord(
+        tool_family="file_read",
+        logical_target="src/tok/runtime/core.py",
+        display_target="src/tok/runtime/core.py",
+        summary="",
+        token_cost=0,
+        result_digest="",
+        last_seen_turn=3,
+        stuck_promotion_turn=3,
+    )
     request = RuntimeRequest(
         model="claude-sonnet-4-6",
         request_policy="natural_first",
@@ -900,12 +968,6 @@ def test_natural_first_escalates_on_repeated_tool_loop_signal(
                         "name": "view_file",
                         "input": {"path": "src/tok/runtime/core.py"},
                     },
-                    {
-                        "type": "tool_use",
-                        "id": "t2",
-                        "name": "view_file",
-                        "input": {"path": "src/tok/runtime/core.py"},
-                    },
                 ],
             },
             {
@@ -914,11 +976,6 @@ def test_natural_first_escalates_on_repeated_tool_loop_signal(
                     {
                         "type": "tool_result",
                         "tool_use_id": "t1",
-                        "content": "runtime core",
-                    },
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "t2",
                         "content": "runtime core",
                     },
                 ],
@@ -3508,6 +3565,25 @@ def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
     assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
+
+
+def test_prepare_request_records_loop_detection_without_final_answer_steering(
+    tmp_path,
+) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session._loop_detected = True
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        messages=[{"role": "user", "content": "Continue the investigation."}],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.behavior_signals.get("loop_terminated", 0) == 1
+    assert "@tok_terminate_loop" not in prepared.body["system"]
+    assert "provide a final response now" not in prepared.body["system"]
 
 
 def test_prepare_request_tool_results_only_do_not_trigger_answer_ready(

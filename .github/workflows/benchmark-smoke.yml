@@ -36,11 +36,13 @@ jobs:
       - name: Run release smoke with benchmarks
         env:
           BENCHMARK_OUTPUT: ${{ github.workspace }}/tmp/benchmark-smoke
+          BENCHMARK_MODE: ${{ inputs.mode }}
+          MODEL: ${{ inputs.model }}
         run: |
           uv run python scripts/run_release_smoke.py \
-            --benchmark-mode "${{ inputs.mode }}" \
+            --benchmark-mode "$BENCHMARK_MODE" \
             --benchmark-output "$BENCHMARK_OUTPUT" \
-            --model "${{ inputs.model }}"
+            --model "$MODEL"
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v4

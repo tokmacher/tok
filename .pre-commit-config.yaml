@@ -49,6 +49,20 @@ repos:
               }
             }
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        name: "🐙 github-actions · Lint workflow logic"
+
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.22.0
+    hooks:
+      - id: zizmor
+        name: "🔒 github-actions · Audit workflow security"
+        args: ["--no-online-audits", "."]
+        pass_filenames: false
+
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.8
     hooks:
@@ -123,6 +137,12 @@ repos:
       - id: validate-pyproject
         name: "🐍 python · Validate pyproject.toml"
 
+  - repo: https://github.com/tox-dev/pyproject-fmt
+    rev: v2.21.1
+    hooks:
+      - id: pyproject-fmt
+        name: "🐍 python · Format pyproject.toml"
+
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0.31.0
     hooks:
@@ -156,6 +176,14 @@ repos:
       - id: shellcheck
         files: ^scripts/.*\.sh$
 
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+        name: "🐚 shell · Format shell scripts"
+        args: ["-w", "-i", "4", "-ci", "-sr"]
+        files: ^scripts/.*\.sh$
+
   - repo: https://github.com/openstack/bashate
     rev: 2.1.1
     hooks:
@@ -169,6 +197,12 @@ repos:
         name: "🖼️ images · Optimize PNG files"
         args: ["-o", "4", "--strip", "safe", "--alpha"]
 
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.10.0
+    hooks:
+      - id: commitizen
+        name: "🌳 git · Validate commit message"
+        stages: [commit-msg]
 
   - repo: local
     hooks:

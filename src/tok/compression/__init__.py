@@ -29,6 +29,18 @@ TOOL_COMPRESS_THRESHOLD = 0
 
 logger = logging.getLogger("tok.compression")
 
+
+def _env_int(name: str, fallback: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+        return fallback
+
+
 _HARNESS_INJECTION_RE = re.compile(r"\n?<system-reminder>.*?</system-reminder>\n?", re.DOTALL)
 
 
@@ -398,7 +410,7 @@ When you see freshness indicators, the associated file has not changed on disk s
 """
 
 # Minimum content length to be eligible for semantic hash deduplication.
-_SEMANTIC_HASH_MIN_CHARS = int(os.getenv("TOK_SEMANTIC_HASH_MIN_CHARS", "200"))
+_SEMANTIC_HASH_MIN_CHARS = _env_int("TOK_SEMANTIC_HASH_MIN_CHARS", 200)
 
 
 def _compute_semantic_hash(content: str) -> str:
@@ -964,7 +976,7 @@ def _unpack_cache_entry(
     if entry_length == 2:
         return str(entry[0]), str(entry[1]), None, False, entry_length
     if entry_length == 1:
-        return str(entry[0]), "", None, True, entry_length
+        return str(entry[0]), "", None, False, entry_length
     return "", "", None, True, entry_length
 
 
@@ -1376,6 +1388,7 @@ def compress_tool_results(
     preserve_exact_search_evidence: bool = False,
     recently_edited_files: dict[str, int] | None = None,
     file_heat: dict[str, float] | None = None,
+    session: Any | None = None,
     model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
@@ -1397,6 +1410,7 @@ def compress_tool_results(
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         recently_edited_files=recently_edited_files,
         file_heat=file_heat,
+        session=session,
         model_profile=model_profile,
     )
 

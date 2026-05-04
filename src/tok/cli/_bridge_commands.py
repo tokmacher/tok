@@ -26,12 +26,12 @@ def bridge_start(
         ),
     ] = False,
     api_base: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--api-base",
             help="Target API base URL (e.g., https://api.anthropic.com)",
         ),
-    ] = "https://api.anthropic.com",
+    ] = None,
 ) -> None:
     """Start the Tok bridge server."""
     from ._bridge import bridge_start as bridge_start_command

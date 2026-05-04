@@ -2221,6 +2221,15 @@ class TestFindPathPreservation:
         assert preserved > 0, f"No paths preserved for 150-path find: {result[:300]}"
         assert "file_" in result, f"All paths lost in 150-path find: {result[:300]}"
 
+    def test_find_with_realistic_long_paths_not_truncated_again(self) -> None:
+        long_base = "/Users/jfj/Desktop/tok/src/tok/compression/workers/jobs"
+        paths = [f"{long_base}/subpkg_{i}/module_{j}.py" for i in range(10) for j in range(20)]
+        text = "\n".join(paths)
+        assert all(len(p) > 60 for p in paths), "test requires 60+ char paths"
+        result = tok_tool_result(text)
+        preserved = sum(1 for p in paths if p in result)
+        assert preserved > 0, f"No long paths preserved; result[:500]: {result[:500]}"
+
 
 # ---------------------------------------------------------------------------
 # Bug 0.1.5-2: Python skeleton must preserve top-level constant values
@@ -2391,3 +2400,42 @@ class TestObservabilityFileBypass:
 
     def test_is_observability_file_handles_empty_args(self) -> None:
         assert not _is_observability_file({"args": {}})
+
+
+def test_threshold_sync_is_thread_safe() -> None:
+    """Verify _sync_threshold uses proper locking for thread-safe synchronization."""
+    import threading
+
+    from tok.compression import _history_pipeline as history_pipeline
+    from tok.compression import _pipeline
+
+    # Verify lock exists
+    assert hasattr(_pipeline, "_threshold_lock"), "Threshold sync lock not found"
+
+    # Test basic synchronization
+    _pipeline.TOOL_COMPRESS_THRESHOLD = 42
+    _pipeline._sync_threshold()
+    assert history_pipeline.TOOL_COMPRESS_THRESHOLD == 42
+
+    # Test concurrent synchronization
+    results = []
+    errors = []
+
+    def sync_and_check(val: int) -> None:
+        try:
+            for _ in range(100):
+                _pipeline.TOOL_COMPRESS_THRESHOLD = val
+                _pipeline._sync_threshold()
+                results.append(history_pipeline.TOOL_COMPRESS_THRESHOLD)
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=sync_and_check, args=(i % 5,)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"Thread errors: {errors}"
+    # All results should be valid threshold values (0-4)
+    assert all(v in range(5) for v in results), f"Invalid threshold values found: {set(results)}"

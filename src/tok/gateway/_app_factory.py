@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 
 from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
 from tok.runtime.smoothness import SmoothnessEventType
+from tok.spec.live_trace import emit_live_trace
 
 from . import (
     _RUNTIME,
@@ -119,10 +120,11 @@ def _build_rate_limit_response(retry_after_seconds: float) -> Response:
     return Response(
         content=json.dumps(
             {
+                "type": "error",
                 "error": {
                     "type": "rate_limit_error",
                     "message": "Tok gateway is temporarily rate limited; retry later.",
-                }
+                },
             }
         ),
         status_code=429,
@@ -131,19 +133,14 @@ def _build_rate_limit_response(retry_after_seconds: float) -> Response:
     )
 
 
-def _normalize_rate_limit_response(session: BridgeSession, response: httpx.Response) -> Response:
-    _record_rate_limit_hit(session)
-    remaining = _rate_limit_throttle_remaining(session)
-    retry_after_header = response.headers.get("retry-after")
-    retry_after_seconds = remaining
-    if retry_after_seconds <= 0.0 and retry_after_header:
-        try:
-            retry_after_seconds = max(0.0, float(retry_after_header))
-        except ValueError:
-            retry_after_seconds = 1.0
-    if retry_after_seconds <= 0.0:
-        retry_after_seconds = 1.0
-    return _build_rate_limit_response(retry_after_seconds)
+async def _build_upstream_rate_limit_response(response: httpx.Response) -> Response:
+    content = await response.aread()
+    return Response(
+        content=content,
+        status_code=response.status_code,
+        headers=_safe_headers(response.headers),
+        media_type=response.headers.get("content-type", "application/json"),
+    )
 
 
 def _rebuild_content_preserving_position(
@@ -235,15 +232,28 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         return {"status": "ok", "bridge": "tok"}
 
     @app.api_route("/health", methods=["GET", "HEAD"])
-    async def health() -> dict[str, Any]:
-        report_session = session.reporting_session()
-        session_summary = report_session.tracker.session_summary() or {}
-        signals = dict(report_session.tracker.behavior_signals())
-        for (
-            key,
-            value,
-        ) in report_session.runtime_session.pending_behavior_signals.items():
-            signals[key] = signals.get(key, 0) + int(value)
+    async def health(request: Request) -> dict[str, Any]:
+        explicit_session_key = ""
+        if any(
+            request.headers.get(header, "").strip()
+            for header in ("x-tok-session-id", "x-claude-session-id", "x-codex-session-id", "x-client-session-id")
+        ):
+            explicit_session_key = session.activate_session_for_request(dict(request.headers), None)
+        report_session = (
+            session.bound_session_for_key(explicit_session_key) if explicit_session_key else session.reporting_session()
+        )
+        session_summary = (
+            report_session.tracker.session_summary() if explicit_session_key else session.aggregate_session_summary()
+        ) or {}
+        if explicit_session_key:
+            signals = dict(report_session.tracker.behavior_signals())
+            for (
+                key,
+                value,
+            ) in report_session.runtime_session.pending_behavior_signals.items():
+                signals[key] = signals.get(key, 0) + int(value)
+        else:
+            signals = session.aggregate_behavior_signals()
         return {
             "status": "ok",
             "bridge": "tok",
@@ -253,11 +263,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "request_policy": session.request_policy_default,
             "baseline_only": report_session.runtime_session._baseline_only,
             "persistence_failures": report_session.runtime_session._persistence_failures,
-            "fallback_count": int(
-                session_summary.get(
-                    "fallback_count",
-                    report_session.tracker.behavior_signals().get("tok_fallback_activated", 0),
-                )
+            "fallback_count": max(
+                int(session_summary.get("fallback_count", 0)),
+                int(signals.get("tok_fallback_activated", 0)),
             ),
             "actual_tokens": int(session_summary.get("actual_tokens", 0)),
             "baseline_tokens": int(session_summary.get("baseline_tokens", 0)),
@@ -266,6 +274,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "prepared_prompt_tokens": int(session_summary.get("prepared_prompt_tokens", 0)),
             "saved_prompt_tokens": int(session_summary.get("saved_prompt_tokens", 0)),
             "session_savings_pct": float(session_summary.get("savings_pct", 0.0)),
+            "session_cost_savings_pct": float(
+                session_summary.get("cost_savings_pct", session_summary.get("savings_pct", 0.0))
+            ),
             "actual_cost_usd": float(session_summary.get("actual_cost_usd", 0.0)),
             "baseline_cost_usd": float(session_summary.get("baseline_cost_usd", 0.0)),
             "cost_saved_usd": float(session_summary.get("cost_saved_usd", 0.0)),
@@ -305,7 +316,15 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "state_resend_full_count": int(signals.get("state_resend_full_turn", 0)),
             "state_resend_delta_count": int(signals.get("state_resend_delta_turn", 0)),
             "state_resend_suppressed_count": int(signals.get("state_resend_suppressed_turn", 0)),
-            "stream_recovery_attempt_count": int(session_summary.get("stream_recovery_attempt_count", 0)),
+            "stream_recovery_attempt_count": max(
+                int(session_summary.get("stream_recovery_attempt_count", 0)),
+                int(signals.get("stream_recovery_started", 0)),
+                sum(
+                    v
+                    for k, v in report_session.runtime_session.smoothness_event_counts.items()
+                    if "stream_recovery" in k.lower()
+                ),
+            ),
             "stream_recovery_success_text_count": int(session_summary.get("stream_recovery_success_text_count", 0)),
             "stream_recovery_success_tool_use_count": int(
                 session_summary.get("stream_recovery_success_tool_use_count", 0)
@@ -326,7 +345,10 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             "tool_history_repaired_count": int(session_summary.get("tool_history_repaired_count", 0)),
             "tool_history_pairing_repaired_count": int(session_summary.get("tool_history_pairing_repaired_count", 0)),
             "tool_history_quarantined_count": int(session_summary.get("tool_history_quarantined_count", 0)),
-            "tool_history_blocked_count": int(session_summary.get("tool_history_blocked_count", 0)),
+            "tool_history_blocked_count": max(
+                int(session_summary.get("tool_history_blocked_count", 0)),
+                int(signals.get("tok_bridge_invalid_tool_history_blocked", 0)),
+            ),
             "invalid_tool_history_session_reset_count": int(
                 session_summary.get("invalid_tool_history_session_reset_count", 0)
             ),
@@ -509,7 +531,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     raise ValueError(msg)
                 tok_tool_header = request.headers.get("x-tok-tool-compatible", "")
                 bridge_payload, preflight_response = prepare_bridge_payload(
-                    session=session,
+                    session=active_session,
                     body=body,
                     headers=headers,
                     path=path,
@@ -577,6 +599,30 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     if not behavior_signals.get("plan_finalization_passthrough", 0):
                         body = apply_anthropic_optimizations(body)
                     body_bytes = json.dumps(body).encode()
+                    emit_live_trace(
+                        active_session,
+                        "request_prepared",
+                        trace_class="message",
+                        action="summary_reference" if compressed else "pass_through",
+                        result="ok",
+                        expectation="accept_non_exact_reference" if compressed else "accept_fallback",
+                        reason=(
+                            "live metadata-only trace; request artifacts are not captured"
+                            if compressed
+                            else "request passed through without live artifact capture"
+                        ),
+                        direction="request",
+                        metadata={
+                            "compressed": bool(compressed),
+                            "input_saved_tokens": int(saved_toks if compressed else 0),
+                            "request_policy": request_policy,
+                            "mode": _request_policy_mode_label(request_policy),
+                            "tool_compatible": bool(request_tool_compatible),
+                            "behavior_signals": behavior_signals,
+                            "prompt_metrics": prompt_metrics,
+                            "prepared_body_bytes": len(body_bytes),
+                        },
+                    )
 
                     if tool_breakdown:
                         logger.info(
@@ -716,8 +762,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         behavior_signals[key] = behavior_signals.get(key, 0) + value
                 _note_request_policy_recovery_watch(active_session, retry_signals)
                 if response.status_code == 429:
-                    await _close_streaming_setup_resources(response, client)
-                    return _normalize_rate_limit_response(session, response)
+                    _record_rate_limit_hit(session)
+                    try:
+                        # aread() drains and closes the streaming response; only client needs cleanup.
+                        rate_limit_response = await _build_upstream_rate_limit_response(response)
+                    finally:
+                        await _close_streaming_setup_resources(None, client)
+                    return rate_limit_response
                 if retried_without_tok:
                     compressed = False
                     saved_toks = 0
@@ -875,7 +926,8 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     behavior_signals[key] = behavior_signals.get(key, 0) + value
             _note_request_policy_recovery_watch(active_session, retry_signals)
             if response.status_code == 429:
-                return _normalize_rate_limit_response(session, response)
+                _record_rate_limit_hit(session)
+                return await _build_upstream_rate_limit_response(response)
             if retried_without_tok:
                 compressed = False
                 saved_toks = 0
@@ -1029,6 +1081,27 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                                     (active_session.tracker.session_summary() or {}).get("last_degradation_reason", "")
                                 ),
                             }
+                        )
+                        emit_live_trace(
+                            active_session,
+                            "response_processed",
+                            trace_class="response",
+                            action="summary_reference" if total_output_saved else "pass_through",
+                            result="ok",
+                            expectation="accept_non_exact_reference" if total_output_saved else "accept_fallback",
+                            reason=(
+                                "live metadata-only trace; response artifacts are not captured"
+                                if total_output_saved
+                                else "response passed through without live artifact capture"
+                            ),
+                            direction="response",
+                            metadata={
+                                "output_saved_tokens": int(total_output_saved),
+                                "behavior_signals": response_signals or {},
+                                "request_policy": request_policy,
+                                "tool_compatible": bool(request_tool_compatible),
+                                "baseline_only": bool(active_session.runtime_session._baseline_only),
+                            },
                         )
                     content = json.dumps(resp_json).encode()
                 except Exception as exc:

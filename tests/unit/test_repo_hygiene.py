@@ -24,6 +24,7 @@ def test_find_violations_accepts_canonical_root_files() -> None:
     violations = module.find_violations(
         [
             "README.md",
+            ".editorconfig",
             "LICENSE",
             "pyproject.toml",
             "roadmap.md",
@@ -66,3 +67,17 @@ def test_find_violations_flags_runtime_and_ad_hoc_root_files() -> None:
 
     assert "tracked runtime artifact in repo root: memory.tok" in violations
     assert "unexpected tracked top-level file: plan_structure.txt" in violations
+
+
+def test_find_violations_flags_root_release_report_artifacts() -> None:
+    module = _load_module()
+
+    violations = module.find_violations(
+        [
+            "subtle-bug-audit-report-2026-04-30.md",
+            "stability-campaign-findings.md",
+        ]
+    )
+
+    assert "tracked release report artifact in repo root: subtle-bug-audit-report-2026-04-30.md" in violations
+    assert "tracked release report artifact in repo root: stability-campaign-findings.md" in violations

@@ -237,6 +237,137 @@ def test_hot_recent_search_hints_require_session_exact_observation(
     assert metrics["hot_recent_hint_injected"] == 1
 
 
+def test_evidence_safety_ledger_records_exact_then_non_exact_file_reference(tmp_path) -> None:
+    runtime, session = _runtime(tmp_path)
+    session.bridge_memory.turn = 9
+    content = "\n".join(
+        [
+            "def alpha():",
+            "    return 1",
+            "",
+            "def beta():",
+            "    return 2",
+        ]
+        * 80
+    )
+    exact_key = evidence_identity_key("read_file", path="src/foo.py", args={"path": "src/foo.py"})
+
+    first = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Inspect foo."},
+                _make_tool_use_msg("t1", "read_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", content),
+                {"role": "user", "content": "Keep going."},
+            ],
+        ),
+        session,
+    )
+    assert exact_key in session._first_exact_evidence_seen
+    assert first.behavior_signals.get("evidence_first_exact_observed", 0) >= 1
+    assert session._evidence_safety_ledger[exact_key].latest_form == "exact"
+
+    second = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Inspect foo."},
+                _make_tool_use_msg("t1", "read_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", content),
+                {"role": "user", "content": "Keep going."},
+                _make_tool_use_msg("t2", "read_file", path="src/foo.py"),
+                _make_tool_result_msg("t2", content),
+                {"role": "user", "content": "Summarize."},
+            ],
+        ),
+        session,
+    )
+
+    assert second.behavior_signals.get("evidence_non_exact_reference_emitted", 0) >= 1
+    assert session._evidence_safety_ledger[exact_key].latest_form in {"summary", "skeleton", "reference"}
+    assert session.evidence_safety_audit_summary()["non_exact_latest"] >= 1
+
+
+def test_edit_after_non_exact_file_reference_blocks_compression_until_exact_reacquisition(tmp_path) -> None:
+    runtime, session = _runtime(tmp_path)
+    session.bridge_memory.turn = 9
+    content = "\n".join(["def alpha():", "    return 1", "", "def beta():", "    return 2"] * 80)
+    exact_key = evidence_identity_key("read_file", path="src/foo.py", args={"path": "src/foo.py"})
+
+    runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Inspect foo."},
+                _make_tool_use_msg("t1", "read_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", content),
+                {"role": "user", "content": "Keep going."},
+            ],
+        ),
+        session,
+    )
+    runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Inspect foo."},
+                _make_tool_use_msg("t1", "read_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", content),
+                {"role": "user", "content": "Keep going."},
+                _make_tool_use_msg("t2", "read_file", path="src/foo.py"),
+                _make_tool_result_msg("t2", content),
+                {"role": "user", "content": "Now edit it."},
+            ],
+        ),
+        session,
+    )
+    assert session.evidence_requires_reacquisition(exact_key)
+
+    edit_turn = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Inspect foo."},
+                _make_tool_use_msg("t1", "read_file", path="src/foo.py"),
+                _make_tool_result_msg("t1", content),
+                {"role": "user", "content": "Keep going."},
+                _make_tool_use_msg("t2", "read_file", path="src/foo.py"),
+                _make_tool_result_msg("t2", content),
+                {"role": "user", "content": "Now edit it."},
+                _make_tool_use_msg("e1", "edit_file", path="src/foo.py", old="return 1", new="return 10"),
+            ],
+        ),
+        session,
+    )
+
+    assert edit_turn.behavior_signals["evidence_exact_reacquisition_required"] >= 1
+    assert edit_turn.behavior_signals["evidence_compression_blocked_for_safety"] >= 1
+    assert edit_turn.behavior_signals["evidence_tool_result_compression_skipped"] == 1
+    assert edit_turn.behavior_signals["evidence_history_compression_skipped"] == 1
+
+    reacquired = runtime.prepare_request(
+        RuntimeRequest(
+            model="claude-sonnet-4",
+            tool_compatible=True,
+            messages=[
+                {"role": "user", "content": "Re-read exactly."},
+                _make_tool_use_msg("t3", "read_file", path="src/foo.py", tok_bypass_cache=True),
+                _make_tool_result_msg("t3", content),
+                {"role": "user", "content": "Continue."},
+            ],
+        ),
+        session,
+    )
+    assert reacquired.behavior_signals.get("evidence_exact_reacquisition_satisfied", 0) >= 1
+    assert not session.evidence_requires_reacquisition(exact_key)
+
+
 def test_repeated_command_family_promotes_hot_command_hint(tmp_path) -> None:
     runtime, session = _runtime(tmp_path)
     session.bridge_memory.turn = 9

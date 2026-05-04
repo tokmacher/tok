@@ -1,22 +1,37 @@
 """Configuration and constants for the Tok runtime."""
 
+import logging
 import os
 
 from .policy.smart_policy import MemoryProjectionProfile
 
+logger = logging.getLogger("tok.runtime.config")
+
+
+def _env_int(name: str, fallback: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+        return fallback
+
+
 TTL_SECONDS = {"1h": 3600, "30m": 1800, "15m": 900, "5m": 300, "1m": 60}
 
-RESULT_CACHE_TTL_SECONDS: int = int(os.getenv("TOK_RESULT_CACHE_TTL", "1800"))
+RESULT_CACHE_TTL_SECONDS: int = _env_int("TOK_RESULT_CACHE_TTL", 1800)
 
 # Consecutive fail-open events in a session that trigger automatic baseline degradation.
-_FALLBACK_THRESHOLD: int = int(os.getenv("TOK_FALLBACK_THRESHOLD", "3"))
+_FALLBACK_THRESHOLD: int = _env_int("TOK_FALLBACK_THRESHOLD", 3)
 
 # Short session threshold: sessions with fewer turns use baseline mode to avoid overhead.
-_SHORT_SESSION_THRESHOLD: int = int(os.getenv("TOK_SHORT_SESSION_THRESHOLD", "8"))
+_SHORT_SESSION_THRESHOLD: int = _env_int("TOK_SHORT_SESSION_THRESHOLD", 8)
 
-_HOT_HINT_MIN_TURN: int = int(os.getenv("TOK_HOT_HINT_MIN_TURN", "10"))
+_HOT_HINT_MIN_TURN: int = _env_int("TOK_HOT_HINT_MIN_TURN", 10)
 
-_SHORT_MEMORY_TURN_CEILING: int = int(os.getenv("TOK_SHORT_MEMORY_TURN_CEILING", "14"))
+_SHORT_MEMORY_TURN_CEILING: int = _env_int("TOK_SHORT_MEMORY_TURN_CEILING", 14)
 
 # Known project-type marker filenames used for Local Mesh Discovery.
 _PROJECT_MARKER_FILES: frozenset[str] = frozenset(
@@ -68,23 +83,21 @@ TOOL_COMPAT_DELTA_KEYS = ("turns", "goal", "files", "tests", "errs", "facts")
 TOOL_COMPAT_STICKY_KEYS = ("files", "tests")
 TOOL_COMPAT_MAX_FILES = 2
 
-TOK_REACQUIRE_TRIGGER_COUNT: int = int(os.getenv("TOK_REACQUIRE_TRIGGER_COUNT", "2"))
-TOK_REACQUIRE_STUCK_COUNT: int = int(os.getenv("TOK_REACQUIRE_STUCK_COUNT", "3"))
-TOK_REACQUIRE_WINDOW_TURNS: int = int(os.getenv("TOK_REACQUIRE_WINDOW_TURNS", "6"))
-TOK_REACQUIRE_STUCK_WINDOW_TURNS: int = int(os.getenv("TOK_REACQUIRE_STUCK_WINDOW_TURNS", "8"))
-TOK_HOT_RECENT_MAX_HINTS: int = int(os.getenv("TOK_HOT_RECENT_MAX_HINTS", "2"))
-TOK_HOT_FILE_MAX_LINES: int = int(os.getenv("TOK_HOT_FILE_MAX_LINES", "12"))
-TOK_HOT_FILE_MAX_CHARS: int = int(os.getenv("TOK_HOT_FILE_MAX_CHARS", "400"))
-TOK_HOT_SEARCH_MAX_LINES: int = int(os.getenv("TOK_HOT_SEARCH_MAX_LINES", "6"))
-TOK_HOT_SEARCH_MAX_CHARS: int = int(os.getenv("TOK_HOT_SEARCH_MAX_CHARS", "300"))
-TOK_HOT_COMMAND_MAX_LINES: int = int(os.getenv("TOK_HOT_COMMAND_MAX_LINES", "6"))
-TOK_HOT_COMMAND_MAX_CHARS: int = int(os.getenv("TOK_HOT_COMMAND_MAX_CHARS", "300"))
-TOK_PREDICTIVE_CACHE_TOP_K: int = int(os.getenv("TOK_PREDICTIVE_CACHE_TOP_K", "3"))
-TOK_REQUEST_POLICY_STICKY_TURNS: int = int(os.getenv("TOK_REQUEST_POLICY_STICKY_TURNS", "3"))
-TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS: int = int(os.getenv("TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS", "2"))
-TOK_REQUEST_POLICY_TOOL_DENSE_ASSISTANT_TURNS: int = int(
-    os.getenv("TOK_REQUEST_POLICY_TOOL_DENSE_ASSISTANT_TURNS", "2")
-)
+TOK_REACQUIRE_TRIGGER_COUNT: int = _env_int("TOK_REACQUIRE_TRIGGER_COUNT", 2)
+TOK_REACQUIRE_STUCK_COUNT: int = _env_int("TOK_REACQUIRE_STUCK_COUNT", 3)
+TOK_REACQUIRE_WINDOW_TURNS: int = _env_int("TOK_REACQUIRE_WINDOW_TURNS", 6)
+TOK_REACQUIRE_STUCK_WINDOW_TURNS: int = _env_int("TOK_REACQUIRE_STUCK_WINDOW_TURNS", 8)
+TOK_HOT_RECENT_MAX_HINTS: int = _env_int("TOK_HOT_RECENT_MAX_HINTS", 2)
+TOK_HOT_FILE_MAX_LINES: int = _env_int("TOK_HOT_FILE_MAX_LINES", 12)
+TOK_HOT_FILE_MAX_CHARS: int = _env_int("TOK_HOT_FILE_MAX_CHARS", 400)
+TOK_HOT_SEARCH_MAX_LINES: int = _env_int("TOK_HOT_SEARCH_MAX_LINES", 6)
+TOK_HOT_SEARCH_MAX_CHARS: int = _env_int("TOK_HOT_SEARCH_MAX_CHARS", 300)
+TOK_HOT_COMMAND_MAX_LINES: int = _env_int("TOK_HOT_COMMAND_MAX_LINES", 6)
+TOK_HOT_COMMAND_MAX_CHARS: int = _env_int("TOK_HOT_COMMAND_MAX_CHARS", 300)
+TOK_PREDICTIVE_CACHE_TOP_K: int = _env_int("TOK_PREDICTIVE_CACHE_TOP_K", 3)
+TOK_REQUEST_POLICY_STICKY_TURNS: int = _env_int("TOK_REQUEST_POLICY_STICKY_TURNS", 3)
+TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS: int = _env_int("TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS", 2)
+TOK_REQUEST_POLICY_TOOL_DENSE_ASSISTANT_TURNS: int = _env_int("TOK_REQUEST_POLICY_TOOL_DENSE_ASSISTANT_TURNS", 2)
 
 # Runtime repair and followthrough hints
 ANSWER_READY_RUNTIME_HINT = (
@@ -133,10 +146,10 @@ TOK_REPEAT_COMMAND_SUPPRESSION_HINT = (
     "You just ran an identical command and got the same successful result. "
     "Do not rerun it unless files or constraints changed; proceed to synthesis or next distinct step."
 )
-TOK_NEIGHBORHOOD_TRIGGER_ANCHORS: int = int(os.getenv("TOK_NEIGHBORHOOD_TRIGGER_ANCHORS", "3"))
-TOK_NEIGHBORHOOD_WINDOW_TURNS: int = int(os.getenv("TOK_NEIGHBORHOOD_WINDOW_TURNS", "6"))
-TOK_TOOL_REQUIRED_LATCH_THRESHOLD: int = int(os.getenv("TOK_TOOL_REQUIRED_LATCH_THRESHOLD", "2"))
-TOK_RUNTIME_HINT_COOLDOWN_TURNS: int = int(os.getenv("TOK_RUNTIME_HINT_COOLDOWN_TURNS", "2"))
+TOK_NEIGHBORHOOD_TRIGGER_ANCHORS: int = _env_int("TOK_NEIGHBORHOOD_TRIGGER_ANCHORS", 3)
+TOK_NEIGHBORHOOD_WINDOW_TURNS: int = _env_int("TOK_NEIGHBORHOOD_WINDOW_TURNS", 6)
+TOK_TOOL_REQUIRED_LATCH_THRESHOLD: int = _env_int("TOK_TOOL_REQUIRED_LATCH_THRESHOLD", 2)
+TOK_RUNTIME_HINT_COOLDOWN_TURNS: int = _env_int("TOK_RUNTIME_HINT_COOLDOWN_TURNS", 2)
 
 _TOOL_REQUIRED_PROMPT_PATTERNS = (
     "fresh evidence",
@@ -165,7 +178,7 @@ COMMAND_DENSITY_THRESHOLD: int = 5
 HEAVY_RESULT_THRESHOLD: int = 6
 HEAVY_RESULT_SKIP_THRESHOLD: int = 4
 
-RUNTIME_HINTS_MAX_PER_TURN: int = int(os.getenv("TOK_RUNTIME_HINTS_MAX_PER_TURN", "3"))
+RUNTIME_HINTS_MAX_PER_TURN: int = _env_int("TOK_RUNTIME_HINTS_MAX_PER_TURN", 3)
 
 # Word-count thresholds for drift detection
 DRIFT_SHORT_TEXT_WORDS: int = 10
@@ -175,7 +188,7 @@ DRIFT_BULLET_LINE_THRESHOLD: int = 2
 # Diff ratio threshold for result cache
 DIFF_RATIO_THRESHOLD: float = 0.7
 
-TOK_FILE_DELIVERY_STALE_TURNS: int = int(os.getenv("TOK_FILE_DELIVERY_STALE_TURNS", "2"))
+TOK_FILE_DELIVERY_STALE_TURNS: int = _env_int("TOK_FILE_DELIVERY_STALE_TURNS", 2)
 
 # Force file codec: when enabled (1), treat all file-read tool results as cacheable
 # by the file codec, producing @stable_result/@stable_summary stubs aggressively.
@@ -183,7 +196,7 @@ TOK_FORCE_FILE_CODEC: bool = os.getenv("TOK_FORCE_FILE_CODEC", "0") == "1"
 
 # Repair loop detection: when enabled (1, default), detect and break loop patterns.
 TOK_LOOP_DETECTION_ENABLED: bool = os.getenv("TOK_LOOP_DETECTION_ENABLED", "1") == "1"
-TOK_LOOP_DETECTION_THRESHOLD: int = int(os.getenv("TOK_LOOP_DETECTION_THRESHOLD", "3"))
+TOK_LOOP_DETECTION_THRESHOLD: int = _env_int("TOK_LOOP_DETECTION_THRESHOLD", 3)
 
 # Compression feature flags (off by default for conservative rollout).
 TOK_ENABLE_PYTEST_FAIL_COMPRESSION: bool = os.getenv("TOK_ENABLE_PYTEST_FAIL_COMPRESSION", "0") == "1"

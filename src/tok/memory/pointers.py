@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from tok.utils.event_logging import log_pointer_created
 
+_MAX_POINTERS = 52  # 26 base + 26 overflow slots; prune beyond this
+
 
 class PointerRegistry:
     """Registry for relational memory pointers (*A, *B, etc.)."""
@@ -11,12 +13,15 @@ class PointerRegistry:
     def __init__(self) -> None:
         self.map: dict[str, str] = {}
         self.reverse_map: dict[str, str] = {}
+        self.scores: dict[str, int] = {}  # ptr -> score
         self._next_idx: int = 0
 
-    def get_pointer(self, value: str) -> str:
-        """Get or create a pointer for a value."""
+    def get_pointer(self, value: str, score: int = 1) -> str:
+        """Get or create a pointer for a value, bumping its score on each access."""
         if value in self.reverse_map:
-            return self.reverse_map[value]
+            ptr = self.reverse_map[value]
+            self.scores[ptr] = self.scores.get(ptr, 1) + score
+            return ptr
 
         ptr = f"*{chr(65 + (self._next_idx % 26))}"
         if self._next_idx >= 26:
@@ -24,13 +29,27 @@ class PointerRegistry:
 
         # Only intern if it actually saves space
         if len(value) <= len(ptr):
-            return value  # Interning saves nothing; return verbatim.
+            return value
 
         self._next_idx += 1
         self.map[ptr] = value
         self.reverse_map[value] = ptr
+        self.scores[ptr] = score
         log_pointer_created(ptr, value)
+
+        # Evict lowest-scored pointer if over limit
+        if len(self.map) > _MAX_POINTERS:
+            self._evict_lowest()
+
         return ptr
+
+    def _evict_lowest(self) -> None:
+        if not self.map:
+            return
+        evict_ptr = min(self.map, key=lambda p: self.scores.get(p, 0))
+        evict_val = self.map.pop(evict_ptr)
+        self.reverse_map.pop(evict_val, None)
+        self.scores.pop(evict_ptr, None)
 
     def resolve(self, ptr: str) -> str | None:
         return self.map.get(ptr)
@@ -39,7 +58,8 @@ class PointerRegistry:
         if not self.map:
             return ""
         lines = ["@pointers"]
-        for ptr, val in sorted(self.map.items()):
+        # Emit highest-scored pointers first so the session-start hint is signal-dense
+        for ptr, val in sorted(self.map.items(), key=lambda item: -self.scores.get(item[0], 0)):
             lines.append(f"  |> {ptr}={val}")
         return "\n".join(lines) + "\n"
 

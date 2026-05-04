@@ -26,6 +26,7 @@ class TestCLI:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "bridge" in result.output
+        assert "claude" in result.output
         assert "stats" in result.output
         assert "install" in result.output
         assert "doctor" in result.output
@@ -112,8 +113,8 @@ class TestCLI:
 
         assert result.exit_code == 0
         assert "Tok install complete." in result.output
-        assert "Default mode is explicit" in result.output
-        assert "ANTHROPIC_BASE_URL=http://localhost:9090 claude" in result.output
+        assert "Default mode is explicit and shell-safe" in result.output
+        assert "tok claude" in result.output
         assert "tok install --wrap-claude" in result.output
 
     def test_install_default_mode_removes_legacy_wrapper_when_present(self, monkeypatch, tmp_path) -> None:
@@ -128,7 +129,120 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Removed legacy `claude()` Tok wrapper from:" in result.output
         assert ".zshrc" in result.output
-        assert "Default mode is explicit" in result.output
+        assert "Default mode is explicit and shell-safe" in result.output
+
+    def test_claude_starts_bridge_and_launches_with_bridge_env(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        calls: dict[str, Any] = {}
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: None)
+
+        def fake_bridge_start(**kwargs) -> None:
+            calls["bridge_start"] = kwargs
+
+        class FakeCompleted:
+            returncode = 0
+
+        def fake_run(argv, *, env, check):
+            calls["argv"] = argv
+            calls["env"] = env
+            calls["check"] = check
+            return FakeCompleted()
+
+        monkeypatch.setattr(_claude._bridge, "bridge_start", fake_bridge_start)
+        monkeypatch.setattr(_claude.subprocess, "run", fake_run)
+
+        result = runner.invoke(app, ["claude", "--port", "9191", "--api-base", "https://api.example.test", "--debug"])
+
+        assert result.exit_code == 0
+        assert calls["bridge_start"]["port"] == 9191
+        assert calls["bridge_start"]["api_base"] == "https://api.example.test"
+        assert calls["bridge_start"]["debug"] is True
+        assert calls["argv"] == ["claude"]
+        assert calls["env"]["ANTHROPIC_BASE_URL"] == "http://localhost:9191"
+        assert calls["env"]["TOK_SELF_BRIDGED_SESSION"] == "1"
+        assert calls["env"]["TOK_BRIDGE_PORT"] == "9191"
+        assert calls["check"] is False
+
+    def test_claude_reuses_existing_bridge_without_starting_new_one(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        calls: dict[str, Any] = {}
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: 4321)
+        monkeypatch.setattr(
+            _claude._bridge,
+            "bridge_start",
+            lambda **kwargs: (_ for _ in ()).throw(AssertionError("bridge_start should not be called")),
+        )
+
+        class FakeCompleted:
+            returncode = 0
+
+        def fake_run(argv, *, env, check):
+            calls["argv"] = argv
+            calls["env"] = env
+            return FakeCompleted()
+
+        monkeypatch.setattr(_claude.subprocess, "run", fake_run)
+
+        result = runner.invoke(app, ["claude"])
+
+        assert result.exit_code == 0
+        assert "Using existing Tok bridge on :9090 (PID 4321)." in result.output
+        assert calls["argv"] == ["claude"]
+        assert calls["env"]["ANTHROPIC_BASE_URL"] == "http://localhost:9090"
+
+    def test_claude_passes_trailing_args_unchanged(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        calls: dict[str, Any] = {}
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: 4321)
+
+        class FakeCompleted:
+            returncode = 0
+
+        def fake_run(argv, *, env, check):
+            calls["argv"] = argv
+            return FakeCompleted()
+
+        monkeypatch.setattr(_claude.subprocess, "run", fake_run)
+
+        result = runner.invoke(app, ["claude", "--", "--model", "sonnet", "hello"])
+
+        assert result.exit_code == 0
+        assert calls["argv"] == ["claude", "--model", "sonnet", "hello"]
+
+    def test_claude_returns_subprocess_exit_code(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: 4321)
+
+        class FakeCompleted:
+            returncode = 42
+
+        monkeypatch.setattr(_claude.subprocess, "run", lambda *args, **kwargs: FakeCompleted())
+
+        result = runner.invoke(app, ["claude"])
+
+        assert result.exit_code == 42
+
+    def test_claude_reports_missing_claude_executable(self, monkeypatch) -> None:
+        from tok.cli import _claude
+
+        monkeypatch.setattr(_claude._bridge, "get_running_bridge_pid", lambda port: 4321)
+        monkeypatch.setattr(
+            _claude.subprocess,
+            "run",
+            lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()),
+        )
+
+        result = runner.invoke(app, ["claude"])
+
+        assert result.exit_code == 127
+        assert "Claude Code executable not found" in result.output
 
     def test_install_wrap_claude_uses_shell_integration_backend(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr("tok.utils.shell_integration.install", lambda: tmp_path / ".zshrc")
@@ -209,6 +323,40 @@ class TestCLI:
         assert "Session signals" in result.output
         assert "tok doctor" in result.output
         assert "tok bridge logs 100" in result.output
+
+    def test_bridge_status_invalid_port_config_falls_back_without_traceback(self, monkeypatch) -> None:
+        monkeypatch.setenv("TOK_BRIDGE_PORT", "bad")
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: None)
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 1
+        assert "Invalid integer config TOK_BRIDGE_PORT='bad'; using fallback 9090." in result.output
+        assert "Bridge not running" in result.output
+        assert "Traceback" not in result.output
+
+    def test_bridge_status_reports_malformed_health_payload_honestly(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "session_tokens_saved": "not-an-int",
+                    "session_savings_pct": "not-a-float",
+                }
+
+        monkeypatch.setattr("tok.cli._bridge.get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 1
+        assert "health payload is malformed" in result.output
+        assert "not responding" not in result.output
+        assert "Traceback" not in result.output
 
     def test_bridge_status_shows_watch_session_verdict(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
@@ -542,6 +690,32 @@ class TestCLI:
         assert result.exit_code == 0
         assert captured["_api_base"] == "https://example.test/custom"
 
+    def test_bridge_start_foreground_preserves_env_api_base_without_explicit_override(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from tok.cli import _cli_support
+
+        def no_bridge(port) -> None:
+            return None
+
+        monkeypatch.setenv("TOK_API_BASE", "https://env.example.test/api")
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", no_bridge)
+        for mod in (_cli_support,):
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+
+        captured = {}
+
+        def _fake_run_bridge(**kwargs) -> None:
+            captured.update(kwargs)
+
+        monkeypatch.setattr("tok.gateway.run_bridge", _fake_run_bridge)
+
+        result = runner.invoke(app, ["bridge", "start", "--foreground"])
+
+        assert result.exit_code == 0
+        assert captured["_api_base"] is None
+
     def test_bridge_start_subprocess_exports_custom_api_base(self, monkeypatch, tmp_path) -> None:
         from tok.cli import _cli_support
 
@@ -586,6 +760,45 @@ class TestCLI:
         assert captured["env"]["TOK_API_BASE"] == "https://example.test/custom"
         assert captured["env"]["TOK_RESET_SESSION"] == "1"
 
+    def test_bridge_start_subprocess_preserves_env_api_base_without_explicit_override(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from tok.cli import _cli_support
+
+        def no_bridge(port) -> None:
+            return None
+
+        def fake_memory_root():
+            return tmp_path / ".tok"
+
+        monkeypatch.setenv("TOK_API_BASE", "https://env.example.test/api")
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", no_bridge)
+        for mod in (_cli_support,):
+            monkeypatch.setattr(mod, "LOG_FILE", tmp_path / "bridge.log")
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+            monkeypatch.setattr(mod, "memory_root", fake_memory_root)
+
+        captured = {}
+
+        class FakeProcess:
+            pid = 4321
+
+        class FakeResponse:
+            status_code = 200
+
+        def _fake_popen(*args, **kwargs):
+            captured["env"] = kwargs["env"]
+            return FakeProcess()
+
+        monkeypatch.setattr("subprocess.Popen", _fake_popen)
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["bridge", "start"])
+
+        assert result.exit_code == 0
+        assert captured["env"]["TOK_API_BASE"] == "https://env.example.test/api"
+        assert captured["env"]["TOK_RESET_SESSION"] == "1"
+
     def test_savings_no_data(self) -> None:
         result = runner.invoke(app, ["stats"])
         assert result.exit_code == 0
@@ -610,6 +823,7 @@ class TestCLI:
         )
         monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: None)
 
         result = runner.invoke(app, ["stats"])
         assert result.exit_code == 0
@@ -834,6 +1048,42 @@ class TestCLI:
         output = capsys.readouterr().out
 
         assert "Bridge stopped" in output
+
+    def test_bridge_stop_pid_file_permission_error_does_not_traceback(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+
+        class UnlinkDeniedPath:
+            def unlink(self, *, missing_ok: bool = False) -> None:
+                raise PermissionError("permission denied")
+
+            def __str__(self) -> str:
+                return str(tmp_path / "bridge.pid")
+
+            def _print(self, *args, **kwargs) -> None:
+                pass
+
+        calls = {"checked": False}
+
+        def fake_kill(pid, sig) -> None:
+            assert pid == 123
+            if sig == signal.SIGTERM:
+                return
+            if sig == 0 and not calls["checked"]:
+                calls["checked"] = True
+                raise ProcessLookupError
+            return
+
+        monkeypatch.setattr(_bridge, "PID_FILE", UnlinkDeniedPath())
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+
+        result = runner.invoke(app, ["bridge", "stop"])
+
+        assert result.exit_code == 0
+        assert "Could not remove bridge PID file" in result.output
+        assert "Traceback" not in result.output
 
     def test_savings_breakdown_shows_behavior_signals(self, tmp_path, monkeypatch) -> None:
         tracker = SavingsTracker(
@@ -1433,6 +1683,21 @@ class TestCLI:
         assert "Recommendation:" in result.output
         assert "investigate degradation before trusting this session" in result.output
 
+    def test_doctor_invalid_port_config_falls_back_without_traceback(self, monkeypatch) -> None:
+        monkeypatch.setenv("TOK_BRIDGE_PORT", "bad")
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: None)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
+        monkeypatch.setattr(
+            "tok.cli._release.memory_root",
+            lambda: Path("/tmp/nonexistent_tok"),
+        )
+
+        result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 1
+        assert "Invalid integer config TOK_BRIDGE_PORT='bad'; using fallback 9090." in result.output
+        assert "Traceback" not in result.output
+
     def test_doctor_surfaces_request_shape_and_stream_attribution(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
         monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")
@@ -1529,6 +1794,11 @@ class TestCLI:
                     "thinking_mutation_events": 0,
                     "task_score": 100,
                     "repeated_active_file_reads": 0,
+                    "evidence_exact_observed_count": 4,
+                    "evidence_non_exact_reference_count": 2,
+                    "evidence_exact_reacquisition_required_count": 1,
+                    "evidence_exact_reacquisition_satisfied_count": 1,
+                    "evidence_compression_blocked_for_safety_count": 1,
                 }
 
         monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
@@ -1540,6 +1810,11 @@ class TestCLI:
         assert "env_OPENAI_API_KEY=set" in result.output
         assert "env_OPENROUTER_API_KEY=set" in result.output
         assert "env_TOK_PROJECT_DIR=set" in result.output
+        assert "evidence_exact_observed=4" in result.output
+        assert "evidence_non_exact_reference=2" in result.output
+        assert "evidence_exact_reacquisition_required=1" in result.output
+        assert "evidence_exact_reacquisition_satisfied=1" in result.output
+        assert "evidence_compression_blocked_for_safety=1" in result.output
         assert "sk-secret-123" not in result.output
         assert "or-secret-456" not in result.output
 

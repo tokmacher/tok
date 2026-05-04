@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from _project_metadata import read_project_metadata
     from _uv_lock import load_uv_lock, normalize_hash
 except ImportError:  # pragma: no cover - import path differs under tests
+    from scripts._project_metadata import read_project_metadata
     from scripts._uv_lock import load_uv_lock, normalize_hash
 
 
@@ -22,8 +24,14 @@ def parse_uv_lock() -> list[dict[str, Any]]:
     return load_uv_lock()
 
 
-def generate_spdx_sbom(packages: list[dict[str, Any]]) -> dict[str, Any]:
+def generate_spdx_sbom(
+    packages: list[dict[str, Any]], project_metadata: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Generate SPDX 2.3 format SBOM."""
+    project_metadata = project_metadata or read_project_metadata()
+    project_name = project_metadata["name"]
+    project_version = project_metadata["version"]
+
     # Document creation info
     creation_info = {
         "created": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -48,19 +56,19 @@ def generate_spdx_sbom(packages: list[dict[str, Any]]) -> dict[str, Any]:
 
     # Add the main package
     main_package = {
-        "name": "tok-protocol",
+        "name": project_name,
         "SPDXID": "SPDXRef-tok-protocol",
-        "versionInfo": "0.1.0",
+        "versionInfo": project_version,
         "downloadLocation": "https://github.com/tokmacher/tok",
         "filesAnalyzed": False,
         "licenseConcluded": "Apache-2.0",
         "licenseDeclared": "Apache-2.0",
-        "copyrightText": "Copyright 2024 tokmacher",
+        "copyrightText": f"Copyright {datetime.now(timezone.utc).year} tokmacher",
         "externalRefs": [
             {
                 "referenceCategory": "PACKAGE-MANAGER",
                 "referenceType": "purl",
-                "referenceLocator": "pkg:pypi/tok-protocol@0.1.0",
+                "referenceLocator": f"pkg:pypi/{project_name}@{project_version}",
             }
         ],
     }
@@ -73,7 +81,7 @@ def generate_spdx_sbom(packages: list[dict[str, Any]]) -> dict[str, Any]:
         package_hash = str(package.get("artifact_hash", ""))
         package_url = str(package.get("artifact_url", ""))
 
-        if not package_name or not version:
+        if not package_name or not version or package_name == project_name:
             continue
 
         spdx_package = {
@@ -111,7 +119,7 @@ def generate_spdx_sbom(packages: list[dict[str, Any]]) -> dict[str, Any]:
     # Add relationships for dependencies
     for package in packages:
         package_name = package.get("name", "")
-        if package_name:
+        if package_name and package_name != project_name:
             spdx_id = f"SPDXRef-{package_name.replace('-', '_').replace('.', '_')}"
             relationships.append(
                 {

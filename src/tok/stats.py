@@ -26,18 +26,3 @@ from .utils.savings_tracker import (  # noqa: F401 — re-export for backward co
 )
 
 logger = logging.getLogger("tok.stats")
-
-
-def calculate_reasoning_depth_per_token(step_count: int, tool_diversity: int, token_count: int) -> float:
-    """
-    Dual-axis metric: reasoning diversity per token consumed.
-
-    step_count      — number of assistant response steps in the session
-    tool_diversity  — number of distinct tool names used
-    token_count     — total output tokens consumed
-
-    Higher is better.  Returns 0.0 when token_count is 0.
-    """
-    if token_count == 0:
-        return 0.0
-    return round((step_count * max(tool_diversity, 1)) / token_count, 4)

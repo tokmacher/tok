@@ -130,7 +130,7 @@ class TestHotSearchFirstExactProtection:
             assert any(
                 marker in second_result
                 for marker in (
-                    ">>> tool:grep|matches:",
+                    ">>> tool:grep|lines:",
                     ">>> tool:grep_search|unchanged|cached",
                     "@stable_result(",
                 )
@@ -644,7 +644,7 @@ class TestSearchCostAdvisoryTriggers:
         large_input = "\n".join(f"src/module{i}.py:{j * 10}:code_here" for i in range(12) for j in range(5))
         result = _compress_grep(large_input)
         # Header must be present
-        assert ">>> tool:grep|matches:" in result
+        assert ">>> tool:grep|lines:" in result
         # File entries must be present
         assert "src/module0.py:" in result
         # Advisory is optional; when present it should be appended.

@@ -96,3 +96,46 @@ def test_benchmark_smoke_mode_invokes_expected_live_benchmark_and_gate_commands(
     assert (output_root / "claims" / "gate_metrics.json").exists()
     assert (output_root / "claims" / "claims_verification.json").exists()
     assert (output_root / "summary.md").exists()
+
+
+def test_build_and_artifact_smoke_use_isolated_versioned_dist() -> None:
+    module = _load_module()
+    steps = module.build_steps(
+        benchmark_mode="none",
+        benchmark_output=Path("unused"),
+        model="anthropic/test-model",
+        catalog_root=Path("benchmarks"),
+        repeats=1,
+        pricing_prompt=None,
+        pricing_completion=None,
+        provider_options=None,
+    )
+
+    build_step = next(step for step in steps if step.name == "Build smoke")
+    artifact_step = next(step for step in steps if step.name == "Artifact metadata smoke")
+    build_command = " ".join(build_step.command)
+    artifact_command = " ".join(artifact_step.command)
+
+    assert "tmp/release-smoke-dist" in build_command
+    assert "--outdir" in build_command
+    assert "tmp/release-smoke-dist" in artifact_command
+    assert "expected_version" in artifact_command
+    assert "len(files) == 2" in artifact_command
+
+
+def test_release_smoke_includes_tok_trace_spec_contract_gate() -> None:
+    module = _load_module()
+    steps = module.build_steps(
+        benchmark_mode="none",
+        benchmark_output=Path("unused"),
+        model="anthropic/test-model",
+        catalog_root=Path("benchmarks"),
+        repeats=1,
+        pricing_prompt=None,
+        pricing_completion=None,
+        provider_options=None,
+    )
+
+    commands = {" ".join(step.command) for step in steps}
+
+    assert "uv run pytest tests/spec -q" in commands

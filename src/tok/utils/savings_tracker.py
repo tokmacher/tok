@@ -16,6 +16,7 @@ from tok.runtime.policy.semantic_validation import (
     calculate_memory_lift,
     calculate_semantic_regression_score,
 )
+from tok.runtime.signals import EVIDENCE_SAFETY_SIGNAL_NAMES
 
 from ._savings_persistence import (
     GLOBAL_LEDGER_FILENAME,
@@ -367,6 +368,17 @@ class SavingsTracker:
         request_policy_held_by_recovery_count = int(signals.get("request_policy_held_by_recovery", 0)) + int(
             signals.get("request_policy_recovery_sticky_continuations", 0)
         )
+        evidence_exact_observed_count = int(signals.get("evidence_exact_observed", 0))
+        evidence_first_exact_observed_count = int(signals.get("evidence_first_exact_observed", 0))
+        evidence_non_exact_reference_count = int(signals.get("evidence_non_exact_reference_emitted", 0))
+        evidence_non_exact_summary_count = int(signals.get("evidence_non_exact_summary_emitted", 0))
+        evidence_non_exact_skeleton_count = int(signals.get("evidence_non_exact_skeleton_emitted", 0))
+        evidence_exact_reacquisition_required_count = int(signals.get("evidence_exact_reacquisition_required", 0))
+        evidence_exact_reacquisition_satisfied_count = int(signals.get("evidence_exact_reacquisition_satisfied", 0))
+        evidence_compression_blocked_for_safety_count = int(signals.get("evidence_compression_blocked_for_safety", 0))
+        evidence_tool_result_compression_skipped_count = int(signals.get("evidence_tool_result_compression_skipped", 0))
+        evidence_history_compression_skipped_count = int(signals.get("evidence_history_compression_skipped", 0))
+        evidence_safety_event_count = sum(int(signals.get(name, 0)) for name in EVIDENCE_SAFETY_SIGNAL_NAMES)
 
         return {
             "calls": calls,
@@ -418,6 +430,17 @@ class SavingsTracker:
             "request_policy_reason_tool_recovery_count": request_policy_reason_tool_recovery_count,
             "request_policy_reason_structured_tool_loop_count": request_policy_reason_structured_tool_loop_count,
             "request_policy_held_by_recovery_count": request_policy_held_by_recovery_count,
+            "evidence_exact_observed_count": evidence_exact_observed_count,
+            "evidence_first_exact_observed_count": evidence_first_exact_observed_count,
+            "evidence_non_exact_reference_count": evidence_non_exact_reference_count,
+            "evidence_non_exact_summary_count": evidence_non_exact_summary_count,
+            "evidence_non_exact_skeleton_count": evidence_non_exact_skeleton_count,
+            "evidence_exact_reacquisition_required_count": evidence_exact_reacquisition_required_count,
+            "evidence_exact_reacquisition_satisfied_count": evidence_exact_reacquisition_satisfied_count,
+            "evidence_compression_blocked_for_safety_count": evidence_compression_blocked_for_safety_count,
+            "evidence_tool_result_compression_skipped_count": evidence_tool_result_compression_skipped_count,
+            "evidence_history_compression_skipped_count": evidence_history_compression_skipped_count,
+            "evidence_safety_event_count": evidence_safety_event_count,
             "session_quality": quality,
             "last_degradation_reason": degradation_reason,
         }
@@ -501,6 +524,12 @@ class SavingsTracker:
             "malformed_tok_non_inverted_msg": 0,
             "malformed_tok_markdown_fallback": 0,
             "malformed_tok_bad_header": 0,
+            "evidence_exact_observed": 0,
+            "evidence_first_exact_observed": 0,
+            "evidence_non_exact_reference_emitted": 0,
+            "evidence_exact_reacquisition_required": 0,
+            "evidence_exact_reacquisition_satisfied": 0,
+            "evidence_compression_blocked_for_safety": 0,
         }
 
     @staticmethod
@@ -602,6 +631,12 @@ class SavingsTracker:
             f"  malformed_tok_non_inverted_msg: {ledger['malformed_tok_non_inverted_msg']}",
             f"  malformed_tok_markdown_fallback: {ledger['malformed_tok_markdown_fallback']}",
             f"  malformed_tok_bad_header: {ledger['malformed_tok_bad_header']}",
+            f"  evidence_exact_observed: {ledger['evidence_exact_observed']}",
+            f"  evidence_first_exact_observed: {ledger['evidence_first_exact_observed']}",
+            f"  evidence_non_exact_reference_emitted: {ledger['evidence_non_exact_reference_emitted']}",
+            f"  evidence_exact_reacquisition_required: {ledger['evidence_exact_reacquisition_required']}",
+            f"  evidence_exact_reacquisition_satisfied: {ledger['evidence_exact_reacquisition_satisfied']}",
+            f"  evidence_compression_blocked_for_safety: {ledger['evidence_compression_blocked_for_safety']}",
             "",
             "@per_session_log",
             "  # format: date;session_id;turns;tokens;cost_usd;baseline_cost_usd;saved_usd;tokens_saved;invisible_pressure;non_tok_response;memory_lift;semantic_regression;reacquisition_count;answer_anchor_miss_count;degradation_reason;prompt_tokens;completion_tokens;fallback_activated;baseline_only;baseline_prompt_tokens;prepared_prompt_tokens;saved_prompt_tokens;hot_hint_tokens_added;reacquisition_avoided;reacquisition_cost_tokens",
@@ -785,7 +820,7 @@ class SavingsTracker:
             f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
             f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
             f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
-            f"- cost saved: ${float(summary['cost_saved_usd']):.4f}\n"
+            f"- est. cost saved: ~${float(summary['cost_saved_usd']):.4f}\n"
             f"- fallback count: {int(summary['fallback_count'])}\n"
             f"- baseline-only: {'yes' if bool(summary['baseline_only']) else 'no'}\n"
             f"- session quality: {summary['session_quality']}\n"
@@ -832,7 +867,7 @@ class SavingsTracker:
             f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
             f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
             f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
-            f"- cost saved: ${float(summary['cost_saved_usd']):.4f}\n"
+            f"- est. cost saved: ~${float(summary['cost_saved_usd']):.4f}\n"
             f"- fallback count: {int(summary['fallback_count'])}\n"
             f"- baseline-only requests: {int(summary['baseline_only_requests'])}"
         )
@@ -944,7 +979,7 @@ class SavingsTracker:
             f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
             f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
             f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
-            f"- cost saved: ${float(summary['cost_saved_usd']):.4f}\n"
+            f"- est. cost saved: ~${float(summary['cost_saved_usd']):.4f}\n"
             f"- session quality: {summary['session_quality']}\n"
             f"- degradation reason: {summary['last_degradation_reason'] or 'none'}"
         )
