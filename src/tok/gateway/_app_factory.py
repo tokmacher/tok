@@ -120,10 +120,11 @@ def _build_rate_limit_response(retry_after_seconds: float) -> Response:
     return Response(
         content=json.dumps(
             {
+                "type": "error",
                 "error": {
                     "type": "rate_limit_error",
                     "message": "Tok gateway is temporarily rate limited; retry later.",
-                }
+                },
             }
         ),
         status_code=429,
@@ -132,19 +133,14 @@ def _build_rate_limit_response(retry_after_seconds: float) -> Response:
     )
 
 
-def _normalize_rate_limit_response(session: BridgeSession, response: httpx.Response) -> Response:
-    _record_rate_limit_hit(session)
-    remaining = _rate_limit_throttle_remaining(session)
-    retry_after_header = response.headers.get("retry-after")
-    retry_after_seconds = remaining
-    if retry_after_seconds <= 0.0 and retry_after_header:
-        try:
-            retry_after_seconds = max(0.0, float(retry_after_header))
-        except ValueError:
-            retry_after_seconds = 1.0
-    if retry_after_seconds <= 0.0:
-        retry_after_seconds = 1.0
-    return _build_rate_limit_response(retry_after_seconds)
+async def _build_upstream_rate_limit_response(response: httpx.Response) -> Response:
+    content = await response.aread()
+    return Response(
+        content=content,
+        status_code=response.status_code,
+        headers=_safe_headers(response.headers),
+        media_type=response.headers.get("content-type", "application/json"),
+    )
 
 
 def _rebuild_content_preserving_position(
@@ -763,8 +759,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         behavior_signals[key] = behavior_signals.get(key, 0) + value
                 _note_request_policy_recovery_watch(active_session, retry_signals)
                 if response.status_code == 429:
-                    await _close_streaming_setup_resources(response, client)
-                    return _normalize_rate_limit_response(session, response)
+                    _record_rate_limit_hit(session)
+                    try:
+                        # aread() drains and closes the streaming response; only client needs cleanup.
+                        rate_limit_response = await _build_upstream_rate_limit_response(response)
+                    finally:
+                        await _close_streaming_setup_resources(None, client)
+                    return rate_limit_response
                 if retried_without_tok:
                     compressed = False
                     saved_toks = 0
@@ -922,7 +923,8 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     behavior_signals[key] = behavior_signals.get(key, 0) + value
             _note_request_policy_recovery_watch(active_session, retry_signals)
             if response.status_code == 429:
-                return _normalize_rate_limit_response(session, response)
+                _record_rate_limit_hit(session)
+                return await _build_upstream_rate_limit_response(response)
             if retried_without_tok:
                 compressed = False
                 saved_toks = 0

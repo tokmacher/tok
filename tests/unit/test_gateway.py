@@ -5059,6 +5059,203 @@ def test_gateway_persistent_429_retries_then_exhausts(tmp_path, monkeypatch, cap
     assert "rate_limit_retry_exhausted" in caplog.text
 
 
+def test_gateway_upstream_429_preserves_provider_body_and_headers(tmp_path, monkeypatch) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    provider_body = {
+        "type": "error",
+        "error": {
+            "type": "rate_limit_error",
+            "message": "Claude AI usage limit reached. Your limit will reset at 5:00 PM.",
+        },
+    }
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(
+            429,
+            json=provider_body,
+            headers={
+                "Retry-After": "300",
+                "Content-Type": "application/json",
+                "anthropic-ratelimit-requests-reset": "2026-05-04T17:00:00Z",
+            },
+        )
+
+    monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=0,  # type: ignore[call-arg]
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.json() == provider_body
+    assert response.headers["Retry-After"] == "300"
+    assert response.headers["anthropic-ratelimit-requests-reset"] == "2026-05-04T17:00:00Z"
+    assert response.headers["content-type"].startswith("application/json")
+
+
+def test_gateway_streaming_setup_upstream_429_preserves_provider_body_and_headers(tmp_path, monkeypatch) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    provider_body = {
+        "type": "error",
+        "error": {
+            "type": "rate_limit_error",
+            "message": "Claude AI usage limit reached. Your limit will reset at 5:00 PM.",
+        },
+    }
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": True,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, request
+        assert stream is True
+        return httpx.Response(
+            429,
+            json=provider_body,
+            headers={
+                "Retry-After": "300",
+                "Content-Type": "application/json",
+                "anthropic-ratelimit-requests-reset": "2026-05-04T17:00:00Z",
+            },
+        )
+
+    monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=0,  # type: ignore[call-arg]
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.json() == provider_body
+    assert response.headers["Retry-After"] == "300"
+    assert response.headers["anthropic-ratelimit-requests-reset"] == "2026-05-04T17:00:00Z"
+    assert response.headers["content-type"].startswith("application/json")
+
+
+def test_gateway_upstream_429s_accumulate_to_internal_throttle(tmp_path, monkeypatch) -> None:
+    """After threshold upstream 429s the gateway blocks locally with its synthetic body."""
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    provider_body = {"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}}
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={"model": request.model, "max_tokens": 8192, "messages": request.messages, "stream": False},
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(429, json=provider_body, headers={"Content-Type": "application/json"})
+
+    monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=0,  # type: ignore[call-arg]
+            rate_limit_throttle_threshold=2,  # type: ignore[call-arg]
+            rate_limit_throttle_cooldown_sec=30,  # type: ignore[call-arg]
+            rate_limit_throttle_window_sec=60,  # type: ignore[call-arg]
+        )
+    )
+    client = TestClient(app)
+    post_kwargs: dict[str, Any] = dict(
+        headers={"x-api-key": "test"},
+        json={"model": "claude-sonnet-4", "max_tokens": 8192, "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    # First two upstream 429s are passed through with the provider's body.
+    first = client.post("/v1/messages", **post_kwargs)
+    assert first.status_code == 429
+    assert first.json() == provider_body
+
+    second = client.post("/v1/messages", **post_kwargs)
+    assert second.status_code == 429
+    assert second.json() == provider_body
+
+    # Threshold reached: tok now blocks locally before hitting the upstream.
+    third = client.post("/v1/messages", **post_kwargs)
+    assert third.status_code == 429
+    # Tok's synthetic body — distinct from the provider's body.
+    assert third.json()["error"]["type"] == "rate_limit_error"
+    assert third.json()["error"]["message"] != provider_body["error"]["message"]
+    assert "Retry-After" in third.headers
+
+
 def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch) -> None:
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
@@ -5132,7 +5329,9 @@ def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch) 
 
     assert first.status_code == 429
     assert second.status_code == 429
-    assert second.json()["error"]["type"] == "rate_limit_error"
+    second_body = second.json()
+    assert second_body["type"] == "error"
+    assert second_body["error"]["type"] == "rate_limit_error"
     assert "Retry-After" in second.headers
     assert sent_count == 1
 

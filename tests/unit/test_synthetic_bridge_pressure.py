@@ -927,6 +927,57 @@ def test_answer_ready_failure_requests_visible_repair_after_tool_response(tmp_pa
     assert processed.behavior_signals.get("structured_answer_visible_preserved", 0) == 0
 
 
+def test_re_read_after_history_compression_not_silently_compressed() -> None:
+    """Guard: after history compression marks a file as summary-only, a re-read in the
+    next turn must receive verbatim content, not a compressed stub.
+
+    The risk: history compression records file.py as non-exact (summary in tok_state).
+    Both _first_exact_evidence_seen and _files_read_this_session are populated from the
+    prior turn.  Without a guard, compress_tool_results sees no reason to preserve the
+    re-read and may return a stub — meaning the model never gets exact bytes back.
+    """
+    path = "/tmp/reacquire.py"
+    file_content = _file_text(path, lines=100)
+    evidence_key = evidence_identity_key("read_file", path=path, args={"file_path": path})
+    norm_path = normalize_path_target(path)
+
+    messages = [
+        {"role": "assistant", "content": [_tool_use("t_reread", "read_file", file_path=path)]},
+        {"role": "user", "content": [_tool_result("t_reread", file_content)]},
+    ]
+    tool_use_id_to_context = build_tool_use_id_to_context(messages)
+
+    # Simulate state as it exists after a prior turn already served this file exactly:
+    # - key is in first_exact_evidence_seen (turn 1 added it)
+    # - path is in session_files_read (turn 1 delivery added it)
+    # This is the condition that exists when history compression later demotes the
+    # file's entry to summary-only via _record_non_exact_history_evidence.
+    first_exact_evidence_seen: set[str] = {evidence_key}
+    session_files_read: set[str] = {norm_path}
+
+    compressed, _breakdown = compress_tool_results_impl(
+        messages,
+        result_cache={},
+        tool_use_id_to_context=tool_use_id_to_context,
+        compression_level="balanced",
+        first_exact_evidence_seen=first_exact_evidence_seen,
+        session_files_read=session_files_read,
+    )
+
+    reread_result = compressed[1]["content"][0]["content"]
+    is_stub = any(
+        marker in reread_result
+        for marker in ("@stable_result", "tok_compressed", "|unchanged|", "[tok optimized]", "@skeleton")
+    )
+
+    assert not is_stub, (
+        "Re-read after history compression was silently compressed into a stub. "
+        "The model never gets exact bytes back when both first_exact_evidence_seen "
+        f"and session_files_read are pre-populated. Got: {reread_result[:120]!r}"
+    )
+    assert reread_result == file_content, f"Re-read content was modified. Got: {reread_result[:120]!r}"
+
+
 def test_answer_ready_repair_active_second_miss_fails_closed(tmp_path) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     runtime = UniversalTokRuntime()
