@@ -4,7 +4,7 @@ Runtime defaults and release posture for Tok.
 
 ## Supported Platforms
 
-- Python 3.10, 3.11, 3.12
+- Python 3.10 or newer
 - macOS and Linux
 
 ## Runtime Defaults
@@ -43,7 +43,7 @@ status probes when you intentionally connect through a non-default hostname.
 
 ## Release Posture
 
-- Development status: Alpha (0.1.5)
+- Development status: Alpha (0.1.7)
 - The bridge is the only supported product surface
 - SDK/wrapper path exists but is experimental
 - No breaking changes are guaranteed before 1.0

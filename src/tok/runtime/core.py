@@ -93,6 +93,7 @@ from .config import (
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOOL_COMPAT_MEMORY_PROFILE,
 )
+from .evidence_safety import EvidenceForm, EvidenceLedgerEntry, evidence_safety_summary
 from .memory.answer_memory import (
     _should_persist_to_durable,  # noqa: F401
     compact_structured_answer_memory,
@@ -252,6 +253,7 @@ class RuntimeSession:
     _evidence_anchor_novelty_keys: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
     _evidence_alias_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _first_exact_evidence_seen: set[str] = field(default_factory=set, init=False, repr=False)
+    _evidence_safety_ledger: dict[str, EvidenceLedgerEntry] = field(default_factory=dict, init=False, repr=False)
     _pending_exact_evidence_keys: set[str] = field(default_factory=set, init=False, repr=False)
     _files_read_this_session: set[str] = field(default_factory=set, init=False, repr=False)
     _files_fully_delivered: dict[str, int] = field(default_factory=dict, init=False, repr=False)
@@ -358,6 +360,7 @@ class RuntimeSession:
         self._evidence_anchor_novelty_keys.clear()
         self._evidence_alias_map.clear()
         self._first_exact_evidence_seen.clear()
+        self._evidence_safety_ledger.clear()
         self._pending_exact_evidence_keys.clear()
         self._files_read_this_session.clear()
         self._files_fully_delivered.clear()
@@ -396,6 +399,7 @@ class RuntimeSession:
             self._last_tool_compatible_state_fields = {}
             self._observed_tool_result_ids.clear()
             self._first_exact_evidence_seen.clear()
+            self._evidence_safety_ledger.clear()
             self._pending_exact_evidence_keys.clear()
             self.result_cache.clear()
             self.semantic_hash_cache.clear()
@@ -533,6 +537,75 @@ class RuntimeSession:
         norm_path = normalize_path_target(file_path)
         if norm_path in self._skeleton_delivered_paths:
             self._skeleton_delivered_paths.remove(norm_path)
+
+    def record_exact_evidence(self, key: str, digest: str = "") -> dict[str, int]:
+        """Record that exact content for an evidence identity was model-visible."""
+        if not key:
+            return {}
+        turn = max(1, self.bridge_memory.turn)
+        entry = self._evidence_safety_ledger.get(key)
+        signals: dict[str, int] = {"evidence_exact_observed": 1}
+        if entry is None:
+            entry = EvidenceLedgerEntry(key=key)
+            self._evidence_safety_ledger[key] = entry
+        if entry.first_exact_turn <= 0:
+            entry.first_exact_turn = turn
+            signals["evidence_first_exact_observed"] = 1
+        if entry.exact_reacquisition_required:
+            entry.exact_reacquisition_required = False
+            entry.exact_reacquisition_satisfied_turn = turn
+            signals["evidence_exact_reacquisition_satisfied"] = 1
+        entry.latest_turn = turn
+        entry.latest_digest = digest or entry.latest_digest
+        entry.latest_form = "exact"
+        self._first_exact_evidence_seen.add(key)
+        self._bump_signals(signals)
+        return signals
+
+    def record_non_exact_evidence(
+        self,
+        key: str,
+        *,
+        digest: str = "",
+        form: EvidenceForm = "summary",
+    ) -> dict[str, int]:
+        """Record that only a compact, non-exact representation was model-visible."""
+        if not key:
+            return {}
+        turn = max(1, self.bridge_memory.turn)
+        entry = self._evidence_safety_ledger.get(key)
+        if entry is None:
+            entry = EvidenceLedgerEntry(key=key)
+            self._evidence_safety_ledger[key] = entry
+        entry.latest_turn = turn
+        entry.latest_digest = digest or entry.latest_digest
+        entry.latest_form = form
+        signals = {"evidence_non_exact_reference_emitted": 1}
+        signals[f"evidence_non_exact_{form}_emitted"] = 1
+        self._bump_signals(signals)
+        return signals
+
+    def require_exact_reacquisition(self, key: str) -> dict[str, int]:
+        """Mark an evidence identity as needing exact bytes before edit authority."""
+        if not key:
+            return {}
+        entry = self._evidence_safety_ledger.get(key)
+        if entry is None or entry.latest_is_exact:
+            return {}
+        entry.exact_reacquisition_required = True
+        signals = {
+            "evidence_exact_reacquisition_required": 1,
+            "evidence_compression_blocked_for_safety": 1,
+        }
+        self._bump_signals(signals)
+        return signals
+
+    def evidence_requires_reacquisition(self, key: str) -> bool:
+        entry = self._evidence_safety_ledger.get(key)
+        return bool(entry and not entry.latest_is_exact)
+
+    def evidence_safety_audit_summary(self) -> dict[str, int]:
+        return evidence_safety_summary(self._evidence_safety_ledger)
 
     def adaptive_keep_turns(self) -> int:
         """Dynamically reduce history depth as the session grows."""

@@ -18,6 +18,7 @@ Thanks for helping improve Tok.
 Suggested checks:
 
 ```bash
+pre-commit install --hook-type pre-commit --hook-type pre-push --hook-type commit-msg
 pre-commit run --all-files
 python scripts/check_repo_hygiene.py
 uv run pytest tests/unit/test_cli.py tests/unit/test_gateway.py tests/unit/test_compression.py tests/unit/test_universal_runtime.py tests/unit/test_bridge_memory.py

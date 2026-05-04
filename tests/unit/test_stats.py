@@ -359,6 +359,75 @@ class TestSavingsTracker:
         assert "malformed_tok_non_inverted_msg: 1" in content
         assert "malformed_tok_bad_header: 1" in content
 
+    def test_session_summary_aggregates_evidence_safety_signals(self, tracker) -> None:
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=10,
+            output_saved=5,
+            behavior_signals={
+                "evidence_exact_observed": 2,
+                "evidence_first_exact_observed": 1,
+                "evidence_non_exact_reference_emitted": 1,
+                "evidence_non_exact_summary_emitted": 1,
+                "evidence_non_exact_skeleton_emitted": 1,
+                "evidence_exact_reacquisition_required": 2,
+                "evidence_exact_reacquisition_satisfied": 1,
+                "evidence_compression_blocked_for_safety": 1,
+                "evidence_tool_result_compression_skipped": 1,
+                "evidence_history_compression_skipped": 1,
+            },
+        )
+
+        summary = tracker.session_summary()
+
+        assert summary is not None
+        assert summary["evidence_exact_observed_count"] == 2
+        assert summary["evidence_first_exact_observed_count"] == 1
+        assert summary["evidence_non_exact_reference_count"] == 1
+        assert summary["evidence_non_exact_summary_count"] == 1
+        assert summary["evidence_non_exact_skeleton_count"] == 1
+        assert summary["evidence_exact_reacquisition_required_count"] == 2
+        assert summary["evidence_exact_reacquisition_satisfied_count"] == 1
+        assert summary["evidence_compression_blocked_for_safety_count"] == 1
+        assert summary["evidence_tool_result_compression_skipped_count"] == 1
+        assert summary["evidence_history_compression_skipped_count"] == 1
+        assert summary["evidence_safety_event_count"] == 12
+
+    def test_merge_session_to_ledger_persists_selected_evidence_safety_counters(self, tracker) -> None:
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=10,
+            output_saved=5,
+            behavior_signals={
+                "evidence_exact_observed": 2,
+                "evidence_first_exact_observed": 1,
+                "evidence_non_exact_reference_emitted": 1,
+                "evidence_non_exact_summary_emitted": 5,
+                "evidence_exact_reacquisition_required": 2,
+                "evidence_exact_reacquisition_satisfied": 1,
+                "evidence_compression_blocked_for_safety": 1,
+            },
+        )
+
+        tracker.merge_session_to_ledger()
+
+        content = tracker.ledger_path.read_text()
+        assert "evidence_exact_observed: 2" in content
+        assert "evidence_first_exact_observed: 1" in content
+        assert "evidence_non_exact_reference_emitted: 1" in content
+        assert "evidence_exact_reacquisition_required: 2" in content
+        assert "evidence_exact_reacquisition_satisfied: 1" in content
+        assert "evidence_compression_blocked_for_safety: 1" in content
+        assert "evidence_non_exact_summary_emitted:" not in content
+
     def test_format_session_empty(self, tracker) -> None:
         assert tracker.format_session() is None
 

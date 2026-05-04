@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
@@ -14,7 +16,19 @@ from tok.release_surface import (
     validate_release_surface,
 )
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
+
 runner = CliRunner()
+
+
+def test_package_metadata_version_matches_runtime_version() -> None:
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    metadata = tomllib.loads(pyproject.read_text())
+
+    assert metadata["project"]["version"] == tok.__version__
 
 
 def test_release_surface_gate_passes_for_supported_bridge_story() -> None:
@@ -51,6 +65,15 @@ def test_experimental_root_helpers_are_not_in_the_supported_root_exports() -> No
     assert "OrchestratorAdapter" not in tok.__all__
     assert "OpenAIChatAdapter" not in tok.__all__
     assert "TextLoopAdapter" not in tok.__all__
+
+
+def test_evidence_safety_diagnostics_do_not_add_root_commands() -> None:
+    help_output = runner.invoke(app, ["--help"]).output
+
+    assert "evidence" not in SUPPORTED_CLI_ROOT_COMMANDS
+    assert "signals" not in SUPPORTED_CLI_ROOT_COMMANDS
+    assert " evidence " not in f" {help_output} "
+    assert " signals " not in f" {help_output} "
 
 
 def test_release_surface_rejects_unregistered_visible_cli_command() -> None:

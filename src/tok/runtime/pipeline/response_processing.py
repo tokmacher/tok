@@ -545,6 +545,17 @@ def _repair_structured_answer_text(
         return visible_text, {"structured_answer_repair_failed": 1}
     if session is None:
         return visible_text, {}
+    if not fields:
+        if _looks_like_tool_intent_text(visible_text) or _looks_like_answer_deferral_text(visible_text):
+            return visible_text, {
+                "structured_answer_deferral_rejected": 1,
+                "structured_answer_repair_failed": 1,
+            }
+        known_files, known_verifications = _extract_session_answer_anchors(session)
+        signals = {"structured_answer_visible_preserved": 1}
+        if known_files or known_verifications:
+            signals["structured_answer_backfilled"] = 1
+        return visible_text, signals
 
     known_files, known_verifications = _extract_session_answer_anchors(session)
     repaired = dict(fields)
@@ -597,18 +608,17 @@ def _repair_structured_answer_text(
         return visible_text, {"structured_answer_repair_failed": 1}
 
     repaired_text = "\n".join(rebuilt_lines)
-    signals: dict[str, int] = {}
+    result_signals: dict[str, int] = {}
     missing_expected = [
         label for label in expected_labels if label not in repaired or not repaired.get(label, "").strip()
     ]
     if missing_expected:
-        signals["structured_answer_repair_failed"] = 1
+        result_signals["structured_answer_repair_failed"] = 1
     if changed or repaired_text != visible_text.strip():
-        signals["structured_answer_repaired"] = 1
+        result_signals["structured_answer_repaired"] = 1
     if backfilled:
-        signals["structured_answer_backfilled"] = 1
-        repaired_text = "[memory-derived]\n" + repaired_text
-    return repaired_text, signals
+        result_signals["structured_answer_backfilled"] = 1
+    return repaired_text, result_signals
 
 
 def _synthesize_answer_phase_fallback_text(

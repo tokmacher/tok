@@ -25,6 +25,19 @@ from tok.utils.sifter import DirectoryWalker, Sifter
 class TestSifterFunctionExtraction:
     """Test function signature extraction."""
 
+    def test_varargs_preserve_python_signature_order(self, tmp_path: Path) -> None:
+        """Varargs should appear before keyword-only args in skeleton signatures."""
+        Sifter.reset_pointers()
+        module = tmp_path / "signatures.py"
+        module.write_text(
+            "def configure(path, *flags, retries=3, dry_run=False, **metadata):\n"
+            "    return path, flags, retries, dry_run, metadata\n"
+        )
+
+        result = Sifter.from_file(str(module))
+
+        assert "@func configure(path, *flags, retries, dry_run, **metadata)" in result["skeleton"]
+
     def test_parser_function_extraction(self) -> None:
         """Extract functions from actual parser.py."""
         Sifter.reset_pointers()

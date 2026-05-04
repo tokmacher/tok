@@ -167,6 +167,20 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
             rewritten_messages.append(copy.deepcopy(message))
             index += 1
             continue
+        expected_ids = [
+            str(tool.get("id", "")).strip()
+            for segment in segments
+            for tool in segment["tool_uses"]
+            if isinstance(tool, dict)
+        ]
+        actual_ids = [str(block.get("tool_use_id", "")).strip() for block in user_tool_result_blocks]
+        if expected_ids != actual_ids:
+            rewritten_messages.append(copy.deepcopy(message))
+            index += 1
+            signals["tok_bridge_large_file_read_burst_rewrite_skipped_id_mismatch"] = (
+                signals.get("tok_bridge_large_file_read_burst_rewrite_skipped_id_mismatch", 0) + 1
+            )
+            continue
 
         changed = True
         signals["tok_bridge_large_file_read_burst_rewritten"] = (
@@ -615,7 +629,6 @@ def _run_bridge_preflight(
             )
             behavior_signals["tok_bridge_preflight_failed_local"] = 1
             behavior_signals["tok_bridge_invalid_tool_history_blocked"] = 1
-            session._bump_signals(behavior_signals)
             session.capture_event(
                 {
                     "event": _preflight_event_name("bridge_preflight_rejected_blocked_local", path),
@@ -625,6 +638,7 @@ def _run_bridge_preflight(
             )
             behavior_signals["tok_fallback_activated"] = 1
             _record_fallback_once(session, request_state)
+            session._bump_signals(behavior_signals)
             return (
                 canonical_body,
                 behavior_signals,

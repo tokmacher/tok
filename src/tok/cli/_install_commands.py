@@ -57,8 +57,8 @@ def install(
             else:
                 console.print("[green]Tok install complete.[/green]")
             console.print(
-                "[dim]Default mode is explicit: run `tok bridge start`, then "
-                "`ANTHROPIC_BASE_URL=http://localhost:9090 claude`.[/dim]"
+                "[dim]Default mode is explicit and shell-safe: run `tok claude` to start the bridge "
+                "and launch Claude Code.[/dim]"
             )
             console.print("[dim]Optional wrapper mode: run `tok install --wrap-claude` if you want auto-routing.[/dim]")
     except RuntimeError as exc:

@@ -190,10 +190,14 @@ def test_generate_spdx_uses_primary_artifact_download_location_and_checksum(tmp_
 
     sbom = json.loads((tmp_path / "sbom.spdx").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in sbom["packages"]}
+    project_metadata = module.read_project_metadata()
 
+    main = packages["tok-protocol"]
     alpha = packages["alpha"]
     beta = packages["beta"]
 
+    assert main["versionInfo"] == project_metadata["version"]
+    assert main["externalRefs"][0]["referenceLocator"] == f"pkg:pypi/tok-protocol@{project_metadata['version']}"
     assert alpha["downloadLocation"].endswith("alpha-1.0.0.tar.gz")
     assert alpha["checksums"] == [
         {
@@ -208,6 +212,31 @@ def test_generate_spdx_uses_primary_artifact_download_location_and_checksum(tmp_
             "checksumValue": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         }
     ]
+
+
+def test_checked_in_sbom_matches_project_metadata_and_has_single_root_package() -> None:
+    module = _load_module("test_generate_spdx_sbom_current", "scripts/generate_spdx_sbom.py")
+    metadata = module.read_project_metadata()
+    sbom = json.loads((REPO_ROOT / "sbom.spdx").read_text(encoding="utf-8"))
+    project_packages = [package for package in sbom["packages"] if package["name"] == metadata["name"]]
+
+    assert len(project_packages) == 1
+    package = project_packages[0]
+    assert package["versionInfo"] == metadata["version"]
+    assert package["externalRefs"][0]["referenceLocator"] == f"pkg:pypi/{metadata['name']}@{metadata['version']}"
+    assert not any(
+        relationship["relatedSpdxElement"] == "SPDXRef-tok_protocol" for relationship in sbom["relationships"]
+    )
+
+
+def test_security_utility_user_agents_follow_project_version() -> None:
+    metadata_module = _load_module("test_project_metadata", "scripts/_project_metadata.py")
+    dashboard = _load_module("test_security_dashboard_version", "scripts/security_dashboard.py")
+    analyzer = _load_module("test_analyze_dependency_tree_version", "scripts/analyze_dependency_tree.py")
+    version = metadata_module.read_project_metadata()["version"]
+
+    assert dashboard.SECURITY_CONFIG["user_agent"] == f"tok-security-dashboard/{version}"
+    assert analyzer.SECURITY_CONFIG["user_agent"] == f"tok-dependency-analyzer/{version}"
 
 
 def test_dependency_analysis_uses_normalized_dependencies_and_skips_editable_packages(

@@ -23,6 +23,7 @@ from ._utils import (
     _file_mentioned,
     _git,
     _normalize_pytest_output,
+    _pytest_execution_command,
     _run_zsh_command,
     _sentence_count,
     _truncate,
@@ -263,7 +264,8 @@ class FamilyEvaluator:
         hidden_tests = tuple(hidden_spec.get("selectors") or hidden_spec.get("hidden_tests") or task.hidden_tests)
         if not hidden_command:
             hidden_command = self._pytest_command(hidden_tests)
-        hidden_result = self._run_shell(hidden_command, cwd=workspace_root, timeout_seconds=timeout_seconds)
+        hidden_execution_command = _pytest_execution_command(hidden_command)
+        hidden_result = self._run_shell(hidden_execution_command, cwd=workspace_root, timeout_seconds=timeout_seconds)
         modified_files = self._modified_files(workspace_root)
         allowed_paths_ok = all(path in task.allowed_paths for path in modified_files)
         command_invoked = hidden_result.command_invoked

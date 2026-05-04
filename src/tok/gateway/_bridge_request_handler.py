@@ -58,7 +58,7 @@ def _normalize_provider_safe_retry_payload(
     changed = False
     normalized_messages: list[dict[str, Any]] = []
 
-    for msg in messages:
+    for msg_idx, msg in enumerate(messages):
         if not isinstance(msg, dict):
             normalized_messages.append(msg)
             continue
@@ -70,25 +70,45 @@ def _normalize_provider_safe_retry_payload(
             normalized_messages.append(msg)
             continue
 
-        # Check if this assistant message has tool_use blocks with thinking interleaved
         has_tool_use = any(isinstance(block, dict) and block.get("type") == "tool_use" for block in content)
 
         if not has_tool_use:
             normalized_messages.append(msg)
             continue
 
-        # Filter out ALL thinking/redacted_thinking blocks from assistant messages
-        # that contain tool_use blocks.  Anthropic's API rejects any assistant
-        # message where thinking blocks appear alongside tool_use, regardless of
-        # position.
-        message_changed = False
-        filtered_content: list[dict[str, Any]] = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}:
-                message_changed = True
-                changed = True
-                continue
-            filtered_content.append(block)
+        is_current_turn = all(not isinstance(m, dict) or m.get("role") != "assistant" for m in messages[msg_idx + 1 :])
+
+        if is_current_turn:
+            message_changed = False
+            filtered_content: list[dict[str, Any]] = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}:
+                    message_changed = True
+                    changed = True
+                    continue
+                filtered_content.append(block)
+        else:
+            first_tool_index = next(
+                (
+                    block_index
+                    for block_index, block in enumerate(content)
+                    if isinstance(block, dict) and block.get("type") == "tool_use"
+                ),
+                None,
+            )
+            message_changed = False
+            filtered_content = []
+            for block_index, block in enumerate(content):
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") in {"thinking", "redacted_thinking"}
+                    and first_tool_index is not None
+                    and block_index > first_tool_index
+                ):
+                    message_changed = True
+                    changed = True
+                    continue
+                filtered_content.append(block)
 
         if message_changed:
             new_msg = dict(msg.items())
@@ -174,7 +194,7 @@ async def send_with_tok_fail_open_retry(
         return (
             httpx.Response(
                 429,
-                json={"error": {"type": "rate_limit_error", "message": "Tok cooldown active"}},
+                json={"type": "error", "error": {"type": "rate_limit_error", "message": "Tok cooldown active"}},
                 headers={"Retry-After": str(max(1, int(math.ceil(remaining))))},
             ),
             False,

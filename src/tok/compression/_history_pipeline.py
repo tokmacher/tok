@@ -868,6 +868,74 @@ def compress_tool_results_impl(
         heat = file_heat.get(norm_path, 0.0)
         return heat == 0.0
 
+    def _evidence_key_for_context(context: dict[str, Any] | None) -> str:
+        if not context:
+            return ""
+        args = context.get("args") if isinstance(context.get("args"), dict) else {}
+        return (
+            evidence_identity_key(
+                str(context.get("name", "")),
+                path=_extract_normalized_path(context),
+                query=str(context.get("query") or "").strip() or None,
+                command=str(args.get("command") or args.get("cmd") or "").strip() or None,
+                args=args,
+            )
+            or ""
+        )
+
+    def _record_exact_observation(context: dict[str, Any] | None, raw: str) -> None:
+        if session is None:
+            return
+        key = _evidence_key_for_context(context)
+        if not key or not hasattr(session, "record_exact_evidence"):
+            return
+        session.record_exact_evidence(key, digest=_compute_semantic_hash(raw))
+
+    def _looks_like_failure_evidence(raw: str) -> bool:
+        lowered = raw.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "traceback",
+                "assertionerror",
+                "exception",
+                "error:",
+                " failed",
+                "failed ",
+                " failures ",
+                " failed in ",
+            )
+        )
+
+    def _preserve_first_failure_observation(context: dict[str, Any] | None, raw: str) -> bool:
+        if first_exact_evidence_seen is None or not _looks_like_failure_evidence(raw):
+            return False
+        key = _evidence_key_for_context(context)
+        if not key and isinstance(context, dict):
+            args = context.get("args") if isinstance(context.get("args"), dict) else {}
+            command = str(args.get("command") or args.get("cmd") or "").strip()
+            tool_name = str(context.get("name", "")).strip().lower()
+            if tool_name and command:
+                key = f"tool_result|{tool_name}|cmd:{command}"
+        if not key or key in first_exact_evidence_seen:
+            return False
+        first_exact_evidence_seen.add(key)
+        _record_exact_observation(context, raw)
+        return True
+
+    def _record_non_exact_observation(
+        context: dict[str, Any] | None,
+        raw: str,
+        *,
+        form: str,
+    ) -> None:
+        if session is None:
+            return
+        key = _evidence_key_for_context(context)
+        if not key or not hasattr(session, "record_non_exact_evidence"):
+            return
+        session.record_non_exact_evidence(key, digest=_compute_semantic_hash(raw), form=form)
+
     def _cache_semantic_hash(
         context: dict[str, Any] | None,
         raw: str,
@@ -884,6 +952,7 @@ def compress_tool_results_impl(
     def _mark_verbatim_file_observation(context: dict[str, Any] | None, raw: str, norm_path: str) -> None:
         if not norm_path:
             return
+        _record_exact_observation(context, raw)
         _verbatim_delivered_paths.add(norm_path)
         _same_turn_seen_paths.add(norm_path)
         _mark_file_fully_delivered(norm_path)
@@ -1026,6 +1095,10 @@ def compress_tool_results_impl(
                         continue
                     # Check for explicit bypass flag
                     if _should_bypass_cache(context):
+                        if is_file_like_tool and norm_path:
+                            _mark_verbatim_file_observation(context, content, norm_path)
+                        else:
+                            _record_exact_observation(context, content)
                         breakdown["bypass_reacquire"] = breakdown.get("bypass_reacquire", 0) + 1
                         msg["content"] = content
                         continue
@@ -1077,11 +1150,18 @@ def compress_tool_results_impl(
                 if _should_preserve_exact_search_observation(ctx, raw):
                     block["content"] = raw
                     continue
+                if _preserve_first_failure_observation(ctx, raw):
+                    block["content"] = raw
+                    continue
                 if _preserve_first_exact_observation(ctx, raw, norm_path):
                     block["content"] = raw
                     continue
                 # Check for explicit bypass flag
                 if _should_bypass_cache(ctx):
+                    if norm_path:
+                        _mark_verbatim_file_observation(ctx, raw, norm_path)
+                    else:
+                        _record_exact_observation(ctx, raw)
                     breakdown["bypass_reacquire"] = breakdown.get("bypass_reacquire", 0) + 1
                     block["content"] = raw
                     continue
@@ -1327,6 +1407,7 @@ def compress_tool_results_impl(
                                 if saved > 0:
                                     breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)
                                     log_semantic_dedup(cache_key, saved)
+                                    _record_non_exact_observation(ctx, raw, form="summary")
                                     block["content"] = token
                                     continue
                             continue
@@ -1335,6 +1416,7 @@ def compress_tool_results_impl(
                             saved = len(raw) - len(compressed)
                             breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)
                             log_semantic_dedup(cache_key, saved)
+                            _record_non_exact_observation(ctx, raw, form="skeleton")
                             block["content"] = compressed
                             continue
                         # Small files return unchanged — preserve verbatim, don't build skeleton
@@ -1380,6 +1462,7 @@ def compress_tool_results_impl(
                         if saved > 0:
                             breakdown["semantic_dedup"] = breakdown.get("semantic_dedup", 0) + max(0, saved)
                             log_semantic_dedup(cache_key, saved)
+                            _record_non_exact_observation(ctx, raw, form="skeleton" if skeleton else "summary")
                             block["content"] = token
                             continue
                     else:
@@ -1414,6 +1497,9 @@ def compress_tool_results_impl(
                         kind = _detect_tool_content_type_impl(raw)
                         key = f"{kind}_cached" if "|unchanged|" in compressed else f"{kind}_diff"
                         breakdown[key] = breakdown.get(key, 0) + saved
+                        _record_non_exact_observation(
+                            context, raw, form="reference" if "|unchanged|" in compressed else "summary"
+                        )
                         block["content"] = compressed
                     continue
 
@@ -1462,6 +1548,10 @@ def compress_tool_results_impl(
             if saved > 0:
                 kind = _detect_tool_content_type_impl(raw)
                 breakdown[kind] = breakdown.get(kind, 0) + saved
+                if tool_name in FILE_LIKE_TOOLS:
+                    _record_non_exact_observation(
+                        ctx, raw, form="skeleton" if "is_skeleton:true" in compressed else "summary"
+                    )
                 block["content"] = compressed
     if feature_telemetry:
         logger.debug("compression_feature_telemetry=%s", feature_telemetry)

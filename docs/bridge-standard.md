@@ -6,6 +6,21 @@ disagrees with this one, this document wins.
 It defines the current bridge contract, not the future universal communication contract.
 That broader ambition remains later-stage work.
 
+## Bridge Profile Boundary
+
+The bridge grammar is a profile-local adapter contract. The `>>>` working-memory line,
+Tok-native markers, Markdown recovery rules, and Claude Code request/response shaping
+are part of this bridge profile only and must not be treated as Tok Session core
+semantics.
+
+These bridge-profile sigils and recovery rules must not be treated as Tok Session core
+semantics.
+
+The protocol core that may later outlive this bridge is the smaller audit/state
+discipline documented under `docs/spec/`: exact content identity, exact versus non-exact
+references, explicit resolver availability states, and explicit fallback/degradation
+outcomes.
+
 ## Scope
 
 Tok is standardized around the bridge-first runtime in `src/tok/gateway/__init__.py`.
@@ -83,6 +98,11 @@ The bridge must keep inversion semantics stable:
 - cold starts prefer structured projected memory
 - malformed or non-inverted output must not be mistaken for Tok-native success
 - file readability must not be sacrificed for local compression ratio
+- compact skeletons, summaries, and stable references are non-exact evidence and must
+  not authorize edit-like work unless exact content has been observed again
+- the bridge may audit exact/non-exact evidence safety, but this remains bridge fidelity
+  infrastructure rather than graph memory, OpenCode commands, or a context packing
+  product surface
 
 ## Conformance Targets
 
@@ -93,3 +113,5 @@ Conformance tests should lock down:
 - Tok-native success detection
 - fail-open compatibility detection
 - malformed/non-inverted response handling
+- exact evidence before non-exact compression
+- exact reacquisition before edit-like work after skeleton/summary delivery

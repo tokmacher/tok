@@ -60,6 +60,10 @@ def collect_provider_sensitivity_risks(
                 risks["provider_sensitive_large_tool_use_text_interleaving"] = (
                     risks.get("provider_sensitive_large_tool_use_text_interleaving", 0) + 1
                 )
+            else:
+                risks["provider_sensitive_large_tool_use_batch_unterminated"] = (
+                    risks.get("provider_sensitive_large_tool_use_batch_unterminated", 0) + 1
+                )
 
     return risks
 

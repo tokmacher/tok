@@ -43,8 +43,20 @@ def bridge_url(port: int | None = None, path: str = "") -> str:
     """Build the bridge server URL."""
     host = os.getenv("TOK_BRIDGE_HOST", "localhost")
     if port is None:
-        port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+        port = env_int("TOK_BRIDGE_PORT", 9090)
     return f"http://{host}:{port}{path}"
+
+
+def env_int(name: str, fallback: int) -> int:
+    """Read an integer environment variable, warning and falling back when malformed."""
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        console.print(f"[yellow]Invalid integer config {name}={raw!r}; using fallback {fallback}.[/yellow]")
+        return fallback
 
 
 def _normalize_host(host: str) -> str:
@@ -61,7 +73,7 @@ def bridge_health_urls(port: int | None = None, path: str = "/health") -> list[s
     """Build bridge health probe URLs with loopback fallbacks for local hosts."""
     configured_host = os.getenv("TOK_BRIDGE_HOST", "localhost").strip() or "localhost"
     if port is None:
-        port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+        port = env_int("TOK_BRIDGE_PORT", 9090)
 
     if _normalize_host(configured_host) in _LOOPBACK_HOST_ALIASES:
         host_candidates = ["127.0.0.1", "localhost", "::1"]
@@ -116,7 +128,7 @@ def get_bridge_health_response(
 def collector_url(path: str = "") -> str:
     """Build the collector server URL."""
     host = os.getenv("TOK_COLLECTOR_HOST", "localhost")
-    port = int(os.getenv("TOK_COLLECTOR_PORT", "8000"))
+    port = env_int("TOK_COLLECTOR_PORT", 8000)
     return f"http://{host}:{port}{path}"
 
 
@@ -274,8 +286,8 @@ def render_stats_panel(
     border_style: str,
 ) -> Panel:
     grid = Table.grid(expand=True, padding=(0, 2))
-    grid.add_column(justify="left", ratio=1)
-    grid.add_column(justify="right")
+    grid.add_column(justify="left", ratio=1, overflow="fold")
+    grid.add_column(justify="right", overflow="fold")
     grid.add_row(f"[{headline_style}]{headline}[/{headline_style}]", "")
     grid.add_row(f"[dim]{subhead}[/dim]", "")
     for label, value in rows:
@@ -327,6 +339,28 @@ def runtime_verdict(
 def session_signals_text(payload: dict[str, Any]) -> str:
     parts: list[str] = []
     reacq_count = int(payload.get("repeat_search_count", 0)) + int(payload.get("repeat_file_read_count", 0))
+    exact_count = int(payload.get("evidence_exact_observed_count", payload.get("evidence_exact_observed", 0)))
+    nonexact_count = int(
+        payload.get("evidence_non_exact_reference_count", payload.get("evidence_non_exact_reference_emitted", 0))
+    )
+    reacq_required_count = int(
+        payload.get(
+            "evidence_exact_reacquisition_required_count",
+            payload.get("evidence_exact_reacquisition_required", 0),
+        )
+    )
+    reacq_satisfied_count = int(
+        payload.get(
+            "evidence_exact_reacquisition_satisfied_count",
+            payload.get("evidence_exact_reacquisition_satisfied", 0),
+        )
+    )
+    compression_blocked_count = int(
+        payload.get(
+            "evidence_compression_blocked_for_safety_count",
+            payload.get("evidence_compression_blocked_for_safety", 0),
+        )
+    )
     signal_map = (
         ("fallback", int(payload.get("fallback_count", 0))),
         ("drift", int(payload.get("semantic_drift_count", 0))),
@@ -352,10 +386,16 @@ def session_signals_text(payload: dict[str, Any]) -> str:
             "held",
             int(payload.get("request_policy_held_by_recovery_count", 0)),
         ),
+        ("exact", exact_count),
+        ("nonexact", nonexact_count),
     )
     for label, value in signal_map:
         if value > 0:
             parts.append(f"{label}={value}")
+    if reacq_required_count > 0 or reacq_satisfied_count > 0:
+        parts.append(f"reacq-safe={reacq_satisfied_count}/{reacq_required_count}")
+    if compression_blocked_count > 0:
+        parts.append(f"safe-block={compression_blocked_count}")
     return "clean" if not parts else ", ".join(parts)
 
 
@@ -369,6 +409,46 @@ def session_recommendation(
     if session_quality == "watch":
         return "Recommendation: keep Tok on, but watch this session"
     return "Recommendation: keep Tok on"
+
+
+def savings_diagnostic_note(
+    *,
+    summary: Mapping[str, Any] | None,
+    baseline_only: bool,
+    mode: str | None = None,
+    fallback_count: int | None = None,
+) -> str | None:
+    """Explain low savings without changing the bridge contract."""
+    if summary is None:
+        return None
+    tokens_saved = int(summary.get("tokens_saved", 0))
+    savings_pct = float(summary.get("savings_pct", 0.0))
+    calls = int(summary.get("calls", 0))
+    fallback_total = fallback_count
+    if fallback_total is None:
+        fallback_total = int(summary.get("fallback_count", 0))
+    safe_blocks = int(summary.get("evidence_compression_blocked_for_safety_count", 0))
+    repeated_reads = int(summary.get("repeat_file_read_count", 0)) + int(summary.get("repeat_search_count", 0))
+
+    if tokens_saved > 0 and savings_pct >= 5:
+        return None
+    if baseline_only:
+        return "Session fell back to baseline for safety; inspect doctor/logs before judging savings."
+    if mode == "baseline":
+        return "Bridge is intentionally in baseline mode, so compression is disabled."
+    if fallback_total > 0:
+        return "Request-level fallback protected fidelity; inspect doctor/logs before judging savings."
+    if safe_blocks > 0 and tokens_saved <= 0:
+        return "Tok blocked compression for evidence safety; exactness won over token savings."
+    if tokens_saved <= 0 or savings_pct <= 0:
+        if calls < 3:
+            return "Very short sessions often show no savings; recheck after sustained Claude Code work."
+        if repeated_reads <= 0:
+            return "Savings usually require repeated history, file reads, searches, or tool output."
+        return "Repeated context exists, but Tok may be waiting for exact evidence before compressing."
+    if 0 < savings_pct < 5:
+        return "Light savings can be normal with provider caching, little repetition, or safety blocks."
+    return None
 
 
 def savings_headline(
@@ -398,7 +478,7 @@ def savings_headline(
     return (
         f"Saved {tokens_saved:,} tokens",
         f"{pct:.1f}% saved",
-        f"{savings_verdict(pct)} • ${saved_usd:.4f} cost saved ({cost_pct:.1f}% cost)",
+        f"{savings_verdict(pct)} • ~${saved_usd:.4f} est. cost saved ({cost_pct:.1f}% cost)",
     )
 
 
@@ -451,6 +531,29 @@ def session_status_rows(
     if session_signals is not None:
         rows.append(("Session signals", session_signals))
     if summary is not None:
+        exact_count = int(summary.get("evidence_exact_observed_count", 0))
+        nonexact_count = int(summary.get("evidence_non_exact_reference_count", 0))
+        summary_count = int(summary.get("evidence_non_exact_summary_count", 0))
+        skeleton_count = int(summary.get("evidence_non_exact_skeleton_count", 0))
+        if exact_count > 0 or nonexact_count > 0 or summary_count > 0 or skeleton_count > 0:
+            rows.append(
+                (
+                    "Evidence safety",
+                    f"exact={exact_count}, non-exact={nonexact_count}, summaries={summary_count}, skeletons={skeleton_count}",
+                )
+            )
+        reacq_required_count = int(summary.get("evidence_exact_reacquisition_required_count", 0))
+        reacq_satisfied_count = int(summary.get("evidence_exact_reacquisition_satisfied_count", 0))
+        if reacq_required_count > 0 or reacq_satisfied_count > 0:
+            rows.append(
+                (
+                    "Exact reacquisition",
+                    f"required={reacq_required_count}, satisfied={reacq_satisfied_count}",
+                )
+            )
+        compression_blocked_count = int(summary.get("evidence_compression_blocked_for_safety_count", 0))
+        if compression_blocked_count > 0:
+            rows.append(("Compression safety blocks", str(compression_blocked_count)))
         request_shape_blocks = int(summary.get("preflight_block_original_payload_count", 0)) + int(
             summary.get("preflight_block_rewritten_payload_count", 0)
         )
@@ -487,6 +590,14 @@ def session_status_rows(
                 ),
             ]
         )
+    note = savings_diagnostic_note(
+        summary=summary,
+        baseline_only=baseline_only,
+        mode=mode,
+        fallback_count=fallback_count,
+    )
+    if note:
+        rows.append(("Savings note", note))
     if fallback_count is None and summary is not None:
         fallback_count_val = summary["fallback_count"]
         fallback_count = int(fallback_count_val) if isinstance(fallback_count_val, int | float | str) else 0
@@ -544,6 +655,7 @@ __all__ = [
     "render_stats_panel",
     "runtime_verdict",
     "savings_headline",
+    "savings_diagnostic_note",
     "savings_style",
     "savings_verdict",
     "session_recommendation",

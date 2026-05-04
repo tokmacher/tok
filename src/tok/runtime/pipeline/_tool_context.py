@@ -160,6 +160,11 @@ def _process_single_tool_use(
         return
 
     path, query = _extract_tool_input_fields(tool_input)
+    # Resolve pointer aliases (*A, *B1, etc.) so cache keys match full paths
+    if session is not None and path and isinstance(path, str) and path.startswith("*"):
+        resolved = session.bridge_memory.pointers.resolve(path)
+        if resolved:
+            path = resolved
     context = _build_context_dict(tool_name, tool_input, path, query)
 
     # Add session to context if available

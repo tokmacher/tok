@@ -16,16 +16,23 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+try:
+    from _project_metadata import read_project_metadata
+except ImportError:  # pragma: no cover - import path differs under tests
+    from scripts._project_metadata import read_project_metadata
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+PROJECT_VERSION = read_project_metadata()["version"]
 
 # Security configuration
 SECURITY_CONFIG = {
     "request_timeout": 30,
     "max_retries": 3,
     "rate_limit_delay": 0.1,  # 100ms between requests
-    "user_agent": "tok-security-dashboard/0.1.0",
+    "user_agent": f"tok-security-dashboard/{PROJECT_VERSION}",
     "vulnerability_db_url": "https://pypi.org/pypi",
     "safety_db_url": "https://pyup.io/safety/api/v1/advisories/",
 }

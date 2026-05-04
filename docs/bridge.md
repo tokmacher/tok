@@ -8,8 +8,7 @@ use this page when you want the complete operating flow.
 Tok's first open-source release is intentionally narrow and Claude-first:
 
 - install the Python package
-- start the bridge
-- route Claude through the bridge explicitly
+- launch Claude through `tok claude`
 - diagnose with `status`, `doctor`, `stats`, and logs
 
 The bridge is the supported product path. Broader platform and SDK work come later. The
@@ -35,7 +34,7 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 
 ## Prerequisites
 
-- Python `3.10`-`3.12` (tested for `0.1.x`)
+- Python `3.10` or newer
 - macOS or Linux
 - Claude Code installed and available as `claude`
 - provider/API configuration that already works with Claude Code
@@ -44,14 +43,16 @@ The bridge is responsible for transport and process lifecycle. The shared runtim
 
 ```bash
 pip install tok-protocol
-tok install
-tok bridge start
-ANTHROPIC_BASE_URL=http://localhost:9090 claude
+tok claude
 tok bridge status
 tok doctor
 tok bridge stop
 tok stats
 ```
+
+If you want an isolated CLI install and already use `pipx`, `pipx install tok-protocol`
+works too. `tok claude` starts the bridge if needed and launches Claude Code with the
+bridge environment set for that process only.
 
 `tok install` is a setup/migration helper and does not wrap `claude` by default. If you
 want legacy auto-routing behavior, use `tok install --wrap-claude`.

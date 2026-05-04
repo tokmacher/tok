@@ -373,6 +373,32 @@ class TestResetSessionEndpoint:
         assert payload["session_tokens_saved"] > 0
         assert payload["session_savings_pct"] > 0
 
+    @pytest.mark.asyncio
+    async def test_health_explicit_session_header_reports_that_bucket(self, test_client: tuple) -> None:  # type: ignore[no-untyped-def]
+        client, session = test_client
+        session.activate_session_for_request({"x-tok-session-id": "alpha"}, None)
+        session.tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=10,
+            cache_read=0,
+            cache_write=0,
+            input_saved=25,
+            output_saved=0,
+        )
+        session.activate_session_for_request({"x-tok-session-id": "beta"}, None)
+        session.runtime_session._baseline_only = True
+        session.runtime_session._bump_signals({"tok_fallback_activated": 1})
+
+        async with client:
+            resp = await client.get("/health", headers={"x-tok-session-id": "beta"})
+            assert resp.status_code == 200
+
+        payload = resp.json()
+        assert payload["baseline_only"] is True
+        assert payload["fallback_count"] == 1
+        assert payload["session_tokens_saved"] == 0
+
 
 class TestIsFirstRequestFlag:
     """RuntimeSession._is_first_request tracks fresh session start vs resumption."""
@@ -409,6 +435,8 @@ class TestFreshSessionPointerInjection:
         rs.bridge_memory.turn = 100
         rs.bridge_memory.pointers.get_pointer("/repo/src/foo.py")
         rs.bridge_memory.durable["facts"] = [MemoryEntry(value="answer_file:/repo/src/foo.py")]
+        (tmp_path / ".tok").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".tok" / "bridge_memory.tok").write_text("@mem v:b1 t:100\n")
         assert rs._is_first_request is True
 
         runtime = UniversalTokRuntime()
@@ -430,8 +458,8 @@ class TestFreshSessionPointerInjection:
             with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
                 prepare_request_impl(runtime, req, rs)
 
-        assert any("bridge_memory.tok @pointers" in h for h in captured_hints), (
-            f"Pointer hint not found in runtime_hints: {captured_hints}"
+        assert any("[tok] Session memory:" in h and "bridge_memory.tok" in h for h in captured_hints), (
+            f"Memory hint not found in runtime_hints: {captured_hints}"
         )
         assert rs._is_first_request is False
 
@@ -469,8 +497,8 @@ class TestFreshSessionPointerInjection:
             with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
                 prepare_request_impl(runtime, req, rs)
 
-        assert not any("bridge_memory.tok @pointers" in h for h in captured_hints), (
-            f"Pointer hint unexpectedly found in runtime_hints on second request: {captured_hints}"
+        assert not any("[tok] Session memory:" in h for h in captured_hints), (
+            f"Memory hint unexpectedly found in runtime_hints on second request: {captured_hints}"
         )
 
     def test_short_session_no_injection(self, tmp_path) -> None:
@@ -505,8 +533,8 @@ class TestFreshSessionPointerInjection:
             with patch("tok.runtime._request_preparation._should_skip_history_rewrite", return_value=(False, "")):
                 prepare_request_impl(runtime, req, rs)
 
-        assert not any("bridge_memory.tok @pointers" in h for h in captured_hints), (
-            f"Pointer hint unexpectedly found for short session: {captured_hints}"
+        assert not any("[tok] Session memory:" in h for h in captured_hints), (
+            f"Memory hint unexpectedly found for short session: {captured_hints}"
         )
         assert rs._is_first_request is False
 

@@ -260,7 +260,7 @@ CLEAN_INSTALL_IMPORT_CHECK = (
     "with tempfile.TemporaryDirectory(prefix='tok-clean-import-') as td:\n"
     "    tmp = Path(td); dist_dir = tmp / 'dist'; dist_dir.mkdir(parents=True, exist_ok=True)\n"
     "    expected_version = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']\n"
-    "    subprocess.run([sys.executable, '-m', 'build', '--wheel', '--sdist', '--outdir', str(dist_dir)], cwd=root, check=True)\n"
+    "    subprocess.run(['uv', 'run', '--with', 'build', '--with', 'hatchling', 'python', '-m', 'build', '--wheel', '--sdist', '--outdir', str(dist_dir)], cwd=root, check=True)\n"
     "    wheels = sorted(dist_dir.glob('*.whl')); assert wheels, 'no wheel'; wheel = wheels[-1]\n"
     "    sdists = sorted(dist_dir.glob('*.tar.gz')); assert sdists, 'no sdist'\n"
     "    venv_dir = tmp / 'venv'; venv.EnvBuilder(with_pip=True).create(venv_dir)\n"
@@ -299,6 +299,11 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
         "Release-surface gate",
         SURFACE_GATE_CHECK,
     ),
+    _pytest_step(
+        "Tok Trace spec contract smoke",
+        "tests/spec",
+        "-q",
+    ),
     # Focused baseline regression cluster.
     _pytest_step(
         "Focused bridge/runtime/compression smoke",
@@ -314,6 +319,12 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
         "-q",
     ),
     _pytest_step("Claude live smoke matrix", "tests/smoke/test_live_claude_smoke_matrix.py", "-q"),
+    _pytest_step(
+        "Ugly path matrix smoke",
+        "tests/unit/test_synthetic_bridge_pressure.py",
+        "tests/smoke/test_live_claude_smoke_matrix.py",
+        "-q",
+    ),
     # Ledger-promoted boundaries, in promotion order.
     _pytest_step(
         "Primary non-streaming bridge smoke",
@@ -333,27 +344,28 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
         CLEAN_INSTALL_IMPORT_CHECK,
     ),
     # Packaging build sanity gate.
-    SmokeStep(
+    _inline_python_step(
         "Build smoke",
         (
-            "uv",
-            "run",
-            "--with",
-            "build",
-            "--with",
-            "hatchling",
-            "python",
-            "-m",
-            "build",
+            "import shutil, subprocess",
+            "from pathlib import Path",
+            "dist = Path('tmp/release-smoke-dist')",
+            "shutil.rmtree(dist, ignore_errors=True)",
+            "dist.mkdir(parents=True, exist_ok=True)",
+            "subprocess.run(['uv', 'run', '--with', 'build', '--with', 'hatchling', 'python', '-m', 'build', '--wheel', '--sdist', '--outdir', str(dist)], check=True)",
         ),
     ),
     _inline_python_step(
         "Artifact metadata smoke",
         (
             "import subprocess",
+            "import tomllib",
             "from pathlib import Path",
-            "files = sorted(str(path) for path in Path('dist').glob('*.whl')) + sorted(str(path) for path in Path('dist').glob('*.tar.gz'))",
-            "assert files, 'no dist artifacts to validate'",
+            "dist = Path('tmp/release-smoke-dist')",
+            "expected_version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']",
+            "files = sorted(str(path) for path in dist.glob('*.whl')) + sorted(str(path) for path in dist.glob('*.tar.gz'))",
+            "assert len(files) == 2, f'expected one wheel and one sdist in isolated smoke dist, got {files}'",
+            "assert all(expected_version in Path(path).name for path in files), f'artifact version mismatch for {expected_version}: {files}'",
             "subprocess.run(['uv', 'run', '--with', 'twine', 'python', '-m', 'twine', 'check', *files], check=True)",
         ),
     ),

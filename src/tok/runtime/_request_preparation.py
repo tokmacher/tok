@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -102,6 +103,9 @@ _DEFAULT_JIT_HIT_THRESHOLD = 3
 _DEFAULT_SPECULATIVE_HIT_THRESHOLD = 2
 _BRIDGE_CUT_SEARCH_MAX_EXTRA_TURNS = 4
 _BRIDGE_CUT_SEARCH_MIN_SAVED_TOKENS = 16
+_EVIDENCE_PATH_RE = re.compile(
+    r"(?<!\w)([\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|yaml|yml|sh|txt|css|html|sql|rs|go|rb))(?!\w)"
+)
 
 
 def _tool_result_only_suffix_has_safe_pairing(messages: list[dict[str, Any]]) -> bool:
@@ -120,6 +124,39 @@ def _has_exact_search_evidence(evidence_keys: set[str]) -> bool:
         if str(key).startswith("search|"):
             return True
     return False
+
+
+def _edit_events_requiring_exact_reacquisition(
+    session: RuntimeSession,
+    normalized_tool_events: list[Any],
+) -> dict[str, int]:
+    signals: dict[str, int] = {}
+    for event in normalized_tool_events:
+        if not session._is_edit_tool_event(event):
+            continue
+        file_path = session._extract_file_path_from_event(event)
+        if not file_path:
+            continue
+        exact_key = evidence_identity_key(
+            "read_file",
+            path=file_path,
+            args=event.args if isinstance(event.args, dict) else None,
+        )
+        if not exact_key or not session.evidence_requires_reacquisition(exact_key):
+            continue
+        for key, value in session.require_exact_reacquisition(exact_key).items():
+            signals[key] = signals.get(key, 0) + value
+    return signals
+
+
+def _record_non_exact_history_evidence(session: RuntimeSession, tok_state: str) -> None:
+    if not tok_state:
+        return
+    for match in _EVIDENCE_PATH_RE.finditer(tok_state):
+        path = match.group(1)
+        exact_key = evidence_identity_key("read_file", path=path, args={"path": path})
+        if exact_key:
+            session.record_non_exact_evidence(exact_key, form="summary")
 
 
 def _record_structured_answer_expectation(
@@ -385,12 +422,14 @@ def _resolve_effective_tool_compatible(
         behavior_signals["short_session_baseline_mode"] = 1
         return False, ["short_session"]
 
-    structured_tool_loop = any(
+    # Use session's persisted repeat-target records to detect stuck loops across turns.
+    # repeat_target_* signals aren't in behavior_signals yet at policy-decision time
+    # (they're populated by _capture_repeat_target_snapshots, which runs later),
+    # so we query the session state directly instead.
+    has_stuck_target = any(r.stuck_promotion_turn > 0 for r in getattr(session, "_hot_summary_records", {}).values())
+    structured_tool_loop = has_stuck_target or any(
         behavior_signals.get(key, 0) > 0
         for key in (
-            "repeat_file_read",
-            "repeat_search",
-            "repeat_command",
             "repeated_tool_call",
             "stream_recovery_reacquisition_suppressed",
         )
@@ -523,6 +562,21 @@ def _restore_latest_assistant_thinking(
 
         return bool(restored_hash == original_hash)
     return False
+
+
+def _is_first_turn_broad_audit_batch(
+    request: RuntimeRequest,
+    session: RuntimeSession,
+    normalized_tool_events: list[Any],
+) -> bool:
+    if request.adapter_kind != "claude-bridge" or session.bridge_memory.turn > 1:
+        return False
+    if session._stream_recovery_reacquisition_budget > 0 or session._stream_recovery_history_floor_budget > 0:
+        return False
+    file_read_count = sum(1 for event in normalized_tool_events if event.compressibility_class == "file_read")
+    if file_read_count < 8:
+        return False
+    return not any(event.name.lower() in EDIT_LIKE_TOOLS for event in normalized_tool_events)
 
 
 def prepare_request_impl(
@@ -658,6 +712,11 @@ def prepare_request_impl(
         session.bridge_memory._upsert(session.bridge_memory.hot, "questions", hypothesis, score_delta=2)
 
     normalized_tool_events = normalize_tool_events(translated_messages)
+    broad_audit_batch = (
+        not suppress_reacquisition_once
+        and not stream_recovery_history_floor_active
+        and _is_first_turn_broad_audit_batch(request, session, normalized_tool_events)
+    )
     runtime_hints: list[str] = []
     injected_state_payload = ""
     history_skip_reason = ""
@@ -666,6 +725,15 @@ def prepare_request_impl(
     for event in normalized_tool_events:
         if event.name.lower() in EDIT_LIKE_TOOLS and event.path:
             session.bridge_memory.bump_file_heat(event.path, weight=2.0)
+    edit_reacquisition_signals = _edit_events_requiring_exact_reacquisition(session, normalized_tool_events)
+    if edit_reacquisition_signals:
+        for key, value in edit_reacquisition_signals.items():
+            behavior_signals[key] = behavior_signals.get(key, 0) + value
+        should_skip_history = True
+        skip_reason = "evidence_exact_reacquisition"
+        history_skip_reason = skip_reason
+    if broad_audit_batch:
+        behavior_signals["broad_audit_tok_additions_suppressed"] = 1
 
     mode, policy = session.policy_snapshot(request.model)
     saved_tokens = 0
@@ -858,10 +926,6 @@ def prepare_request_impl(
 
         runtime_hints = []
         if session.consume_loop_detected():
-            runtime_hints.append(
-                "@tok_terminate_loop You appear to be in a loop of repeated actions. "
-                "Choose the most likely answer and provide a final response now."
-            )
             behavior_signals["loop_terminated"] = 1
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
             behavior_signals["repeat_command_suppression_hint_injected"] = 0
@@ -951,7 +1015,13 @@ def prepare_request_impl(
             session._last_elevated_path = ""
         elif fidelity_overrides and current_path:
             session._last_elevated_path = current_path
-        if stream_recovery_history_floor_active:
+        if broad_audit_batch:
+            body["messages"] = translated_messages
+            behavior_signals["broad_audit_tool_result_compression_skipped"] = 1
+        elif edit_reacquisition_signals:
+            body["messages"] = translated_messages
+            behavior_signals["evidence_tool_result_compression_skipped"] = 1
+        elif stream_recovery_history_floor_active:
             body["messages"] = translated_messages
         elif plan_finalization_turn:
             body["messages"] = translated_messages
@@ -977,6 +1047,7 @@ def prepare_request_impl(
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
                 recently_edited_files=dict(session._recently_edited_files),
                 file_heat=dict(session.bridge_memory._file_heat),
+                session=session,
                 model_profile=session.model_profile,
             )
             tool_saved = sum(type_breakdown.values()) // 4
@@ -1007,7 +1078,17 @@ def prepare_request_impl(
             keep_turns = 0
             session._tok_memory_snap_triggered = 0
 
-        if preserve_exact_search_evidence:
+        if broad_audit_batch:
+            should_skip_history = True
+            skip_reason = "broad_audit"
+            history_skip_reason = skip_reason
+            behavior_signals["broad_audit_history_skipped"] = 1
+        elif edit_reacquisition_signals:
+            should_skip_history = True
+            skip_reason = "evidence_exact_reacquisition"
+            history_skip_reason = skip_reason
+            behavior_signals["evidence_history_compression_skipped"] = 1
+        elif preserve_exact_search_evidence:
             should_skip_history = True
             skip_reason = "answer_ready_exact_search_evidence"
             history_skip_reason = skip_reason
@@ -1198,6 +1279,7 @@ def prepare_request_impl(
 
         if not should_skip_history:
             if tok_state:
+                _record_non_exact_history_evidence(session, tok_state)
                 logger.info(f"HISTORY WINNOWING SUCCESS: msgs {len(body['messages'])} -> {len(recent)}")
                 _in_active_tool_loop = any(
                     behavior_signals.get(k, 0) > 0
@@ -1251,20 +1333,18 @@ def prepare_request_impl(
             session_memory = session.refresh_hot_memory("", model=request.model)
 
         if session._is_first_request:
-            if session.bridge_memory.pointers.map:
-                # Don't hard-code a developer machine path; derive from the active session memory dir.
-                try:
-                    memory_path = bridge_memory_file(session)
-                    pointer_hint = f"see {memory_path} @pointers for recent file references"
-                except Exception:
-                    pointer_hint = "see ~/.tok/bridge_memory.tok @pointers for recent file references"
-                runtime_hints = [pointer_hint] + runtime_hints
+            try:
+                memory_path = bridge_memory_file(session)
+                if memory_path.exists():
+                    runtime_hints = [f"[tok] Session memory: {memory_path}"] + runtime_hints
+            except Exception:
+                pass
             session._is_first_request = False
 
         if effective_tool_compatible:
-            if skip_reason == "short_session":
-                # Short session: skip ALL Tok additions to avoid overhead
-                behavior_signals["short_session_system_additions_skipped"] = 1
+            if skip_reason in {"short_session", "broad_audit"}:
+                # Skip all Tok additions when overhead would dominate the turn.
+                behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
             else:
                 (
                     injected_state_payload,
@@ -1307,9 +1387,9 @@ def prepare_request_impl(
                     session=session,
                 )
             has_answer_anchor = bool(behavior_signals.get("answer_anchor_present", 0))
-        elif skip_reason == "short_session":
-            # Short session: skip ALL Tok additions to avoid overhead
-            behavior_signals["short_session_system_additions_skipped"] = 1
+        elif skip_reason in {"short_session", "broad_audit"}:
+            # Skip all Tok additions when overhead would dominate the turn.
+            behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
         else:
             max_runtime_hints = RUNTIME_HINTS_MAX_PER_TURN
             if len(runtime_hints) > max_runtime_hints:

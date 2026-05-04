@@ -13,14 +13,16 @@
 #   3. Leaves the real `tok` CLI untouched
 
 # Path to the tok repo (auto-detected from this script's location)
-TOK_DIR="${TOK_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]:-${(%):-%x}}")/.." && pwd)"}"
+_TOK_SCRIPT_SOURCE="${BASH_SOURCE[0]:-${(%):-%x}}"
+TOK_DIR="${TOK_DIR:-"$(cd "$(dirname "$_TOK_SCRIPT_SOURCE")/.." && pwd)"}"
 TOK_BRIDGE_PORT="${TOK_BRIDGE_PORT:-9090}"
 TOK_BRIDGE_HOST="${TOK_BRIDGE_HOST:-localhost}"
 _TOK_STARTUP_TRIES="${_TOK_STARTUP_TRIES:-15}"
 
 _tok_bridge_running() {
-    curl -s --connect-timeout 1 "http://${TOK_BRIDGE_HOST}:${TOK_BRIDGE_PORT}/health" \
-        -o /dev/null 2>&1
+    local health_url
+    health_url="http://${TOK_BRIDGE_HOST}:${TOK_BRIDGE_PORT}/health"
+    curl -s --connect-timeout 1 "$health_url" -o /dev/null 2>&1
 }
 
 _tok_start_bridge() {

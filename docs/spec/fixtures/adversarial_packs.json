@@ -1,0 +1,82 @@
+{
+  "schema": "tok-trace-adversarial-packs/v0.1-draft",
+  "packs": [
+    {
+      "id": "trace-l1-l2-core-adversarial",
+      "status": "implemented-local",
+      "conformance_levels": ["L0", "L1", "L2"],
+      "description": "Cases the 0.1.x Tok Trace verifier can judge from fixture structure, local artifacts, and sequence checks.",
+      "cases": [
+        {
+          "id": "forged_payload_digest",
+          "expected_status": "fail",
+          "expected_error": "payload_digest_mismatch"
+        },
+        {
+          "id": "resolver_uri_path_escape",
+          "expected_status": "fail",
+          "expected_error": "available_local_unresolved_content_uri"
+        },
+        {
+          "id": "exactness_lie",
+          "expected_status": "fail",
+          "expected_error": "non_exact_reference_marked_exact"
+        },
+        {
+          "id": "resolver_state_lie",
+          "expected_status": "fail",
+          "expected_error": "available_local_unresolved_content_uri"
+        },
+        {
+          "id": "unsupported_delta_algorithm",
+          "expected_status": "fail",
+          "expected_error": "unsupported_delta_algorithm_for_audit"
+        },
+        {
+          "id": "malformed_jsonl_line",
+          "expected_status": "fail",
+          "expected_error": "invalid_jsonl_line"
+        },
+        {
+          "id": "duplicate_block_ids",
+          "expected_status": "fail",
+          "expected_error": "duplicate_block_id"
+        },
+        {
+          "id": "out_of_order_turns",
+          "expected_status": "fail",
+          "expected_error": "out_of_order_trace_block"
+        },
+        {
+          "id": "unknown_required_field_or_version",
+          "expected_status": "fail",
+          "expected_error": "invalid_trace_version"
+        },
+        {
+          "id": "extension_override_core_semantics",
+          "expected_status": "fail",
+          "expected_error": "extension_namespace_overrides_core"
+        }
+      ]
+    },
+    {
+      "id": "resolver-routing-future-adversarial",
+      "status": "future-design-only",
+      "conformance_levels": ["L3", "L4", "L5"],
+      "description": "Resolver, routing, capability, and session cases that must not be claimed by the L1/L2 verifier.",
+      "cases": [
+        {"id": "resolver_referral_loop"},
+        {"id": "unauthorized_resolver_request"},
+        {"id": "hash_exists_but_capability_missing"},
+        {"id": "resolver_returns_wrong_bytes"},
+        {"id": "resolver_leaks_path_or_session_metadata"},
+        {"id": "remote_unavailable_but_trace_remains_valid"},
+        {"id": "conflicting_resolver_manifests"},
+        {"id": "stale_but_hash_valid_resolver_response"},
+        {"id": "session_splice_replay"},
+        {"id": "capability_downgrade_silent_drop"},
+        {"id": "privacy_class_violation"}
+      ]
+    }
+  ]
+}

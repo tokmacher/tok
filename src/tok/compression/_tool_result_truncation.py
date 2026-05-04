@@ -167,7 +167,9 @@ def _extract_symbol_table(lines: list[str], start: int, end: int) -> str:
     return "@symbols\n" + "\n".join(entries) + "\n"
 
 
-def truncate_large_result(text: str, limit: int = 1200, *, already_compressed: bool = False) -> str:
+def truncate_large_result(
+    text: str, limit: int = 1200, *, already_compressed: bool = False, result_type: str = ""
+) -> str:
     # If already compressed (e.g., skeletonized by file_read), don't truncate further.
     if already_compressed:
         return text
@@ -228,11 +230,12 @@ def truncate_large_result(text: str, limit: int = 1200, *, already_compressed: b
     omitted_chars = max(0, len(text) - len(head_text) - len(tail_text))
     continuation_line = tail_idx + 1 if tail_idx < len(lines) else len(lines)
     symbol_table = _extract_symbol_table(lines, head_idx, tail_idx)
+    offset_hint = f"... [use offset={head_idx + 1} to read omitted section] ..." if result_type != "bash" else ""
     marker = (
         f"... [TRUNCATED {omitted_chars} CHARS; omitted lines "
         f"{head_idx + 1}-{tail_idx}; continue at line {continuation_line}]\n"
         f"{symbol_table}"
-        f"... [use offset={head_idx + 1} to read omitted section] ..."
+        f"{offset_hint}"
     )
 
     compressed = head_text

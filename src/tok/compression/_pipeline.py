@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import MutableMapping
 from typing import Any
 
@@ -67,10 +68,18 @@ __all__ = [
 # Tests monkeypatch this module-level threshold directly.
 TOOL_COMPRESS_THRESHOLD = 0
 
+# Lock for thread-safe threshold synchronization
+_threshold_lock = threading.Lock()
+
 
 def _sync_threshold() -> None:
-    """Synchronize the threshold between pipeline modules."""
-    _history.TOOL_COMPRESS_THRESHOLD = TOOL_COMPRESS_THRESHOLD
+    """Synchronize the threshold between pipeline modules.
+
+    Thread-safe: uses a lock to ensure consistent reads/writes of the
+    module-level threshold between pipeline modules.
+    """
+    with _threshold_lock:
+        _history.TOOL_COMPRESS_THRESHOLD = TOOL_COMPRESS_THRESHOLD
 
 
 def tok_tool_result_impl(
@@ -106,6 +115,7 @@ def compress_tool_results_impl(
     preserve_exact_search_evidence: bool = False,
     recently_edited_files: dict[str, int] | None = None,
     file_heat: dict[str, float] | None = None,
+    session: Any | None = None,
     model_profile: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Compress tool results in messages using the history pipeline."""
@@ -126,6 +136,7 @@ def compress_tool_results_impl(
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         recently_edited_files=recently_edited_files,
         file_heat=file_heat,
+        session=session,
         model_profile=model_profile,
     )
 

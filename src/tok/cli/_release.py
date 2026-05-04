@@ -27,6 +27,7 @@ from tok.stats import SavingsTracker
 
 from ._cli_support import (
     console,
+    env_int,
     get_bridge_health_response,
     get_running_bridge_pid,
     interaction_quality_rows,
@@ -77,7 +78,7 @@ def stats_command(
     recent_completed = tracker.recent_summary(recent) if recent else None
     since_completed = tracker.since_summary(since) if since else None
 
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+    port = env_int("TOK_BRIDGE_PORT", 9090)
     pid = get_running_bridge_pid(port)
     health_payload = None
     if pid:
@@ -93,18 +94,23 @@ def stats_command(
     # data so "Current Session" always reflects the live bucket.
     # Only apply when showing the default view — not when --last-session or --total
     # were requested, which expect a different data source.
+    local_calls = int(session_summary["calls"]) if session_summary else 0
+    health_calls = int(health_payload.get("calls", 0)) if health_payload else 0
     if (
-        session_summary is None
-        and not last_session
+        not last_session
         and not total
         and health_payload
         and int(health_payload.get("actual_tokens", 0)) > 0
+        and health_calls >= local_calls
     ):
         session_summary = {
             "actual_tokens": int(health_payload.get("actual_tokens", 0)),
             "baseline_tokens": int(health_payload.get("baseline_tokens", 0)),
             "tokens_saved": int(health_payload.get("session_tokens_saved", 0)),
             "savings_pct": float(health_payload.get("session_savings_pct", 0.0)),
+            "cost_savings_pct": float(
+                health_payload.get("session_cost_savings_pct", health_payload.get("session_savings_pct", 0.0))
+            ),
             "actual_cost_usd": float(health_payload.get("actual_cost_usd", 0.0)),
             "baseline_cost_usd": float(health_payload.get("baseline_cost_usd", 0.0)),
             "cost_saved_usd": float(health_payload.get("cost_saved_usd", 0.0)),
@@ -125,6 +131,19 @@ def stats_command(
             ),
             "stream_recovery_empty_success_count": int(health_payload.get("stream_recovery_empty_success_count", 0)),
             "stream_recovery_read_error_count": int(health_payload.get("stream_recovery_read_error_count", 0)),
+            "evidence_exact_observed_count": int(health_payload.get("evidence_exact_observed_count", 0)),
+            "evidence_non_exact_reference_count": int(health_payload.get("evidence_non_exact_reference_count", 0)),
+            "evidence_non_exact_summary_count": int(health_payload.get("evidence_non_exact_summary_count", 0)),
+            "evidence_non_exact_skeleton_count": int(health_payload.get("evidence_non_exact_skeleton_count", 0)),
+            "evidence_exact_reacquisition_required_count": int(
+                health_payload.get("evidence_exact_reacquisition_required_count", 0)
+            ),
+            "evidence_exact_reacquisition_satisfied_count": int(
+                health_payload.get("evidence_exact_reacquisition_satisfied_count", 0)
+            ),
+            "evidence_compression_blocked_for_safety_count": int(
+                health_payload.get("evidence_compression_blocked_for_safety_count", 0)
+            ),
         }
 
     if not total:
@@ -558,10 +577,11 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
     console.print("=" * 52)
 
     issues = False
-    port = int(os.getenv("TOK_BRIDGE_PORT", "9090"))
+    port = env_int("TOK_BRIDGE_PORT", 9090)
     pid = get_running_bridge_pid(port)
     tracker = SavingsTracker()
     session_summary = tracker.session_summary()
+    doctor_report_summary: dict[str, Any] = dict(session_summary or {})
     if pid:
         console.print(f"[green]✅ Bridge process: PID {pid}[/green]")
         try:
@@ -614,6 +634,69 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
                         "request_policy_held_by_recovery_count": int(
                             payload.get("request_policy_held_by_recovery_count", 0)
                         ),
+                        "evidence_exact_observed_count": int(
+                            payload.get(
+                                "evidence_exact_observed_count",
+                                session_view_summary.get("evidence_exact_observed_count", 0),
+                            )
+                        ),
+                        "evidence_non_exact_reference_count": int(
+                            payload.get(
+                                "evidence_non_exact_reference_count",
+                                session_view_summary.get("evidence_non_exact_reference_count", 0),
+                            )
+                        ),
+                        "evidence_non_exact_summary_count": int(
+                            payload.get(
+                                "evidence_non_exact_summary_count",
+                                session_view_summary.get("evidence_non_exact_summary_count", 0),
+                            )
+                        ),
+                        "evidence_non_exact_skeleton_count": int(
+                            payload.get(
+                                "evidence_non_exact_skeleton_count",
+                                session_view_summary.get("evidence_non_exact_skeleton_count", 0),
+                            )
+                        ),
+                        "evidence_exact_reacquisition_required_count": int(
+                            payload.get(
+                                "evidence_exact_reacquisition_required_count",
+                                session_view_summary.get("evidence_exact_reacquisition_required_count", 0),
+                            )
+                        ),
+                        "evidence_exact_reacquisition_satisfied_count": int(
+                            payload.get(
+                                "evidence_exact_reacquisition_satisfied_count",
+                                session_view_summary.get("evidence_exact_reacquisition_satisfied_count", 0),
+                            )
+                        ),
+                        "evidence_compression_blocked_for_safety_count": int(
+                            payload.get(
+                                "evidence_compression_blocked_for_safety_count",
+                                session_view_summary.get("evidence_compression_blocked_for_safety_count", 0),
+                            )
+                        ),
+                    }
+                )
+                doctor_report_summary = dict(session_view_summary)
+                signal_payload = dict(payload)
+                signal_payload.update(
+                    {
+                        "evidence_exact_observed_count": int(
+                            session_view_summary.get("evidence_exact_observed_count", 0)
+                        ),
+                        "evidence_non_exact_reference_count": int(
+                            session_view_summary.get("evidence_non_exact_reference_count", 0)
+                        ),
+                        "evidence_exact_reacquisition_required_count": int(
+                            session_view_summary.get("evidence_exact_reacquisition_required_count", 0)
+                        ),
+                        "evidence_exact_reacquisition_satisfied_count": int(
+                            session_view_summary.get("evidence_exact_reacquisition_satisfied_count", 0)
+                        ),
+                        "evidence_compression_blocked_for_safety_count": int(
+                            session_view_summary.get("evidence_compression_blocked_for_safety_count", 0)
+                        ),
                     }
                 )
                 console.print(
@@ -632,7 +715,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
                             fallback_count=fallback_count,
                             session_quality=str(payload.get("session_quality", "clean")),
                             degradation_reason=str(payload.get("last_degradation_reason", "")),
-                            session_signals=session_signals_text(payload),
+                            session_signals=session_signals_text(signal_payload),
                         ),
                         border_style=status_border(verdict_style),
                     )
@@ -735,6 +818,11 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
             f"env_TOK_PROJECT_DIR={_safe_env_flag('TOK_PROJECT_DIR')}",
             f"env_TOK_COLLECTOR_DB={_safe_env_flag('TOK_COLLECTOR_DB')}",
             f"env_TOK_MODE={os.getenv('TOK_MODE', 'unset')}",
+            f"evidence_exact_observed={int(doctor_report_summary.get('evidence_exact_observed_count', 0))}",
+            f"evidence_non_exact_reference={int(doctor_report_summary.get('evidence_non_exact_reference_count', 0))}",
+            f"evidence_exact_reacquisition_required={int(doctor_report_summary.get('evidence_exact_reacquisition_required_count', 0))}",
+            f"evidence_exact_reacquisition_satisfied={int(doctor_report_summary.get('evidence_exact_reacquisition_satisfied_count', 0))}",
+            f"evidence_compression_blocked_for_safety={int(doctor_report_summary.get('evidence_compression_blocked_for_safety_count', 0))}",
         ]
         console.print("\n[bold]Report:[/bold]")
         console.print("```")

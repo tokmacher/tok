@@ -3,9 +3,9 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "tok-protocol-dependencies",
-  "documentNamespace": "https://tok-protocol.dev/sbom/17deefe2-8d37-4b15-aa4e-b6f9657fefe8",
+  "documentNamespace": "https://tok-protocol.dev/sbom/d71efad2-6234-4ade-ba37-c60b26a04551",
   "creationInfo": {
-    "created": "2026-04-09T06:40:54.450994Z",
+    "created": "2026-05-04T06:51:55.508140Z",
     "creators": [
       "Tool: tok-security-pipeline-1.0.0",
       "Organization: tokmacher"
@@ -15,7 +15,7 @@
     {
       "name": "tok-protocol",
       "SPDXID": "SPDXRef-tok-protocol",
-      "versionInfo": "0.1.4",
+      "versionInfo": "0.1.7",
       "downloadLocation": "https://github.com/tokmacher/tok",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -25,7 +25,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/tok-protocol@0.1.4"
+          "referenceLocator": "pkg:pypi/tok-protocol@0.1.7"
         }
       ]
     },
@@ -33,7 +33,7 @@
       "name": "annotated-doc",
       "SPDXID": "SPDXRef-annotated_doc",
       "versionInfo": "0.0.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/57/ba/046ceea27344560984e26a590f90bc7f4a75b06701f653222458922b558c/annotated_doc-0.0.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -44,13 +44,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/annotated-doc@0.0.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4"
+        }
       ]
     },
     {
       "name": "annotated-types",
       "SPDXID": "SPDXRef-annotated_types",
       "versionInfo": "0.7.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/ee/67/531ea369ba64dcff5ec9c3402f9f51bf748cec26dde048a2f973a4eea7f5/annotated_types-0.7.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -61,13 +67,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/annotated-types@0.7.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89"
+        }
       ]
     },
     {
       "name": "anyio",
       "SPDXID": "SPDXRef-anyio",
       "versionInfo": "4.12.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/96/f0/5eb65b2bb0d09ac6776f2eb54adee6abe8228ea05b20a5ad0e4945de8aac/anyio-4.12.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -78,13 +90,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/anyio@4.12.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "41cfcc3a4c85d3f05c932da7c26d0201ac36f72abd4435ba90d0464a3ffed703"
+        }
       ]
     },
     {
       "name": "authlib",
       "SPDXID": "SPDXRef-authlib",
       "versionInfo": "1.6.9",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/af/98/00d3dd826d46959ad8e32af2dbb2398868fd9fd0683c26e56d0789bd0e68/authlib-1.6.9.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -95,13 +113,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/authlib@1.6.9"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "d8f2421e7e5980cc1ddb4e32d3f5fa659cfaf60d8eaf3281ebed192e4ab74f04"
+        }
       ]
     },
     {
       "name": "backports-asyncio-runner",
       "SPDXID": "SPDXRef-backports_asyncio_runner",
       "versionInfo": "1.2.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/8e/ff/70dca7d7cb1cbc0edb2c6cc0c38b65cba36cccc491eca64cabd5fe7f8670/backports_asyncio_runner-1.2.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -112,13 +136,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/backports-asyncio-runner@1.2.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a5aa7b2b7d8f8bfcaa2b57313f70792df84e32a2a746f585213373f900b42162"
+        }
       ]
     },
     {
       "name": "backports-datetime-fromisoformat",
       "SPDXID": "SPDXRef-backports_datetime_fromisoformat",
       "versionInfo": "2.0.3",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/71/81/eff3184acb1d9dc3ce95a98b6f3c81a49b4be296e664db8e1c2eeabef3d9/backports_datetime_fromisoformat-2.0.3.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -129,13 +159,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/backports-datetime-fromisoformat@2.0.3"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "b58edc8f517b66b397abc250ecc737969486703a66eb97e01e6d51291b1a139d"
+        }
       ]
     },
     {
       "name": "build",
       "SPDXID": "SPDXRef-build",
       "versionInfo": "1.4.2",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/6c/1d/ab15c8ac57f4ee8778d7633bc6685f808ab414437b8644f555389cdc875e/build-1.4.2.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -146,13 +182,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/build@1.4.2"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "35b14e1ee329c186d3f08466003521ed7685ec15ecffc07e68d706090bf161d1"
+        }
       ]
     },
     {
       "name": "certifi",
       "SPDXID": "SPDXRef-certifi",
       "versionInfo": "2026.2.25",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/af/2d/7bf41579a8986e348fa033a31cdd0e4121114f6bce2457e8876010b092dd/certifi-2026.2.25.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -163,13 +205,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/certifi@2026.2.25"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e887ab5cee78ea814d3472169153c2d12cd43b14bd03329a39a9c6e2e80bfba7"
+        }
       ]
     },
     {
       "name": "cffi",
       "SPDXID": "SPDXRef-cffi",
       "versionInfo": "2.0.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -180,13 +228,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/cffi@2.0.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529"
+        }
       ]
     },
     {
       "name": "cfgv",
       "SPDXID": "SPDXRef-cfgv",
       "versionInfo": "3.5.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/4e/b5/721b8799b04bf9afe054a3899c6cf4e880fcf8563cc71c15610242490a0c/cfgv-3.5.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -197,13 +251,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/cfgv@3.5.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "d5b1034354820651caa73ede66a6294d6e95c1b00acc5e9b098e917404669132"
+        }
       ]
     },
     {
       "name": "charset-normalizer",
       "SPDXID": "SPDXRef-charset_normalizer",
       "versionInfo": "3.4.5",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/1d/35/02daf95b9cd686320bb622eb148792655c9412dbb9b67abb5694e5910a24/charset_normalizer-3.4.5.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -214,13 +274,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/charset-normalizer@3.4.5"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "95adae7b6c42a6c5b5b559b1a99149f090a57128155daeea91732c8d970d8644"
+        }
       ]
     },
     {
       "name": "click",
       "SPDXID": "SPDXRef-click",
       "versionInfo": "8.3.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/3d/fa/656b739db8587d7b5dfa22e22ed02566950fbfbcdc20311993483657a5c0/click-8.3.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -231,13 +297,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/click@8.3.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "12ff4785d337a1bb490bb7e9c2b1ee5da3112e94a8622f26a6c77f5d2fc6842a"
+        }
       ]
     },
     {
       "name": "colorama",
       "SPDXID": "SPDXRef-colorama",
       "versionInfo": "0.4.6",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93a6792e2acffb9d9d5cb0a5cfd8802644b7b1c9a02e4/colorama-0.4.6.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -248,13 +320,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/colorama@0.4.6"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"
+        }
       ]
     },
     {
       "name": "coverage",
       "SPDXID": "SPDXRef-coverage",
       "versionInfo": "7.13.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/24/56/95b7e30fa389756cb56630faa728da46a27b8c6eb46f9d557c68fff12b65/coverage-7.13.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -265,13 +343,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/coverage@7.13.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e5c8f6ed1e61a8b2dcdf31eb0b9bbf0130750ca79c1c49eb898e2ad86f5ccc91"
+        }
       ]
     },
     {
       "name": "cryptography",
       "SPDXID": "SPDXRef-cryptography",
       "versionInfo": "46.0.6",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/a4/ba/04b1bd4218cbc58dc90ce967106d51582371b898690f3ae0402876cc4f34/cryptography-46.0.6.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -282,13 +366,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/cryptography@46.0.6"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "27550628a518c5c6c903d84f637fbecf287f6cb9ced3804838a1295dc1fd0759"
+        }
       ]
     },
     {
       "name": "distlib",
       "SPDXID": "SPDXRef-distlib",
       "versionInfo": "0.4.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/96/8e/709914eb2b5749865801041647dc7f4e6d00b549cfe88b65ca192995f07c/distlib-0.4.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -299,13 +389,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/distlib@0.4.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "feec40075be03a04501a973d81f633735b4b69f98b05450592310c0f401a4e0d"
+        }
       ]
     },
     {
       "name": "distro",
       "SPDXID": "SPDXRef-distro",
       "versionInfo": "1.9.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527f8a2e8885fc8015d3e6f5775df186e443e0964a11c3/distro-1.9.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -316,13 +412,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/distro@1.9.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed"
+        }
       ]
     },
     {
       "name": "dparse",
       "SPDXID": "SPDXRef-dparse",
       "versionInfo": "0.6.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/29/ee/96c65e17222b973f0d3d0aa9bad6a59104ca1b0eb5b659c25c2900fccd85/dparse-0.6.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -333,13 +435,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/dparse@0.6.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "90b29c39e3edc36c6284c82c4132648eaf28a01863eb3c231c2512196132201a"
+        }
       ]
     },
     {
       "name": "exceptiongroup",
       "SPDXID": "SPDXRef-exceptiongroup",
       "versionInfo": "1.3.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -350,13 +458,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/exceptiongroup@1.3.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219"
+        }
       ]
     },
     {
       "name": "fastapi",
       "SPDXID": "SPDXRef-fastapi",
       "versionInfo": "0.135.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/e7/7b/f8e0211e9380f7195ba3f3d40c292594fd81ba8ec4629e3854c353aaca45/fastapi-0.135.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -367,13 +481,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/fastapi@0.135.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "d04115b508d936d254cea545b7312ecaa58a7b3a0f84952535b4c9afae7668cd"
+        }
       ]
     },
     {
       "name": "filelock",
       "SPDXID": "SPDXRef-filelock",
       "versionInfo": "3.25.2",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/94/b8/00651a0f559862f3bb7d6f7477b192afe3f583cc5e26403b44e59a55ab34/filelock-3.25.2.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -384,13 +504,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/filelock@3.25.2"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "b64ece2b38f4ca29dd3e810287aa8c48182bbecd1ae6e9ae126c9b35f1382694"
+        }
       ]
     },
     {
       "name": "h11",
       "SPDXID": "SPDXRef-h11",
       "versionInfo": "0.16.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -401,13 +527,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/h11@0.16.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1"
+        }
       ]
     },
     {
       "name": "hatchling",
       "SPDXID": "SPDXRef-hatchling",
       "versionInfo": "1.29.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/cf/9c/b4cfe330cd4f49cff17fd771154730555fa4123beb7f292cf0098b4e6c20/hatchling-1.29.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -418,13 +550,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/hatchling@1.29.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "793c31816d952cee405b83488ce001c719f325d9cda69f1fc4cd750527640ea6"
+        }
       ]
     },
     {
       "name": "httpcore",
       "SPDXID": "SPDXRef-httpcore",
       "versionInfo": "1.0.9",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -435,13 +573,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/httpcore@1.0.9"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8"
+        }
       ]
     },
     {
       "name": "httptools",
       "SPDXID": "SPDXRef-httptools",
       "versionInfo": "0.7.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/b5/46/120a669232c7bdedb9d52d4aeae7e6c7dfe151e99dc70802e2fc7a5e1993/httptools-0.7.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -452,13 +596,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/httptools@0.7.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "abd72556974f8e7c74a259655924a717a2365b236c882c3f6f8a45fe94703ac9"
+        }
       ]
     },
     {
       "name": "httpx",
       "SPDXID": "SPDXRef-httpx",
       "versionInfo": "0.28.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -469,13 +619,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/httpx@0.28.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc"
+        }
       ]
     },
     {
       "name": "hypothesis",
       "SPDXID": "SPDXRef-hypothesis",
       "versionInfo": "6.151.9",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/19/e1/ef365ff480903b929d28e057f57b76cae51a30375943e33374ec9a165d9c/hypothesis-6.151.9.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -486,13 +642,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/hypothesis@6.151.9"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "2f284428dda6c3c48c580de0e18470ff9c7f5ef628a647ee8002f38c3f9097ca"
+        }
       ]
     },
     {
       "name": "identify",
       "SPDXID": "SPDXRef-identify",
       "versionInfo": "2.6.17",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/57/84/376a3b96e5a8d33a7aa2c5b3b31a4b3c364117184bf0b17418055f6ace66/identify-2.6.17.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -503,13 +665,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/identify@2.6.17"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "f816b0b596b204c9fdf076ded172322f2723cf958d02f9c3587504834c8ff04d"
+        }
       ]
     },
     {
       "name": "idna",
       "SPDXID": "SPDXRef-idna",
       "versionInfo": "3.11",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/6f/6d/0703ccc57f3a7233505399edb88de3cbd678da106337b9fcde432b65ed60/idna-3.11.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -520,13 +688,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/idna@3.11"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "795dafcc9c04ed0c1fb032c2aa73654d8e8c5023a7df64a53f39190ada629902"
+        }
       ]
     },
     {
       "name": "importlib-metadata",
       "SPDXID": "SPDXRef-importlib_metadata",
       "versionInfo": "9.0.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -537,13 +711,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/importlib-metadata@9.0.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc"
+        }
       ]
     },
     {
       "name": "iniconfig",
       "SPDXID": "SPDXRef-iniconfig",
       "versionInfo": "2.3.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -554,13 +734,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/iniconfig@2.3.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730"
+        }
       ]
     },
     {
       "name": "jinja2",
       "SPDXID": "SPDXRef-jinja2",
       "versionInfo": "3.1.6",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -571,13 +757,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/jinja2@3.1.6"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d"
+        }
       ]
     },
     {
       "name": "jiter",
       "SPDXID": "SPDXRef-jiter",
       "versionInfo": "0.13.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/0d/5e/4ec91646aee381d01cdb9974e30882c9cd3b8c5d1079d6b5ff4af522439a/jiter-0.13.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -588,13 +780,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/jiter@0.13.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "f2839f9c2c7e2dffc1bc5929a510e14ce0a946be9365fd1219e7ef342dae14f4"
+        }
       ]
     },
     {
       "name": "joblib",
       "SPDXID": "SPDXRef-joblib",
       "versionInfo": "1.5.3",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/41/f2/d34e8b3a08a9cc79a50b2208a93dce981fe615b64d5a4d4abee421d898df/joblib-1.5.3.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -605,13 +803,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/joblib@1.5.3"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "8561a3269e6801106863fd0d6d84bb737be9e7631e33aaed3fb9ce5953688da3"
+        }
       ]
     },
     {
       "name": "librt",
       "SPDXID": "SPDXRef-librt",
       "versionInfo": "0.8.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/56/9c/b4b0c54d84da4a94b37bd44151e46d5e583c9534c7e02250b961b1b6d8a8/librt-0.8.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -622,13 +826,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/librt@0.8.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "be46a14693955b3bd96014ccbdb8339ee8c9346fbe11c1b78901b55125f14c73"
+        }
       ]
     },
     {
       "name": "markdown-it-py",
       "SPDXID": "SPDXRef-markdown_it_py",
       "versionInfo": "4.0.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/5b/f5/4ec618ed16cc4f8fb3b701563655a69816155e79e24a17b651541804721d/markdown_it_py-4.0.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -639,13 +849,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/markdown-it-py@4.0.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3"
+        }
       ]
     },
     {
       "name": "markupsafe",
       "SPDXID": "SPDXRef-markupsafe",
       "versionInfo": "3.0.3",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/7e/99/7690b6d4034fffd95959cbe0c02de8deb3098cc577c67bb6a24fe5d7caa7/markupsafe-3.0.3.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -656,13 +872,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/markupsafe@3.0.3"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "722695808f4b6457b320fdc131280796bdceb04ab50fe1795cd540799ebe1698"
+        }
       ]
     },
     {
       "name": "marshmallow",
       "SPDXID": "SPDXRef-marshmallow",
       "versionInfo": "4.2.3",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/7f/ed/ecdd3a8259680dc9626ed5971b110c9be560962e11f7b0319b45ec2092b1/marshmallow-4.2.3.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -673,13 +895,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/marshmallow@4.2.3"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "3e3fef6b3603721a25a723b8caedfa488369bddaf9bc03b40b9442c90aebd22b"
+        }
       ]
     },
     {
       "name": "mdurl",
       "SPDXID": "SPDXRef-mdurl",
       "versionInfo": "0.1.2",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -690,13 +918,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/mdurl@0.1.2"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba"
+        }
       ]
     },
     {
       "name": "mypy",
       "SPDXID": "SPDXRef-mypy",
       "versionInfo": "1.19.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/f5/db/4efed9504bc01309ab9c2da7e352cc223569f05478012b5d9ece38fd44d2/mypy-1.19.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -707,13 +941,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/mypy@1.19.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "19d88bb05303fe63f71dd2c6270daca27cb9401c4ca8255fe50d1d920e0eb9ba"
+        }
       ]
     },
     {
       "name": "mypy-extensions",
       "SPDXID": "SPDXRef-mypy_extensions",
       "versionInfo": "1.1.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8dac321cda606860fa4548858c0cc45d9d1d4ca2628b/mypy_extensions-1.1.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -724,13 +964,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/mypy-extensions@1.1.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558"
+        }
       ]
     },
     {
       "name": "nltk",
       "SPDXID": "SPDXRef-nltk",
       "versionInfo": "3.9.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/74/a1/b3b4adf15585a5bc4c357adde150c01ebeeb642173ded4d871e89468767c/nltk-3.9.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -741,13 +987,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/nltk@3.9.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ed03bc098a40481310320808b2db712d95d13ca65b27372f8a403949c8b523d0"
+        }
       ]
     },
     {
       "name": "nodeenv",
       "SPDXID": "SPDXRef-nodeenv",
       "versionInfo": "1.10.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/24/bf/d1bda4f6168e0b2e9e5958945e01910052158313224ada5ce1fb2e1113b8/nodeenv-1.10.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -758,13 +1010,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/nodeenv@1.10.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "996c191ad80897d076bdfba80a41994c2b47c68e224c542b48feba42ba00f8bb"
+        }
       ]
     },
     {
       "name": "openai",
       "SPDXID": "SPDXRef-openai",
       "versionInfo": "1.109.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/c6/a1/a303104dc55fc546a3f6914c842d3da471c64eec92043aef8f652eb6c524/openai-1.109.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -775,13 +1033,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/openai@1.109.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "d173ed8dbca665892a6db099b4a2dfac624f94d20a93f46eb0b56aae940ed869"
+        }
       ]
     },
     {
       "name": "packaging",
       "SPDXID": "SPDXRef-packaging",
       "versionInfo": "26.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/65/ee/299d360cdc32edc7d2cf530f3accf79c4fca01e96ffc950d8a52213bd8e4/packaging-26.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -792,13 +1056,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/packaging@26.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4"
+        }
       ]
     },
     {
       "name": "pathspec",
       "SPDXID": "SPDXRef-pathspec",
       "versionInfo": "1.0.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/fa/36/e27608899f9b8d4dff0617b2d9ab17ca5608956ca44461ac14ac48b44015/pathspec-1.0.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -809,13 +1079,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pathspec@1.0.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "0210e2ae8a21a9137c0d470578cb0e595af87edaa6ebf12ff176f14a02e0e645"
+        }
       ]
     },
     {
       "name": "platformdirs",
       "SPDXID": "SPDXRef-platformdirs",
       "versionInfo": "4.9.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/19/56/8d4c30c8a1d07013911a8fdbd8f89440ef9f08d07a1b50ab8ca8be5a20f9/platformdirs-4.9.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -826,13 +1102,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/platformdirs@4.9.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "1ec356301b7dc906d83f371c8f487070e99d3ccf9e501686456394622a01a934"
+        }
       ]
     },
     {
       "name": "pluggy",
       "SPDXID": "SPDXRef-pluggy",
       "versionInfo": "1.6.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -843,13 +1125,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pluggy@1.6.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3"
+        }
       ]
     },
     {
       "name": "pre-commit",
       "SPDXID": "SPDXRef-pre_commit",
       "versionInfo": "4.5.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/40/f1/6d86a29246dfd2e9b6237f0b5823717f60cad94d47ddc26afa916d21f525/pre_commit-4.5.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -860,13 +1148,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pre-commit@4.5.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "eb545fcff725875197837263e977ea257a402056661f09dae08e4b149b030a61"
+        }
       ]
     },
     {
       "name": "pycparser",
       "SPDXID": "SPDXRef-pycparser",
       "versionInfo": "3.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/1b/7d/92392ff7815c21062bea51aa7b87d45576f649f16458d78b7cf94b9ab2e6/pycparser-3.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -877,13 +1171,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pycparser@3.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29"
+        }
       ]
     },
     {
       "name": "pydantic",
       "SPDXID": "SPDXRef-pydantic",
       "versionInfo": "2.12.5",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/69/44/36f1a6e523abc58ae5f928898e4aca2e0ea509b5aa6f6f392a5d882be928/pydantic-2.12.5.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -894,13 +1194,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pydantic@2.12.5"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "4d351024c75c0f085a9febbb665ce8c0c6ec5d30e903bdb6394b7ede26aebb49"
+        }
       ]
     },
     {
       "name": "pydantic-core",
       "SPDXID": "SPDXRef-pydantic_core",
       "versionInfo": "2.41.5",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/71/70/23b021c950c2addd24ec408e9ab05d59b035b39d97cdc1130e1bce647bb6/pydantic_core-2.41.5.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -911,13 +1217,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pydantic-core@2.41.5"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "08daa51ea16ad373ffd5e7606252cc32f07bc72b28284b6bc9c6df804816476e"
+        }
       ]
     },
     {
       "name": "pygments",
       "SPDXID": "SPDXRef-pygments",
       "versionInfo": "2.20.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/c3/b2/bc9c9196916376152d655522fdcebac55e66de6603a76a02bca1b6414f6c/pygments-2.20.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -928,13 +1240,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pygments@2.20.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f"
+        }
       ]
     },
     {
       "name": "pyproject-hooks",
       "SPDXID": "SPDXRef-pyproject_hooks",
       "versionInfo": "1.2.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/e7/82/28175b2414effca1cdac8dc99f76d660e7a4fb0ceefa4b4ab8f5f6742925/pyproject_hooks-1.2.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -945,13 +1263,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pyproject-hooks@1.2.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "1e859bd5c40fae9448642dd871adf459e5e2084186e8d2c2a79a824c970da1f8"
+        }
       ]
     },
     {
       "name": "pytest",
       "SPDXID": "SPDXRef-pytest",
-      "versionInfo": "9.0.2",
-      "downloadLocation": "NOASSERTION",
+      "versionInfo": "8.3.5",
+      "downloadLocation": "https://files.pythonhosted.org/packages/ae/3c/c9d525a414d506893f0cd8a8d0de7706446213181570cdbd766691164e40/pytest-8.3.5.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -960,7 +1284,13 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/pytest@9.0.2"
+          "referenceLocator": "pkg:pypi/pytest@8.3.5"
+        }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "f4efe70cc14e511565ac476b57c279e12a855b11f48f212af1080ef2263d3845"
         }
       ]
     },
@@ -968,7 +1298,7 @@
       "name": "pytest-asyncio",
       "SPDXID": "SPDXRef-pytest_asyncio",
       "versionInfo": "1.3.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/90/2c/8af215c0f776415f3590cac4f9086ccefd6fd463befeae41cd4d3f193e5a/pytest_asyncio-1.3.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -979,13 +1309,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pytest-asyncio@1.3.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "d7f52f36d231b80ee124cd216ffb19369aa168fc10095013c6b014a34d3ee9e5"
+        }
       ]
     },
     {
       "name": "pytest-cov",
       "SPDXID": "SPDXRef-pytest_cov",
       "versionInfo": "7.0.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/5e/f7/c933acc76f5208b3b00089573cf6a2bc26dc80a8aece8f52bb7d6b1855ca/pytest_cov-7.0.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -996,13 +1332,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pytest-cov@7.0.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "33c97eda2e049a0c5298e91f519302a1334c26ac65c1a483d6206fd458361af1"
+        }
       ]
     },
     {
       "name": "python-discovery",
       "SPDXID": "SPDXRef-python_discovery",
       "versionInfo": "1.1.3",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/d7/7e/9f3b0dd3a074a6c3e1e79f35e465b1f2ee4b262d619de00cfce523cc9b24/python_discovery-1.1.3.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1013,13 +1355,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/python-discovery@1.1.3"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "7acca36e818cd88e9b2ba03e045ad7e93e1713e29c6bbfba5d90202310b7baa5"
+        }
       ]
     },
     {
       "name": "python-dotenv",
       "SPDXID": "SPDXRef-python_dotenv",
       "versionInfo": "1.2.2",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1030,13 +1378,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/python-dotenv@1.2.2"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3"
+        }
       ]
     },
     {
       "name": "pyyaml",
       "SPDXID": "SPDXRef-pyyaml",
       "versionInfo": "6.0.3",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/05/8e/961c0007c59b8dd7729d542c61a4d537767a59645b82a0b521206e1e25c2/pyyaml-6.0.3.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1047,13 +1401,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/pyyaml@6.0.3"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"
+        }
       ]
     },
     {
       "name": "regex",
       "SPDXID": "SPDXRef-regex",
       "versionInfo": "2026.2.28",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/8b/71/41455aa99a5a5ac1eaf311f5d8efd9ce6433c03ac1e0962de163350d0d97/regex-2026.2.28.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1064,13 +1424,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/regex@2026.2.28"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a729e47d418ea11d03469f321aaf67cdee8954cde3ff2cf8403ab87951ad10f2"
+        }
       ]
     },
     {
       "name": "requests",
       "SPDXID": "SPDXRef-requests",
       "versionInfo": "2.33.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/5f/a4/98b9c7c6428a668bf7e42ebb7c79d576a1c3c1e3ae2d47e674b468388871/requests-2.33.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1081,13 +1447,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/requests@2.33.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "18817f8c57c6263968bc123d237e3b8b08ac046f5456bd1e307ee8f4250d3517"
+        }
       ]
     },
     {
       "name": "rich",
       "SPDXID": "SPDXRef-rich",
       "versionInfo": "13.9.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/ab/3a/0316b28d0761c6734d6bc14e770d85506c986c85ffb239e688eeaab2c2bc/rich-13.9.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1098,13 +1470,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/rich@13.9.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "439594978a49a09530cff7ebc4b5c7103ef57baf48d5ea3184f21d9a2befa098"
+        }
       ]
     },
     {
       "name": "ruamel-yaml",
       "SPDXID": "SPDXRef-ruamel_yaml",
       "versionInfo": "0.19.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/c7/3b/ebda527b56beb90cb7652cb1c7e4f91f48649fbcd8d2eb2fb6e77cd3329b/ruamel_yaml-0.19.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1115,13 +1493,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/ruamel-yaml@0.19.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "53eb66cd27849eff968ebf8f0bf61f46cdac2da1d1f3576dd4ccee9b25c31993"
+        }
       ]
     },
     {
       "name": "ruff",
       "SPDXID": "SPDXRef-ruff",
       "versionInfo": "0.15.6",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/51/df/f8629c19c5318601d3121e230f74cbee7a3732339c52b21daa2b82ef9c7d/ruff-0.15.6.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1132,13 +1516,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/ruff@0.15.6"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "8394c7bb153a4e3811a4ecdacd4a8e6a4fa8097028119160dffecdcdf9b56ae4"
+        }
       ]
     },
     {
       "name": "safety",
       "SPDXID": "SPDXRef-safety",
       "versionInfo": "3.7.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/6f/e8/1cfffa0d8836de8aa31f4fa7fdeb892c7cfa97cd555039ad5df71ce0e968/safety-3.7.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1149,13 +1539,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/safety@3.7.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "daec15a393cafc32b846b7ef93f9c952a1708863e242341ab5bde2e4beabb54e"
+        }
       ]
     },
     {
       "name": "safety-schemas",
       "SPDXID": "SPDXRef-safety_schemas",
       "versionInfo": "0.0.16",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/c2/ef/0e07dfdb4104c4e42ae9fc6e8a0da7be2d72ac2ee198b32f7500796de8f3/safety_schemas-0.0.16.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1166,13 +1562,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/safety-schemas@0.0.16"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "3bb04d11bd4b5cc79f9fa183c658a6a8cf827a9ceec443a5ffa6eed38a50a24e"
+        }
       ]
     },
     {
       "name": "shellingham",
       "SPDXID": "SPDXRef-shellingham",
       "versionInfo": "1.5.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/58/15/8b3609fd3830ef7b27b655beb4b4e9c62313a4e8da8c676e142cc210d58e/shellingham-1.5.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1183,13 +1585,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/shellingham@1.5.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de"
+        }
       ]
     },
     {
       "name": "sniffio",
       "SPDXID": "SPDXRef-sniffio",
       "versionInfo": "1.3.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1200,13 +1608,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/sniffio@1.3.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc"
+        }
       ]
     },
     {
       "name": "sortedcontainers",
       "SPDXID": "SPDXRef-sortedcontainers",
       "versionInfo": "2.4.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1217,13 +1631,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/sortedcontainers@2.4.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88"
+        }
       ]
     },
     {
       "name": "starlette",
       "SPDXID": "SPDXRef-starlette",
       "versionInfo": "0.52.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1234,13 +1654,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/starlette@0.52.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933"
+        }
       ]
     },
     {
       "name": "tenacity",
       "SPDXID": "SPDXRef-tenacity",
       "versionInfo": "9.1.4",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1251,13 +1677,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/tenacity@9.1.4"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a"
+        }
       ]
     },
     {
       "name": "tiktoken",
       "SPDXID": "SPDXRef-tiktoken",
       "versionInfo": "0.12.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/7d/ab/4d017d0f76ec3171d469d80fc03dfbb4e48a4bcaddaa831b31d526f05edc/tiktoken-0.12.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1268,13 +1700,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/tiktoken@0.12.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "b18ba7ee2b093863978fcb14f74b3707cdc8d4d4d3836853ce7ec60772139931"
+        }
       ]
     },
     {
       "name": "tomli",
       "SPDXID": "SPDXRef-tomli",
       "versionInfo": "2.4.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/82/30/31573e9457673ab10aa432461bee537ce6cef177667deca369efb79df071/tomli-2.4.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1285,13 +1723,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/tomli@2.4.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "aa89c3f6c277dd275d8e243ad24f3b5e701491a860d5121f2cdd399fbb31fc9c"
+        }
       ]
     },
     {
       "name": "tomlkit",
       "SPDXID": "SPDXRef-tomlkit",
       "versionInfo": "0.14.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/c3/af/14b24e41977adb296d6bd1fb59402cf7d60ce364f90c890bd2ec65c43b5a/tomlkit-0.14.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1302,13 +1746,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/tomlkit@0.14.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "cf00efca415dbd57575befb1f6634c4f42d2d87dbba376128adb42c121b87064"
+        }
       ]
     },
     {
       "name": "tqdm",
       "SPDXID": "SPDXRef-tqdm",
       "versionInfo": "4.67.3",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1319,13 +1769,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/tqdm@4.67.3"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb"
+        }
       ]
     },
     {
       "name": "trove-classifiers",
       "SPDXID": "SPDXRef-trove_classifiers",
       "versionInfo": "2026.1.14.14",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/d8/43/7935f8ea93fcb6680bc10a6fdbf534075c198eeead59150dd5ed68449642/trove_classifiers-2026.1.14.14.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1336,13 +1792,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/trove-classifiers@2026.1.14.14"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "00492545a1402b09d4858605ba190ea33243d361e2b01c9c296ce06b5c3325f3"
+        }
       ]
     },
     {
       "name": "typer",
       "SPDXID": "SPDXRef-typer",
       "versionInfo": "0.24.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/f5/24/cb09efec5cc954f7f9b930bf8279447d24618bb6758d4f6adf2574c41780/typer-0.24.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1353,13 +1815,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/typer@0.24.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "e39b4732d65fbdcde189ae76cf7cd48aeae72919dea1fdfc16593be016256b45"
+        }
       ]
     },
     {
       "name": "typing-extensions",
       "SPDXID": "SPDXRef-typing_extensions",
       "versionInfo": "4.15.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/72/94/1a15dd82efb362ac84269196e94cf00f187f7ed21c242792a923cdb1c61f/typing_extensions-4.15.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1370,13 +1838,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/typing-extensions@4.15.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466"
+        }
       ]
     },
     {
       "name": "typing-inspection",
       "SPDXID": "SPDXRef-typing_inspection",
       "versionInfo": "0.4.2",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/55/e3/70399cb7dd41c10ac53367ae42139cf4b1ca5f36bb3dc6c9d33acdb43655/typing_inspection-0.4.2.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1387,13 +1861,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/typing-inspection@0.4.2"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464"
+        }
       ]
     },
     {
       "name": "urllib3",
       "SPDXID": "SPDXRef-urllib3",
       "versionInfo": "2.6.3",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1404,13 +1884,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/urllib3@2.6.3"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed"
+        }
       ]
     },
     {
       "name": "uvicorn",
       "SPDXID": "SPDXRef-uvicorn",
       "versionInfo": "0.42.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/e3/ad/4a96c425be6fb67e0621e62d86c402b4a17ab2be7f7c055d9bd2f638b9e2/uvicorn-0.42.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1421,13 +1907,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/uvicorn@0.42.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "9b1f190ce15a2dd22e7758651d9b6d12df09a13d51ba5bf4fc33c383a48e1775"
+        }
       ]
     },
     {
       "name": "uvloop",
       "SPDXID": "SPDXRef-uvloop",
       "versionInfo": "0.22.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/06/f0/18d39dbd1971d6d62c4629cc7fa67f74821b0dc1f5a77af43719de7936a7/uvloop-0.22.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1438,13 +1930,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/uvloop@0.22.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "6c84bae345b9147082b17371e3dd5d42775bddce91f885499017f4607fdaf39f"
+        }
       ]
     },
     {
       "name": "virtualenv",
       "SPDXID": "SPDXRef-virtualenv",
       "versionInfo": "21.2.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/aa/92/58199fe10049f9703c2666e809c4f686c54ef0a68b0f6afccf518c0b1eb9/virtualenv-21.2.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1455,13 +1953,42 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/virtualenv@21.2.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "1720dc3a62ef5b443092e3f499228599045d7fea4c79199770499df8becf9098"
+        }
+      ]
+    },
+    {
+      "name": "vulture",
+      "SPDXID": "SPDXRef-vulture",
+      "versionInfo": "2.16",
+      "downloadLocation": "https://files.pythonhosted.org/packages/66/3e/4d08c5903b2c0c70cad583c170cc4a663fc6a61e2ad00b711fcda61358cd/vulture-2.16.tar.gz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/vulture@2.16"
+        }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "f8d9f6e2af03011664a3c6c240c9765b3f392917d3135fddca6d6a68d359f717"
+        }
       ]
     },
     {
       "name": "watchfiles",
       "SPDXID": "SPDXRef-watchfiles",
       "versionInfo": "1.1.1",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/c2/c9/8869df9b2a2d6c59d79220a4db37679e74f807c559ffe5265e08b227a210/watchfiles-1.1.1.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1472,13 +1999,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/watchfiles@1.1.1"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a173cb5c16c4f40ab19cecf48a534c409f7ea983ab8fed0741304a1c0a31b3f2"
+        }
       ]
     },
     {
       "name": "websockets",
       "SPDXID": "SPDXRef-websockets",
       "versionInfo": "16.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/04/24/4b2031d72e840ce4c1ccb255f693b15c334757fc50023e4db9537080b8c4/websockets-16.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1489,13 +2022,19 @@
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/websockets@16.0"
         }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "5f6261a5e56e8d5c42a4497b364ea24d94d9563e8fbd44e78ac40879c60179b5"
+        }
       ]
     },
     {
       "name": "zipp",
       "SPDXID": "SPDXRef-zipp",
       "versionInfo": "3.23.0",
-      "downloadLocation": "NOASSERTION",
+      "downloadLocation": "https://files.pythonhosted.org/packages/e3/02/0f2892c661036d50ede074e376733dca2ae7c6eb617489437771209d4180/zipp-3.23.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1505,6 +2044,12 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:pypi/zipp@3.23.0"
+        }
+      ],
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "a07157588a12518c9d4034df3fbbee09c814741a33ff63c05fa29d26a2404166"
         }
       ]
     }
@@ -1877,11 +2422,6 @@
     },
     {
       "spdxElementId": "SPDXRef-tok-protocol",
-      "relatedSpdxElement": "SPDXRef-tok_protocol",
-      "relationshipType": "DEPENDS_ON"
-    },
-    {
-      "spdxElementId": "SPDXRef-tok-protocol",
       "relatedSpdxElement": "SPDXRef-tomli",
       "relationshipType": "DEPENDS_ON"
     },
@@ -1933,6 +2473,11 @@
     {
       "spdxElementId": "SPDXRef-tok-protocol",
       "relatedSpdxElement": "SPDXRef-virtualenv",
+      "relationshipType": "DEPENDS_ON"
+    },
+    {
+      "spdxElementId": "SPDXRef-tok-protocol",
+      "relatedSpdxElement": "SPDXRef-vulture",
       "relationshipType": "DEPENDS_ON"
     },
     {

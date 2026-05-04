@@ -31,6 +31,7 @@ from tok.runtime.pipeline.request_validation import (
     summarize_message_structure,
     validate_anthropic_outgoing_bridge_body,
 )
+from tok.spec.trace import audit_trace_file
 from tok.stats import SavingsTracker
 from tok.universal_runtime import PreparedRuntimeRequest
 
@@ -228,6 +229,17 @@ def _provider_sensitive_large_tool_batch_messages() -> list[dict[str, Any]]:
     ]
 
 
+def test_provider_sensitive_large_file_read_rewrite_skips_reversed_result_ids() -> None:
+    body = {"messages": _provider_sensitive_large_tool_batch_messages()}
+    body["messages"][2]["content"] = list(reversed(body["messages"][2]["content"]))
+
+    rewritten, changed, signals = _rewrite_provider_sensitive_large_tool_use_text_interleaving(body)
+
+    assert changed is False
+    assert rewritten == body
+    assert signals["tok_bridge_large_file_read_burst_rewrite_skipped_id_mismatch"] == 1
+
+
 def _interleaved_tool_batch_messages() -> list[dict[str, Any]]:
     return [
         {
@@ -313,6 +325,7 @@ def test_health_endpoint(monkeypatch) -> None:
         "prepared_prompt_tokens": 0,
         "saved_prompt_tokens": 0,
         "session_savings_pct": 0.0,
+        "session_cost_savings_pct": 0.0,
         "actual_cost_usd": 0.0,
         "baseline_cost_usd": 0.0,
         "cost_saved_usd": 0.0,
@@ -868,6 +881,55 @@ def test_health_endpoint_reports_recovery_and_repair_counters(
     assert payload["last_degradation_reason"] == "request-shape incompatibility"
 
 
+def test_health_endpoint_aggregates_behavior_signals_across_sessions(tmp_path) -> None:
+    session = BridgeSession(port=9191, memory_dir=tmp_path / ".tok")
+    alpha_key = session.activate_session_for_request({"x-tok-session-id": "alpha"}, None)
+    beta_key = session.activate_session_for_request({"x-tok-session-id": "beta"}, None)
+    alpha_session = session.bound_session_for_key(alpha_key)
+    beta_session = session.bound_session_for_key(beta_key)
+    alpha_session.tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=100,
+        actual_output=20,
+        cache_read=0,
+        cache_write=0,
+        input_saved=50,
+        output_saved=10,
+        behavior_signals={"repeat_search": 2, "repeat_file_read": 1},
+    )
+    beta_session.tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=80,
+        actual_output=10,
+        cache_read=0,
+        cache_write=0,
+        input_saved=40,
+        output_saved=5,
+        behavior_signals={"repeat_search": 3, "repeat_target_hot": 1},
+    )
+    beta_session._bump_signals({"stream_recovery_started": 1})
+    app = create_app(session)
+    client = TestClient(app)
+
+    aggregate_response = client.get("/health")
+    alpha_response = client.get("/health", headers={"x-tok-session-id": "alpha"})
+
+    assert aggregate_response.status_code == 200
+    aggregate = aggregate_response.json()
+    assert aggregate["actual_tokens"] == 210
+    assert aggregate["repeat_search_count"] == 5
+    assert aggregate["repeat_file_read_count"] == 1
+    assert aggregate["repeat_target_hot_count"] == 1
+    assert aggregate["stream_recovery_attempt_count"] == 1
+
+    assert alpha_response.status_code == 200
+    alpha = alpha_response.json()
+    assert alpha["actual_tokens"] == 120
+    assert alpha["repeat_search_count"] == 2
+    assert alpha["repeat_target_hot_count"] == 0
+    assert alpha["stream_recovery_attempt_count"] == 0
+
+
 def test_clean_system_context_uses_top_level_prompt_compressor(
     monkeypatch,
 ) -> None:
@@ -942,6 +1004,20 @@ def test_record_fallback_once_only_counts_first_event() -> None:
 
     assert session.runtime_session._consecutive_fallback_count == 1
     assert request_state["fallback_recorded"] is True
+
+
+def test_record_fallback_once_emits_auditable_live_trace(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = BridgeSession(memory_dir=tmp_path / ".tok")
+    request_state = {"fallback_recorded": False}
+
+    _record_fallback_once(session, request_state)
+
+    trace_file = next((tmp_path / ".tok" / "traces").glob("*.jsonl"))
+    record = json.loads(trace_file.read_text())
+    assert record["observation"]["key"] == "live:fallback"
+    assert audit_trace_file(trace_file)[0].status == "pass"
 
 
 def test_root_endpoint() -> None:
@@ -3378,6 +3454,123 @@ def test_tool_compatible_system_injection_present_when_tools_used(tmp_path, monk
     assert "Plain text. Tool calls only. Omit all headers." not in system
 
 
+def test_bridge_request_path_emits_auditable_live_trace(monkeypatch, tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "Continue."}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    trace_file = next((memory_dir / "traces").glob("*.jsonl"))
+    records = [json.loads(line) for line in trace_file.read_text().splitlines()]
+    keys = {record["observation"]["key"] for record in records}
+    assert "live:request_prepared" in keys
+    assert "live:response_processed" in keys
+    assert {result.status for result in audit_trace_file(trace_file)} == {"pass"}
+
+
+def test_bridge_live_trace_disabled_by_default(monkeypatch, tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    monkeypatch.delenv("TOK_TRACE", raising=False)
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "Continue."}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert not (memory_dir / "traces").exists()
+
+
+def test_bridge_live_trace_write_failure_does_not_fail_request(monkeypatch, tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_FILE", str(tmp_path))
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4",
+                "max_tokens": 8192,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(BridgeSession(memory_dir=memory_dir))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "Continue."}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+
+
 def test_response_contract_ignores_python_repl_noise_in_tool_compatible_mode() -> None:
     from tok.gateway import _response_contract_for_mode
 
@@ -3609,6 +3802,8 @@ def test_streaming_empty_success_recovers_via_non_stream_text(monkeypatch, caplo
     assert signals["stream_recovery_retry"] >= 1
     assert signals["stream_recovery_success_text"] >= 1
     assert signals["tool_compatible_response"] == 1
+    assert session.tracker.record_call.call_args.kwargs["behavior_signals"]["stream_recovery_started"] == 1
+    assert session.tracker.record_call.call_args.kwargs["behavior_signals"]["stream_recovery_retry"] == 1
     assert "stream_recovery_retry_started" in caplog.text
     assert "stream_recovery_succeeded_text" in caplog.text
     assert client.closed is True
@@ -3731,7 +3926,9 @@ def test_streaming_empty_success_without_read_error_records_empty_counter(monkey
     signals = session.tracker.record_call.call_args.kwargs["behavior_signals"]
     assert signals["stream_empty_after_success"] >= 1
     assert signals["stream_recovery_empty_success"] >= 1
-    assert "stream_recovery_read_error" not in signals
+    assert signals["stream_recovery_started"] >= 1
+    assert signals["stream_recovery_retry"] >= 1
+    assert signals.get("stream_recovery_read_error", 0) == 0
     assert "stream_recovery_retry_started" in caplog.text
     assert "stream_recovery_succeeded_text" in caplog.text
 
@@ -4913,6 +5110,203 @@ def test_gateway_persistent_429_retries_then_exhausts(tmp_path, monkeypatch, cap
     assert "rate_limit_retry_exhausted" in caplog.text
 
 
+def test_gateway_upstream_429_preserves_provider_body_and_headers(tmp_path, monkeypatch) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    provider_body = {
+        "type": "error",
+        "error": {
+            "type": "rate_limit_error",
+            "message": "Claude AI usage limit reached. Your limit will reset at 5:00 PM.",
+        },
+    }
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": False,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(
+            429,
+            json=provider_body,
+            headers={
+                "Retry-After": "300",
+                "Content-Type": "application/json",
+                "anthropic-ratelimit-requests-reset": "2026-05-04T17:00:00Z",
+            },
+        )
+
+    monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=0,  # type: ignore[call-arg]
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.json() == provider_body
+    assert response.headers["Retry-After"] == "300"
+    assert response.headers["anthropic-ratelimit-requests-reset"] == "2026-05-04T17:00:00Z"
+    assert response.headers["content-type"].startswith("application/json")
+
+
+def test_gateway_streaming_setup_upstream_429_preserves_provider_body_and_headers(tmp_path, monkeypatch) -> None:
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    provider_body = {
+        "type": "error",
+        "error": {
+            "type": "rate_limit_error",
+            "message": "Claude AI usage limit reached. Your limit will reset at 5:00 PM.",
+        },
+    }
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={
+                "model": request.model,
+                "max_tokens": 8192,
+                "messages": [{"role": "user", "content": "compressed by tok"}],
+                "stream": True,
+            },
+            compressed=True,
+            input_saved_tokens=1,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, request
+        assert stream is True
+        return httpx.Response(
+            429,
+            json=provider_body,
+            headers={
+                "Retry-After": "300",
+                "Content-Type": "application/json",
+                "anthropic-ratelimit-requests-reset": "2026-05-04T17:00:00Z",
+            },
+        )
+
+    monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=0,  # type: ignore[call-arg]
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.json() == provider_body
+    assert response.headers["Retry-After"] == "300"
+    assert response.headers["anthropic-ratelimit-requests-reset"] == "2026-05-04T17:00:00Z"
+    assert response.headers["content-type"].startswith("application/json")
+
+
+def test_gateway_upstream_429s_accumulate_to_internal_throttle(tmp_path, monkeypatch) -> None:
+    """After threshold upstream 429s the gateway blocks locally with its synthetic body."""
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    provider_body = {"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}}
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body={"model": request.model, "max_tokens": 8192, "messages": request.messages, "stream": False},
+            compressed=False,
+            input_saved_tokens=0,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del self, request, stream
+        return httpx.Response(429, json=provider_body, headers={"Content-Type": "application/json"})
+
+    monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+
+    app = create_app(
+        BridgeSession(
+            memory_dir=memory_dir,
+            rate_limit_retry_max_attempts=0,  # type: ignore[call-arg]
+            rate_limit_throttle_threshold=2,  # type: ignore[call-arg]
+            rate_limit_throttle_cooldown_sec=30,  # type: ignore[call-arg]
+            rate_limit_throttle_window_sec=60,  # type: ignore[call-arg]
+        )
+    )
+    client = TestClient(app)
+    post_kwargs: dict[str, Any] = dict(
+        headers={"x-api-key": "test"},
+        json={"model": "claude-sonnet-4", "max_tokens": 8192, "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    # First two upstream 429s are passed through with the provider's body.
+    first = client.post("/v1/messages", **post_kwargs)
+    assert first.status_code == 429
+    assert first.json() == provider_body
+
+    second = client.post("/v1/messages", **post_kwargs)
+    assert second.status_code == 429
+    assert second.json() == provider_body
+
+    # Threshold reached: tok now blocks locally before hitting the upstream.
+    third = client.post("/v1/messages", **post_kwargs)
+    assert third.status_code == 429
+    # Tok's synthetic body — distinct from the provider's body.
+    assert third.json()["error"]["type"] == "rate_limit_error"
+    assert third.json()["error"]["message"] != provider_body["error"]["message"]
+    assert "Retry-After" in third.headers
+
+
 def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch) -> None:
     memory_dir = tmp_path / ".tok"
     memory_dir.mkdir()
@@ -4986,7 +5380,9 @@ def test_gateway_local_throttle_blocks_follow_up_request(tmp_path, monkeypatch) 
 
     assert first.status_code == 429
     assert second.status_code == 429
-    assert second.json()["error"]["type"] == "rate_limit_error"
+    second_body = second.json()
+    assert second_body["type"] == "error"
+    assert second_body["error"]["type"] == "rate_limit_error"
     assert "Retry-After" in second.headers
     assert sent_count == 1
 
@@ -6190,10 +6586,110 @@ def test_provider_safe_retry_normalization_preserves_later_unchanged_messages() 
 
     result, changed = _normalize_provider_safe_retry_payload(body)
 
+    assert result is not None
+    assert result["messages"][2] is later_message
+    assert result["messages"][0]["content"][0]["type"] == "thinking"
+
+
+def test_provider_safe_retry_normalization_ignores_non_dict_later_messages() -> None:
+    current_message = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "remove this"},
+            {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {}},
+        ],
+    }
+    body = {
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            current_message,
+            "malformed-later-message",
+        ]
+    }
+
+    result, changed = _normalize_provider_safe_retry_payload(body)
+
     assert changed is True
     assert result is not None
-    assert result["messages"][0] is not first_message
-    assert result["messages"][2] is later_message
+    assert result["messages"][2] == "malformed-later-message"
+    current_content = result["messages"][1]["content"]
+    assert [block.get("type") for block in current_content] == ["tool_use"]
+
+
+def test_thinking_preserved_in_history_before_tool_use_blocks() -> None:
+    """Pre-tool_use thinking in history turns is preserved; only post-tool_use thinking is stripped."""
+    history_message = {
+        "role": "assistant",
+        "content": [
+            {"type": "thinking", "thinking": "Early reasoning about the codebase."},
+            {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {}},
+            {"type": "tool_use", "id": "tu_2", "name": "read_file", "input": {}},
+        ],
+    }
+    current_message = {
+        "role": "assistant",
+        "content": [
+            {"type": "tool_use", "id": "tu_3", "name": "grep_search", "input": {}},
+            {"type": "thinking", "thinking": "Interleaved thinking should be stripped."},
+            {"type": "tool_use", "id": "tu_4", "name": "grep_search", "input": {}},
+        ],
+    }
+    body = {
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            history_message,
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "ok"}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_2", "content": "ok"}]},
+            current_message,
+        ],
+    }
+
+    result, changed = _normalize_provider_safe_retry_payload(body)
+
+    assert changed is True
+    assert result is not None
+    history_content = result["messages"][1]["content"]
+    thinking_blocks = [b for b in history_content if b.get("type") in {"thinking", "redacted_thinking"}]
+    assert len(thinking_blocks) == 1
+    assert thinking_blocks[0]["thinking"] == "Early reasoning about the codebase."
+
+    current_content = result["messages"][4]["content"]
+    current_thinking = [b for b in current_content if b.get("type") in {"thinking", "redacted_thinking"}]
+    assert len(current_thinking) == 0
+
+
+def test_provider_safe_retry_normalization_uses_block_position_for_duplicate_thinking() -> None:
+    duplicate_thinking = {"type": "thinking", "thinking": "same thought"}
+    history_message = {
+        "role": "assistant",
+        "content": [
+            dict(duplicate_thinking),
+            {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {}},
+            dict(duplicate_thinking),
+            {"type": "tool_use", "id": "tu_2", "name": "read_file", "input": {}},
+        ],
+    }
+    body = {
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            history_message,
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_1", "content": "ok"}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_2", "content": "ok"}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "tu_3", "name": "read_file", "input": {}}],
+            },
+        ],
+    }
+
+    result, changed = _normalize_provider_safe_retry_payload(body)
+
+    assert changed is True
+    assert result is not None
+    history_content = result["messages"][1]["content"]
+    thinking_blocks = [block for block in history_content if block.get("type") == "thinking"]
+    assert thinking_blocks == [duplicate_thinking]
+    assert [block["id"] for block in history_content if block.get("type") == "tool_use"] == ["tu_1", "tu_2"]
 
 
 def test_gateway_fail_open_false_propagates_request_processing_error(tmp_path, monkeypatch) -> None:
@@ -6384,6 +6880,9 @@ class TestRateLimitThunderingHerd:
                 )
             assert response.status_code == 429
             assert "Retry-After" in response.headers
+            body = response.json()
+            assert body["type"] == "error"
+            assert body["error"]["type"] == "rate_limit_error"
             assert signals.get("rate_limit_cooldown_skipped") == 1
 
         asyncio.run(_run())

@@ -1,0 +1,52 @@
+[
+  {
+    "id": "first_exact_file_observation",
+    "expected_status": "pass",
+    "summary": "exact file content is stored with local resolver identity"
+  },
+  {
+    "id": "unchanged_cached_tool_result",
+    "expected_status": "pass",
+    "summary": "unchanged tool result references previously stored exact content"
+  },
+  {
+    "id": "delta_result",
+    "expected_status": "pass",
+    "summary": "delta block carries base, delta, algorithm, and final content identity"
+  },
+  {
+    "id": "fallback_raw_output",
+    "expected_status": "pass",
+    "summary": "fallback is accepted because raw exact output and reason are present"
+  },
+  {
+    "id": "missing_resolver_cache",
+    "expected_status": "warn",
+    "summary": "content is identifiable by hash but local resolver bytes are missing"
+  },
+  {
+    "id": "unresolvable_fallback_required",
+    "expected_status": "warn",
+    "summary": "compact form is not exact and requires fallback for exact recovery"
+  },
+  {
+    "id": "repeated_search_reference",
+    "expected_status": "pass",
+    "summary": "repeated search result references exact cached content"
+  },
+  {
+    "id": "skeleton_reference_non_exact",
+    "expected_status": "pass",
+    "summary": "skeleton reference is accepted only as non-exact model-facing state"
+  },
+  {
+    "id": "summary_reference_non_exact",
+    "expected_status": "pass",
+    "summary": "summary reference is accepted only as non-exact model-facing state"
+  },
+  {
+    "id": "malformed_block_rejection",
+    "expected_status": "fail",
+    "summary": "malformed direction, missing delta fields, and rejected expectation must fail"
+  }
+]

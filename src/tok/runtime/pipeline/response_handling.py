@@ -153,6 +153,7 @@ def _handle_late_assembly_phase(
         _late_answer_assembly_repair_mode,
         _late_answer_assembly_repair_satisfied,
         _mark_late_answer_assembly_mode_counters,
+        _mark_late_answer_assembly_suppressed_mixed_signal,
     )
 
     late_answer_assembly_mode = ""
@@ -166,6 +167,7 @@ def _handle_late_assembly_phase(
         and not merged_signals.get("validated_target_exact_reacquired")
     ):
         late_answer_assembly_mode = _late_answer_assembly_repair_mode(merged_signals)
+        _mark_late_answer_assembly_suppressed_mixed_signal(merged_signals, merged_signals)
 
     if late_answer_assembly_mode:
         merged_signals["late_answer_assembly_repair_requested"] = 1

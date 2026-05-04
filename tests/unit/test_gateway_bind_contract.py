@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import errno
+import logging
 from types import SimpleNamespace
 
 import tok.gateway as gateway
+import tok.gateway.__main__ as gateway_main
+import tok.gateway._bridge_runtime_pipeline as bridge_runtime_pipeline
 from tok.gateway import BridgeSession
 from tok.universal_runtime import RuntimeSession
 
@@ -87,6 +91,44 @@ def test_bridge_session_reads_env_defaults_at_construction_time(monkeypatch) -> 
     assert session.fail_open is False
     assert session.capture is True
     assert session.rate_limit_retry_max_attempts == 5
+
+
+def test_bridge_session_warns_on_invalid_integer_env(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS", "many")
+    caplog.set_level(logging.WARNING, logger="tok.gateway")
+
+    session = BridgeSession()
+
+    assert session.rate_limit_retry_max_attempts == 2
+    assert "Invalid integer config TOK_RATE_LIMIT_RETRY_MAX_ATTEMPTS='many'; using fallback 2" in caplog.text
+
+
+def test_plan_finalization_guard_warns_on_invalid_integer_env(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "lots")
+    caplog.set_level(logging.WARNING, logger="tok.gateway")
+
+    value = bridge_runtime_pipeline._plan_finalization_min_saved_tokens()
+
+    assert value == 32
+    assert "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS='lots'; using fallback 32" in caplog.text
+
+
+def test_python_module_gateway_reports_port_conflict(monkeypatch, capsys) -> None:
+    def _raise_port_conflict() -> None:
+        raise OSError(errno.EADDRINUSE, "address already in use")
+
+    monkeypatch.setattr(gateway, "run_bridge", _raise_port_conflict)
+    monkeypatch.setenv("TOK_BRIDGE_PORT", "9191")
+
+    try:
+        gateway_main._main()
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("gateway_main._main() should exit on bind failure")
+
+    captured = capsys.readouterr()
+    assert "tok.gateway startup failed: port 9191 is already in use" in captured.err
 
 
 def test_bridge_session_keep_turns_reaches_runtime_without_explicit_memory_dir() -> None:

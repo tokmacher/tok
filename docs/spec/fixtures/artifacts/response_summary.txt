@@ -1,0 +1,1 @@
+Assistant summarized the bridge fallback path and identified the next audit fixture to add.

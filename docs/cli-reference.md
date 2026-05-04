@@ -10,21 +10,32 @@ If you are new to Tok, start with [`README.md`](../README.md) or the full workfl
 ## Core Workflow
 
 ```bash
-tok install
-tok init
-tok bridge start
-ANTHROPIC_BASE_URL=http://localhost:9090 claude
+pip install tok-protocol
+tok claude
 tok bridge status
 tok doctor [--report]
-tok bridge stop
 tok stats
+tok bridge stop
+tok audit --latest
 ```
+
+`tok claude` is the easiest path: it starts the bridge if needed, launches Claude Code
+with `ANTHROPIC_BASE_URL=http://localhost:9090`, and does not modify shell rc files.
 
 `tok install` is a setup/migration helper. To opt into legacy auto-routing, use
 `tok install --wrap-claude`.
 
 `tok init` creates a project-local `.tok/` workspace and optional `.env` / `.gitignore`
-entries. Run it once per project before starting the bridge.
+entries. It is useful for projects that want local Tok workspace files, but it is not
+required before `tok claude`.
+
+For advanced routing or compatibility checks, you can still run the bridge and route a
+client explicitly:
+
+```bash
+tok bridge start
+ANTHROPIC_BASE_URL=http://localhost:9090 <your-client-command>
+```
 
 ## Bridge Commands
 
@@ -53,12 +64,54 @@ Use:
 tok doctor
 tok stats [--session | --total | --last-session | --recent N | --since DATE]
 tok stats [--breakdown] [--trends] [--window N]
+tok audit [TRACE_FILE | --latest] [--json]
 ```
 
 Use:
 
 - `tok doctor` as the first troubleshooting command after install
-- `tok stats` for current, last-session, recent, and lifetime savings views
+- `tok stats` for current, last-session, recent, and lifetime savings views, including
+  low-savings notes for short sessions, baseline mode, fallback, or evidence-safety
+  blocks
+- `tok audit` to validate Tok Trace v0.1 draft fixture files or live bridge sidecars
+
+## Trace Audit
+
+```bash
+TOK_TRACE=1 tok bridge start
+TOK_TRACE=1 TOK_TRACE_CAPTURE_ARTIFACTS=1 tok bridge start
+tok audit --latest
+tok audit ~/.tok/traces/20260430_061100_live_example.jsonl
+tok audit --latest --json
+```
+
+`TOK_TRACE=1` enables opt-in sidecar traces under `~/.tok/traces/`.
+`TOK_TRACE_CAPTURE_ARTIFACTS=1` writes sanitized metadata artifacts next to the trace so
+audit can verify local hashes and byte sizes. This does not capture raw prompts,
+responses, or tool outputs.
+
+`tok audit` is a draft trace-audit feature for inspecting what Tok did. It is not a
+universal protocol compliance certificate.
+
+Audit output uses three statuses:
+
+- `PASS`: the trace block shape, digest, and available local artifact checks passed
+- `WARN`: the trace is structurally valid, but exact bytes are missing or unavailable
+- `FAIL`: the trace is malformed, has a digest mismatch, or failed a local artifact
+  check
+
+Metadata-only live traces commonly produce `WARN` because Tok can identify what happened
+without storing original prompt, response, or tool-result bytes. Artifact-backed
+metadata mode can produce `PASS`, but it still verifies sanitized trace metadata rather
+than raw session content.
+
+Exactness terms:
+
+- `exact`: Tok observed exact evidence before treating that evidence identity as
+  compressible.
+- `non-exact`: Tok emitted a reference, summary, or skeleton rather than original bytes.
+- `safe-block`: Tok blocked compression because exactness mattered more than savings.
+- `fallback`: Tok used raw/baseline behavior because compact representation was unsafe.
 
 Advanced maintainer utilities remain available, but they are intentionally hidden from
 the default help surface in `0.1.x` so new users land on one clear workflow. Hidden
@@ -74,3 +127,5 @@ as public onboarding material.
 - [`docs/bridge.md`](./bridge.md)
 - [`docs/troubleshooting.md`](./troubleshooting.md)
 - [`docs/production-readiness.md`](./production-readiness.md)
+- [`docs/claude-compaction-comparison.md`](./claude-compaction-comparison.md)
+- [`docs/positioning-context-tools.md`](./positioning-context-tools.md)

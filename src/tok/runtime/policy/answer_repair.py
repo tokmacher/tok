@@ -16,7 +16,18 @@ def _is_late_answer_assembly_context(signals: dict[str, int]) -> bool:
 
 
 def _late_answer_assembly_repair_mode(signals: dict[str, int]) -> str:
-    """Determine the repair mode (tool_only vs answer_only) based on signals."""
+    """Determine the repair mode (tool_only vs answer_only) based on signals.
+
+    Priority order (first match wins):
+      1. toolless_fresh_answer_event  -> tool_only
+      2. mixed_answer_tool_event / answer_ready_mixed_turn_violation -> answer_only
+      3. late_retry_contract_stage_answer_only + answer_ready_failed_to_answer -> answer_only
+      4. answer_ready_failed_to_answer -> tool_only
+
+    When both toolless_fresh_answer_event and mixed_answer_tool_event are set,
+    tool_only wins and mixed_answer_tool_event is suppressed — this is intentional
+    but should be tracked via late_answer_assembly_mixed_signal_suppressed.
+    """
     if signals.get("toolless_fresh_answer_event"):
         return "tool_only"
     if signals.get("mixed_answer_tool_event") or signals.get("answer_ready_mixed_turn_violation"):
@@ -57,3 +68,14 @@ def _mark_late_answer_assembly_mode_counters(
         behavior_signals["late_answer_assembly_repair_answer_only_resolved"] = 1
     elif outcome == "failed":
         behavior_signals["late_answer_assembly_repair_answer_only_failed"] = 1
+
+
+def _mark_late_answer_assembly_suppressed_mixed_signal(
+    behavior_signals: dict[str, int],
+    signals: dict[str, int],
+) -> None:
+    """Track when mixed_answer_tool_event is suppressed by toolless_fresh_answer_event."""
+    if signals.get("toolless_fresh_answer_event") and signals.get("mixed_answer_tool_event"):
+        behavior_signals["late_answer_assembly_mixed_signal_suppressed"] = (
+            behavior_signals.get("late_answer_assembly_mixed_signal_suppressed", 0) + 1
+        )
