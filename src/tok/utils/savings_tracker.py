@@ -44,6 +44,17 @@ _default_savings_file = default_savings_file
 _default_ledger_path = default_ledger_path
 _legacy_ledger_path = legacy_ledger_path
 
+
+def _env_int(name: str, fallback: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        return fallback
+
+
 __all__ = [
     "BASELINE_ONLY_SIGNAL",
     "FALLBACK_SIGNAL",
@@ -68,6 +79,12 @@ class SavingsTracker:
     ) -> None:
         self._savings_file = savings_file or default_savings_file()
         self._ledger_path = ledger_path or default_ledger_path()
+        # Lifetime ledger was historically only merged on clean shutdown. In practice,
+        # the bridge is sometimes stopped abruptly (e.g. SIGKILL), so we also do a
+        # periodic in-process flush to keep lifetime stats current.
+        #
+        # Set TOK_LIFETIME_FLUSH_EVERY_TURNS=0 to disable.
+        self._lifetime_flush_every_turns = _env_int("TOK_LIFETIME_FLUSH_EVERY_TURNS", 1)
         self._lock = threading.Lock()
         self._migrate_legacy_ledger()
 
@@ -185,6 +202,7 @@ class SavingsTracker:
             + cache_write * cw_rate / M
         )
 
+        flush_now = False
         with self._lock:
             stats = self.load_stats()
             m = stats["models"].setdefault(
@@ -238,6 +256,12 @@ class SavingsTracker:
                 for m in stats["models"].values()
             )
             self.save_stats(stats)
+            if self._lifetime_flush_every_turns > 0 and total_turns % self._lifetime_flush_every_turns == 0:
+                flush_now = True
+
+        if flush_now:
+            with contextlib.suppress(Exception):
+                self.merge_session_to_ledger()
 
         pct = (baseline_cost - actual_cost) / baseline_cost * 100 if baseline_cost > 0 else 0.0
         logger.info(

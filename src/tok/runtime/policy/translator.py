@@ -43,6 +43,7 @@ def _is_likely_tok(text: str) -> bool:
 
 
 _MD_STRIP = [
+    (re.compile(r"^\s*\|[#\d]?>\s?", re.MULTILINE), ""),  # strip |> syntax bleed in plain-text path
     (re.compile(r"^#{1,6}\s+", re.MULTILINE), ""),
     (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), r"\1"),
     (re.compile(r"\*(.+?)\*", re.DOTALL), r"\1"),

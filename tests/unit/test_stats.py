@@ -359,6 +359,27 @@ class TestSavingsTracker:
         assert summary["tokens_saved"] == 2500
         assert summary["cost_saved_usd"] == pytest.approx(0.045)
 
+    def test_tracker_flushes_lifetime_ledger_periodically(self, tmp_path, monkeypatch) -> None:
+        from tok.stats import SavingsTracker
+
+        monkeypatch.setenv("TOK_LIFETIME_FLUSH_EVERY_TURNS", "1")
+        ledger_path = tmp_path / "global_savings.tok"
+        savings_file = str(tmp_path / "session_stats.tok")
+
+        tracker = SavingsTracker(savings_file=savings_file, ledger_path=ledger_path)
+        tracker.record_call(
+            model="claude-3-5-sonnet-latest",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=25,
+            output_saved=10,
+        )
+
+        text = ledger_path.read_text()
+        assert "@per_session_log" in text
+
     def test_merge_session_to_ledger_persists_malformed_tok_subtypes(self, tracker) -> None:
         tracker.record_call(
             model="claude-sonnet-4",

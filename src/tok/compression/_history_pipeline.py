@@ -1228,15 +1228,27 @@ def compress_tool_results_impl(
             # Search-specific repeat compression path
             # Search tools use query+scope identity, not norm_path
             tool_name = str(ctx.get("name", "")).lower() if ctx else ""
+            # Bash/shell dispatched search: treat as search tool when command root is rg/grep/find
+            _bash_search_command: str = ""
+            if tool_name in COMMAND_LIKE_TOOLS and ctx:
+                _cmd = str((ctx.get("args") or {}).get("command", "")).strip()
+                _root = _cmd.split()[0] if _cmd else ""
+                if _root in {"rg", "grep", "find"}:
+                    _bash_search_command = _cmd
+            _is_search = tool_name in SEARCH_LIKE_TOOLS or bool(_bash_search_command)
             if (
                 TOK_ENABLE_SEARCH_OVERLAP_DELTA
                 and ctx
-                and tool_name in SEARCH_LIKE_TOOLS
+                and _is_search
                 and not preserve_exact_search_evidence
                 and search_result_evidence_level(raw) != "navigation"
             ):
-                search_scope = str(ctx.get("path") or "").strip().lower()
-                search_key = f"{tool_name}|{search_scope or 'global'}"
+                if _bash_search_command:
+                    search_scope = _bash_search_command
+                    search_key = f"bash_search|{_bash_search_command}"
+                else:
+                    search_scope = str(ctx.get("path") or "").strip().lower()
+                    search_key = f"{tool_name}|{search_scope or 'global'}"
                 current_lines = [line for line in raw.splitlines() if line.strip()]
                 if current_lines:
                     previous_lines = search_seen_matches.get(search_key)
