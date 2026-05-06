@@ -83,8 +83,10 @@ class SavingsTracker:
         # the bridge is sometimes stopped abruptly (e.g. SIGKILL), so we also do a
         # periodic in-process flush to keep lifetime stats current.
         #
-        # Set TOK_LIFETIME_FLUSH_EVERY_TURNS=0 to disable.
-        self._lifetime_flush_every_turns = _env_int("TOK_LIFETIME_FLUSH_EVERY_TURNS", 1)
+        # Set TOK_LIFETIME_FLUSH_EVERY_TURNS=N (N>=1) to enable periodic flushing.
+        # Default is disabled to avoid double-counting in cases where callers also
+        # merge on shutdown and to preserve historical "merge on exit" behavior.
+        self._lifetime_flush_every_turns = _env_int("TOK_LIFETIME_FLUSH_EVERY_TURNS", 0)
         self._lock = threading.Lock()
         self._migrate_legacy_ledger()
 
