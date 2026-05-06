@@ -153,11 +153,11 @@ class TestCLI:
         monkeypatch.setattr(_claude._bridge, "bridge_start", fake_bridge_start)
         monkeypatch.setattr(_claude.subprocess, "run", fake_run)
 
-        result = runner.invoke(app, ["claude", "--port", "9191", "--api-base", "https://api.example.test", "--debug"])
+        result = runner.invoke(app, ["claude", "--port", "9191", "--api-base", "custom-api-host.internal", "--debug"])
 
         assert result.exit_code == 0
         assert calls["bridge_start"]["port"] == 9191
-        assert calls["bridge_start"]["api_base"] == "https://api.example.test"
+        assert calls["bridge_start"]["api_base"] == "custom-api-host.internal"
         assert calls["bridge_start"]["debug"] is True
         assert calls["argv"] == ["claude"]
         assert calls["env"]["ANTHROPIC_BASE_URL"] == "http://localhost:9191"
@@ -283,7 +283,7 @@ class TestCLI:
                     "status": "ok",
                     "bridge": "tok",
                     "port": 9090,
-                    "api_base": "https://api.example.test",
+                    "api_base": "custom-api-host.internal",
                     "mode": "tool-compatible",
                     "request_policy": "natural_first",
                     "baseline_only": True,
@@ -318,7 +318,7 @@ class TestCLI:
         assert "Mode" in result.output
         assert "Request policy" in result.output
         assert "API base" in result.output
-        assert "https://api.example.test" in result.output
+        assert "custom-api-host.internal" in result.output
         assert "natural_first" in result.output
         assert "Fallbacks" in result.output
         assert "Session quality" in result.output
@@ -1650,7 +1650,7 @@ class TestCLI:
                     "status": "ok",
                     "bridge": "tok",
                     "port": 9090,
-                    "api_base": "https://api.example.test",
+                    "api_base": "custom-api-host.internal",
                     "mode": "baseline",
                     "baseline_only": True,
                     "fallback_count": 3,
@@ -1685,7 +1685,7 @@ class TestCLI:
         assert "Tok verdict:" in result.output
         assert "baseline" in result.output
         assert "API base" in result.output
-        assert "https://api.example.test" in result.output
+        assert "custom-api-host.internal" in result.output
         assert "Recommendation:" in result.output
         assert "investigate degradation before trusting this session" in result.output
 
