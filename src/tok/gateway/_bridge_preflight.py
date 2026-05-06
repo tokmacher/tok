@@ -503,7 +503,9 @@ def _run_bridge_preflight(
     original_tool_result_cache_blocks = int(
         request_fingerprint.get("original", {}).get("cache_control", {}).get("message_tool_result_blocks", 0) or 0
     )
-    previous_tool_result_cache_blocks = getattr(session, "_previous_original_message_tool_result_blocks", None)
+    active_key = getattr(session, "_active_session_key", "default")
+    per_key_cache = getattr(session, "_per_key_previous_tool_result_cache_blocks", {})
+    previous_tool_result_cache_blocks = per_key_cache.get(active_key)
     if (
         previous_tool_result_cache_blocks is not None
         and original_tool_result_cache_blocks < previous_tool_result_cache_blocks
@@ -511,7 +513,7 @@ def _run_bridge_preflight(
         behavior_signals["client_cache_marker_dropped"] = (
             previous_tool_result_cache_blocks - original_tool_result_cache_blocks
         )
-    session._previous_original_message_tool_result_blocks = original_tool_result_cache_blocks
+    per_key_cache[active_key] = original_tool_result_cache_blocks
     should_log_preflight = bool(compressed or bridge_canonicalized or strict_failures)
     _merge_signal_counts(behavior_signals, bridge_signals)
     tool_history_repaired, pairing_repaired, order_only_repaired = _tool_history_repair_summary(bridge_signals)

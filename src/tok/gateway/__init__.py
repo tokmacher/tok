@@ -441,7 +441,7 @@ class BridgeSession:
     _active_session_key: str = field(default="default", init=False, repr=False)
     _auto_fingerprint_to_key: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _live_trace_instance_id: str = field(default_factory=lambda: secrets.token_hex(12), init=False, repr=False)
-    _previous_original_message_tool_result_blocks: int | None = field(default=None, init=False, repr=False)
+    _per_key_previous_tool_result_cache_blocks: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.api_base = self.api_base.strip() or ANTHROPIC_API_BASE
