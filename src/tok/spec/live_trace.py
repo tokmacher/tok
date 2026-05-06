@@ -80,11 +80,14 @@ def build_live_trace_block(
     trace_file: Path | None = None,
 ) -> dict[str, Any]:
     """Build a Tok Trace block for live bridge auditing."""
+    client_session_key = _client_session_key(session)
+    trace_instance_id = _trace_instance_id(session)
     session_id = _session_id(session)
     runtime_session = getattr(session, "runtime_session", None)
     bridge_memory = getattr(runtime_session, "bridge_memory", None)
     turn = int(getattr(bridge_memory, "turn", 0) or 0)
     clean_metadata = _json_safe(metadata)
+    expectation = _normalize_live_expectation(action=action, result=result, expectation=expectation)
     payload_bytes = json.dumps(clean_metadata, sort_keys=True, default=str).encode("utf-8")
     artifact_uri = _write_metadata_artifact(trace_file, event, payload_bytes)
     block = {
@@ -116,6 +119,8 @@ def build_live_trace_block(
         "extensions": {
             "tok.live": {
                 "event": event,
+                "client_session_key": client_session_key,
+                "trace_instance_id": trace_instance_id,
                 "metadata": clean_metadata,
             }
         },
@@ -128,6 +133,12 @@ def build_live_trace_block(
         cast(dict[str, Any], block["content"])["resolver_uri"] = artifact_uri
     cast(dict[str, Any], block["envelope"])["payload_digest"] = canonical_payload_digest(block)
     return block
+
+
+def _normalize_live_expectation(*, action: str, result: str, expectation: str) -> str:
+    if action == "pass_through" and result == "ok" and expectation in {"accept_fallback", "accept_reference"}:
+        return "accept_pass_through"
+    return expectation
 
 
 def _next_trace_step(session_id: str) -> int:
@@ -160,8 +171,16 @@ def _emit_trace_warning(session: Any, event: str) -> None:
 
 
 def _session_id(session: Any) -> str:
-    key = str(getattr(session, "_active_session_key", "") or "default")
+    key = f"{_trace_instance_id(session)}:{_client_session_key(session)}"
     return "live:" + sha256(key.encode("utf-8")).hexdigest()[:24]
+
+
+def _client_session_key(session: Any) -> str:
+    return str(getattr(session, "_active_session_key", "") or "default")
+
+
+def _trace_instance_id(session: Any) -> str:
+    return str(getattr(session, "_live_trace_instance_id", "") or "standalone")
 
 
 def _safe_name(value: str) -> str:

@@ -30,7 +30,7 @@ def test_trace_fixture_file_has_expected_coverage() -> None:
     fixtures = load_fixtures()
     fixture_ids = {fixture["id"] for fixture in fixtures}
 
-    assert len(fixtures) >= 10
+    assert len(fixtures) >= 11
     assert "first_exact_file_observation" in fixture_ids
     assert "unchanged_cached_tool_result" in fixture_ids
     assert "delta_result" in fixture_ids
@@ -39,6 +39,7 @@ def test_trace_fixture_file_has_expected_coverage() -> None:
     assert "malformed_block_rejection" in fixture_ids
     assert "skeleton_reference_non_exact" in fixture_ids
     assert "summary_reference_non_exact" in fixture_ids
+    assert "healthy_pass_through_metadata" in fixture_ids
 
 
 def test_valid_trace_fixtures_match_draft_schema() -> None:
@@ -97,6 +98,7 @@ def test_fixture_file_audit_uses_local_artifacts() -> None:
     assert results["first_exact_file_observation"].status == "pass"
     assert results["delta_result"].status == "pass"
     assert results["missing_resolver_cache"].status == "warn"
+    assert results["healthy_pass_through_metadata"].status == "pass"
     assert results["malformed_block_rejection"].status == "fail"
 
 

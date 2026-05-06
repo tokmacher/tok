@@ -311,7 +311,7 @@ def _attempt_quarantine_invalid_tool_history(
 
 def _tool_history_repair_summary(
     bridge_signals: dict[str, int],
-) -> tuple[bool, bool]:
+) -> tuple[bool, bool, bool]:
     repaired_ids = any(
         bridge_signals.get(key, 0)
         for key in (
@@ -320,17 +320,34 @@ def _tool_history_repair_summary(
             "tok_bridge_tool_id_deduped",
         )
     )
-    pairing_repaired = any(
+    serious_pairing_repaired = any(
         bridge_signals.get(key, 0)
         for key in (
             "tok_bridge_tool_result_pairing_repaired",
             "tok_bridge_tool_result_id_rewritten",
             "tok_bridge_tool_result_rewrite_complete",
-            "tok_bridge_tool_result_order_repaired",
             "tok_bridge_user_tool_result_text_split",
         )
     )
-    return repaired_ids, pairing_repaired
+    order_repaired_count = int(bridge_signals.get("tok_bridge_tool_result_order_repaired", 0) or 0)
+    pairing_repaired_count = int(bridge_signals.get("tok_bridge_tool_result_pairing_repaired", 0) or 0)
+    serious_pairing_signals = any(
+        bridge_signals.get(key, 0)
+        for key in (
+            "tok_bridge_tool_result_id_rewritten",
+            "tok_bridge_tool_result_rewrite_complete",
+            "tok_bridge_tool_result_rewrite_incomplete",
+            "tok_bridge_tool_result_pairing_unrepaired",
+            "tok_bridge_tool_result_pairing_ambiguous",
+            "tok_bridge_user_tool_result_text_split",
+        )
+    )
+    order_only_repaired = bool(
+        order_repaired_count > 0 and not serious_pairing_signals and pairing_repaired_count <= order_repaired_count
+    )
+    if order_only_repaired:
+        serious_pairing_repaired = pairing_repaired_count > order_repaired_count
+    return repaired_ids, serious_pairing_repaired, order_only_repaired
 
 
 def _count_user_messages_with_mixed_tool_result_content(
@@ -483,13 +500,31 @@ def _run_bridge_preflight(
     invalid_tool_history_unrecoverable = False
     strict_failures = validate_anthropic_bridge_body(canonical_body)
     request_fingerprint = _request_fingerprint_diff(headers, canonical_body, original_body)
+    original_tool_result_cache_blocks = int(
+        request_fingerprint.get("original", {}).get("cache_control", {}).get("message_tool_result_blocks", 0) or 0
+    )
+    active_key = getattr(session, "_active_session_key", "default")
+    per_key_cache = getattr(session, "_per_key_previous_tool_result_cache_blocks", {})
+    previous_tool_result_cache_blocks = per_key_cache.get(active_key)
+    if (
+        previous_tool_result_cache_blocks is not None
+        and original_tool_result_cache_blocks < previous_tool_result_cache_blocks
+    ):
+        behavior_signals["client_cache_marker_dropped"] = (
+            previous_tool_result_cache_blocks - original_tool_result_cache_blocks
+        )
+    per_key_cache[active_key] = original_tool_result_cache_blocks
     should_log_preflight = bool(compressed or bridge_canonicalized or strict_failures)
     _merge_signal_counts(behavior_signals, bridge_signals)
-    tool_history_repaired, pairing_repaired = _tool_history_repair_summary(bridge_signals)
+    tool_history_repaired, pairing_repaired, order_only_repaired = _tool_history_repair_summary(bridge_signals)
     if tool_history_repaired:
         behavior_signals["tok_bridge_tool_history_repaired"] = 1
     if pairing_repaired:
         behavior_signals["tok_bridge_tool_history_pairing_repaired"] = 1
+    if order_only_repaired:
+        behavior_signals["tool_result_order_repair_non_degrading"] = int(
+            bridge_signals.get("tok_bridge_tool_result_order_repaired", 0) or 1
+        )
     if (
         request_fingerprint.get("messages_changed")
         and behavior_signals.get("request_policy_reason_structured_tool_loop", 0) > 0
@@ -669,11 +704,13 @@ def _run_bridge_preflight(
             )
             behavior_signals["tok_bridge_preflight_rejected"] = 1
             behavior_signals["tok_fallback_activated"] = 1
+            if not compressed:
+                behavior_signals["tok_fallback_zero_compression_revert"] = 1
             _record_fallback_once(session, request_state)
             return (
                 copy.deepcopy(original_body),
                 behavior_signals,
-                tool_history_repaired or pairing_repaired or tool_history_recovery_applied,
+                tool_history_repaired or pairing_repaired or order_only_repaired or tool_history_recovery_applied,
                 None,
             )
 
@@ -894,6 +931,6 @@ def _run_bridge_preflight(
     return (
         body,
         behavior_signals,
-        tool_history_repaired or pairing_repaired or tool_history_recovery_applied,
+        tool_history_repaired or pairing_repaired or order_only_repaired or tool_history_recovery_applied,
         None,
     )

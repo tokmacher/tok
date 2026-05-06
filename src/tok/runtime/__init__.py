@@ -11,6 +11,7 @@ _SYMBOLS = {
     "ProcessedRuntimeResponse": (".types", "ProcessedRuntimeResponse"),
     "RuntimeRequest": (".types", "RuntimeRequest"),
     "RuntimeSession": (".core", "RuntimeSession"),
+    # Backward-compat exports (0.1.6/0.1.7) kept for non-breaking 0.1.x upgrades.
     "DEFAULT_KEEP_TURNS": (".config", "DEFAULT_KEEP_TURNS"),
     "DEFAULT_MODE": (".config", "DEFAULT_MODE"),
     "DEFAULT_MODEL_FAMILY": (".config", "DEFAULT_MODEL_FAMILY"),
@@ -29,10 +30,7 @@ _SYMBOLS = {
     "DEFAULT_MUTATION_THRESHOLD": (".config", "DEFAULT_MUTATION_THRESHOLD"),
     "DEFAULT_TELEMETRY_MODE": (".config", "DEFAULT_TELEMETRY_MODE"),
     "DEFAULT_MEMORY_PROFILE": (".config", "DEFAULT_MEMORY_PROFILE"),
-    "DEFAULT_PROJECT_MARKER_PATTERNS": (
-        ".config",
-        "DEFAULT_PROJECT_MARKER_PATTERNS",
-    ),
+    "DEFAULT_PROJECT_MARKER_PATTERNS": (".config", "DEFAULT_PROJECT_MARKER_PATTERNS"),
     "TOOL_DENSITY_THRESHOLD": (".config", "TOOL_DENSITY_THRESHOLD"),
     "RuntimeToolExecutor": (".tools", "RuntimeToolExecutor"),
 }

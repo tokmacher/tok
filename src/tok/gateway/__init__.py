@@ -62,6 +62,9 @@ if TYPE_CHECKING:
 
     from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
+# ---------------------------------------------------------------------------
+# Constants and configuration
+# ---------------------------------------------------------------------------
 # PID file handling for foreground mode
 TOK_DIR = Path.home() / ".tok"
 PID_FILE = TOK_DIR / "bridge.pid"
@@ -123,6 +126,9 @@ def _env_bool(name: str, fallback: bool) -> bool:
     return raw == "1"
 
 
+# ---------------------------------------------------------------------------
+# Auth token cache and session bucketing
+# ---------------------------------------------------------------------------
 _SESSION_ID_HEADERS = (
     "x-tok-session-id",
     "x-claude-session-id",
@@ -177,6 +183,9 @@ class _BridgeSessionBucket:
     last_seen: float = field(default_factory=time.time)
 
 
+# ---------------------------------------------------------------------------
+# Capture redaction helpers
+# ---------------------------------------------------------------------------
 def _is_sensitive_capture_key(key: str) -> bool:
     normalized = key.strip().lower().replace("-", "_")
     return normalized in _CAPTURE_SENSITIVE_KEYS or normalized.endswith("_api_key")
@@ -207,6 +216,9 @@ def _sanitize_capture_payload(value: Any) -> Any:
     return value
 
 
+# ---------------------------------------------------------------------------
+# Request parsing and fingerprinting
+# ---------------------------------------------------------------------------
 def _parse_request_body(
     body: dict[str, Any] | None,
     content: bytes | None,
@@ -323,6 +335,9 @@ def _log_bridge_body_structure(
     )
 
 
+# ---------------------------------------------------------------------------
+# Response contract and fallback recording
+# ---------------------------------------------------------------------------
 _RUNTIME = UniversalTokRuntime()
 _build_tool_use_id_to_context = build_tool_use_id_to_context
 _collect_behavior_signals = collect_behavior_signals
@@ -381,6 +396,9 @@ def _response_contract_for_mode(text: str, *, tool_compatible: bool) -> Response
     )
 
 
+# ---------------------------------------------------------------------------
+# BridgeSession — HTTP gateway session with multi-tenant bucketing
+# ---------------------------------------------------------------------------
 @dataclass
 class BridgeSession:
     """HTTP gateway configuration and telemetry (delegates runtime state to RuntimeSession)."""
@@ -422,6 +440,8 @@ class BridgeSession:
     _session_buckets: dict[str, _BridgeSessionBucket] = field(default_factory=dict, init=False, repr=False)
     _active_session_key: str = field(default="default", init=False, repr=False)
     _auto_fingerprint_to_key: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _live_trace_instance_id: str = field(default_factory=lambda: secrets.token_hex(12), init=False, repr=False)
+    _per_key_previous_tool_result_cache_blocks: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.api_base = self.api_base.strip() or ANTHROPIC_API_BASE
@@ -513,6 +533,7 @@ class BridgeSession:
                 evicted = self._session_buckets.pop(key, None)
                 if evicted is not None:
                     evicted.tracker.merge_session_to_ledger()
+                    self._per_key_previous_tool_result_cache_blocks.pop(key, None)
                     _prune_auto_fingerprint_map_for_key(key)
         max_sessions = max(1, int(self.max_sessions))
         while len(self._session_buckets) > max_sessions:
@@ -523,6 +544,7 @@ class BridgeSession:
             evicted = self._session_buckets.pop(evict_key, None)
             if evicted is not None:
                 evicted.tracker.merge_session_to_ledger()
+                self._per_key_previous_tool_result_cache_blocks.pop(evict_key, None)
                 _prune_auto_fingerprint_map_for_key(evict_key)
 
     def resolve_session_key(self, headers: dict[str, str], body: dict[str, Any] | None = None) -> str:
@@ -707,9 +729,11 @@ class BridgeSession:
             return
         bucket.tracker.reset_session_stats()
         bucket.runtime_session.reset_session()
+        self._per_key_previous_tool_result_cache_blocks.pop(bucket.key, None)
         self._activate_session_bucket(bucket)
 
     def reset_all_sessions(self) -> None:
+        self._per_key_previous_tool_result_cache_blocks.clear()
         for bucket in self._session_buckets.values():
             bucket.tracker.reset_session_stats()
             bucket.runtime_session.reset_session()
@@ -815,6 +839,9 @@ class BridgeSession:
         self.runtime_session.bridge_memory = value
 
 
+# ---------------------------------------------------------------------------
+# Streaming helpers
+# ---------------------------------------------------------------------------
 async def _buffer_strip_restream(
     session: BridgeSession,
     client: httpx.AsyncClient,
@@ -882,6 +909,9 @@ def _materialize_stream_tool_blocks(
     return normalized_tool_blocks
 
 
+# ---------------------------------------------------------------------------
+# Application factory and entry point
+# ---------------------------------------------------------------------------
 def create_app(session: BridgeSession | None = None) -> FastAPI:
     """Create the bridge FastAPI application."""
     from ._app_factory import create_app_impl

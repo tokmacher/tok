@@ -351,6 +351,7 @@ def bridge_status() -> None:
                         baseline_only=baseline_only,
                         mode=mode,
                         request_policy=str(payload.get("request_policy", "")) or None,
+                        api_base=str(payload.get("api_base", "")) or None,
                         fallback_count=fallback_count,
                         session_quality=str(payload.get("session_quality", "clean")),
                         degradation_reason=str(payload.get("last_degradation_reason", "")),

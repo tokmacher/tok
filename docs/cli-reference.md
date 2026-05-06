@@ -90,6 +90,10 @@ tok audit --latest --json
 audit can verify local hashes and byte sizes. This does not capture raw prompts,
 responses, or tool outputs.
 
+For live traces, `envelope.session_id` is an opaque trace-session id. It is not a
+durable client id across bridge restarts; the client bucket hint appears in
+`extensions.tok.live.client_session_key`.
+
 `tok audit` is a draft trace-audit feature for inspecting what Tok did. It is not a
 universal protocol compliance certificate.
 
@@ -127,5 +131,3 @@ as public onboarding material.
 - [`docs/bridge.md`](./bridge.md)
 - [`docs/troubleshooting.md`](./troubleshooting.md)
 - [`docs/production-readiness.md`](./production-readiness.md)
-- [`docs/claude-compaction-comparison.md`](./claude-compaction-comparison.md)
-- [`docs/positioning-context-tools.md`](./positioning-context-tools.md)

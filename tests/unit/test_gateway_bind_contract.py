@@ -109,8 +109,8 @@ def test_plan_finalization_guard_warns_on_invalid_integer_env(monkeypatch, caplo
 
     value = bridge_runtime_pipeline._plan_finalization_min_saved_tokens()
 
-    assert value == 32
-    assert "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS='lots'; using fallback 32" in caplog.text
+    assert value == 500
+    assert "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS='lots'; using fallback 500" in caplog.text
 
 
 def test_python_module_gateway_reports_port_conflict(monkeypatch, capsys) -> None:

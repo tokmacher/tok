@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -22,6 +23,7 @@ from tok.gateway import (
 )
 from tok.gateway._bridge_preflight import (
     _rewrite_provider_sensitive_large_tool_use_text_interleaving,
+    _run_bridge_preflight,
 )
 from tok.gateway._bridge_request_handler import _normalize_provider_safe_retry_payload, send_with_tok_fail_open_retry
 from tok.gateway._bridge_runtime_pipeline import prepare_bridge_payload
@@ -156,6 +158,157 @@ def test_prepare_bridge_payload_passthroughs_plan_finalization_when_tok_has_no_c
     assert payload.request_tool_compatible is False
     assert payload.behavior_signals.get("plan_finalization_turn") == 1
     assert payload.behavior_signals.get("plan_finalization_passthrough") == 1
+
+
+def test_bridge_preflight_zero_compression_revert_is_observable() -> None:
+    session = BridgeSession()
+    original_body = {
+        "model": "claude-sonnet-4",
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+    }
+    body = {
+        **original_body,
+        "system": [{"type": "text", "text": ""}],
+    }
+    behavior_signals: dict[str, int] = {}
+
+    prepared_body, signals, _, response = _run_bridge_preflight(
+        session,
+        body=body,
+        original_body=original_body,
+        headers={},
+        behavior_signals=behavior_signals,
+        compressed=False,
+        request_state={"fallback_recorded": False},
+        path="v1/messages",
+    )
+
+    assert response is None
+    assert prepared_body == original_body
+    assert signals["tok_bridge_preflight_rejected"] == 1
+    assert signals["tok_fallback_zero_compression_revert"] == 1
+
+
+def test_bridge_preflight_reports_client_tool_result_cache_marker_drop() -> None:
+    session = BridgeSession()
+    cached_body = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "bash",
+                        "input": {"cmd": "pwd"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": "/Users/jfj/Desktop/tok",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
+        ],
+    }
+    uncached_body = copy.deepcopy(cached_body)
+    uncached_body["messages"][1]["content"][0].pop("cache_control")
+
+    first_signals: dict[str, int] = {}
+    _run_bridge_preflight(
+        session,
+        body=copy.deepcopy(cached_body),
+        original_body=copy.deepcopy(cached_body),
+        headers={},
+        behavior_signals=first_signals,
+        compressed=False,
+        request_state={"fallback_recorded": False},
+        path="v1/messages",
+    )
+    second_signals: dict[str, int] = {}
+    _run_bridge_preflight(
+        session,
+        body=copy.deepcopy(uncached_body),
+        original_body=copy.deepcopy(uncached_body),
+        headers={},
+        behavior_signals=second_signals,
+        compressed=False,
+        request_state={"fallback_recorded": False},
+        path="v1/messages",
+    )
+
+    assert first_signals.get("client_cache_marker_dropped", 0) == 0
+    assert second_signals["client_cache_marker_dropped"] == 1
+
+
+def test_bridge_preflight_treats_order_only_tool_result_repair_as_non_degrading() -> None:
+    session = BridgeSession()
+    body = {
+        "model": "claude-sonnet-4",
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "Run two tools."}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_1",
+                        "name": "bash",
+                        "input": {"cmd": "pwd"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "tool_2",
+                        "name": "bash",
+                        "input": {"cmd": "git status --short"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_2",
+                        "content": "clean",
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tool_1",
+                        "content": "/Users/jfj/Desktop/tok",
+                    },
+                ],
+            },
+        ],
+    }
+    behavior_signals: dict[str, int] = {}
+
+    prepared_body, signals, repaired, response = _run_bridge_preflight(
+        session,
+        body=copy.deepcopy(body),
+        original_body=copy.deepcopy(body),
+        headers={},
+        behavior_signals=behavior_signals,
+        compressed=False,
+        request_state={"fallback_recorded": False},
+        path="v1/messages",
+    )
+
+    assert response is None
+    assert repaired is True
+    assert prepared_body["messages"][2]["content"][0]["tool_use_id"] == "tool_1"
+    assert prepared_body["messages"][2]["content"][1]["tool_use_id"] == "tool_2"
+    assert signals["tok_bridge_tool_result_order_repaired"] == 1
+    assert signals["tok_bridge_tool_result_pairing_repaired"] == 1
+    assert signals["tool_result_order_repair_non_degrading"] == 1
+    assert signals.get("tok_bridge_tool_history_pairing_repaired", 0) == 0
 
 
 async def _collect_stream_chunks(session):

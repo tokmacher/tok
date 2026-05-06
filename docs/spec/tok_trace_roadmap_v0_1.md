@@ -1,6 +1,6 @@
 # Tok Trace Roadmap
 
-Status: draft for 0.1.7
+Status: draft for 0.1.8
 
 Tok Trace should grow from audit evidence, not from protocol ambition. The first useful
 version is a small verifier-friendly trace format for bridge sessions.
@@ -12,7 +12,7 @@ Tok Session are future layers described in `tok_protocol_layers_v0_1.md`.
 Routing is a future design axis, not a 0.1.x layer. It should grow from resolver use
 cases: where a runtime is allowed to ask for missing bytes or state. Tok should avoid
 global routing, DHTs, and ambient public discovery unless a later resolver design proves
-they are necessary. For 0.1.7 release claims, this means no DHT, no ambient discovery,
+they are necessary. For 0.1.x release claims, this means no DHT, no ambient discovery,
 and no routing layer.
 
 ## Ladder
@@ -40,7 +40,7 @@ credible if audit and fixtures stay strict.
 
 ## Conformance Levels
 
-| Level | Meaning                                                           | 0.1.7 status                                 |
+| Level | Meaning                                                           | 0.1.8 status                                 |
 | ----- | ----------------------------------------------------------------- | -------------------------------------------- |
 | L0    | Read documented fixture files.                                    | Covered by fixture tests.                    |
 | L1    | Audit live bridge traces.                                         | Covered by `tok audit` and live JSONL tests. |
@@ -52,8 +52,14 @@ credible if audit and fixtures stay strict.
 | L4    | Negotiate capabilities with another runtime.                      | Deferred.                                    |
 | L5    | Exchange compact verified state agent-to-agent.                   | Deferred.                                    |
 
-0.1.7 should only claim L1/L2 draft trace audit. Stable protocol or agent-to-agent
-claims require L3+ design and independent conformance testing.
+0.1.8 protocol claim is Trace L0-L2 only: parse JSON arrays and JSONL traces; validate
+required fields, enum values, extension namespaces, canonical payload digests, and
+pass/warn/fail outcomes; verify local artifacts, exact hashes and sizes, exact versus
+non-exact references, fallback/degradation reasons, sequence consistency, and supported
+unified_diff deltas. L3-L5 remain future design only.
+
+Stable protocol or agent-to-agent claims require L3+ design and independent conformance
+testing.
 
 ## Named Adversarial Packs
 
@@ -85,9 +91,9 @@ Future L3+ hardening should add `resolver-routing-future-adversarial` cases:
 - remote unavailable but trace remains valid
 - conflicting resolver manifests
 
-0.1.7 includes local tests for the subset the draft verifier can defend now. Later
-releases should promote this into a named adversarial fixture pack with expected audit
-outcomes.
+0.1.8 includes a named local adversarial pack for the subset the draft verifier can
+defend now. Future Resolver, Routing, Capability, and Session cases remain
+future-design-only and must not carry 0.1.x expected audit outcomes.
 
 ## Compatibility Policy
 

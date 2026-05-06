@@ -32,6 +32,17 @@ fallback meanings.
 | L1    | Validate required fields, enum values, extension namespace rules, canonical payload digests, and pass/warn/fail audit outcomes.                                                |
 | L2    | Verify local artifacts, exact content hashes and sizes, exact versus non-exact rules, fallback/degradation reasons, sequence consistency, and supported `unified_diff` deltas. |
 
+For 0.1.8, Tok validates exactly this L0-L2 set:
+
+- L0: parse JSON fixture arrays and JSONL traces, reject malformed JSON or malformed
+  fixture structure, and preserve block order.
+- L1: validate required fields, enum values, extension namespace rules, canonical
+  payload digests, and pass/warn/fail audit outcomes.
+- L2: verify local artifact hashes and sizes, exact versus non-exact content claims,
+  fallback/degradation reasons, sequence consistency, and supported unified_diff deltas.
+
+Everything above L2 is documentation-only in 0.1.8.
+
 L3, L4, and L5 remain out of scope for this conformance draft. A reader must not claim
 cross-cache resolution, capability negotiation, or agent-to-agent compact-state exchange
 from L0-L2 fixture success.
@@ -39,12 +50,23 @@ from L0-L2 fixture success.
 L0-L2 fixture success must not claim cross-cache resolution, capability negotiation, or
 agent-to-agent compact-state exchange.
 
+L0-L2 success also does not claim resolver networking, remote fetchability, or future
+exact recovery. `accept_exact` means this reader verified the exact bytes locally. A
+remote resolver reference can be identifiable and still warn because this reader has not
+seen the bytes.
+
 ## L0-L2 Invariants
 
-- Exact content requires digest identity and either local availability or a resolver
-  state that honestly reports missing/unavailable bytes.
+- `accept_exact` requires digest identity, size identity, and local byte availability.
+- `available_local` always requires `resolver_uri`, `hash`, and `size_bytes`; otherwise
+  there is nothing concrete for the L2 reader to verify.
+- `accept_reference` is reserved for exact `reference` actions. Missing or remote exact
+  references warn; they do not pass as local proof.
+- Healthy pass-through metadata uses `accept_pass_through`, not `accept_reference` or
+  `accept_fallback`.
 - `summary_reference` and `skeleton_reference` are non-exact unless future layers add a
   separate exact recovery path; they cannot authorize edit-like exactness by themselves.
+- `result: "ok"` cannot pair with `unresolvable_fallback_required`.
 - Fallback, degraded, error, and rejected outcomes require an audit reason.
 - A hash proves identity, not availability, authorization, freshness, or permission to
   export raw content.

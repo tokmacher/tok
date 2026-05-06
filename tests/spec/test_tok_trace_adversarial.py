@@ -74,6 +74,15 @@ def test_exact_available_local_content_requires_resolver_uri() -> None:
     assert "available_local_missing_resolver" in errors
 
 
+def test_accept_exact_requires_locally_available_artifact() -> None:
+    block = _fixture_block("missing_resolver_cache")
+    block["audit"]["expectation"] = "accept_exact"
+
+    errors = _audit_mutated(block)
+
+    assert "accept_exact_requires_available_local_content" in errors
+
+
 @pytest.mark.parametrize("fixture_id", ["summary_reference_non_exact", "skeleton_reference_non_exact"])
 def test_non_exact_reference_cannot_claim_exactness(fixture_id: str) -> None:
     block = _fixture_block(fixture_id)
@@ -119,6 +128,134 @@ def test_reject_malformed_expectation_requires_rejected_result() -> None:
     errors = _audit_mutated(block)
 
     assert "reject_fixture_must_have_rejected_result" in errors
+
+
+def test_accept_delta_expectation_requires_delta_action() -> None:
+    block = _fixture_block("first_exact_file_observation")
+    block["audit"]["expectation"] = "accept_delta"
+
+    errors = _audit_mutated(block)
+
+    assert "accept_delta_requires_delta_action" in errors
+
+
+def test_accept_reference_requires_reference_action() -> None:
+    block = _fixture_block("first_exact_file_observation")
+    block["audit"]["expectation"] = "accept_reference"
+
+    errors = _audit_mutated(block)
+
+    assert "accept_reference_requires_reference_action" in errors
+
+
+@pytest.mark.parametrize("field", ["hash", "size_bytes"])
+def test_accept_reference_requires_exact_identity(field: str) -> None:
+    block = _fixture_block("unchanged_cached_tool_result")
+    block["content"].pop(field)
+
+    errors = _audit_mutated(block)
+
+    assert f"missing_or_invalid_content_{'hash' if field == 'hash' else 'size'}" in errors
+
+
+def test_accept_reference_cannot_be_used_for_summary_or_skeleton() -> None:
+    block = _fixture_block("summary_reference_non_exact")
+    block["audit"]["expectation"] = "accept_reference"
+
+    errors = _audit_mutated(block)
+
+    assert "accept_reference_requires_reference_action" in errors
+    assert "accept_reference_requires_exact_content" in errors
+
+
+def test_resolvable_exact_reference_warns_without_local_proof() -> None:
+    block = _fixture_block("unchanged_cached_tool_result")
+    block["audit"]["resolver_state"] = "resolvable_remote"
+    block["envelope"]["payload_digest"] = canonical_payload_digest(block)
+
+    result = audit_block(block, fixture_id="remote-reference", context=AuditContext(FIXTURE_DIR))
+
+    assert result.status == "warn"
+    assert result.errors == ("resolvable_remote",)
+
+
+def test_accept_non_exact_reference_requires_summary_or_skeleton_action() -> None:
+    block = _fixture_block("first_exact_file_observation")
+    block["content"]["exact"] = False
+    block["audit"]["expectation"] = "accept_non_exact_reference"
+
+    errors = _audit_mutated(block)
+
+    assert "accept_non_exact_reference_requires_non_exact_reference_action" in errors
+
+
+def test_accept_non_exact_reference_requires_non_exact_content() -> None:
+    block = _fixture_block("summary_reference_non_exact")
+    block["content"]["exact"] = True
+
+    errors = _audit_mutated(block)
+
+    assert "accept_non_exact_reference_requires_non_exact_content" in errors
+
+
+@pytest.mark.parametrize("field", ["hash", "size_bytes"])
+def test_available_local_non_exact_reference_requires_artifact_identity(field: str) -> None:
+    block = _fixture_block("summary_reference_non_exact")
+    block["content"].pop(field)
+
+    errors = _audit_mutated(block)
+
+    assert f"missing_or_invalid_content_{'hash' if field == 'hash' else 'size'}" in errors
+
+
+def test_healthy_pass_through_cannot_claim_fallback_expectation() -> None:
+    block = _fixture_block("missing_resolver_cache")
+    block["observation"]["action"] = "pass_through"
+    block["observation"]["result"] = "ok"
+    block["audit"]["expectation"] = "accept_fallback"
+    block["audit"]["reason"] = "metadata-only healthy pass-through"
+
+    errors = _audit_mutated(block)
+
+    assert "accept_fallback_requires_fallback_or_degradation" in errors
+
+
+def test_accept_pass_through_requires_healthy_pass_through() -> None:
+    block = _fixture_block("unresolvable_fallback_required")
+    block["audit"]["expectation"] = "accept_pass_through"
+
+    errors = _audit_mutated(block)
+
+    assert "accept_pass_through_requires_ok_pass_through" in errors
+
+
+def test_accept_pass_through_rejects_exact_content_claims() -> None:
+    block = _fixture_block("first_exact_file_observation")
+    block["observation"]["action"] = "pass_through"
+    block["audit"]["expectation"] = "accept_pass_through"
+
+    errors = _audit_mutated(block)
+
+    assert "accept_pass_through_requires_non_exact_content" in errors
+
+
+@pytest.mark.parametrize("field", ["hash", "size_bytes"])
+def test_available_local_pass_through_requires_artifact_identity(field: str) -> None:
+    block = _fixture_block("healthy_pass_through_metadata")
+    block["content"].pop(field)
+
+    errors = _audit_mutated(block)
+
+    assert f"missing_or_invalid_content_{'hash' if field == 'hash' else 'size'}" in errors
+
+
+def test_ok_result_cannot_require_unresolvable_fallback() -> None:
+    block = _fixture_block("unresolvable_fallback_required")
+    block["observation"]["result"] = "ok"
+
+    errors = _audit_mutated(block)
+
+    assert "ok_result_cannot_require_unresolvable_fallback" in errors
 
 
 @pytest.mark.parametrize(
@@ -339,6 +476,16 @@ def test_extension_attack_shapes_are_rejected(extensions: dict[str, object], exp
     assert expected_error in errors
 
 
+def test_unknown_object_extension_namespace_is_allowed() -> None:
+    block = _fixture_block("first_exact_file_observation")
+    block["extensions"] = {"tok.future": {"l3": "documented-future-only"}}
+    block["envelope"]["payload_digest"] = canonical_payload_digest(block)
+
+    result = audit_block(block, fixture_id="extension", context=AuditContext(FIXTURE_DIR))
+
+    assert result.status == "pass"
+
+
 def test_extension_semantic_mutation_is_covered_by_payload_digest() -> None:
     block = _fixture_block("first_exact_file_observation")
     block["extensions"] = {"tok.attack": {"claim": "benign"}}
@@ -363,6 +510,14 @@ def test_named_adversarial_pack_expected_errors_are_exercised_by_current_tests()
         "out_of_order_trace_block",
         "invalid_trace_version",
         "extension_namespace_overrides_core",
+        "accept_exact_requires_available_local_content",
+        "accept_delta_requires_delta_action",
+        "accept_fallback_requires_fallback_or_degradation",
+        "accept_reference_requires_reference_action",
+        "accept_non_exact_reference_requires_non_exact_reference_action",
+        "accept_pass_through_requires_ok_pass_through",
+        "ok_result_cannot_require_unresolvable_fallback",
+        "missing_or_invalid_content_hash",
     }
 
     assert {case["expected_error"] for case in cases.values()} <= exercised_errors

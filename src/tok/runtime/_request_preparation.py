@@ -54,6 +54,7 @@ from .config import (
     TOK_REACQUIRE_STUCK_WINDOW_TURNS,
     TOK_REACQUIRE_TRIGGER_COUNT,
     TOK_REACQUIRE_WINDOW_TURNS,
+    TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOK_TOOL_REQUIRED_LATCH_THRESHOLD,
 )
@@ -124,6 +125,46 @@ def _has_exact_search_evidence(evidence_keys: set[str]) -> bool:
         if str(key).startswith("search|"):
             return True
     return False
+
+
+def _exact_search_evidence_keys_in_messages(
+    messages: list[dict[str, Any]],
+    tool_use_id_to_context: dict[str, dict[str, Any]],
+) -> set[str]:
+    evidence_keys: set[str] = set()
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_id = str(block.get("tool_use_id") or "")
+            context = tool_use_id_to_context.get(tool_id)
+            if not context:
+                continue
+            tool_name = str(context.get("name") or "").strip().lower()
+            raw = text_of(cast("Any", block.get("content", ""))).strip()
+            if not raw:
+                continue
+            if raw.startswith(">>>"):
+                continue
+            if search_result_evidence_level(raw) != "exact_content":
+                continue
+            args = context.get("args") if isinstance(context.get("args"), dict) else {}
+            command = str(args.get("command") or args.get("cmd") or "").strip() or None
+            key = evidence_identity_key(
+                tool_name,
+                path=str(context.get("path") or "").strip() or None,
+                query=str(context.get("query") or "").strip() or None,
+                command=command,
+                args=args,
+            )
+            if key and key.startswith("search|"):
+                evidence_keys.add(key)
+    return evidence_keys
 
 
 def _edit_events_requiring_exact_reacquisition(
@@ -426,7 +467,21 @@ def _resolve_effective_tool_compatible(
     # repeat_target_* signals aren't in behavior_signals yet at policy-decision time
     # (they're populated by _capture_repeat_target_snapshots, which runs later),
     # so we query the session state directly instead.
-    has_stuck_target = any(r.stuck_promotion_turn > 0 for r in getattr(session, "_hot_summary_records", {}).values())
+    recent_stuck_targets = 0
+    expired_stuck_targets = 0
+    for record in getattr(session, "_hot_summary_records", {}).values():
+        stuck_turn = int(getattr(record, "stuck_promotion_turn", 0) or 0)
+        if stuck_turn <= 0:
+            continue
+        if current_turn - stuck_turn <= TOK_REACQUIRE_STUCK_WINDOW_TURNS:
+            recent_stuck_targets += 1
+        else:
+            expired_stuck_targets += 1
+    if recent_stuck_targets:
+        behavior_signals["structured_tool_loop_stuck_target_recent"] = recent_stuck_targets
+    if expired_stuck_targets:
+        behavior_signals["structured_tool_loop_stuck_target_expired"] = expired_stuck_targets
+    has_stuck_target = recent_stuck_targets > 0
     structured_tool_loop = has_stuck_target or any(
         behavior_signals.get(key, 0) > 0
         for key in (
@@ -624,6 +679,22 @@ def prepare_request_impl(
         session.pending_behavior_signals["tok_prompt_bloat_detected"] = 1
         if is_bridge_adapter:
             session.pending_behavior_signals["tok_prompt_optimization_skipped_bridge"] = 1
+            current_sys = cast("Any", body.get("system", ""))
+            dry_run_memory = type(session.bridge_memory)(load_global_macros=False)
+            cleaned_sys = clean_system_context(dry_run_memory, current_sys)
+            if cleaned_sys and cleaned_sys != current_sys:
+                original_chars = len(text_of(current_sys) if isinstance(current_sys, list) else str(current_sys))
+                cleaned_chars = len(text_of(cleaned_sys) if isinstance(cleaned_sys, list) else str(cleaned_sys))
+                suppressed_chars = max(0, original_chars - cleaned_chars)
+                if suppressed_chars:
+                    session.pending_behavior_signals["tok_prompt_optimization_suppressed_chars"] = (
+                        session.pending_behavior_signals.get("tok_prompt_optimization_suppressed_chars", 0)
+                        + suppressed_chars
+                    )
+                    session.pending_behavior_signals["tok_prompt_optimization_suppressed_tokens"] = (
+                        session.pending_behavior_signals.get("tok_prompt_optimization_suppressed_tokens", 0)
+                        + suppressed_chars // 4
+                    )
             logger.info(
                 "tok_prompt_optimization_skipped_bridge: adapter_kind=%s, skipping clean_system_context",
                 request.adapter_kind,
@@ -686,6 +757,7 @@ def prepare_request_impl(
     _speculative_macro_hint: str | None = None
 
     id_to_context = build_tool_use_id_to_context(translated_messages, session)
+    exact_search_evidence_keys_in_request = _exact_search_evidence_keys_in_messages(translated_messages, id_to_context)
     for ctx in id_to_context.values():
         path = ctx.get("path")
         if path:
@@ -928,7 +1000,8 @@ def prepare_request_impl(
         if session.consume_loop_detected():
             behavior_signals["loop_terminated"] = 1
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
-            behavior_signals["repeat_command_suppression_hint_injected"] = 0
+            runtime_hints.append(TOK_REPEAT_COMMAND_SUPPRESSION_HINT)
+            behavior_signals["repeat_command_suppression_hint_injected"] = 1
         answer_ready = False
         resend_signals: dict[str, int] = {}
         has_answer_anchor = False
@@ -1001,8 +1074,21 @@ def prepare_request_impl(
             )
             if tool_required_latch_active:
                 answer_ready_turn = False
-            preserve_exact_search_evidence = bool(answer_ready_turn and has_answer_anchor)
+            preserve_exact_search_evidence = bool(answer_ready_turn and exact_search_evidence_keys_in_request)
         session._answer_phase_expected_this_turn = bool(answer_ready_turn)
+
+        def _first_exact_evidence_seen_for_compression() -> set[str]:
+            if not preserve_exact_search_evidence:
+                return session._first_exact_evidence_seen
+            seen = set(session._first_exact_evidence_seen)
+            seen.difference_update(exact_search_evidence_keys_in_request)
+            return seen
+
+        def _retains_required_exact_search_evidence(messages: list[dict[str, Any]]) -> bool:
+            if not preserve_exact_search_evidence:
+                return True
+            retained_exact_keys = _exact_search_evidence_keys_in_messages(messages, id_to_context)
+            return exact_search_evidence_keys_in_request.issubset(retained_exact_keys)
 
         session._save_bridge_memory()
         fidelity_overrides, current_path = compute_fidelity_overrides(
@@ -1018,14 +1104,18 @@ def prepare_request_impl(
         if broad_audit_batch:
             body["messages"] = translated_messages
             behavior_signals["broad_audit_tool_result_compression_skipped"] = 1
+            behavior_signals["compress_tool_results_bypassed"] = 1
         elif edit_reacquisition_signals:
             body["messages"] = translated_messages
             behavior_signals["evidence_tool_result_compression_skipped"] = 1
+            behavior_signals["compress_tool_results_bypassed"] = 1
         elif stream_recovery_history_floor_active:
             body["messages"] = translated_messages
+            behavior_signals["compress_tool_results_bypassed"] = 1
         elif plan_finalization_turn:
             body["messages"] = translated_messages
             behavior_signals["plan_finalization_tool_result_compression_skipped"] = 1
+            behavior_signals["compress_tool_results_bypassed"] = 1
         else:
             effective_compression_level = policy.tool_levels[mode]
             if session.model_profile.compression_aggressiveness < 0.8:
@@ -1041,7 +1131,7 @@ def prepare_request_impl(
                 hot_summary_records=session._hot_summary_records,
                 session_files_read=session._files_read_this_session,
                 files_fully_delivered=session._files_fully_delivered,
-                first_exact_evidence_seen=session._first_exact_evidence_seen,
+                first_exact_evidence_seen=_first_exact_evidence_seen_for_compression(),
                 current_turn=session.bridge_memory.turn,
                 keep_turns_window=TOK_FILE_DELIVERY_STALE_TURNS,
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
@@ -1057,6 +1147,30 @@ def prepare_request_impl(
             file_cache_hits = sum(v for k, v in type_breakdown.items() if k.endswith("_cached"))
             if file_cache_hits > 0:
                 behavior_signals["tool_result_cache_hit"] = behavior_signals.get("tool_result_cache_hit", 0) + 1
+            command_cache_saved_chars = int(type_breakdown.get("command_cached", 0))
+            _cacheable_count = type_breakdown.get("command_cacheable_seen", 0)
+            if _cacheable_count > 0:
+                behavior_signals["command_result_cacheable_seen"] = (
+                    behavior_signals.get("command_result_cacheable_seen", 0) + _cacheable_count
+                )
+            if command_cache_saved_chars > 0:
+                behavior_signals["command_result_cache_hit"] = behavior_signals.get("command_result_cache_hit", 0) + 1
+                behavior_signals["command_result_cache_saved_tokens"] = (
+                    behavior_signals.get("command_result_cache_saved_tokens", 0) + command_cache_saved_chars // 4
+                )
+            for _cache_sig in (
+                "command_cache_stored",
+                "command_cache_hit",
+                "command_cache_refreshed_stale",
+                "command_cache_replaced_changed",
+                "command_cache_skip_ineligible_cmd",
+                "command_cache_first_exact_ineligible",
+                "command_cache_first_exact_no_cache",
+                "command_cache_reached_apply",
+            ):
+                _cache_val = type_breakdown.get(_cache_sig, 0)
+                if _cache_val > 0:
+                    behavior_signals[_cache_sig] = behavior_signals.get(_cache_sig, 0) + _cache_val
             semantic_dedup_hits = type_breakdown.get("semantic_dedup", 0)
             if semantic_dedup_hits > 0:
                 behavior_signals["semantic_dedup_hit"] = behavior_signals.get("semantic_dedup_hit", 0) + 1
@@ -1088,11 +1202,6 @@ def prepare_request_impl(
             skip_reason = "evidence_exact_reacquisition"
             history_skip_reason = skip_reason
             behavior_signals["evidence_history_compression_skipped"] = 1
-        elif preserve_exact_search_evidence:
-            should_skip_history = True
-            skip_reason = "answer_ready_exact_search_evidence"
-            history_skip_reason = skip_reason
-            behavior_signals["answer_ready_exact_search_evidence_history_preserved"] = 1
         elif plan_finalization_turn:
             should_skip_history = True
             skip_reason = "plan_finalization"
@@ -1159,7 +1268,7 @@ def prepare_request_impl(
                 recent,
                 tool_use_id_to_context=id_to_context,
                 tool_compatible=effective_tool_compatible,
-                first_exact_evidence_seen=session._first_exact_evidence_seen,
+                first_exact_evidence_seen=_first_exact_evidence_seen_for_compression(),
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
                 session_files_read=session._files_read_this_session,
                 model_profile=session.model_profile,
@@ -1188,7 +1297,11 @@ def prepare_request_impl(
                 )
                 if safe_recent is not None and bridge_candidate is not None:
                     candidate_body, canonical_signals, candidate_saved_prompt_tokens = bridge_candidate
-                    if candidate_saved_prompt_tokens >= bridge_min_saved_prompt_tokens:
+                    candidate_preserves_exact = _retains_required_exact_search_evidence(candidate_body["messages"])
+                    if candidate_preserves_exact and (
+                        candidate_saved_prompt_tokens >= bridge_min_saved_prompt_tokens
+                        or preserve_exact_search_evidence
+                    ):
                         recent = candidate_body["messages"]
                         behavior_signals["bridge_history_cut_search_used"] = 1
                         for key, value in canonical_signals.items():
@@ -1214,7 +1327,7 @@ def prepare_request_impl(
                             candidate_recent,
                             tool_use_id_to_context=id_to_context,
                             tool_compatible=effective_tool_compatible,
-                            first_exact_evidence_seen=session._first_exact_evidence_seen,
+                            first_exact_evidence_seen=_first_exact_evidence_seen_for_compression(),
                             preserve_exact_search_evidence=preserve_exact_search_evidence,
                             session_files_read=session._files_read_this_session,
                         )
@@ -1234,7 +1347,11 @@ def prepare_request_impl(
                             bridge_candidate_had_invalid = True
                             continue
                         candidate_body, canonical_signals, candidate_saved_prompt_tokens = bridge_candidate
-                        if candidate_saved_prompt_tokens >= bridge_min_saved_prompt_tokens:
+                        candidate_preserves_exact = _retains_required_exact_search_evidence(candidate_body["messages"])
+                        if (
+                            candidate_preserves_exact
+                            and candidate_saved_prompt_tokens >= bridge_min_saved_prompt_tokens
+                        ):
                             recent = candidate_body["messages"]
                             tok_state = candidate_tok_state
                             recent_breakdown = candidate_breakdown
@@ -1274,6 +1391,22 @@ def prepare_request_impl(
                             session._request_policy_tool_recovery_watch_turns,
                             TOK_REQUEST_POLICY_STICKY_TURNS,
                         )
+            if preserve_exact_search_evidence:
+                if _retains_required_exact_search_evidence(recent):
+                    behavior_signals["answer_ready_exact_evidence_in_safe_suffix"] = 1
+                else:
+                    recent = body["messages"]
+                    tok_state = ""
+                    recent_breakdown = {}
+                    should_skip_history = True
+                    skip_reason = "answer_ready_exact_search_evidence"
+                    history_skip_reason = skip_reason
+                    behavior_signals["answer_ready_exact_evidence_fallback_full_history"] = 1
+                    behavior_signals["answer_ready_exact_search_evidence_history_preserved"] = 1
+                    behavior_signals["tok_history_compression_skipped"] = (
+                        behavior_signals.get("tok_history_compression_skipped", 0) + 1
+                    )
+                    behavior_signals[f"tok_skip_{skip_reason}"] = 1
             for k, v in recent_breakdown.items():
                 type_breakdown[f"recent_{k}"] = type_breakdown.get(f"recent_{k}", 0) + v
 

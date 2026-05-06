@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.8 (2026-05-06)
+
+### Improved
+
+- **Compression pipeline**: expanded tool-result detection and caching heuristics, with
+  additional unit coverage for result optimizations and common Claude-Code-like
+  patterns.
+- **Runtime state clarity**: refactored runtime and compression state into grouped
+  sub-objects and feature flags to reduce cross-module drift and tighten invariants.
+
+### Notes
+
+- `sbom.spdx` regenerated for this release so `pyproject.toml`, `tok.__version__`, and
+  SBOM metadata all report `0.1.8`.
+
 ## 0.1.7 (2026-05-04)
 
 ### Added
