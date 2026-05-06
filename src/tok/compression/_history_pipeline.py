@@ -5,7 +5,9 @@ from __future__ import annotations
 import contextlib
 import copy
 import difflib
+import os
 import re
+import shlex
 from collections.abc import MutableMapping
 from typing import Any
 
@@ -18,6 +20,7 @@ from tok.runtime.config import (
     TOK_ENABLE_STACK_REPEAT_DELTA,
 )
 from tok.runtime.repeat_targets import (
+    LISTING_LIKE_TOOLS,
     SEARCH_LIKE_TOOLS,
     build_file_skeleton,
     build_file_summary,
@@ -50,6 +53,8 @@ from . import (
 )
 from ._registry import Compressor
 from ._tool_result_codecs import (
+    _compress_config_json,
+    _compress_env_ps,
     _compress_file_read,
     _compress_find,
     _compress_git_diff,
@@ -58,9 +63,12 @@ from ._tool_result_codecs import (
     _compress_install,
     _compress_ls,
     _compress_pytest,
+    _compress_repetitive,
     _compress_search_results,
     _compress_stack_traces,
 )
+
+WEB_RESULT_TOOLS = frozenset({"web_search", "websearch", "web_fetch", "webfetch"})
 from ._tool_result_pipeline import (
     compress_git_log_impl as _compress_git_log_impl_fn,
 )
@@ -84,8 +92,8 @@ __all__ = [
 ]
 
 
-def _detect_tool_content_type_impl(text: str) -> str:
-    return _detect_tool_content_type_impl_fn(text)
+def _detect_tool_content_type_impl(text: str, path: str = "") -> str:
+    return _detect_tool_content_type_impl_fn(text, path=path)
 
 
 def _compress_git_log_impl(text: str) -> str:
@@ -1040,12 +1048,30 @@ def compress_tool_results_impl(
             return False
         if context:
             tool_name = str(context.get("name", "")).lower()
-            if (
-                tool_name in COMMAND_LIKE_TOOLS
-                and result_cache is not None
-                and not bypass_result_cache
-                and _command_cache_context(context, raw) is not None
-            ):
+            if tool_name in COMMAND_LIKE_TOOLS:
+                if result_cache is not None and not bypass_result_cache:
+                    cache_ctx = _command_cache_context(context, raw)
+                    if cache_ctx is not None:
+                        _apply_result_cache(
+                            raw,
+                            context,
+                            result_cache,
+                            compression_level=compression_level,
+                            bypass_cache=bypass_result_cache,
+                            ttl_seconds=RESULT_CACHE_TTL_SECONDS,
+                            preserve_exact_search_evidence=preserve_exact_search_evidence,
+                            cache_breakdown=breakdown,
+                        )
+                        breakdown["command_cacheable_seen"] = breakdown.get("command_cacheable_seen", 0) + 1
+                    else:
+                        breakdown["command_cache_first_exact_ineligible"] = (
+                            breakdown.get("command_cache_first_exact_ineligible", 0) + 1
+                        )
+                else:
+                    breakdown["command_cache_first_exact_no_cache"] = (
+                        breakdown.get("command_cache_first_exact_no_cache", 0) + 1
+                    )
+            elif tool_name in LISTING_LIKE_TOOLS and result_cache is not None and not bypass_result_cache:
                 _apply_result_cache(
                     raw,
                     context,
@@ -1056,7 +1082,6 @@ def compress_tool_results_impl(
                     preserve_exact_search_evidence=preserve_exact_search_evidence,
                     cache_breakdown=breakdown,
                 )
-                breakdown["command_cacheable_seen"] = breakdown.get("command_cacheable_seen", 0) + 1
             if tool_name in FILE_LIKE_TOOLS:
                 args = context.get("args")
                 if isinstance(args, dict) and any(k in args for k in ("offset", "limit", "start", "end")):
@@ -1138,6 +1163,8 @@ def compress_tool_results_impl(
                     ):
                         _mark_verbatim_file_observation(context, content, norm_path)
                         continue
+                    if tool_name in COMMAND_LIKE_TOOLS:
+                        breakdown["command_cache_reached_apply"] = breakdown.get("command_cache_reached_apply", 0) + 1
                     compressed, saved = _apply_result_cache(
                         content,
                         context,
@@ -1498,13 +1525,15 @@ def compress_tool_results_impl(
                         semantic_hash_cache[cache_key] = content_hash
 
             if (
-                tool_name in FILE_LIKE_TOOLS | COMMAND_LIKE_TOOLS
+                tool_name in FILE_LIKE_TOOLS | COMMAND_LIKE_TOOLS | LISTING_LIKE_TOOLS
                 and result_cache is not None
                 and tool_use_id_to_context is not None
                 and not bypass_result_cache
             ):
                 context = ctx
                 if context:
+                    if tool_name in COMMAND_LIKE_TOOLS:
+                        breakdown["command_cache_reached_apply"] = breakdown.get("command_cache_reached_apply", 0) + 1
                     if _preserve_first_exact_observation(context, raw, norm_path):
                         block["content"] = raw
                         continue
@@ -1774,6 +1803,19 @@ def compress_recent_window_impl(
     def _file_compressor(text: str) -> str:
         return _compress_file_read(text, tool_context={"_model_profile": model_profile} if model_profile else None)
 
+    def _command_name(context: dict[str, Any] | None) -> str:
+        args = context.get("args") if isinstance(context, dict) else None
+        command = str((args or {}).get("command") or (args or {}).get("cmd") or "").strip()
+        if not command:
+            return ""
+        try:
+            parts = shlex.split(command)
+        except Exception:
+            parts = command.split()
+        while len(parts) >= 2 and os.path.basename(parts[0]).lower() == "uv" and parts[1] == "run":
+            parts = parts[2:]
+        return os.path.basename(parts[0]).lower() if parts else ""
+
     compressors: dict[str, Compressor] = {
         "file": _file_compressor,
         "grep": _compress_grep,
@@ -1786,6 +1828,11 @@ def compress_recent_window_impl(
         "find": _compress_find,
         "install": _compress_install,
         "git_log": _compress_git_log_impl,
+        "config_json": _compress_config_json,
+        "json_skeleton": _compress_config_json,
+        "ps_output": lambda text: _compress_env_ps(text, "ps_output"),
+        "env_output": lambda text: _compress_env_ps(text, "env_output"),
+        "repetitive": _compress_repetitive,
     }
 
     for msg in messages:
@@ -1828,8 +1875,16 @@ def compress_recent_window_impl(
             kind = _detect_tool_content_type_impl(content)
             if tool_name in FILE_LIKE_TOOLS:
                 kind = "file"
-            elif tool_name in SEARCH_LIKE_TOOLS and kind == "file":
+            elif tool_name in SEARCH_LIKE_TOOLS and kind in {"file", "json_skeleton"}:
                 kind = "grep"
+            elif tool_name in WEB_RESULT_TOOLS and kind in {"raw", "repetitive"}:
+                kind = "search_results"
+            elif tool_name in COMMAND_LIKE_TOOLS and kind == "raw":
+                command_name = _command_name(ctx)
+                if command_name in {"env", "printenv"}:
+                    kind = "env_output"
+                elif command_name in {"ps", "pgrep"}:
+                    kind = "ps_output"
             elif kind == "raw":
                 logger.debug("compression_decision: decision=bypassed reason=detection_type_raw tool=%s", tool_name)
                 continue
@@ -1923,18 +1978,27 @@ def compress_recent_window_impl(
                     continue
 
             kind = _detect_tool_content_type_impl(raw)
-            if kind == "raw" and tool_name in SEARCH_LIKE_TOOLS:
+            if tool_name in SEARCH_LIKE_TOOLS and kind in {"raw", "json_skeleton"}:
                 kind = "search_results"
+            elif kind in {"raw", "repetitive"} and tool_name in WEB_RESULT_TOOLS:
+                kind = "search_results"
+            elif kind == "raw" and tool_name in COMMAND_LIKE_TOOLS:
+                command_name = _command_name(tool_ctx)
+                if command_name in {"env", "printenv"}:
+                    kind = "env_output"
+                elif command_name in {"ps", "pgrep"}:
+                    kind = "ps_output"
             if kind == "pytest" and " FAILED" in raw and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
+                continue
+            if _is_precision_read_context(tool_ctx):
+                block["content"] = raw
                 continue
             if kind in {"raw", "file"}:
                 context = tool_ctx or {}
-                if _is_precision_read_context(context):
-                    continue
                 tool_name = str(context.get("name", "")).lower()
                 if tool_name in FILE_LIKE_TOOLS:
                     kind = "file"
-                elif tool_name in SEARCH_LIKE_TOOLS and kind == "file":
+                elif tool_name in SEARCH_LIKE_TOOLS and kind in {"file", "json_skeleton"}:
                     kind = "grep"
                 elif kind == "raw":
                     continue

@@ -69,6 +69,7 @@ ResultCacheEntry: TypeAlias = dict[str, object] | tuple[str, str, float] | tuple
 # Maximum number of entries in the result cache to bound memory usage
 RESULT_CACHE_MAX_SIZE = 256
 TOK_ENABLE_COMMAND_RESULT_CACHE = bool(_env_int("TOK_ENABLE_COMMAND_RESULT_CACHE", 1))
+logger.info("TOK_ENABLE_COMMAND_RESULT_CACHE=%s", TOK_ENABLE_COMMAND_RESULT_CACHE)
 
 # Lock for thread-safe cache operations (callers must use this for external synchronization)
 _result_cache_lock = threading.Lock()
@@ -639,11 +640,11 @@ def compress_history(
     )
 
 
-def _detect_tool_content_type(text: str) -> str:
+def _detect_tool_content_type(text: str, path: str = "") -> str:
     """Detect the content type of a tool result."""
     from ._pipeline import _detect_tool_content_type_impl
 
-    return _detect_tool_content_type_impl(text)
+    return _detect_tool_content_type_impl(text, path=path)
 
 
 def _compress_git_log(text: str) -> str:
@@ -855,6 +856,11 @@ def _apply_result_cache(
 
     raw_text = _strip_harness_injections(str(raw or ""))
     raw = raw_text
+    if is_command_like and raw_text.startswith(">>> tool:"):
+        # Block was already tok-compressed by a previous compress_tool_results pass.
+        # The cache entry for the original raw output is intact — don't overwrite it
+        # with the compressed form or fire a spurious replaced_changed signal.
+        return raw_text, 0
     if is_command_like:
         command_context = _command_cache_context(context, raw_text)
         if bypass_cache or command_context is None:

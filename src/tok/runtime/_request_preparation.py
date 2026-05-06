@@ -1164,6 +1164,9 @@ def prepare_request_impl(
                 "command_cache_refreshed_stale",
                 "command_cache_replaced_changed",
                 "command_cache_skip_ineligible_cmd",
+                "command_cache_first_exact_ineligible",
+                "command_cache_first_exact_no_cache",
+                "command_cache_reached_apply",
             ):
                 _cache_val = type_breakdown.get(_cache_sig, 0)
                 if _cache_val > 0:

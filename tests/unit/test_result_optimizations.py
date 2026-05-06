@@ -280,6 +280,97 @@ def test_compress_tool_results_command_cache_hit_signals() -> None:
     assert breakdown.get("command_cacheable_seen", 0) >= 2
     assert breakdown.get("command_cache_stored", 0) >= 1
     assert breakdown.get("command_cache_hit", 0) >= 1
+    assert breakdown.get("command_cache_reached_apply", 0) >= 1
+
+
+def test_compress_tool_results_command_cache_signals_combined() -> None:
+    from tok.compression import compress_tool_results
+
+    raw = "\n".join(f"src/tok/foo.py:{i}: match" for i in range(80))
+    tool_use_id_1 = "toolu_001"
+    tool_use_id_2 = "toolu_002"
+    context = {"name": "bash", "args": {"command": "rg 'pattern' src/tok"}}
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": tool_use_id_1, "name": "bash", "input": context["args"]}],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id_1, "content": raw}]},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": tool_use_id_2, "name": "bash", "input": context["args"]}],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id_2, "content": raw}]},
+    ]
+
+    id_to_context = {tool_use_id_1: context, tool_use_id_2: context}
+    result_cache: dict[str, object] = {}
+
+    _, breakdown = compress_tool_results(
+        messages,
+        result_cache=result_cache,
+        tool_use_id_to_context=id_to_context,
+    )
+
+    assert breakdown.get("command_cacheable_seen", 0) >= 2, f"Expected >=2 command_cacheable_seen, got {breakdown}"
+    assert breakdown.get("command_cache_stored", 0) >= 1, f"Expected >=1 stored, got {breakdown}"
+    assert breakdown.get("command_cache_hit", 0) >= 1, f"Expected >=1 hit, got {breakdown}"
+    assert breakdown.get("command_cache_reached_apply", 0) >= 1, f"Expected >=1 reached_apply, got {breakdown}"
+
+
+def test_compress_tool_results_repeated_pass_no_replaced_changed() -> None:
+    """compress_tool_results called N times on the same mutated messages must not fire
+    command_cache_replaced_changed.  The second pass sees already-compressed content
+    (starts with '>>> tool:'); it should pass through unchanged instead of overwriting
+    the cache entry with the compressed form and breaking subsequent real hits.
+    """
+    from tok.compression import compress_tool_results
+
+    raw = "\n".join(f"src/tok/foo.py:{i}: match_token" for i in range(80))
+    tool_use_id = "toolu_001"
+    context = {"name": "bash", "args": {"command": "rg 'match_token' src/tok"}}
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": tool_use_id, "name": "bash", "input": context["args"]}],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id, "content": raw}]},
+    ]
+    id_to_context = {tool_use_id: context}
+    result_cache: dict[str, object] = {}
+    first_exact_evidence_seen: set[str] = set()
+
+    # Pass 1 — stores the entry and compresses the block in-place
+    _, bd1 = compress_tool_results(
+        messages,
+        result_cache=result_cache,
+        tool_use_id_to_context=id_to_context,
+        first_exact_evidence_seen=first_exact_evidence_seen,
+    )
+    assert bd1.get("command_cache_stored", 0) >= 1, f"Pass 1 should store: {bd1}"
+    assert bd1.get("command_cache_replaced_changed", 0) == 0, f"Pass 1 must not replace: {bd1}"
+
+    # Pass 2 — block content is now tok-compressed; must not fire replaced_changed
+    _, bd2 = compress_tool_results(
+        messages,
+        result_cache=result_cache,
+        tool_use_id_to_context=id_to_context,
+        first_exact_evidence_seen=first_exact_evidence_seen,
+    )
+    assert bd2.get("command_cache_replaced_changed", 0) == 0, (
+        f"Pass 2 must not fire replaced_changed on already-compressed block: {bd2}"
+    )
+
+    # Pass 3 — same invariant
+    _, bd3 = compress_tool_results(
+        messages,
+        result_cache=result_cache,
+        tool_use_id_to_context=id_to_context,
+        first_exact_evidence_seen=first_exact_evidence_seen,
+    )
+    assert bd3.get("command_cache_replaced_changed", 0) == 0, f"Pass 3 must not fire replaced_changed: {bd3}"
 
 
 def test_safe_command_classifier_allows_common_read_only_commands() -> None:
