@@ -3,7 +3,7 @@
 import logging
 import os
 
-from .policy.smart_policy import MemoryProjectionProfile
+from .policy.smart_policy import UNIVERSAL_MODE, MemoryProjectionProfile
 
 logger = logging.getLogger("tok.runtime.config")
 
@@ -80,6 +80,31 @@ TOOL_COMPAT_MEMORY_PROFILE_SHORT = MemoryProjectionProfile(
 TOOL_COMPAT_DELTA_KEYS = ("turns", "goal", "files", "tests", "errs", "facts")
 TOOL_COMPAT_STICKY_KEYS = ("files", "tests")
 TOOL_COMPAT_MAX_FILES = 2
+
+# Backward-compatibility defaults.
+#
+# These symbols were exported from `tok.runtime` in 0.1.6/0.1.7. They are not part of
+# the actively-evolving runtime internals anymore, but keeping them avoids breaking
+# downstream imports in a non-breaking 0.1.x release.
+DEFAULT_KEEP_TURNS: int = 2
+DEFAULT_MODE: str = UNIVERSAL_MODE
+DEFAULT_MODEL_FAMILY: str = "universal"
+DEFAULT_MAX_WORKING_MEMORY: int = 0
+DEFAULT_MIN_WORKING_MEMORY: int = 0
+DEFAULT_HARD_MEMORY_LIMIT: int = 0
+DEFAULT_SOFT_MEMORY_LIMIT: int = 0
+DEFAULT_TOKEN_LIMIT: int = 0
+DEFAULT_INJECTION_THRESHOLD: int = 0
+DEFAULT_KEEP_RECENT_WINDOW: int = 0
+DEFAULT_COMPRESSION_WINDOW: int = 0
+DEFAULT_FAMILY_MODE: str = DEFAULT_MODE
+DEFAULT_FALLBACK_MODE: str = "baseline"
+DEFAULT_REPLAY_GATE_MODE: str = "baseline"
+DEFAULT_REPLAY_THRESHOLD: int = 0
+DEFAULT_MUTATION_THRESHOLD: int = 0
+DEFAULT_TELEMETRY_MODE: str = "off"
+DEFAULT_MEMORY_PROFILE: MemoryProjectionProfile = TOOL_COMPAT_MEMORY_PROFILE
+DEFAULT_PROJECT_MARKER_PATTERNS: tuple[str, ...] = tuple(sorted(_PROJECT_MARKER_FILES))
 
 TOK_REACQUIRE_TRIGGER_COUNT: int = _env_int("TOK_REACQUIRE_TRIGGER_COUNT", 2)
 TOK_REACQUIRE_STUCK_COUNT: int = _env_int("TOK_REACQUIRE_STUCK_COUNT", 3)
