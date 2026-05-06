@@ -3,7 +3,7 @@
 import logging
 import os
 
-from .policy.smart_policy import MemoryProjectionProfile
+from .policy.smart_policy import UNIVERSAL_MODE, MemoryProjectionProfile
 
 logger = logging.getLogger("tok.runtime.config")
 
@@ -20,8 +20,6 @@ def _env_int(name: str, fallback: int) -> int:
 
 
 TTL_SECONDS = {"1h": 3600, "30m": 1800, "15m": 900, "5m": 300, "1m": 60}
-
-RESULT_CACHE_TTL_SECONDS: int = _env_int("TOK_RESULT_CACHE_TTL", 1800)
 
 # Consecutive fail-open events in a session that trigger automatic baseline degradation.
 _FALLBACK_THRESHOLD: int = _env_int("TOK_FALLBACK_THRESHOLD", 3)
@@ -82,6 +80,31 @@ TOOL_COMPAT_MEMORY_PROFILE_SHORT = MemoryProjectionProfile(
 TOOL_COMPAT_DELTA_KEYS = ("turns", "goal", "files", "tests", "errs", "facts")
 TOOL_COMPAT_STICKY_KEYS = ("files", "tests")
 TOOL_COMPAT_MAX_FILES = 2
+
+# Backward-compatibility defaults.
+#
+# These symbols were exported from `tok.runtime` in 0.1.6/0.1.7. They are not part of
+# the actively-evolving runtime internals anymore, but keeping them avoids breaking
+# downstream imports in a non-breaking 0.1.x release.
+DEFAULT_KEEP_TURNS: int = 2
+DEFAULT_MODE: str = UNIVERSAL_MODE
+DEFAULT_MODEL_FAMILY: str = "universal"
+DEFAULT_MAX_WORKING_MEMORY: int = 0
+DEFAULT_MIN_WORKING_MEMORY: int = 0
+DEFAULT_HARD_MEMORY_LIMIT: int = 0
+DEFAULT_SOFT_MEMORY_LIMIT: int = 0
+DEFAULT_TOKEN_LIMIT: int = 0
+DEFAULT_INJECTION_THRESHOLD: int = 0
+DEFAULT_KEEP_RECENT_WINDOW: int = 0
+DEFAULT_COMPRESSION_WINDOW: int = 0
+DEFAULT_FAMILY_MODE: str = DEFAULT_MODE
+DEFAULT_FALLBACK_MODE: str = "baseline"
+DEFAULT_REPLAY_GATE_MODE: str = "baseline"
+DEFAULT_REPLAY_THRESHOLD: int = 0
+DEFAULT_MUTATION_THRESHOLD: int = 0
+DEFAULT_TELEMETRY_MODE: str = "off"
+DEFAULT_MEMORY_PROFILE: MemoryProjectionProfile = TOOL_COMPAT_MEMORY_PROFILE
+DEFAULT_PROJECT_MARKER_PATTERNS: tuple[str, ...] = tuple(sorted(_PROJECT_MARKER_FILES))
 
 TOK_REACQUIRE_TRIGGER_COUNT: int = _env_int("TOK_REACQUIRE_TRIGGER_COUNT", 2)
 TOK_REACQUIRE_STUCK_COUNT: int = _env_int("TOK_REACQUIRE_STUCK_COUNT", 3)
@@ -190,21 +213,23 @@ DIFF_RATIO_THRESHOLD: float = 0.7
 
 TOK_FILE_DELIVERY_STALE_TURNS: int = _env_int("TOK_FILE_DELIVERY_STALE_TURNS", 2)
 
-# Force file codec: when enabled (1), treat all file-read tool results as cacheable
-# by the file codec, producing @stable_result/@stable_summary stubs aggressively.
-TOK_FORCE_FILE_CODEC: bool = os.getenv("TOK_FORCE_FILE_CODEC", "0") == "1"
-
 # Repair loop detection: when enabled (1, default), detect and break loop patterns.
 TOK_LOOP_DETECTION_ENABLED: bool = os.getenv("TOK_LOOP_DETECTION_ENABLED", "1") == "1"
 TOK_LOOP_DETECTION_THRESHOLD: int = _env_int("TOK_LOOP_DETECTION_THRESHOLD", 3)
 
-# Compression feature flags (off by default for conservative rollout).
-TOK_ENABLE_PYTEST_FAIL_COMPRESSION: bool = os.getenv("TOK_ENABLE_PYTEST_FAIL_COMPRESSION", "0") == "1"
-TOK_ENABLE_JSON_NONEXPANSION_GUARD: bool = os.getenv("TOK_ENABLE_JSON_NONEXPANSION_GUARD", "0") == "1"
-TOK_ENABLE_FILE_OVERLAP_DELTA: bool = os.getenv("TOK_ENABLE_FILE_OVERLAP_DELTA", "0") == "1"
-TOK_ENABLE_FILE_REREAD_DIFF: bool = os.getenv("TOK_ENABLE_FILE_REREAD_DIFF", "0") == "1"
-TOK_ENABLE_SEARCH_OVERLAP_DELTA: bool = os.getenv("TOK_ENABLE_SEARCH_OVERLAP_DELTA", "0") == "1"
-TOK_ENABLE_STACK_REPEAT_DELTA: bool = os.getenv("TOK_ENABLE_STACK_REPEAT_DELTA", "0") == "1"
+# Compression feature flags — canonical definitions moved to compression._feature_flags.
+# Re-exported here for backward compatibility; new code should import from
+# tok.compression._feature_flags directly.
+from tok.compression._feature_flags import (  # noqa: F401
+    RESULT_CACHE_TTL_SECONDS,
+    TOK_ENABLE_FILE_OVERLAP_DELTA,
+    TOK_ENABLE_FILE_REREAD_DIFF,
+    TOK_ENABLE_JSON_NONEXPANSION_GUARD,
+    TOK_ENABLE_PYTEST_FAIL_COMPRESSION,
+    TOK_ENABLE_SEARCH_OVERLAP_DELTA,
+    TOK_ENABLE_STACK_REPEAT_DELTA,
+    TOK_FORCE_FILE_CODEC,
+)
 
 __all__ = [
     "ANSWER_READY_REPAIR_HINT",

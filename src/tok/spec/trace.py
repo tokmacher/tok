@@ -37,6 +37,7 @@ ALLOWED_RESOLVER_STATES = {
 ALLOWED_EXPECTATIONS = {
     "accept_exact",
     "accept_reference",
+    "accept_pass_through",
     "accept_delta",
     "accept_fallback",
     "reject_malformed",
@@ -44,6 +45,54 @@ ALLOWED_EXPECTATIONS = {
 }
 ALLOWED_DELTA_ALGORITHMS = {"line", "unified_diff", "json_patch", "binary"}
 CORE_SECTION_NAMES = {"envelope", "observation", "content", "audit"}
+TRACE_INVARIANT_MATRIX_VERSION = "tok-trace-invariant-matrix/v0.1-l0-l2"
+NON_EXACT_REFERENCE_ACTIONS = {"skeleton_reference", "summary_reference"}
+FALLBACK_RESULTS = {"degraded", "error", "rejected"}
+FALLBACK_RESOLVER_STATES = {"missing_identifiable", "unresolvable_fallback_required"}
+TRACE_INVARIANT_MATRIX: dict[str, dict[str, object]] = {
+    "accept_exact": {
+        "content_exact": True,
+        "resolver_state": "available_local",
+        "requires_local_identity": True,
+    },
+    "accept_reference": {
+        "action": "reference",
+        "content_exact": True,
+        "requires_identity": True,
+        "remote_or_missing_status": "warn",
+    },
+    "accept_non_exact_reference": {
+        "actions": sorted(NON_EXACT_REFERENCE_ACTIONS),
+        "content_exact": False,
+        "local_identity_required_when_available": True,
+        "remote_or_missing_status": "warn",
+    },
+    "accept_pass_through": {
+        "action": "pass_through",
+        "result": "ok",
+        "content_exact": False,
+        "local_identity_required_when_available": True,
+    },
+    "accept_delta": {
+        "action": "delta",
+        "content_exact": True,
+        "resolver_state": "available_local",
+        "delta_algorithm": "unified_diff",
+    },
+    "accept_fallback": {
+        "action_or_result_or_resolver_state": [
+            "fallback",
+            "degraded",
+            "error",
+            "rejected",
+            "unresolvable_fallback_required",
+        ],
+        "requires_reason": True,
+    },
+    "reject_malformed": {
+        "result": "rejected",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -163,9 +212,9 @@ def audit_block(
     if artifact_errors:
         return AuditResult(id=fixture_id, status="fail", errors=tuple(artifact_errors))
 
-    resolver_state = block["audit"]["resolver_state"]
-    if resolver_state in {"missing_identifiable", "unresolvable_fallback_required"}:
-        warnings.append(resolver_state)
+    for warning in _resolver_warnings(block):
+        if warning not in warnings:
+            warnings.append(warning)
 
     if warnings:
         return AuditResult(id=fixture_id, status="warn", errors=tuple(warnings))
@@ -301,7 +350,7 @@ def _validate_content(observation: dict[str, Any], content: dict[str, Any], erro
             errors.append("missing_or_invalid_delta_uri")
         if content.get("delta_algorithm") not in ALLOWED_DELTA_ALGORITHMS:
             errors.append("missing_or_invalid_delta_algorithm")
-    if action in {"skeleton_reference", "summary_reference"} and exact is not False:
+    if action in NON_EXACT_REFERENCE_ACTIONS and exact is not False:
         errors.append("non_exact_reference_marked_exact")
 
 
@@ -320,23 +369,109 @@ def _validate_audit(
         errors.append("invalid_resolver_state")
     if expectation not in ALLOWED_EXPECTATIONS:
         errors.append("invalid_expectation")
-    if expectation == "reject_malformed" and result != "rejected":
-        errors.append("reject_fixture_must_have_rejected_result")
-    if expectation == "accept_exact" and content.get("exact") is not True:
-        errors.append("accept_exact_requires_exact_content")
-    if content.get("exact") is False and expectation == "accept_exact":
-        errors.append("non_exact_content_claims_exact_expectation")
 
-    needs_reason = (
-        action == "fallback"
-        or result in {"degraded", "error", "rejected"}
-        or resolver_state in {"missing_identifiable", "unresolvable_fallback_required"}
-    )
+    if expectation in ALLOWED_EXPECTATIONS:
+        _validate_expectation_invariants(action, result, content, resolver_state, expectation, errors)
+    _validate_action_result_resolver_pairing(result, resolver_state, errors)
+    _validate_reason_requirements(action, result, resolver_state, audit, errors)
+    _validate_available_local_artifact(content, resolver_state, errors)
+
+
+def _validate_expectation_invariants(
+    action: object,
+    result: object,
+    content: dict[str, Any],
+    resolver_state: object,
+    expectation: str,
+    errors: list[str],
+) -> None:
+    exact = content.get("exact")
+
+    if expectation == "reject_malformed":
+        if result != "rejected":
+            errors.append("reject_fixture_must_have_rejected_result")
+        return
+
+    if expectation == "accept_exact":
+        if exact is not True:
+            errors.append("accept_exact_requires_exact_content")
+        if exact is False:
+            errors.append("non_exact_content_claims_exact_expectation")
+        if resolver_state != "available_local":
+            errors.append("accept_exact_requires_available_local_content")
+        _require_content_identity(content, errors)
+        return
+
+    if expectation == "accept_reference":
+        if action != "reference":
+            errors.append("accept_reference_requires_reference_action")
+        if exact is not True:
+            errors.append("accept_reference_requires_exact_content")
+        _require_content_identity(content, errors)
+        return
+
+    if expectation == "accept_non_exact_reference":
+        if action not in NON_EXACT_REFERENCE_ACTIONS:
+            errors.append("accept_non_exact_reference_requires_non_exact_reference_action")
+        if exact is not False:
+            errors.append("accept_non_exact_reference_requires_non_exact_content")
+        return
+
+    if expectation == "accept_pass_through":
+        if action != "pass_through" or result != "ok" or resolver_state == "unresolvable_fallback_required":
+            errors.append("accept_pass_through_requires_ok_pass_through")
+        if exact is not False:
+            errors.append("accept_pass_through_requires_non_exact_content")
+        return
+
+    if expectation == "accept_delta":
+        if action != "delta":
+            errors.append("accept_delta_requires_delta_action")
+        if exact is not True:
+            errors.append("accept_delta_requires_exact_content")
+        if resolver_state != "available_local":
+            errors.append("accept_delta_requires_available_local_content")
+        return
+
+    if expectation == "accept_fallback" and not _is_fallback_claim(action, result, resolver_state):
+        errors.append("accept_fallback_requires_fallback_or_degradation")
+
+
+def _validate_action_result_resolver_pairing(
+    result: object,
+    resolver_state: object,
+    errors: list[str],
+) -> None:
+    if result == "ok" and resolver_state == "unresolvable_fallback_required":
+        errors.append("ok_result_cannot_require_unresolvable_fallback")
+
+
+def _validate_reason_requirements(
+    action: object,
+    result: object,
+    resolver_state: object,
+    audit: dict[str, Any],
+    errors: list[str],
+) -> None:
+    needs_reason = action == "fallback" or result in FALLBACK_RESULTS or resolver_state in FALLBACK_RESOLVER_STATES
     if needs_reason and not audit.get("reason"):
         errors.append("missing_reason")
 
-    if resolver_state == "available_local" and content.get("exact") and not content.get("resolver_uri"):
+
+def _validate_available_local_artifact(
+    content: dict[str, Any],
+    resolver_state: object,
+    errors: list[str],
+) -> None:
+    if resolver_state != "available_local":
+        return
+    if not content.get("resolver_uri"):
         errors.append("available_local_missing_resolver")
+    _require_content_identity(content, errors)
+
+
+def _is_fallback_claim(action: object, result: object, resolver_state: object) -> bool:
+    return action == "fallback" or result in FALLBACK_RESULTS or resolver_state == "unresolvable_fallback_required"
 
 
 def _validate_extensions(extensions: object, errors: list[str]) -> None:
@@ -379,6 +514,20 @@ def _audit_payload_digest(block: dict[str, Any], warnings: list[str]) -> list[st
 
     if payload_digest != canonical_payload_digest(block):
         return ["payload_digest_mismatch"]
+    return []
+
+
+def _resolver_warnings(block: dict[str, Any]) -> list[str]:
+    resolver_state = block["audit"]["resolver_state"]
+    expectation = block["audit"]["expectation"]
+    if resolver_state in {"missing_identifiable", "unresolvable_fallback_required"}:
+        return [resolver_state]
+    if resolver_state == "resolvable_remote" and expectation in {
+        "accept_reference",
+        "accept_non_exact_reference",
+        "accept_pass_through",
+    }:
+        return [resolver_state]
     return []
 
 
@@ -474,7 +623,7 @@ def _verify_artifact_identity(
         errors.append(f"{label}_artifact_unreadable")
         return
     actual_hash = "sha256:" + sha256(data).hexdigest()
-    if expected_hash != actual_hash:
+    if expected_hash is not None and expected_hash != actual_hash:
         errors.append(f"{label}_hash_mismatch")
     if expected_size is not None and expected_size != len(data):
         errors.append(f"{label}_size_mismatch")

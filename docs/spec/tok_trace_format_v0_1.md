@@ -129,7 +129,13 @@ Set `TOK_TRACE=1` before starting the bridge to write metadata-only JSONL trace 
 under `.tok/traces/`. These records are sidecar audit data only. They are never sent to
 the model or provider, and they do not change compression decisions.
 
-The live trace surface is intentionally small in 0.1.7:
+For live bridge traces, `envelope.session_id` is an opaque trace-session id. It
+separates independent bridge runtimes even when they append to the same `TOK_TRACE_FILE`
+and reuse the same client session header. The trace-local client bucket hint is
+available under `extensions.tok.live.client_session_key`; it is diagnostic metadata, not
+a cross-bridge sequence identity.
+
+The live trace surface is intentionally small in 0.1.8:
 
 - `request_prepared`
 - `fallback`
@@ -137,7 +143,7 @@ The live trace surface is intentionally small in 0.1.7:
 - `audit_warning` for trace-emission issues
 
 Non-streaming bridge requests emit request and response trace blocks. Streaming bridge
-trace coverage is intentionally limited in 0.1.7; streaming behavior remains governed by
+trace coverage is intentionally limited in 0.1.8; streaming behavior remains governed by
 the bridge fallback/recovery code and should not be treated as full trace replay proof.
 
 Live traces do not store raw prompts, responses, or tool outputs by default. Since exact

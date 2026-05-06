@@ -5,6 +5,7 @@ from tok.runtime.config import (
     ANSWER_READY_REPAIR_HINT,
     TOK_LARGE_FILE_HINT,
     TOK_READ_PLAN_HINT,
+    TOK_REPEAT_COMMAND_SUPPRESSION_HINT,
 )
 from tok.runtime.core import (
     TOOL_COMPAT_MEMORY_PROFILE,
@@ -314,6 +315,35 @@ def test_runtime_prepare_request_preserves_prompt_cached_system_list(
     assert "### Optimized Task Context" not in prepared.body["system"][0]["text"]
     assert prepared.behavior_signals.get("tok_prompt_optimization_skipped_bridge", 0) == 1
     assert prepared.behavior_signals.get("tok_prompt_optimized", 0) == 0
+
+
+def test_runtime_prepare_request_bridge_prompt_cleaning_dry_run_records_suppressed_savings(
+    monkeypatch,
+) -> None:
+    from tok.runtime import _request_preparation
+
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+    system_prompt = "Claude Code prompt\n" + ("duplicate context\n" * 20)
+    cleaned_prompt = "Claude Code prompt\n"
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        adapter_kind="claude-bridge",
+        tool_compatible=True,
+        system=system_prompt,
+        messages=[{"role": "user", "content": "Inspect the bridge request path."}],
+    )
+
+    monkeypatch.setattr(_request_preparation, "detect_prompt_bloat", lambda system, last_user_msg: True)
+    monkeypatch.setattr(_request_preparation, "clean_system_context", lambda memory, system: cleaned_prompt)
+
+    prepared = runtime.prepare_request(request, session)
+
+    suppressed_chars = len(system_prompt) - len(cleaned_prompt)
+    assert system_prompt in prepared.body["system"]
+    assert prepared.behavior_signals.get("tok_prompt_optimization_skipped_bridge", 0) == 1
+    assert prepared.behavior_signals["tok_prompt_optimization_suppressed_chars"] == suppressed_chars
+    assert prepared.behavior_signals["tok_prompt_optimization_suppressed_tokens"] == suppressed_chars // 4
 
 
 def test_runtime_prepare_request_blocks_prompt_optimization_when_required_context_would_be_lost(
@@ -943,6 +973,7 @@ def test_natural_first_escalates_on_repeated_tool_loop_signal(
 
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
     # Seed the session with a stuck target (simulates a prior-turn loop being detected)
     session._hot_summary_records["file_read:src/tok/runtime/core.py"] = HotSummaryRecord(
         tool_family="file_read",
@@ -987,8 +1018,67 @@ def test_natural_first_escalates_on_repeated_tool_loop_signal(
 
     assert prepared.effective_tool_compatible is True
     assert prepared.request_policy_escalated is True
+    assert prepared.behavior_signals.get("structured_tool_loop_stuck_target_recent", 0) == 1
+    assert prepared.behavior_signals.get("structured_tool_loop_stuck_target_expired", 0) == 0
     assert prepared.behavior_signals.get("request_policy_reason_structured_tool_loop", 0) == 1
     assert prepared.behavior_signals.get("request_policy_escalation_source_structured_tool_loop", 0) == 1
+
+
+def test_natural_first_ignores_expired_stuck_target(
+    tmp_path,
+) -> None:
+    """Old stuck targets are observable but do not hold structured-tool-loop mode."""
+    from tok.runtime.repeat_targets import HotSummaryRecord
+
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 20
+    session._hot_summary_records["file_read:src/tok/runtime/core.py"] = HotSummaryRecord(
+        tool_family="file_read",
+        logical_target="src/tok/runtime/core.py",
+        display_target="src/tok/runtime/core.py",
+        summary="",
+        token_cost=0,
+        result_digest="",
+        last_seen_turn=3,
+        stuck_promotion_turn=3,
+    )
+    request = RuntimeRequest(
+        model="claude-sonnet-4-6",
+        request_policy="natural_first",
+        tool_compatible=True,
+        messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "view_file",
+                        "input": {"path": "src/tok/runtime/core.py"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": "runtime core",
+                    },
+                ],
+            },
+        ],
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.effective_tool_compatible is False
+    assert prepared.request_policy_escalated is False
+    assert prepared.behavior_signals.get("structured_tool_loop_stuck_target_recent", 0) == 0
+    assert prepared.behavior_signals.get("structured_tool_loop_stuck_target_expired", 0) == 1
+    assert prepared.behavior_signals.get("request_policy_reason_structured_tool_loop", 0) == 0
 
 
 def test_runtime_prepare_request_suppresses_unchanged_tool_compatible_state(
@@ -1069,7 +1159,7 @@ def test_runtime_prepare_request_suppresses_unchanged_tool_compatible_state(
         + second.behavior_signals.get("state_resend_delta_turn", 0)
         >= 1
     )
-    assert len(second.body["system"]) <= len(first.body["system"])
+    assert len(second.body.get("system", "")) <= len(first.body.get("system", ""))
 
 
 def test_tool_compatible_state_fields_are_canonicalized_for_shorter_wire_state() -> None:
@@ -1239,7 +1329,7 @@ def test_tool_compatible_state_with_answer_facts_suppresses_when_unchanged(
 
     assert first.behavior_signals.get("state_resend_full_turn", 0) == 1
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
-    assert "Reuse existing File=/Verification= facts" not in second.body["system"]
+    assert "Reuse existing File=/Verification= facts" not in second.body.get("system", "")
 
 
 def test_tool_compatible_sticky_files_choose_primary_file_from_test_anchor() -> None:
@@ -1643,6 +1733,27 @@ def test_answer_ready_mixed_turn_requests_repair_for_next_turn(
 
     assert processed.behavior_signals["answer_ready_repair_requested"] == 1
     assert session._answer_ready_repair_pending is True
+
+
+def test_answer_ready_miss_inside_structured_tool_loop_suppresses_repair(tmp_path) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+
+    processed = runtime.process_response(
+        "",
+        model="google/gemini-2.0-flash",
+        session=session,
+        tool_compatible=True,
+        behavior_signals={
+            "answer_ready_turn": 1,
+            "request_policy_reason_structured_tool_loop": 1,
+        },
+    )
+
+    assert processed.behavior_signals["answer_ready_failed_to_answer"] == 1
+    assert processed.behavior_signals["answer_ready_repair_suppressed_tool_loop_active"] == 1
+    assert processed.behavior_signals.get("answer_ready_repair_requested", 0) == 0
+    assert session._answer_ready_repair_pending is False
 
 
 def test_prepare_request_activates_answer_ready_repair_once(tmp_path) -> None:
@@ -2481,11 +2592,62 @@ def test_collect_behavior_signals_matches_bridge_contract() -> None:
     assert signals.get("search_reacquisition_cost_tokens", 0) == 0
 
 
+def test_prepare_request_reports_command_cache_hit_and_repeat_hint() -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession()
+    raw = "\n".join(f"tests/unit/test_gateway.py::test_{i} PASSED" for i in range(100))
+    messages = [
+        {"role": "user", "content": "Run the same verification twice."},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "cmd_1",
+                    "name": "bash",
+                    "input": {"command": "uv run pytest tests/unit/test_gateway.py -q"},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "cmd_2",
+                    "name": "bash",
+                    "input": {"command": "uv run pytest tests/unit/test_gateway.py -q"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "cmd_1", "content": raw},
+                {"type": "tool_result", "tool_use_id": "cmd_2", "content": raw},
+            ],
+        },
+    ]
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        messages=messages,
+        system="Existing system prompt",
+        tool_compatible=True,
+        adapter_kind="claude-bridge",
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    assert prepared.behavior_signals["repeat_command_stable_no_change"] == 1
+    assert prepared.behavior_signals["repeat_command_suppression_hint_injected"] == 1
+    assert prepared.behavior_signals["command_result_cacheable_seen"] >= 1
+    assert prepared.behavior_signals["command_result_cache_hit"] == 1
+    assert prepared.behavior_signals["command_result_cache_saved_tokens"] > 0
+    assert prepared.behavior_signals["tool_result_cache_hit"] == 1
+    assert TOK_REPEAT_COMMAND_SUPPRESSION_HINT in str(prepared.body["system"])
+
+
 def test_prepare_request_distinguishes_answer_ready_reacquisition(
     tmp_path,
 ) -> None:
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
     session.bridge_memory._upsert(
         session.bridge_memory.hot,
         "facts",
@@ -2804,6 +2966,7 @@ def test_answer_anchor_present_signal_set_when_answer_facts_in_state(
 
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
     session.bridge_memory._upsert(
         session.bridge_memory.hot,
         "facts",
@@ -2827,7 +2990,7 @@ def test_answer_anchor_present_signal_set_when_answer_facts_in_state(
     )
 
 
-def test_answer_anchor_present_forces_full_resend_on_answer_ready_turn(
+def test_answer_anchor_verified_current_suppresses_forced_full_resend(
     tmp_path,
 ) -> None:
     from tok.runtime.core import (
@@ -2838,6 +3001,7 @@ def test_answer_anchor_present_forces_full_resend_on_answer_ready_turn(
 
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
     session.bridge_memory._upsert(
         session.bridge_memory.hot,
         "facts",
@@ -2860,6 +3024,9 @@ def test_answer_anchor_present_forces_full_resend_on_answer_ready_turn(
     second = runtime.prepare_request(request, session)
 
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
+    assert second.behavior_signals.get("state_resend_suppressed_turn", 0) == 1
+    assert second.behavior_signals.get("state_resend_full_turn", 0) == 0
+    assert second.behavior_signals.get("answer_ready_forced_full_state_verified_skipped", 0) == 1
 
 
 def test_prepare_request_preserves_exact_search_evidence_on_anchor_turn(tmp_path) -> None:
@@ -2872,6 +3039,7 @@ def test_prepare_request_preserves_exact_search_evidence_on_anchor_turn(tmp_path
 
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
     session.bridge_memory._upsert(
         session.bridge_memory.hot,
         "facts",
@@ -2885,10 +3053,12 @@ def test_prepare_request_preserves_exact_search_evidence_on_anchor_turn(tmp_path
         score_delta=3,
     )
     raw_search = "\n".join(f"src/tok/compression.py:305: def compress_history({idx})" for idx in range(40))
-    request = RuntimeRequest(
-        model="claude-sonnet-4",
-        tool_compatible=True,
-        messages=[
+    messages: list[dict[str, Any]] = []
+    for index in range(6):
+        messages.append({"role": "user", "content": f"intermediate note {index}"})
+        messages.append({"role": "assistant", "content": f"ack {index}"})
+    messages.extend(
+        [
             {
                 "role": "assistant",
                 "content": [
@@ -2910,35 +3080,21 @@ def test_prepare_request_preserves_exact_search_evidence_on_anchor_turn(tmp_path
                     }
                 ],
             },
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": "s2",
-                        "name": "grep_search",
-                        "input": {"query": "compress_history", "search_path": "src/tok"},
-                    }
-                ],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "s2",
-                        "content": raw_search,
-                    }
-                ],
-            },
             {"role": "user", "content": "confirm the gateway entry point"},
-        ],
+        ]
+    )
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        adapter_kind="claude-bridge",
+        messages=messages,
     )
 
     prepared = runtime.prepare_request(request, session)
 
     user_texts = [text_of(msg["content"]) for msg in prepared.body["messages"] if msg.get("role") == "user"]
     assert prepared.behavior_signals.get("answer_anchor_present", 0) == 1
+    assert prepared.behavior_signals.get("answer_ready_exact_evidence_in_safe_suffix", 0) == 1
     assert any(text == raw_search for text in user_texts)
     assert all("unchanged|cached" not in text for text in user_texts)
 
@@ -2955,6 +3111,7 @@ def test_prepare_request_preserves_exact_search_evidence_with_pending_anchor(
 
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
     session._pending_exact_evidence_keys.add("search|compress_history")
 
     raw_search = "\n".join(f"src/tok/compression.py:305: def compress_history({idx})" for idx in range(40))
@@ -2991,8 +3148,74 @@ def test_prepare_request_preserves_exact_search_evidence_with_pending_anchor(
     prepared = runtime.prepare_request(request, session)
 
     user_texts = [text_of(msg["content"]) for msg in prepared.body["messages"] if msg.get("role") == "user"]
+    assert prepared.behavior_signals.get("answer_ready_exact_evidence_in_safe_suffix", 0) == 1
     assert any(text == raw_search for text in user_texts)
     assert all("unchanged|cached" not in text for text in user_texts)
+
+
+def test_prepare_request_falls_back_when_exact_search_evidence_is_cut(tmp_path) -> None:
+    from tok.compression import text_of
+    from tok.runtime.core import (
+        RuntimeRequest,
+        RuntimeSession,
+        UniversalTokRuntime,
+    )
+
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_file:src/tok/compression.py",
+        score_delta=3,
+    )
+    session.bridge_memory._upsert(
+        session.bridge_memory.hot,
+        "facts",
+        "answer_verification:compress_history",
+        score_delta=3,
+    )
+    raw_search = "\n".join(f"src/tok/compression.py:305: def compress_history({idx})" for idx in range(40))
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "s1",
+                    "name": "grep_search",
+                    "input": {"query": "compress_history", "search_path": "src/tok"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "s1",
+                    "content": raw_search,
+                }
+            ],
+        },
+    ]
+    for index in range(6):
+        messages.append({"role": "user", "content": f"intermediate note {index}"})
+        messages.append({"role": "assistant", "content": f"ack {index}"})
+    messages.append({"role": "user", "content": "confirm the gateway entry point"})
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        adapter_kind="claude-bridge",
+        messages=messages,
+    )
+
+    prepared = runtime.prepare_request(request, session)
+
+    user_texts = [text_of(msg["content"]) for msg in prepared.body["messages"] if msg.get("role") == "user"]
+    assert prepared.behavior_signals.get("answer_ready_exact_evidence_fallback_full_history", 0) == 1
+    assert any(text == raw_search for text in user_texts)
 
 
 def test_answer_anchor_present_can_delta_when_state_changes(tmp_path) -> None:
@@ -3004,6 +3227,7 @@ def test_answer_anchor_present_can_delta_when_state_changes(tmp_path) -> None:
 
     runtime = UniversalTokRuntime()
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
     session.bridge_memory._upsert(
         session.bridge_memory.hot,
         "facts",
@@ -3044,6 +3268,12 @@ def test_answer_anchor_present_can_delta_when_state_changes(tmp_path) -> None:
     second = runtime.prepare_request(request, session)
 
     assert second.behavior_signals.get("answer_anchor_present", 0) == 1
+    assert (
+        second.behavior_signals.get("state_resend_delta_turn", 0)
+        + second.behavior_signals.get("state_resend_full_turn", 0)
+        >= 1
+    )
+    assert second.behavior_signals.get("answer_ready_forced_full_state_verified_skipped", 0) == 0
 
 
 def test_answer_anchor_present_signal_absent_without_answer_facts(
@@ -3245,7 +3475,7 @@ def test_prepare_request_emits_answer_now_directive_when_answer_ready_from_ancho
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
-    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body.get("system", "")
 
 
 def test_prepare_request_context_is_consumed_for_same_turn_answer_phase_quarantine(
@@ -3425,7 +3655,7 @@ def test_prepare_request_does_not_emit_answer_now_directive_when_fresh_evidence_
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 0
-    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body.get("system", "")
 
 
 def test_prepare_request_read_hints_available_on_dense_tool_turns(
@@ -3564,7 +3794,7 @@ def test_prepare_request_emits_answer_now_directive_after_fresh_tool_results(
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 1
-    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body.get("system", "")
 
 
 def test_prepare_request_records_loop_detection_without_final_answer_steering(
@@ -3582,8 +3812,8 @@ def test_prepare_request_records_loop_detection_without_final_answer_steering(
     prepared = runtime.prepare_request(request, session)
 
     assert prepared.behavior_signals.get("loop_terminated", 0) == 1
-    assert "@tok_terminate_loop" not in prepared.body["system"]
-    assert "provide a final response now" not in prepared.body["system"]
+    assert "@tok_terminate_loop" not in prepared.body.get("system", "")
+    assert "provide a final response now" not in prepared.body.get("system", "")
 
 
 def test_prepare_request_tool_results_only_do_not_trigger_answer_ready(
@@ -3612,7 +3842,7 @@ def test_prepare_request_tool_results_only_do_not_trigger_answer_ready(
 
     assert prepared.behavior_signals.get("answer_ready_turn", 0) == 0
     assert session._late_answer_followthrough_pending is False
-    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body.get("system", "")
 
 
 def test_prepare_request_read_only_audit_turn_suppresses_answer_repairs(
@@ -3653,7 +3883,7 @@ def test_prepare_request_read_only_audit_turn_suppresses_answer_repairs(
     assert prepared.behavior_signals.get("late_answer_followthrough_active", 0) == 0
     assert session._answer_ready_repair_pending is False
     assert session._late_answer_followthrough_pending is False
-    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body["system"]
+    assert "Answer now using the existing File=/Verification= evidence." not in prepared.body.get("system", "")
 
 
 def test_prepare_request_does_not_emit_answer_anchor_reacquisition_without_anchor(

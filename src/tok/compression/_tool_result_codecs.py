@@ -7,9 +7,9 @@ import os
 import re
 from typing import Any
 
-from tok.runtime.config import TOK_ENABLE_JSON_NONEXPANSION_GUARD, TOK_FORCE_FILE_CODEC
 from tok.utils.token_utils import count_tokens
 
+from ._feature_flags import TOK_ENABLE_JSON_NONEXPANSION_GUARD, TOK_FORCE_FILE_CODEC
 from ._tool_result_advisory import (
     _build_search_advisory,
     _estimate_tokens,
@@ -39,18 +39,77 @@ __all__ = [
     "truncate_large_result",
 ]
 
-_CODE_PATTERNS = re.compile(r"\bdef |\bclass |\bimport |\basync def |\bfunction ")
+_CODE_PATTERNS = re.compile(
+    r"\bdef |\bclass |\bimport |\basync def |\bfunction "
+    r"|\bfn\s+\w+|\bfunc\s+\w+|\binterface\s+\w+"
+    r"|\b(public|private|protected)\s+(class|interface|enum)\s+\w+"
+)
 
 _FIND_ABS_PATH_RE = re.compile(r"^/\S+$")
+
+
+_CODE_FILE_EXTENSIONS = frozenset(
+    {
+        "py",
+        "pyi",
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs",
+        "rs",
+        "go",
+        "java",
+        "kt",
+        "kts",
+        "swift",
+        "rb",
+        "php",
+        "cpp",
+        "cc",
+        "cxx",
+        "c",
+        "h",
+        "hpp",
+        "cs",
+        "scala",
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+    }
+)
+
+_NODE_FRAME_RE = re.compile(r"^\s+at [\w.<>$\[\]]+\s+\(.*:\d+:\d+\)", re.MULTILINE)
+_JAVA_FRAME_RE = re.compile(r"^\s+at [\w.$]+\([\w.]+:\d+\)", re.MULTILINE)
+
+
+def _json_array_kind(stripped: str) -> str:
+    try:
+        data = json.loads(stripped)
+    except Exception:
+        return "json_skeleton"
+    if not isinstance(data, list) or not data or not all(isinstance(item, dict) for item in data[:5]):
+        return "json_skeleton"
+    common_keys = set(data[0])
+    for item in data[:5]:
+        common_keys.intersection_update(item)
+    search_keys = {"path", "file", "line", "snippet", "content", "text", "match", "context"}
+    if common_keys.intersection(search_keys):
+        return "search_results"
+    return "json_skeleton"
 
 
 def _detect_tool_content_type(text: str, path: str = "") -> str:
     """Detect the content type of a tool result."""
     if path:
         ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-        if ext in {"py", "pyi"}:
+        if ext in _CODE_FILE_EXTENSIONS:
             return "file"
     if "Traceback (most recent call last):" in text or "at new " in text:
+        return "stack_trace"
+    if len(_NODE_FRAME_RE.findall(text)) >= 3 or len(_JAVA_FRAME_RE.findall(text)) >= 3:
         return "stack_trace"
     if re.search(r"\b(PASSED|FAILED)\b", text) and re.search(r"\d+ (passed|failed)( in | ,)", text):
         return "pytest"
@@ -60,7 +119,7 @@ def _detect_tool_content_type(text: str, path: str = "") -> str:
         return "git_diff"
     if re.match(r"^(USER\s+PID\s+%CPU|UID\s+PID\s+PPID)", text) or "COMMAND" in text[:200]:
         return "ps_output"
-    if re.match(r"^(HOME|PATH|SHELL|USER|LANG)=", text, re.MULTILINE) and "=" in text:
+    if re.search(r"^(HOME|PATH|SHELL|USER|LANG)=", text, re.MULTILINE) and "=" in text:
         return "env_output"
 
     lines = text.splitlines()
@@ -74,6 +133,8 @@ def _detect_tool_content_type(text: str, path: str = "") -> str:
     stripped = text.strip()
     if stripped.startswith("{") and stripped.endswith("}"):
         return "json_skeleton"
+    if stripped.startswith("[") and stripped.endswith("]"):
+        return _json_array_kind(stripped)
 
     if len(non_empty) >= 2:
         if sum(1 for line in non_empty if _GIT_LOG_COMMIT_RE.match(line)) >= 2:
@@ -702,7 +763,9 @@ def _compress_search_results(text: str) -> str:
 
         return "\n".join(result)
     except Exception:
-        return text
+        pass
+    # Plain-text web results: fall back to repetitive run-length compression.
+    return _compress_repetitive(text)
 
 
 def _compress_stack_traces(text: str) -> str:

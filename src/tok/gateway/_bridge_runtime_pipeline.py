@@ -16,15 +16,15 @@ from ._bridge_preflight import _run_bridge_preflight
 
 
 def _plan_finalization_min_saved_tokens() -> int:
-    raw = os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "32")
+    raw = os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "500")
     try:
         return max(0, int(raw))
     except ValueError:
         logger.warning(
-            "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS=%r; using fallback 32",
+            "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS=%r; using fallback 500",
             raw,
         )
-        return 32
+        return 500
 
 
 _PLAN_FINALIZATION_MIN_SAVED_TOKENS = _plan_finalization_min_saved_tokens()

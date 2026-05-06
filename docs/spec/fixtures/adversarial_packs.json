@@ -56,6 +56,46 @@
           "id": "extension_override_core_semantics",
           "expected_status": "fail",
           "expected_error": "extension_namespace_overrides_core"
+        },
+        {
+          "id": "accept_exact_missing_local_artifact",
+          "expected_status": "fail",
+          "expected_error": "accept_exact_requires_available_local_content"
+        },
+        {
+          "id": "accept_delta_non_delta_action",
+          "expected_status": "fail",
+          "expected_error": "accept_delta_requires_delta_action"
+        },
+        {
+          "id": "accept_fallback_healthy_pass_through",
+          "expected_status": "fail",
+          "expected_error": "accept_fallback_requires_fallback_or_degradation"
+        },
+        {
+          "id": "accept_reference_non_reference_action",
+          "expected_status": "fail",
+          "expected_error": "accept_reference_requires_reference_action"
+        },
+        {
+          "id": "accept_non_exact_reference_wrong_action",
+          "expected_status": "fail",
+          "expected_error": "accept_non_exact_reference_requires_non_exact_reference_action"
+        },
+        {
+          "id": "accept_pass_through_degraded_record",
+          "expected_status": "fail",
+          "expected_error": "accept_pass_through_requires_ok_pass_through"
+        },
+        {
+          "id": "ok_with_unresolvable_fallback_required",
+          "expected_status": "fail",
+          "expected_error": "ok_result_cannot_require_unresolvable_fallback"
+        },
+        {
+          "id": "available_local_without_hash_or_size",
+          "expected_status": "fail",
+          "expected_error": "missing_or_invalid_content_hash"
         }
       ]
     },

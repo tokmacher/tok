@@ -10,6 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit, urlunsplit
 
 from rich.console import Console
 from rich.panel import Panel
@@ -451,6 +452,28 @@ def savings_diagnostic_note(
     return None
 
 
+def _redact_api_base(value: str) -> str:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return value
+    if not parts.scheme or not parts.netloc:
+        return value
+
+    host = parts.hostname or ""
+    if not host:
+        return value
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parts.port is not None:
+        host = f"{host}:{parts.port}"
+    if parts.username or parts.password:
+        host = f"<redacted>@{host}"
+    query = "<redacted>" if parts.query else ""
+    fragment = "<redacted>" if parts.fragment else ""
+    return urlunsplit((parts.scheme, host, parts.path, query, fragment))
+
+
 def savings_headline(
     summary: Mapping[str, Any] | None,
     *,
@@ -489,6 +512,7 @@ def session_status_rows(
     baseline_only: bool,
     mode: str | None = None,
     request_policy: str | None = None,
+    api_base: str | None = None,
     fallback_count: int | None = None,
     session_quality: str | None = None,
     degradation_reason: str | None = None,
@@ -514,6 +538,8 @@ def session_status_rows(
         rows.append(("Mode", mode))
     if request_policy is not None:
         rows.append(("Request policy", request_policy))
+    if api_base:
+        rows.append(("API base", _redact_api_base(api_base)))
     if session_quality or (summary is not None and summary.get("session_quality")):
         rows.append(
             (

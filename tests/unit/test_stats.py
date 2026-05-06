@@ -147,6 +147,29 @@ class TestSavingsTracker:
         assert summary["tool_history_blocked_count"] == 1
         assert summary["invalid_tool_history_session_reset_count"] == 1
 
+    def test_order_only_tool_result_repair_does_not_degrade_session_quality(self, tracker) -> None:
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=20,
+            output_saved=10,
+            behavior_signals={
+                "tok_bridge_tool_result_order_repaired": 1,
+                "tok_bridge_tool_result_pairing_repaired": 1,
+                "tool_result_order_repair_non_degrading": 1,
+            },
+        )
+
+        summary = tracker.session_summary()
+
+        assert summary is not None
+        assert summary["session_quality"] == "clean"
+        assert summary["last_degradation_reason"] == ""
+        assert summary["tool_history_pairing_repaired_count"] == 0
+
     def test_session_summary_surfaces_provider_pairing_disagreement(self, tracker) -> None:
         tracker.record_call(
             model="claude-sonnet-4",
@@ -335,6 +358,27 @@ class TestSavingsTracker:
         assert summary["baseline_tokens"] == 6000
         assert summary["tokens_saved"] == 2500
         assert summary["cost_saved_usd"] == pytest.approx(0.045)
+
+    def test_tracker_flushes_lifetime_ledger_periodically(self, tmp_path, monkeypatch) -> None:
+        from tok.stats import SavingsTracker
+
+        monkeypatch.setenv("TOK_LIFETIME_FLUSH_EVERY_TURNS", "1")
+        ledger_path = tmp_path / "global_savings.tok"
+        savings_file = str(tmp_path / "session_stats.tok")
+
+        tracker = SavingsTracker(savings_file=savings_file, ledger_path=ledger_path)
+        tracker.record_call(
+            model="claude-3-5-sonnet-latest",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=25,
+            output_saved=10,
+        )
+
+        text = ledger_path.read_text()
+        assert "@per_session_log" in text
 
     def test_merge_session_to_ledger_persists_malformed_tok_subtypes(self, tracker) -> None:
         tracker.record_call(

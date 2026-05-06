@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 __all__ = [
+    "AnswerPhaseState",
+    "EvidenceSafetyState",
+    "FileDeliveryState",
+    "RequestPolicyState",
+    "StreamingRecoveryState",
     "TOOL_COMPAT_MEMORY_PROFILE",
     "NormalizedToolEvent",
     "PreparedRuntimeRequest",
@@ -31,6 +36,9 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger("tok.runtime")
 
+from ._answer_phase_state import AnswerPhaseState
+from ._file_delivery_state import FileDeliveryState
+from ._request_policy_state import RequestPolicyState
 from ._runtime_orchestration import (
     build_tool_compatible_resend,
     process_response_impl,
@@ -85,6 +93,7 @@ from ._session_persistence import (
     save_result_cache,
 )
 from ._session_persistence import record_episode as record_episode_impl
+from ._stream_recovery_state import StreamingRecoveryState
 from .config import (
     _FALLBACK_THRESHOLD,
     TOK_LOOP_DETECTION_ENABLED,
@@ -93,7 +102,12 @@ from .config import (
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOOL_COMPAT_MEMORY_PROFILE,
 )
-from .evidence_safety import EvidenceForm, EvidenceLedgerEntry, evidence_safety_summary
+from .evidence_safety import (
+    EvidenceForm,
+    EvidenceLedgerEntry,
+    EvidenceSafetyState,
+    evidence_safety_summary,
+)
 from .memory.answer_memory import (
     _should_persist_to_durable,  # noqa: F401
     compact_structured_answer_memory,
@@ -276,6 +290,13 @@ class RuntimeSession:
     # Rolling sample of visible response word counts (last 5 turns) for verbosity signal
     _response_word_samples: list[int] = field(default_factory=list, init=False, repr=False)
 
+    # --- Grouped state sub-objects (0.1.9 architecture improvement) ---
+    evidence_safety: EvidenceSafetyState = field(default_factory=EvidenceSafetyState, init=False, repr=False)
+    streaming_recovery: StreamingRecoveryState = field(default_factory=StreamingRecoveryState, init=False, repr=False)
+    request_policy: RequestPolicyState = field(default_factory=RequestPolicyState, init=False, repr=False)
+    answer_phase: AnswerPhaseState = field(default_factory=AnswerPhaseState, init=False, repr=False)
+    file_delivery: FileDeliveryState = field(default_factory=FileDeliveryState, init=False, repr=False)
+
     def record_fallback_event(self) -> None:
         """Increment the consecutive fail-open counter and degrade to baseline when threshold is reached."""
         self._consecutive_fallback_count += 1
@@ -383,6 +404,11 @@ class RuntimeSession:
         self.bridge_memory.hot.clear()
         self.bridge_memory.rolling_cmds = []
         self._is_first_request = True
+        self.evidence_safety.reset()
+        self.streaming_recovery.reset()
+        self.request_policy.reset()
+        self.answer_phase.reset()
+        self.file_delivery.reset()
         logger.info("RuntimeSession reset: all transient state cleared")
 
     def record_invalid_tool_history_recovery(self, *, blocked: bool) -> dict[str, int]:

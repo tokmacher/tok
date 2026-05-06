@@ -176,7 +176,11 @@ def scrub_leaked_tok_context(body: dict[str, Any]) -> dict[str, Any]:
     return body
 
 
-def sift_tool_results(body: dict[str, Any]) -> dict[str, Any]:
+def sift_tool_results(
+    body: dict[str, Any],
+    *,
+    behavior_signals: dict[str, int] | None = None,
+) -> dict[str, Any]:
     """
     Vector 2: Compress tool_result stdout before forwarding to Anthropic.
 
@@ -202,20 +206,43 @@ def sift_tool_results(body: dict[str, Any]) -> dict[str, Any]:
             if block.get("type") != "tool_result":
                 continue
             inner = block.get("content")
+            cache_marked = "cache_control" in block
+            cache_marked_original_tokens = 0
+            cache_marked_saved_tokens = 0
             if isinstance(inner, list):
                 for sub in inner:
                     if isinstance(sub, dict) and sub.get("type") == "text":
                         original_len = len(sub.get("text", ""))
+                        if cache_marked:
+                            cache_marked_original_tokens += original_len // 4
                         compressed = _sift_stdout(sub.get("text", ""))
                         if len(compressed) < original_len:
                             sub["text"] = compressed
-                            total_saved_chars += original_len - len(compressed)
+                            saved_chars = original_len - len(compressed)
+                            total_saved_chars += saved_chars
+                            if cache_marked:
+                                cache_marked_saved_tokens += saved_chars // 4
             elif isinstance(inner, str):
                 original_len = len(inner)
+                if cache_marked:
+                    cache_marked_original_tokens += original_len // 4
                 compressed = _sift_stdout(inner)
                 if len(compressed) < original_len:
                     block["content"] = compressed
-                    total_saved_chars += original_len - len(compressed)
+                    saved_chars = original_len - len(compressed)
+                    total_saved_chars += saved_chars
+                    if cache_marked:
+                        cache_marked_saved_tokens += saved_chars // 4
+            if behavior_signals is not None and cache_marked and cache_marked_original_tokens > 0:
+                behavior_signals["tok_sift_cache_marked_blocks"] = (
+                    behavior_signals.get("tok_sift_cache_marked_blocks", 0) + 1
+                )
+                behavior_signals["tok_sift_cache_marked_block_tokens"] = (
+                    behavior_signals.get("tok_sift_cache_marked_block_tokens", 0) + cache_marked_original_tokens
+                )
+                behavior_signals["tok_sift_cache_marked_saved_tokens"] = (
+                    behavior_signals.get("tok_sift_cache_marked_saved_tokens", 0) + cache_marked_saved_tokens
+                )
 
     if total_saved_chars > 0:
         logger.info(
@@ -386,6 +413,7 @@ def apply_anthropic_optimizations(
     body: dict[str, Any],
     *,
     is_claude_bridge: bool = True,
+    behavior_signals: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """
     Apply all Anthropic-specific optimizations to a request body.
@@ -399,7 +427,7 @@ def apply_anthropic_optimizations(
     try:
         body = scrub_leaked_tok_context(body)
         body = split_system_for_caching(body)
-        body = sift_tool_results(body)
+        body = sift_tool_results(body, behavior_signals=behavior_signals)
         body = bpe_translate_request(body)
     except Exception as exc:
         logger.debug("anthropic_opt: skipping due to error: %s", exc)

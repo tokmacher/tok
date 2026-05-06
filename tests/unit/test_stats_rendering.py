@@ -61,6 +61,31 @@ class TestStatsRendering:
             "Very short sessions often show no savings; recheck after sustained Claude Code work.",
         ) in rows
 
+    def test_api_base_row_redacts_url_credentials(self) -> None:
+        rows = session_status_rows(
+            summary={
+                "tokens_saved": 1,
+                "actual_tokens": 100,
+                "baseline_tokens": 101,
+                "actual_cost_usd": 0.001,
+                "baseline_cost_usd": 0.002,
+                "cost_saved_usd": 0.001,
+                "fallback_count": 0,
+                "baseline_only": False,
+                "session_quality": "clean",
+                "last_degradation_reason": "",
+            },
+            tok_active=True,
+            baseline_only=False,
+            api_base="https://user:secret-token@api.example.test/v1?api_key=also-secret",
+        )
+
+        api_base_row = next(value for label, value in rows if label == "API base")
+        assert "api.example.test" in api_base_row
+        assert "secret-token" not in api_base_row
+        assert "also-secret" not in api_base_row
+        assert "<redacted>" in api_base_row
+
     def test_safe_block_zero_savings_explains_evidence_safety(self) -> None:
         note = savings_diagnostic_note(
             summary={

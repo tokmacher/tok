@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 EvidenceForm = Literal["exact", "summary", "skeleton", "reference"]
@@ -25,6 +25,30 @@ class EvidenceLedgerEntry:
     @property
     def latest_is_exact(self) -> bool:
         return self.latest_form == "exact"
+
+
+@dataclass
+class EvidenceSafetyState:
+    """Grouped evidence-safety fields extracted from RuntimeSession.
+
+    Tracks which evidence identities have been observed exactly,
+    which are only summaries/skeletons, and which require reacquisition.
+    """
+
+    neighborhoods: dict[str, set[str]] = field(default_factory=dict)
+    anchor_novelty_keys: dict[str, set[str]] = field(default_factory=dict)
+    alias_map: dict[str, str] = field(default_factory=dict)
+    first_exact_seen: set[str] = field(default_factory=set)
+    ledger: dict[str, EvidenceLedgerEntry] = field(default_factory=dict)
+    pending_exact_keys: set[str] = field(default_factory=set)
+
+    def reset(self) -> None:
+        self.neighborhoods.clear()
+        self.anchor_novelty_keys.clear()
+        self.alias_map.clear()
+        self.first_exact_seen.clear()
+        self.ledger.clear()
+        self.pending_exact_keys.clear()
 
 
 def evidence_safety_summary(ledger: dict[str, EvidenceLedgerEntry]) -> dict[str, int]:

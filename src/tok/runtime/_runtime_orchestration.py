@@ -143,13 +143,23 @@ def build_tool_compatible_resend(
             )
 
         resend_reason = _select_resend_reason(comparable_state, previous_comparable, has_answer_anchor)
+        force_answer_ready_resend = bool(
+            answer_ready and has_answer_anchor and resend_reason != "verified_current_state"
+        )
         (
             processed_memory,
             resend_signals,
         ) = session.maybe_suppress_tool_compatible_state(
             memory,
-            force_resend_on_answer_ready=bool(answer_ready and has_answer_anchor),
+            force_resend_on_answer_ready=force_answer_ready_resend,
         )
+        if (
+            answer_ready
+            and has_answer_anchor
+            and resend_reason == "verified_current_state"
+            and resend_signals.get("state_resend_suppressed_turn", 0) > 0
+        ):
+            resend_signals["answer_ready_forced_full_state_verified_skipped"] = 1
         behavior_signals.update({key: behavior_signals.get(key, 0) + value for key, value in resend_signals.items()})
         _apply_tool_compatible_resend_diagnostics(
             behavior_signals,

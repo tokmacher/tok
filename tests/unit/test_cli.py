@@ -283,6 +283,7 @@ class TestCLI:
                     "status": "ok",
                     "bridge": "tok",
                     "port": 9090,
+                    "api_base": "https://api.example.test",
                     "mode": "tool-compatible",
                     "request_policy": "natural_first",
                     "baseline_only": True,
@@ -316,6 +317,8 @@ class TestCLI:
         assert "Degraded to baseline" in result.output
         assert "Mode" in result.output
         assert "Request policy" in result.output
+        assert "API base" in result.output
+        assert "https://api.example.test" in result.output
         assert "natural_first" in result.output
         assert "Fallbacks" in result.output
         assert "Session quality" in result.output
@@ -1647,6 +1650,7 @@ class TestCLI:
                     "status": "ok",
                     "bridge": "tok",
                     "port": 9090,
+                    "api_base": "https://api.example.test",
                     "mode": "baseline",
                     "baseline_only": True,
                     "fallback_count": 3,
@@ -1680,6 +1684,8 @@ class TestCLI:
         assert "Fallbacks" in result.output
         assert "Tok verdict:" in result.output
         assert "baseline" in result.output
+        assert "API base" in result.output
+        assert "https://api.example.test" in result.output
         assert "Recommendation:" in result.output
         assert "investigate degradation before trusting this session" in result.output
 

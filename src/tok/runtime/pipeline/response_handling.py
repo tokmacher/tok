@@ -100,6 +100,9 @@ def _handle_answer_ready_phase(
         if session._answer_ready_repair_active:
             merged_signals["answer_ready_repair_failed"] = 1
             session._answer_ready_repair_pending = False
+        elif merged_signals.get("request_policy_reason_structured_tool_loop", 0) > 0:
+            merged_signals["answer_ready_repair_suppressed_tool_loop_active"] = 1
+            session._answer_ready_repair_pending = False
         else:
             merged_signals["answer_ready_repair_requested"] = 1
             session._answer_ready_repair_pending = True

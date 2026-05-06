@@ -10,6 +10,7 @@ FORMAT_DOC = ROOT / "docs" / "spec" / "tok_trace_format_v0_1.md"
 CONFORMANCE_DOC = ROOT / "docs" / "spec" / "tok_trace_conformance_v0_1.md"
 BRIDGE_STANDARD_DOC = ROOT / "docs" / "bridge-standard.md"
 ADVERSARIAL_PACKS = ROOT / "docs" / "spec" / "fixtures" / "adversarial_packs.json"
+TRACE_READER = ROOT / "src" / "tok" / "spec" / "trace.py"
 
 
 def _squash_ws(text: str) -> str:
@@ -113,6 +114,32 @@ def test_conformance_doc_defines_l0_l2_reader_boundary_without_future_claims() -
         assert phrase in text
 
 
+def test_trace_roadmap_defines_0_1_8_as_l0_l2_protocol_hardening() -> None:
+    prose = _squash_ws(ROADMAP_DOC.read_text())
+
+    for phrase in (
+        "0.1.8 protocol claim is Trace L0-L2 only",
+        "parse JSON arrays and JSONL traces",
+        "validate required fields, enum values, extension namespaces, canonical payload digests, and pass/warn/fail outcomes",
+        "verify local artifacts, exact hashes and sizes, exact versus non-exact references, fallback/degradation reasons, sequence consistency, and supported unified_diff deltas",
+        "L3-L5 remain future design only",
+    ):
+        assert phrase in prose
+
+
+def test_conformance_doc_names_exact_0_1_8_validation_claims() -> None:
+    prose = _squash_ws(CONFORMANCE_DOC.read_text())
+
+    for phrase in (
+        "For 0.1.8, Tok validates exactly this L0-L2 set",
+        "L0: parse JSON fixture arrays and JSONL traces, reject malformed JSON or malformed fixture structure, and preserve block order",
+        "L1: validate required fields, enum values, extension namespace rules, canonical payload digests, and pass/warn/fail audit outcomes",
+        "L2: verify local artifact hashes and sizes, exact versus non-exact content claims, fallback/degradation reasons, sequence consistency, and supported unified_diff deltas",
+        "Everything above L2 is documentation-only in 0.1.8",
+    ):
+        assert phrase in prose
+
+
 def test_adversarial_pack_manifest_groups_local_and_future_cases() -> None:
     manifest = json.loads(ADVERSARIAL_PACKS.read_text())
     packs = {pack["id"]: pack for pack in manifest["packs"]}
@@ -140,3 +167,42 @@ def test_adversarial_pack_manifest_groups_local_and_future_cases() -> None:
     ):
         assert local_cases[case_id]["expected_status"] == "fail"
         assert local_cases[case_id]["expected_error"]
+
+
+def test_future_adversarial_pack_is_not_a_0_1_x_supported_outcome_pack() -> None:
+    manifest = json.loads(ADVERSARIAL_PACKS.read_text())
+    packs = {pack["id"]: pack for pack in manifest["packs"]}
+
+    local = packs["trace-l1-l2-core-adversarial"]
+    future = packs["resolver-routing-future-adversarial"]
+    local_case_ids = {case["id"] for case in local["cases"]}
+
+    assert future["status"] == "future-design-only"
+    assert set(future["conformance_levels"]) == {"L3", "L4", "L5"}
+    assert not local_case_ids.intersection({case["id"] for case in future["cases"]})
+    for case in future["cases"]:
+        assert "expected_status" not in case
+        assert "expected_error" not in case
+
+
+def test_trace_reader_has_no_bridge_runtime_or_cli_imports() -> None:
+    source = TRACE_READER.read_text()
+
+    forbidden_imports = (
+        "tok.gateway",
+        "tok.runtime",
+        "tok.compression",
+        "tok.cli",
+        "tok.testing",
+        "tok.analysis",
+    )
+    for forbidden_import in forbidden_imports:
+        assert forbidden_import not in source
+
+
+def test_spec_package_exports_trace_reader_without_runtime_bridge_imports() -> None:
+    source = (ROOT / "src" / "tok" / "spec" / "__init__.py").read_text()
+
+    assert "from .trace import" in source
+    for forbidden_import in ("tok.gateway", "tok.runtime", "tok.cli", "tok.compression"):
+        assert forbidden_import not in source

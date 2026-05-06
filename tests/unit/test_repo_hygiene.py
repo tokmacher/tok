@@ -81,3 +81,26 @@ def test_find_violations_flags_root_release_report_artifacts() -> None:
 
     assert "tracked release report artifact in repo root: subtle-bug-audit-report-2026-04-30.md" in violations
     assert "tracked release report artifact in repo root: stability-campaign-findings.md" in violations
+
+
+def test_public_docs_do_not_ship_competitor_or_positioning_pages() -> None:
+    root = Path(__file__).resolve().parents[2]
+    removed_public_docs = {
+        "docs/claude-compaction-comparison.md",
+        "docs/positioning-context-tools.md",
+    }
+
+    for relative_path in removed_public_docs:
+        assert not (root / relative_path).exists(), f"{relative_path} should not be public repo documentation"
+
+    public_docs = [
+        root / "README.md",
+        root / "docs" / "cli-reference.md",
+        root / "docs" / "diagnostics.md",
+    ]
+    public_text = "\n".join(path.read_text() for path in public_docs)
+    for relative_path in removed_public_docs:
+        assert relative_path not in public_text
+
+    for off_roadmap_term in ("TokenPak", "OpenClaw", "LLMLingua", "Context7", "Mem0", "Graphiti"):
+        assert off_roadmap_term not in public_text

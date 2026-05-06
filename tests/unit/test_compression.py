@@ -34,6 +34,7 @@ from tok.compression import _tool_result_codecs as tool_result_codecs
 from tok.compression._tool_result_codecs import (
     _compress_config_json,
     _compress_pytest,
+    _compress_repetitive,
     _compress_search_results,
 )
 
@@ -540,6 +541,27 @@ class TestInjectSystemAdditions:
 
         assert "Use the compressed history before re-reading files" not in result["system"]
 
+    def test_tool_compatible_list_system_no_hints_is_noop(self) -> None:
+        system = [
+            {
+                "type": "text",
+                "text": "Base prompt",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        body = {"system": system.copy(), "messages": []}
+
+        result = inject_system_additions(body, None, tool_compatible=True)
+
+        assert result["system"] == system
+
+    def test_tool_compatible_string_system_no_hints_is_byte_equivalent(self) -> None:
+        body = {"system": "base", "messages": []}
+
+        result = inject_system_additions(body, None, tool_compatible=True)
+
+        assert result["system"] == "base"
+
     def test_runtime_hints_are_appended_for_tool_compatible_prompts(
         self,
     ) -> None:
@@ -804,6 +826,22 @@ class TestCompressToolResults:
         compressed_content = out[1]["content"][0]["content"]
         assert "PASSED" not in compressed_content
 
+    def test_repeated_bash_command_result_uses_command_cache_breakdown(self) -> None:
+        raw = "\n".join(f"tests/unit/test_gateway.py::test_{i} PASSED" for i in range(90))
+        cache: dict[str, ResultCacheEntry] = {}
+        ctx = {"t1": {"name": "bash", "args": {"command": "uv run pytest tests/unit/test_gateway.py -q"}}}
+
+        first = self._make_messages_with_tool_result(raw)
+        compress_tool_results(first, result_cache=cache, tool_use_id_to_context=ctx)
+
+        second = self._make_messages_with_tool_result(raw)
+        out, breakdown = compress_tool_results(second, result_cache=cache, tool_use_id_to_context=ctx)
+
+        content = out[1]["content"][0]["content"]
+        assert content.startswith(">>> tool:bash|unchanged|cached|")
+        assert breakdown.get("command_cached", 0) > 0
+        assert "command_cacheable_seen" in breakdown
+
     def test_first_exact_search_result_stays_raw_then_compresses(self) -> None:
         content = _make_grep_output(n_files=5, matches_per_file=20)
         assert len(content) > 1_200
@@ -1030,6 +1068,47 @@ def _make_git_log_verbose(n_commits: int = 5) -> str:
 
 
 class TestNewCompressors:
+    def test_common_code_extensions_detect_as_file_by_path(self) -> None:
+        content = "const value = 1;\nexport function double(n: number) { return n * 2; }\n"
+        for path in ("src/app.ts", "src/app.tsx", "src/app.js", "src/lib.rs", "src/main.go", "src/App.java"):
+            assert _detect_tool_content_type(content, path=path) == "file"
+
+    def test_common_non_python_code_patterns_detect_as_file_without_path(self) -> None:
+        samples = [
+            'fn main() {\n    println!("hello");\n}\n' * 80,
+            'func main() {\n    fmt.Println("hello")\n}\n' * 80,
+            "public class App {\n    void run() {}\n}\n" * 80,
+            "interface Props {\n    title: string\n}\n" * 80,
+        ]
+        for content in samples:
+            assert _detect_tool_content_type(content) == "file"
+
+    def test_node_and_java_stack_traces_detected(self) -> None:
+        node_trace = "\n".join(
+            [
+                "Error: boom",
+                "    at parseConfig (/repo/src/config.ts:10:5)",
+                "    at loadConfig (/repo/src/config.ts:20:7)",
+                "    at main (/repo/src/index.ts:30:9)",
+            ]
+        )
+        java_trace = "\n".join(
+            [
+                "java.lang.IllegalStateException: boom",
+                "\tat com.example.App.parse(App.java:10)",
+                "\tat com.example.App.load(App.java:20)",
+                "\tat com.example.Main.main(Main.java:30)",
+            ]
+        )
+        assert _detect_tool_content_type(node_trace) == "stack_trace"
+        assert _detect_tool_content_type(java_trace) == "stack_trace"
+
+    def test_json_array_detection_distinguishes_search_results_from_generic_json(self) -> None:
+        search_json = json.dumps([{"path": f"src/file_{i}.ts", "line": i, "snippet": "match text"} for i in range(20)])
+        generic_json = json.dumps([{"id": i, "name": f"item-{i}", "enabled": True} for i in range(20)])
+        assert _detect_tool_content_type(search_json) == "search_results"
+        assert _detect_tool_content_type(generic_json) == "json_skeleton"
+
     # --- git diff ---
 
     def test_git_diff_detected(self) -> None:
@@ -1280,8 +1359,8 @@ class TestFileCache:
         assert "unchanged" in result3_content, (
             f"Expected 'unchanged' stub for third file read; got: {result3_content!r}"
         )
-        assert bd1 == {}
-        assert bd2 == {}
+        assert all(k == "cache_stored" for k in bd1), f"Expected only cache_stored in bd1; got {bd1}"
+        assert all(k in ("cache_hit",) for k in bd2), f"Expected only cache_hit in bd2; got {bd2}"
         assert sum(bd3.values()) > 0, f"Expected savings on third read; got {bd3}"
 
     def test_parallel_reads_of_same_file_deduplicated_within_turn(self) -> None:
@@ -1341,7 +1420,7 @@ class TestFileCache:
 
         assert "view_file" in FILE_LIKE_TOOLS
         assert out[1]["content"][0]["content"] == raw
-        assert breakdown == {}
+        assert all(k.startswith("cache_") for k in breakdown), f"Expected only cache diagnostic keys; got {breakdown}"
 
 
 class TestSavingsBugFix:
@@ -1710,6 +1789,461 @@ class TestCompressRecentWindow:
         }
         msgs, _breakdown = compress_recent_window([msg])
         assert msgs[0]["content"][0]["text"] == "x" * 20_000
+
+    # ------------------------------------------------------------------
+    # Gap 1: compress_recent_window missing compressors for config_json,
+    # json_skeleton, ps_output, env_output, repetitive content types
+    # ------------------------------------------------------------------
+
+    def test_config_json_compresses_in_recent_window(self) -> None:
+        """Large JSON config blobs should be compressed in the recent window."""
+        config = json.dumps(
+            {"services": [{"name": f"svc_{i}", "env": {"KEY": f"value_{i}_{'x' * 40}"}} for i in range(200)]},
+            indent=2,
+        )
+        assert len(config) > 8_000
+        msg = self._make_result_msg(config, tool_use_id="cfg_id")
+        ctx = {"cfg_id": {"name": "bash", "args": {"command": "cat config.json"}}}
+        seen: set[str] = set()
+
+        # First pass preserved; second pass compressed.
+        first_msgs, _first_breakdown = compress_recent_window(
+            [msg], tool_use_id_to_context=ctx, threshold=0, first_exact_evidence_seen=seen
+        )
+        second_msgs, second_breakdown = compress_recent_window(
+            [self._make_result_msg(config, tool_use_id="cfg_id")],
+            tool_use_id_to_context=ctx,
+            threshold=0,
+            first_exact_evidence_seen=seen,
+        )
+
+        assert first_msgs[0]["content"][0]["content"] == config
+        assert second_breakdown.get("config_json", 0) > 0 or second_breakdown.get("json_skeleton", 0) > 0
+        assert len(second_msgs[0]["content"][0]["content"]) < len(config)
+
+    def test_repetitive_output_compresses_in_recent_window(self) -> None:
+        """Repetitive tool output (same-prefix lines) should compress in recent window."""
+        lines = [f"INFO: processing item {i} with status ok" for i in range(200)]
+        content = "\n".join(lines)
+        assert len(content) > 8_000
+        msg = self._make_result_msg(content, tool_use_id="rep_id")
+        ctx = {"rep_id": {"name": "bash", "args": {"command": "process.sh"}}}
+
+        compressed_msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("repetitive", 0) > 0
+        assert len(compressed_msgs[0]["content"][0]["content"]) < len(content)
+
+    def test_ps_output_compresses_in_recent_window(self) -> None:
+        """ps-style output should compress in the recent window."""
+        header = "USER       PID  %CPU %MEM      VSZ    RSS   TT  STAT STARTED      TIME COMMAND\n"
+        rows = [
+            f"user      {1000 + i}   0.{i % 10}  0.1  408000  12000   ??  S     10:00AM   0:00.0{i % 10} /usr/bin/proc_{i}\n"
+            for i in range(120)
+        ]
+        content = header + "".join(rows)
+        assert len(content) > 8_000
+        msg = self._make_result_msg(content, tool_use_id="ps_id")
+        ctx = {"ps_id": {"name": "bash", "args": {"command": "ps aux"}}}
+
+        compressed_msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("ps_output", 0) > 0
+        assert len(compressed_msgs[0]["content"][0]["content"]) < len(content)
+
+    def test_env_output_compresses_in_recent_window(self) -> None:
+        """env/printenv output should compress in the recent window."""
+        lines = [f"KEY_{i}=value_{i}_{'x' * 30}" for i in range(200)]
+        content = "\n".join(lines)
+        assert len(content) > 8_000
+        msg = self._make_result_msg(content, tool_use_id="env_id")
+        ctx = {"env_id": {"name": "bash", "args": {"command": "env"}}}
+
+        compressed_msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("env_output", 0) > 0
+        assert len(compressed_msgs[0]["content"][0]["content"]) < len(content)
+
+    # ------------------------------------------------------------------
+    # Gap 2: web_search / web_fetch not in SEARCH_LIKE_TOOLS pipeline
+    # ------------------------------------------------------------------
+
+    def test_web_search_raw_result_falls_back_to_search_results_compressor(
+        self,
+    ) -> None:
+        """web_search results detected as 'raw' should get search_results compressor."""
+        # Build a result that _detect_tool_content_type sees as 'raw'
+        entries = [
+            f"Result {i}: https://example.com/{i} description text here " + "more text " * 20 for i in range(120)
+        ]
+        content = "\n".join(entries)
+        assert len(content) > 8_000
+        msg = self._make_result_msg(content, tool_use_id="ws_id")
+        ctx = {"ws_id": {"name": "web_search", "args": {"query": "foo"}}}
+
+        compressed_msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert any(breakdown.get(k, 0) > 0 for k in ("search_results", "repetitive", "grep")), (
+            f"Expected some compression for web_search repeat; breakdown={breakdown}"
+        )
+        assert len(compressed_msgs[0]["content"][0]["content"]) < len(content)
+
+    def test_web_fetch_large_result_compressed_in_recent_window(self) -> None:
+        """web_fetch results should not silently pass through the recent window."""
+        content = "\n".join([f"<p>Paragraph {i}: " + "lorem ipsum " * 20 + "</p>" for i in range(80)])
+        assert len(content) > 8_000
+        msg = self._make_result_msg(content, tool_use_id="wf_id")
+        ctx = {"wf_id": {"name": "web_fetch", "args": {"url": "https://example.com"}}}
+
+        compressed_msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert len(compressed_msgs[0]["content"][0]["content"]) < len(content), (
+            f"Expected web_fetch result to compress; breakdown={breakdown}"
+        )
+
+    # ------------------------------------------------------------------
+    # Gap 3: list_dir not routed through LISTING_LIKE_TOOLS in compression
+    # ------------------------------------------------------------------
+
+    def test_list_dir_result_cache_stubs_on_repeat_via_compress_tool_results(self) -> None:
+        """list_dir repeats should produce a cache stub via compress_tool_results."""
+        content = "\n".join([f"file_{i}.py" for i in range(200)])
+        assert len(content) > 1_000
+
+        cache: dict[str, Any] = {}
+        ctx = {"ld1": {"name": "list_dir", "args": {"path": "/repo"}}}
+        msgs1 = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "ld1", "content": content}]}]
+        msgs2 = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "ld1", "content": content}]}]
+
+        compress_tool_results(msgs1, result_cache=cache, tool_use_id_to_context=ctx)
+        out2, bd2 = compress_tool_results(msgs2, result_cache=cache, tool_use_id_to_context=ctx)
+
+        result2 = out2[0]["content"][0]["content"]
+        assert ">>> tool:list_dir|unchanged|cached" in result2, (
+            f"Expected cache stub for list_dir repeat; got: {result2[:200]}"
+        )
+
+    # ------------------------------------------------------------------
+    # Gap 4: env_output detection misses non-canonical first-line order
+    # (re.match with MULTILINE does not scan past the string start)
+    # ------------------------------------------------------------------
+
+    def test_env_output_detected_when_first_line_is_non_canonical(self) -> None:
+        """env output starting with TERM_PROGRAM= should still be env_output, not raw."""
+        # Real macOS `env` output starts with TERM_PROGRAM, not HOME/PATH/SHELL.
+        content = (
+            "TERM_PROGRAM=Apple_Terminal\nSHELL=/bin/zsh\nUSER=testuser\n"
+            "HOME=/Users/testuser\nPATH=/usr/bin:/bin\n" + "\n".join(f"VAR_{i}=value_{i}" for i in range(60))
+        )
+        from tok.compression import _detect_tool_content_type
+
+        assert _detect_tool_content_type(content) == "env_output", (
+            "Expected env_output for content starting with TERM_PROGRAM=; "
+            "re.match anchors at string start so MULTILINE does nothing — must use re.search"
+        )
+
+    def test_env_output_compresses_in_recent_window_non_canonical_first_line(self) -> None:
+        """compress_recent_window must route non-canonical env output to env_output compressor."""
+        content = (
+            "TERM_PROGRAM=Apple_Terminal\nSHELL=/bin/zsh\nUSER=testuser\n"
+            "HOME=/Users/testuser\nPATH=/usr/bin:/bin\n"
+            + "\n".join(f"VAR_{i}=value_{i}_{'x' * 30}" for i in range(200))
+        )
+        assert len(content) > 8_000
+        msg = self._make_result_msg(content, tool_use_id="env_nc_id")
+        ctx = {"env_nc_id": {"name": "bash", "args": {"command": "env"}}}
+
+        compressed_msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("env_output", 0) > 0, (
+            f"Expected env_output in breakdown; got {breakdown}. "
+            "Content is detected as 'raw' because first line is TERM_PROGRAM=, "
+            "so COMMAND_LIKE_TOOLS override does not rescue it when content type is already non-raw."
+        )
+        assert len(compressed_msgs[0]["content"][0]["content"]) < len(content)
+
+    # ------------------------------------------------------------------
+    # Gap 5: WEB_RESULT_TOOLS override in compress_recent_window only fires
+    # when kind == "raw"; web results classified as "repetitive" bypass it
+    # ------------------------------------------------------------------
+
+    def test_web_search_breakdown_key_is_search_results_not_repetitive(self) -> None:
+        """compress_recent_window must emit 'search_results' key for web_search tool results."""
+        # Use content with a common prefix so _detect_tool_content_type returns "repetitive";
+        # the WEB_RESULT_TOOLS override must supersede that classification.
+        entries = [
+            f"Result {i}: https://example.com/page/{i} — description of result {i} " + "detail " * 15 for i in range(80)
+        ]
+        content = "\n".join(entries)
+        assert len(content) > 8_000
+
+        from tok.compression import _detect_tool_content_type
+
+        # Pre-condition: verify the content IS classified as repetitive without tool context.
+        assert _detect_tool_content_type(content) == "repetitive", (
+            "Pre-condition failed: expected content to be 'repetitive'; adjust test fixture"
+        )
+
+        msg = self._make_result_msg(content, tool_use_id="ws_gap5_id")
+        ctx = {"ws_gap5_id": {"name": "web_search", "args": {"query": "test query"}}}
+
+        compressed_msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("search_results", 0) > 0, (
+            f"Expected 'search_results' key in breakdown for web_search tool; got {breakdown}. "
+            "WEB_RESULT_TOOLS override only guards kind=='raw', so 'repetitive' content bypasses it."
+        )
+        assert len(compressed_msgs[0]["content"][0]["content"]) < len(content)
+
+    def test_web_fetch_breakdown_key_is_search_results_not_repetitive(self) -> None:
+        """compress_recent_window must emit 'search_results' for web_fetch regardless of repetitive detection."""
+        entries = [f"Section {i}: content for section {i} with details " + "lorem ipsum " * 12 for i in range(80)]
+        content = "\n".join(entries)
+        assert len(content) > 8_000
+
+        from tok.compression import _detect_tool_content_type
+
+        assert _detect_tool_content_type(content) == "repetitive", (
+            "Pre-condition failed: expected content to be 'repetitive'; adjust test fixture"
+        )
+
+        msg = self._make_result_msg(content, tool_use_id="wf_gap5_id")
+        ctx = {"wf_gap5_id": {"name": "web_fetch", "args": {"url": "https://example.com"}}}
+
+        compressed_msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("search_results", 0) > 0, f"Expected 'search_results' key for web_fetch; got {breakdown}"
+        assert len(compressed_msgs[0]["content"][0]["content"]) < len(content)
+
+
+class TestBridgeReceiptGaps:
+    """Regression tests for the 0.1.8 bridge-receipts gaps."""
+
+    # ------------------------------------------------------------------
+    # Gap A: _apply_result_cache must be idempotent — a block that already
+    # starts with ">>> tool:" must not be re-compressed or mutated.
+    # ------------------------------------------------------------------
+
+    def _bash_msgs(self, content: str, tool_id: str = "t1") -> list[dict]:
+        return [
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": tool_id, "content": content}],
+            }
+        ]
+
+    def test_already_compressed_block_unchanged_on_second_pass(self) -> None:
+        """compress_tool_results must not mutate a block that is already tok-compressed."""
+        raw = "\n".join(f"line {i}: {'x' * 60}" for i in range(120))
+        ctx = {"t1": {"name": "bash", "args": {"command": "cat big.log"}}}
+        cache: dict = {}
+
+        # First pass: compress
+        out1, _ = compress_tool_results(self._bash_msgs(raw), result_cache=cache, tool_use_id_to_context=ctx)
+        first_result = out1[0]["content"][0]["content"]
+
+        # Second pass: feed first-pass output back in
+        msgs2 = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": first_result}]}]
+        out2, bd2 = compress_tool_results(msgs2, result_cache=cache, tool_use_id_to_context=ctx)
+        second_result = out2[0]["content"][0]["content"]
+
+        assert second_result == first_result, "Second compress_tool_results pass mutated an already-compressed block"
+
+    def test_already_compressed_block_no_spurious_saved_signal(self) -> None:
+        """A pre-compressed block must report zero savings on the second pass."""
+        raw = "\n".join(f"entry {i}: {'y' * 50}" for i in range(100))
+        ctx = {"t1": {"name": "bash", "args": {"command": "env"}}}
+        cache: dict = {}
+
+        out1, _ = compress_tool_results(self._bash_msgs(raw), result_cache=cache, tool_use_id_to_context=ctx)
+        pre_compressed = out1[0]["content"][0]["content"]
+        assert pre_compressed.startswith(">>> tool:"), "Pre-condition: first pass should compress to tok format"
+
+        msgs2 = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": pre_compressed}]}]
+        _, bd2 = compress_tool_results(msgs2, result_cache=cache, tool_use_id_to_context=ctx)
+        # No "replaced_changed" savings should have been emitted for the pre-compressed block
+        assert bd2.get("replaced_changed", 0) == 0, (
+            f"Spurious replaced_changed signal fired for already-compressed block; bd2={bd2}"
+        )
+
+    def test_non_command_tool_not_guarded_by_already_compressed_check(self) -> None:
+        """The idempotency guard only applies to COMMAND_LIKE_TOOLS, not file reads."""
+        # A file read starting with >>> (hypothetical) should still go through normal pipeline
+        raw = "\n".join(f"def func_{i}(): pass" for i in range(200))
+        ctx = {"t1": {"name": "read", "args": {"path": "big.py"}}}
+        cache: dict = {}
+        msgs = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": raw}]}]
+        out, _ = compress_tool_results(msgs, result_cache=cache, tool_use_id_to_context=ctx)
+        # File reads go through _apply_result_cache normally — not blocked by the guard
+        # We just verify no exception is raised and the pipeline completes
+        assert out[0]["content"][0]["content"] is not None
+
+    # ------------------------------------------------------------------
+    # Gap B: _compress_search_results falls back to _compress_repetitive
+    # for plain-text (non-JSON) web results — was previously returning
+    # the original text unchanged.
+    # ------------------------------------------------------------------
+
+    def test_compress_search_results_plain_text_falls_back_to_repetitive(self) -> None:
+        """Non-JSON search result text must be compressed via _compress_repetitive fallback."""
+        entries = [f"Result {i}: https://example.com/{i} — some description text here" for i in range(80)]
+        plain = "\n".join(entries)
+        assert not plain.startswith("{"), "Pre-condition: must not be JSON"
+
+        compressed = _compress_search_results(plain)
+        # Must be shorter than input (repetitive compression should apply)
+        assert len(compressed) < len(plain), (
+            f"Expected _compress_search_results to compress plain-text input via _compress_repetitive; "
+            f"input={len(plain)} chars, output={len(compressed)} chars"
+        )
+
+    def test_compress_search_results_plain_text_is_smaller_than_repetitive_alone(self) -> None:
+        """_compress_search_results plain-text path should match _compress_repetitive output."""
+        entries = [f"Title {i}: content describing item {i} with more text" for i in range(60)]
+        plain = "\n".join(entries)
+
+        direct = _compress_repetitive(plain)
+        via_search = _compress_search_results(plain)
+        # Both paths should reach the same result
+        assert via_search == direct
+
+    def test_compress_search_results_json_path_unchanged(self) -> None:
+        """The JSON path must still work; fallback must not interfere."""
+        import json as _json
+
+        data = [{"path": f"src/file_{i}.py", "line": i, "snippet": f"match at line {i}"} for i in range(20)]
+        text = _json.dumps(data)
+        result = _compress_search_results(text)
+        assert result.startswith(">>> tool:search_results|"), (
+            "JSON path in _compress_search_results must still produce tok header"
+        )
+
+    # ------------------------------------------------------------------
+    # Gap C: _command_name strips "uv run" wrappers so env/ps command-kind
+    # routing works even when the command is prefixed with "uv run".
+    # ------------------------------------------------------------------
+
+    def test_compress_recent_window_env_via_uv_run_routes_to_env_output(self) -> None:
+        """`uv run env` should still be classified as env_output."""
+        lines = [f"KEY_{i}=value_{i}_{'x' * 30}" for i in range(200)]
+        content = "\n".join(lines)
+        assert len(content) > 8_000
+        msg = {
+            "role": "tool",
+            "content": [{"type": "tool_result", "tool_use_id": "env_uv_id", "content": content}],
+        }
+        ctx = {"env_uv_id": {"name": "bash", "args": {"command": "uv run env"}}}
+
+        _, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("env_output", 0) > 0, (
+            f"Expected env_output compression for 'uv run env' command; got {breakdown}"
+        )
+
+    def test_compress_recent_window_ps_via_uv_run_routes_to_ps_output(self) -> None:
+        """`uv run ps` should still be classified as ps_output."""
+        header = "USER       PID  %CPU %MEM      VSZ    RSS   TT  STAT STARTED      TIME COMMAND\n"
+        rows = [
+            f"user      {1000 + i}   0.{i % 10}  0.1  408000  12000   ??  S     10:00AM   0:00.0{i % 10} /usr/bin/proc_{i}\n"
+            for i in range(120)
+        ]
+        content = header + "".join(rows)
+        assert len(content) > 8_000
+        msg = {
+            "role": "tool",
+            "content": [{"type": "tool_result", "tool_use_id": "ps_uv_id", "content": content}],
+        }
+        ctx = {"ps_uv_id": {"name": "bash", "args": {"command": "uv run ps aux"}}}
+
+        _, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("ps_output", 0) > 0, (
+            f"Expected ps_output compression for 'uv run ps aux' command; got {breakdown}"
+        )
+
+    def test_compress_recent_window_printenv_routes_to_env_output(self) -> None:
+        """`printenv` should be classified as env_output in compress_recent_window."""
+        lines = [f"VAR_{i}=value_{i}_{'x' * 30}" for i in range(200)]
+        content = "\n".join(lines)
+        assert len(content) > 8_000
+        msg = {
+            "role": "tool",
+            "content": [{"type": "tool_result", "tool_use_id": "pe_id", "content": content}],
+        }
+        ctx = {"pe_id": {"name": "bash", "args": {"command": "printenv"}}}
+
+        _, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("env_output", 0) > 0, f"Expected env_output for printenv command; got {breakdown}"
+
+    def test_compress_recent_window_pgrep_routes_to_ps_output(self) -> None:
+        """`pgrep` output should be classified as ps_output."""
+        # pgrep output: just PIDs or name:PID pairs
+        header = "USER       PID  %CPU %MEM      VSZ    RSS   TT  STAT STARTED      TIME COMMAND\n"
+        rows = [
+            f"user      {2000 + i}   0.0  0.1  200000   5000   ??  S     10:00AM   0:00.00 /usr/bin/python_{i}\n"
+            for i in range(120)
+        ]
+        content = header + "".join(rows)
+        assert len(content) > 8_000
+        msg = {
+            "role": "tool",
+            "content": [{"type": "tool_result", "tool_use_id": "pgrep_id", "content": content}],
+        }
+        ctx = {"pgrep_id": {"name": "bash", "args": {"command": "pgrep -la python"}}}
+
+        _, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+        assert breakdown.get("ps_output", 0) > 0, f"Expected ps_output for pgrep command; got {breakdown}"
+
+    # ------------------------------------------------------------------
+    # Gap D: compress_tool_results breakdown keys for command cache paths
+    # command_cache_first_exact_ineligible — command with no cacheable context
+    # command_cache_first_exact_no_cache   — result_cache=None
+    # command_cache_reached_apply          — non-first-exact command block
+    # ------------------------------------------------------------------
+
+    def test_command_cache_first_exact_no_cache_key_incremented(self) -> None:
+        """When result_cache is None for a COMMAND_LIKE first-exact block, increment no_cache key."""
+        raw = "\n".join(f"line {i}: {'z' * 50}" for i in range(60))
+        ctx = {"t1": {"name": "bash", "args": {"command": "cat file.log"}}}
+        msgs = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": raw}]}]
+        # No result_cache + first_exact_evidence_seen → triggers first-exact guard with no cache
+        _, bd = compress_tool_results(
+            msgs, result_cache=None, tool_use_id_to_context=ctx, first_exact_evidence_seen=set()
+        )
+        assert bd.get("command_cache_first_exact_no_cache", 0) >= 1, (
+            f"Expected command_cache_first_exact_no_cache >= 1 when result_cache=None; bd={bd}"
+        )
+
+    def test_command_cache_first_exact_ineligible_key_incremented(self) -> None:
+        """A bash command that resolves a file-read key but has no cache context increments ineligible."""
+        raw = "\n".join(f"line {i}: {'z' * 50}" for i in range(60))
+        # "cat file.log" → evidence_identity_key returns file_read|file.log (non-None key,
+        # so _first_exact_guard fires), but _command_cache_context returns None for bare cat
+        # → ineligible branch.
+        ctx = {"t1": {"name": "bash", "args": {"command": "cat file.log"}}}
+        cache: dict = {}
+        msgs = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": raw}]}]
+        _, bd = compress_tool_results(
+            msgs, result_cache=cache, tool_use_id_to_context=ctx, first_exact_evidence_seen=set()
+        )
+        assert bd.get("command_cache_first_exact_ineligible", 0) >= 1, (
+            f"Expected command_cache_first_exact_ineligible >= 1 for cat command; bd={bd}"
+        )
+
+    def test_command_cache_reached_apply_key_incremented_on_repeat(self) -> None:
+        """A repeat command block (not first-exact) must increment command_cache_reached_apply."""
+        raw = "\n".join(f"line {i}: {'z' * 50}" for i in range(60))
+        ctx = {"t1": {"name": "bash", "args": {"command": "cat file.log"}}}
+        cache: dict = {}
+        msgs1 = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": raw}]}]
+        msgs2 = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": raw}]}]
+        compress_tool_results(msgs1, result_cache=cache, tool_use_id_to_context=ctx)
+        _, bd2 = compress_tool_results(msgs2, result_cache=cache, tool_use_id_to_context=ctx)
+        assert bd2.get("command_cache_reached_apply", 0) >= 1, (
+            f"Expected command_cache_reached_apply >= 1 on repeat; bd2={bd2}"
+        )
 
 
 _TYPICAL_STATE = (
