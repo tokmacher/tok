@@ -7,9 +7,9 @@ import os
 import re
 from typing import Any
 
-from tok.runtime.config import TOK_ENABLE_JSON_NONEXPANSION_GUARD, TOK_FORCE_FILE_CODEC
 from tok.utils.token_utils import count_tokens
 
+from ._feature_flags import TOK_ENABLE_JSON_NONEXPANSION_GUARD, TOK_FORCE_FILE_CODEC
 from ._tool_result_advisory import (
     _build_search_advisory,
     _estimate_tokens,

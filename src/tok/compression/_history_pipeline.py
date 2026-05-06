@@ -11,17 +11,7 @@ import shlex
 from collections.abc import MutableMapping
 from typing import Any
 
-from tok.runtime.config import (
-    RESULT_CACHE_TTL_SECONDS,
-    TOK_ENABLE_FILE_OVERLAP_DELTA,
-    TOK_ENABLE_FILE_REREAD_DIFF,
-    TOK_ENABLE_PYTEST_FAIL_COMPRESSION,
-    TOK_ENABLE_SEARCH_OVERLAP_DELTA,
-    TOK_ENABLE_STACK_REPEAT_DELTA,
-)
 from tok.runtime.repeat_targets import (
-    LISTING_LIKE_TOOLS,
-    SEARCH_LIKE_TOOLS,
     build_file_skeleton,
     build_file_summary,
     evidence_identity_key,
@@ -51,6 +41,14 @@ from . import (
     logger,
     text_of,
 )
+from ._feature_flags import (
+    RESULT_CACHE_TTL_SECONDS,
+    TOK_ENABLE_FILE_OVERLAP_DELTA,
+    TOK_ENABLE_FILE_REREAD_DIFF,
+    TOK_ENABLE_PYTEST_FAIL_COMPRESSION,
+    TOK_ENABLE_SEARCH_OVERLAP_DELTA,
+    TOK_ENABLE_STACK_REPEAT_DELTA,
+)
 from ._registry import Compressor
 from ._tool_result_codecs import (
     _compress_config_json,
@@ -66,6 +64,10 @@ from ._tool_result_codecs import (
     _compress_repetitive,
     _compress_search_results,
     _compress_stack_traces,
+)
+from ._tool_taxonomy import (
+    LISTING_LIKE_TOOLS,
+    SEARCH_LIKE_TOOLS,
 )
 
 WEB_RESULT_TOOLS = frozenset({"web_search", "websearch", "web_fetch", "webfetch"})

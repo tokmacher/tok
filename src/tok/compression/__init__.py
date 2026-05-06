@@ -98,33 +98,19 @@ def classify_cut_eligibility(msg: dict[str, Any]) -> CutEligibility:
     return CutEligibility(True, "eligible")
 
 
-FILE_LIKE_TOOLS = frozenset(
-    {
-        "view",
-        "view_file",
-        "read",
-        "read_file",
-        "cat",
-        "open_file",
-        "get_file",
-    }
+from ._tool_taxonomy import (
+    COMMAND_LIKE_TOOLS,
+    EDIT_LIKE_TOOLS,
+    FILE_LIKE_TOOLS,
+    LISTING_LIKE_TOOLS,
+    SEARCH_LIKE_TOOLS,
 )
 
-COMMAND_LIKE_TOOLS = frozenset(
-    {
-        "bash",
-        "run_terminal",
-        "run",
-        "shell",
-        "sh",
-        "zsh",
-        "bash_script",
-        "execute_command",
-        "cmd",
-        "terminal",
-        "exec",
-    }
-)
+COMMAND_LIKE_TOOLS = COMMAND_LIKE_TOOLS
+EDIT_LIKE_TOOLS = EDIT_LIKE_TOOLS
+FILE_LIKE_TOOLS = FILE_LIKE_TOOLS
+LISTING_LIKE_TOOLS = LISTING_LIKE_TOOLS
+SEARCH_LIKE_TOOLS = SEARCH_LIKE_TOOLS
 
 _COMMAND_CACHE_UNSAFE_RAW_MARKERS = ("$(", "`")
 _COMMAND_CACHE_UNSAFE_TOKENS = frozenset({"&&", "||", ";", "|", ">>", ">", "<"})
@@ -170,17 +156,6 @@ _COMMAND_CACHE_ALLOWED_ROOTS = frozenset(
     }
 )
 _COMMAND_CACHE_ALLOWED_GIT = frozenset({"status", "log", "show", "diff", "blame"})
-
-EDIT_LIKE_TOOLS = frozenset(
-    {
-        "edit",
-        "write",
-        "edit_file",
-        "write_file",
-        "apply_patch",
-        "str_replace_based_edit_tool",
-    }
-)
 
 _ERROR_EQUIVALENCE_PATTERNS = [
     (
@@ -1426,8 +1401,6 @@ def _serve_cached_content_hash_match(
     first_read_complete: bool = True,
     tool_compatible: bool = False,
 ) -> tuple[str, int]:
-    from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
-
     current_time = time_module.time()
     if is_precision_read:
         content_to_return = cached_raw if host_stub_replayed else raw

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from tok.compression import FILE_LIKE_TOOLS
+from tok.compression._tool_taxonomy import FILE_LIKE_TOOLS
 
 SEARCH_LIKE_TOOLS = frozenset({"grep", "grep_search", "search", "rg", "find_by_name", "glob", "find", "code_search"})
 COMMAND_LIKE_TOOLS = frozenset({"bash", "sh", "run_terminal", "computer"})
