@@ -95,7 +95,8 @@ tok audit --latest
 ```
 
 Trace mode is local. Tok does not send trace files to the model provider, and the
-`0.1.7` live trace path does not store raw prompts, responses, or tool outputs.
+`0.1.8` live trace path does not store raw prompts, responses, or tool outputs. Live
+`session_id` values are trace-local ids, not durable client ids across bridge restarts.
 
 `tok audit` is useful for checking bridge behavior and exactness metadata. It is not a
 general protocol compliance certificate.

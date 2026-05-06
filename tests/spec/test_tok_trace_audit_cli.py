@@ -117,14 +117,102 @@ def test_audit_human_output_includes_live_trace_receipt(monkeypatch, tmp_path: P
 
     assert result.exit_code == 2
     assert "Trace receipt" in result.output
-    assert "Blocks: 2" in result.output
+    assert "Audit results: 2" in result.output
     assert "Pass: 1" in result.output
     assert "Warn: 1" in result.output
     assert "Fail: 0" in result.output
+    assert "Live blocks: 2" in result.output
     assert "Exact: 0" in result.output
     assert "Non-exact: 2" in result.output
     assert "Artifacts: 1/2" in result.output
     assert "metadata-only request trace" in result.output
+
+
+def test_audit_live_receipt_survives_malformed_jsonl_line(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = _Session(tmp_path)
+    emit_live_trace(
+        session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact request trace",
+        metadata={"input_saved_tokens": 17},
+    )
+    emit_live_trace(
+        session,
+        "response_processed",
+        trace_class="response",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact response trace",
+        direction="response",
+        metadata={"output_saved_tokens": 5},
+    )
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+    trace_file.write_text(trace_file.read_text() + "{bad json\n")
+
+    result = runner.invoke(app, ["audit", str(trace_file)])
+
+    assert result.exit_code == 1
+    assert "FAIL line:3 invalid_jsonl_line" in result.output
+    assert "Trace receipt" in result.output
+    assert "Audit results: 3" in result.output
+    assert "Pass: 2" in result.output
+    assert "Warn: 0" in result.output
+    assert "Fail: 1" in result.output
+    assert "Live blocks: 2" in result.output
+    assert "Artifacts: 2/2" in result.output
+    assert "Skipped receipt records: 1" in result.output
+
+
+def test_audit_live_receipt_skips_invalid_jsonl_records_without_hiding_valid_blocks(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = _Session(tmp_path)
+    emit_live_trace(
+        session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact request trace",
+        metadata={"input_saved_tokens": 17},
+    )
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+    trace_file.write_text(
+        trace_file.read_text()
+        + json.dumps(["not", "an", "object"])
+        + "\n"
+        + json.dumps({"block": "not-an-object"})
+        + "\n"
+    )
+
+    result = runner.invoke(app, ["audit", str(trace_file)])
+
+    assert result.exit_code == 1
+    assert "FAIL line:2 jsonl_line_not_object" in result.output
+    assert "FAIL line:3 missing_or_invalid_block" in result.output
+    assert "Trace receipt" in result.output
+    assert "Audit results: 3" in result.output
+    assert "Live blocks: 1" in result.output
+    assert "Artifacts: 1/1" in result.output
+    assert "Skipped receipt records: 2" in result.output
+
+
+def test_audit_fixture_json_does_not_show_live_trace_receipt() -> None:
+    result = runner.invoke(app, ["audit", str(CLEAN_FIXTURE_PATH)])
+
+    assert result.exit_code == 0
+    assert "Trace receipt" not in result.output
 
 
 def test_audit_command_rejects_adversarial_pack_manifest_with_clear_error() -> None:
@@ -214,6 +302,18 @@ def test_audit_malformed_fixture_json_reports_failure_without_traceback(tmp_path
     assert "Traceback" not in result.output
 
 
+def test_audit_malformed_jsonl_line_reports_failure_without_traceback(tmp_path: Path) -> None:
+    trace_file = tmp_path / "bad_trace.jsonl"
+    trace_file.write_text("{bad json\n")
+
+    result = runner.invoke(app, ["audit", str(trace_file)])
+
+    assert result.exit_code == 1
+    assert "invalid_jsonl_line" in result.output
+    assert "Trace receipt" not in result.output
+    assert "Traceback" not in result.output
+
+
 def test_audit_non_utf8_trace_reports_failure_without_traceback(tmp_path: Path) -> None:
     trace_file = tmp_path / "bad_trace.jsonl"
     trace_file.write_bytes(b"\xff\xfe")
@@ -234,3 +334,48 @@ def test_audit_directory_path_reports_failure_without_traceback(tmp_path: Path) 
     assert result.exit_code == 1
     assert "trace_file_unreadable" in result.output
     assert "Traceback" not in result.output
+
+
+def test_audit_exit_code_priority_clean_warn_and_fail(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = _Session(tmp_path)
+    emit_live_trace(
+        session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact request trace",
+        metadata={"input_saved_tokens": 17},
+    )
+    clean_trace = next((tmp_path / "traces").glob("*.jsonl"))
+
+    clean_result = runner.invoke(app, ["audit", str(clean_trace)])
+
+    assert clean_result.exit_code == 0
+
+    monkeypatch.delenv("TOK_TRACE_CAPTURE_ARTIFACTS", raising=False)
+    warn_session = _Session(tmp_path / "warn")
+    emit_live_trace(
+        warn_session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata-only request trace",
+        metadata={"input_saved_tokens": 17},
+    )
+    warn_trace = next((tmp_path / "warn" / "traces").glob("*.jsonl"))
+
+    warn_result = runner.invoke(app, ["audit", str(warn_trace)])
+
+    assert warn_result.exit_code == 2
+
+    clean_trace.write_text(clean_trace.read_text() + "{bad json\n")
+
+    fail_result = runner.invoke(app, ["audit", str(clean_trace)])
+
+    assert fail_result.exit_code == 1

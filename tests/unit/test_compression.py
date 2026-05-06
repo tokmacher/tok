@@ -540,6 +540,27 @@ class TestInjectSystemAdditions:
 
         assert "Use the compressed history before re-reading files" not in result["system"]
 
+    def test_tool_compatible_list_system_no_hints_is_noop(self) -> None:
+        system = [
+            {
+                "type": "text",
+                "text": "Base prompt",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        body = {"system": system.copy(), "messages": []}
+
+        result = inject_system_additions(body, None, tool_compatible=True)
+
+        assert result["system"] == system
+
+    def test_tool_compatible_string_system_no_hints_is_byte_equivalent(self) -> None:
+        body = {"system": "base", "messages": []}
+
+        result = inject_system_additions(body, None, tool_compatible=True)
+
+        assert result["system"] == "base"
+
     def test_runtime_hints_are_appended_for_tool_compatible_prompts(
         self,
     ) -> None:
@@ -803,6 +824,22 @@ class TestCompressToolResults:
         assert self._total_saved(breakdown) > 0
         compressed_content = out[1]["content"][0]["content"]
         assert "PASSED" not in compressed_content
+
+    def test_repeated_bash_command_result_uses_command_cache_breakdown(self) -> None:
+        raw = "\n".join(f"tests/unit/test_gateway.py::test_{i} PASSED" for i in range(90))
+        cache: dict[str, ResultCacheEntry] = {}
+        ctx = {"t1": {"name": "bash", "args": {"command": "uv run pytest tests/unit/test_gateway.py -q"}}}
+
+        first = self._make_messages_with_tool_result(raw)
+        compress_tool_results(first, result_cache=cache, tool_use_id_to_context=ctx)
+
+        second = self._make_messages_with_tool_result(raw)
+        out, breakdown = compress_tool_results(second, result_cache=cache, tool_use_id_to_context=ctx)
+
+        content = out[1]["content"][0]["content"]
+        assert content.startswith(">>> tool:bash|unchanged|cached|")
+        assert breakdown.get("command_cached", 0) > 0
+        assert "command_cacheable_seen" in breakdown
 
     def test_first_exact_search_result_stays_raw_then_compresses(self) -> None:
         content = _make_grep_output(n_files=5, matches_per_file=20)
@@ -1280,8 +1317,8 @@ class TestFileCache:
         assert "unchanged" in result3_content, (
             f"Expected 'unchanged' stub for third file read; got: {result3_content!r}"
         )
-        assert bd1 == {}
-        assert bd2 == {}
+        assert all(k == "cache_stored" for k in bd1), f"Expected only cache_stored in bd1; got {bd1}"
+        assert all(k in ("cache_hit",) for k in bd2), f"Expected only cache_hit in bd2; got {bd2}"
         assert sum(bd3.values()) > 0, f"Expected savings on third read; got {bd3}"
 
     def test_parallel_reads_of_same_file_deduplicated_within_turn(self) -> None:
@@ -1341,7 +1378,7 @@ class TestFileCache:
 
         assert "view_file" in FILE_LIKE_TOOLS
         assert out[1]["content"][0]["content"] == raw
-        assert breakdown == {}
+        assert all(k.startswith("cache_") for k in breakdown), f"Expected only cache diagnostic keys; got {breakdown}"
 
 
 class TestSavingsBugFix:

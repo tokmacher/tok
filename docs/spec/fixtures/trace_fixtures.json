@@ -262,7 +262,7 @@
         "turn": 8,
         "step": 0,
         "direction": "response",
-        "payload_digest": "sha256:6ed95fd375143b22b741d976285848cea0e29a4c7a70f80ee7d3d529403fd640"
+        "payload_digest": "sha256:55f5b99d9a515f058066019c38e99bcd2ce66110f4a9b91774cf3633a7d01657"
       },
       "observation": {
         "class": "response",
@@ -277,8 +277,39 @@
         "resolver_uri": "tok-fixture://artifacts/response_summary.txt"
       },
       "audit": {
-        "resolver_state": "resolvable_remote",
+        "resolver_state": "available_local",
         "expectation": "accept_non_exact_reference"
+      }
+    }
+  },
+  {
+    "id": "healthy_pass_through_metadata",
+    "valid": true,
+    "block": {
+      "envelope": {
+        "trace_version": "tok-trace/v0.1-draft",
+        "block_id": "trace-0010",
+        "session_id": "session-alpha",
+        "turn": 9,
+        "step": 0,
+        "direction": "request",
+        "payload_digest": "sha256:a251e005f7a4c2b4c675a167b66a73f3df7866d59c7b61eca624ca297e9a0e7e"
+      },
+      "observation": {
+        "class": "message",
+        "key": "message:user:turn-9",
+        "action": "pass_through",
+        "result": "ok"
+      },
+      "content": {
+        "exact": false,
+        "hash": "sha256:9f0a11311632ef82c08010137b3ee74c4e37653b2a100722d9ae9fe86686e525",
+        "size_bytes": 92,
+        "resolver_uri": "tok-fixture://artifacts/response_summary.txt"
+      },
+      "audit": {
+        "resolver_state": "available_local",
+        "expectation": "accept_pass_through"
       }
     }
   },
@@ -288,9 +319,9 @@
     "block": {
       "envelope": {
         "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0010",
+        "block_id": "trace-0011",
         "session_id": "session-alpha",
-        "turn": 9,
+        "turn": 10,
         "step": 0,
         "direction": "sideways",
         "payload_digest": "sha256:221302d39b26d54fb9e4a8c64074fa739b8a38e51f80c5b55d9a97d18d0de355"

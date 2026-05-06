@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import threading
 import time as time_module
 from dataclasses import dataclass
@@ -67,6 +68,7 @@ ResultCacheEntry: TypeAlias = dict[str, object] | tuple[str, str, float] | tuple
 
 # Maximum number of entries in the result cache to bound memory usage
 RESULT_CACHE_MAX_SIZE = 256
+TOK_ENABLE_COMMAND_RESULT_CACHE = bool(_env_int("TOK_ENABLE_COMMAND_RESULT_CACHE", 1))
 
 # Lock for thread-safe cache operations (callers must use this for external synchronization)
 _result_cache_lock = threading.Lock()
@@ -122,6 +124,51 @@ COMMAND_LIKE_TOOLS = frozenset(
         "exec",
     }
 )
+
+_COMMAND_CACHE_UNSAFE_RAW_MARKERS = ("$(", "`")
+_COMMAND_CACHE_UNSAFE_TOKENS = frozenset({"&&", "||", ";", "|", ">>", ">", "<"})
+_COMMAND_CACHE_MUTATING_ROOTS = frozenset(
+    {
+        "rm",
+        "mv",
+        "cp",
+        "touch",
+        "mkdir",
+        "rmdir",
+        "chmod",
+        "chown",
+        "install",
+        "pip",
+        "npm",
+        "pnpm",
+        "yarn",
+        "bun",
+        "brew",
+        "curl",
+        "wget",
+        "ssh",
+        "scp",
+        "rsync",
+    }
+)
+_COMMAND_CACHE_ALLOWED_ROOTS = frozenset(
+    {
+        "rg",
+        "grep",
+        "find",
+        "ls",
+        "wc",
+        "sed",
+        "head",
+        "tail",
+        "nl",
+        "git",
+        "pytest",
+        "ruff",
+        "mypy",
+    }
+)
+_COMMAND_CACHE_ALLOWED_GIT = frozenset({"status", "log", "show", "diff", "blame"})
 
 EDIT_LIKE_TOOLS = frozenset(
     {
@@ -651,6 +698,133 @@ def tok_tool_result(
     )
 
 
+def _command_from_context(context: dict[str, Any]) -> str:
+    args = context.get("args") if isinstance(context.get("args"), dict) else {}
+    return str(args.get("command") or args.get("cmd") or context.get("command") or "").strip()
+
+
+def _strip_command_wrappers(parts: list[str]) -> list[str]:
+    remaining = list(parts)
+    while remaining:
+        root = os.path.basename(remaining[0]).lower()
+        if root in {"env", "/usr/bin/env"}:
+            remaining = remaining[1:]
+            while remaining and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", remaining[0]):
+                remaining = remaining[1:]
+            continue
+        if len(remaining) >= 2 and root == "uv" and remaining[1] == "run":
+            remaining = remaining[2:]
+            while remaining and remaining[0].startswith("-"):
+                remaining = remaining[1:]
+            continue
+        if len(remaining) >= 3 and root in {"python", "python3"} and remaining[1] == "-m":
+            remaining = remaining[2:]
+            continue
+        break
+    return remaining
+
+
+def _split_command_parts(command: str) -> list[str] | None:
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        return list(lexer)
+    except Exception:
+        return None
+
+
+def _normalized_cacheable_command(command: str) -> str | None:
+    text = " ".join(str(command or "").strip().split())
+    if not text or any(marker in text for marker in _COMMAND_CACHE_UNSAFE_RAW_MARKERS):
+        return None
+    original_parts = _split_command_parts(text)
+    if not original_parts or any(part in _COMMAND_CACHE_UNSAFE_TOKENS for part in original_parts):
+        return None
+    if any("*" in part or "?" in part for part in original_parts):
+        return None
+    parts = _strip_command_wrappers(original_parts)
+    if not parts:
+        return None
+    root = os.path.basename(parts[0]).lower()
+    if root in _COMMAND_CACHE_MUTATING_ROOTS or root not in _COMMAND_CACHE_ALLOWED_ROOTS:
+        return None
+    if root == "git":
+        if len(parts) < 2 or parts[1].lower() not in _COMMAND_CACHE_ALLOWED_GIT:
+            return None
+    elif root == "ruff":
+        if len(parts) < 2 or parts[1] != "check" or "--fix" in parts:
+            return None
+    elif root == "sed":
+        if "-i" in parts or "--in-place" in parts or "-n" not in parts:
+            return None
+    elif root == "find":
+        if any(part in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for part in parts):
+            return None
+    return " ".join(parts)
+
+
+def _command_cache_context(context: dict[str, Any], raw: str) -> dict[str, Any] | None:
+    if not TOK_ENABLE_COMMAND_RESULT_CACHE:
+        return None
+    tool_name = str(context.get("name") or "").lower()
+    if tool_name not in COMMAND_LIKE_TOOLS:
+        return None
+    command = _normalized_cacheable_command(_command_from_context(context))
+    if not command or not _is_cacheable_command_output(command, raw):
+        return None
+    args = dict(context.get("args") if isinstance(context.get("args"), dict) else {})
+    args["command"] = command
+    args.pop("cmd", None)
+    cwd = str(
+        args.get("cwd")
+        or args.get("workdir")
+        or args.get("working_dir")
+        or context.get("cwd")
+        or context.get("workdir")
+        or context.get("working_dir")
+        or ""
+    ).strip()
+    if cwd:
+        args["_tok_command_cache_cwd"] = os.path.normpath(cwd)
+    args["_tok_command_cache_command"] = command
+    cache_context = {**context, "args": args, "_tok_command_cache_command": command}
+    if cwd:
+        cache_context["_tok_command_cache_cwd"] = os.path.normpath(cwd)
+    return cache_context
+
+
+def _is_cacheable_command_output(command: str, raw: str) -> bool:
+    text = _strip_harness_injections(str(raw or "")).strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    command_root = os.path.basename(command.split(maxsplit=1)[0]).lower()
+    hard_failures = (
+        "traceback (most recent call last)",
+        "command not found",
+        "no such file or directory",
+        "fatal:",
+    )
+    if any(marker in lowered for marker in hard_failures):
+        return False
+    if lowered.startswith("error:") or "\nerror:" in lowered:
+        return False
+    if command_root == "pytest" and (
+        re.search(r"=+\s+failures?\s+=+", lowered)
+        or re.search(r"\bfailed\b", lowered)
+        or re.search(r"\berrors?\b", lowered)
+    ):
+        return False
+    if command_root in {"ruff", "mypy"} and "error" in lowered and "success:" not in lowered:
+        return False
+    return True
+
+
+def _bump_cache_signal(breakdown: dict[str, int] | None, key: str) -> None:
+    if breakdown is not None:
+        breakdown[key] = breakdown.get(key, 0) + 1
+
+
 def _apply_result_cache(
     raw: str,
     context: dict[str, Any],
@@ -660,11 +834,13 @@ def _apply_result_cache(
     ttl_seconds: int = 1800,
     preserve_exact_search_evidence: bool = False,
     tool_compatible: bool = False,
+    cache_breakdown: dict[str, int] | None = None,
 ) -> tuple[str, int]:
     """
     Apply general result cache dedup for any tool result.
 
     Returns (compressed_text, chars_saved).
+    When *cache_breakdown* is provided, diagnostic counters are written to it.
     """
     tool_name = context.get("name")
     normalized_tool_name = str(tool_name or "").lower()
@@ -675,22 +851,35 @@ def _apply_result_cache(
         and any(k in args for k in ("offset", "limit", "start", "end"))
     )
     is_file_like = normalized_tool_name in FILE_LIKE_TOOLS
+    is_command_like = normalized_tool_name in COMMAND_LIKE_TOOLS
 
-    if bypass_cache or normalized_tool_name in COMMAND_LIKE_TOOLS:
+    raw_text = _strip_harness_injections(str(raw or ""))
+    raw = raw_text
+    if is_command_like:
+        command_context = _command_cache_context(context, raw_text)
+        if bypass_cache or command_context is None:
+            _bump_cache_signal(cache_breakdown, "command_cache_skip_ineligible_cmd")
+            compressed = tok_tool_result(
+                raw_text,
+                compression_level=compression_level,
+                tool_context=context,
+            )
+            return compressed, len(raw_text) - len(compressed)
+        context = command_context
+    elif bypass_cache:
         compressed = tok_tool_result(
-            raw,
+            raw_text,
             compression_level=compression_level,
             tool_context=context,
         )
-        return compressed, len(raw) - len(compressed)
+        return compressed, len(raw_text) - len(compressed)
 
     cache_key = _build_cache_key(tool_name, context)
-    raw_text = _strip_harness_injections(str(raw or ""))
-    raw = raw_text  # use stripped content for both hashing and storage
     cached_entry = result_cache.get(cache_key)
 
     if cached_entry is None:
         logger.debug("result_cache_miss: key=%s tool=%s", cache_key, tool_name)
+        _bump_cache_signal(cache_breakdown, "command_cache_stored" if is_command_like else "cache_stored")
         return _store_cache_entry(
             result_cache,
             cache_key,
@@ -705,8 +894,10 @@ def _apply_result_cache(
 
     cached_hash, cached_raw, timestamp, first_read_complete, entry_length = _unpack_cache_entry(cached_entry)
 
-    # Check staleness for entries with timestamps (3-tuple) or legacy entries (1/2-tuple)
     if _is_cache_entry_stale(timestamp, ttl_seconds):
+        _bump_cache_signal(
+            cache_breakdown, "command_cache_refreshed_stale" if is_command_like else "cache_refreshed_stale"
+        )
         return _store_cache_entry(
             result_cache,
             cache_key,
@@ -720,6 +911,9 @@ def _apply_result_cache(
         )
 
     if _is_file_mtime_changed(context, timestamp):
+        _bump_cache_signal(
+            cache_breakdown, "command_cache_refreshed_mtime" if is_command_like else "cache_refreshed_mtime"
+        )
         return _store_cache_entry(
             result_cache,
             cache_key,
@@ -752,6 +946,7 @@ def _apply_result_cache(
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         first_read_complete=first_read_complete,
         tool_compatible=tool_compatible,
+        cache_breakdown=cache_breakdown,
     )
 
 
@@ -796,6 +991,7 @@ def _process_cache_hit(
     preserve_exact_search_evidence: bool = False,
     first_read_complete: bool = True,
     tool_compatible: bool = False,
+    cache_breakdown: dict[str, int] | None = None,
 ) -> tuple[str, int]:
     """Process a cache hit and return compressed result."""
     host_stub_replayed = _should_replay_host_stub(
@@ -840,6 +1036,9 @@ def _process_cache_hit(
         )
 
     if _is_content_hash_match(raw_text, cached_raw_text):
+        _bump_cache_signal(
+            cache_breakdown, "command_cache_hit" if normalized_tool_name in COMMAND_LIKE_TOOLS else "cache_hit"
+        )
         _update_cache_after_hit(
             result_cache,
             cache_key,
@@ -868,6 +1067,20 @@ def _process_cache_hit(
             preserve_exact_search_evidence=preserve_exact_search_evidence,
             first_read_complete=first_read_complete,
             tool_compatible=tool_compatible,
+        )
+
+    if normalized_tool_name in COMMAND_LIKE_TOOLS:
+        _bump_cache_signal(cache_breakdown, "command_cache_replaced_changed")
+        return _store_cache_entry(
+            result_cache,
+            cache_key,
+            raw_text,
+            raw,
+            is_file_like,
+            context,
+            tool_name,
+            compression_level,
+            prefer_normalized_error=False,
         )
 
     # Content changed - need to compute diff
@@ -1284,6 +1497,16 @@ def _serve_cached_content_hash_match(
                 + compressed_search,
                 len(raw_text) - len(compressed_search),
             )
+
+    if normalized_tool_name in COMMAND_LIKE_TOOLS:
+        confidence, reason = _compute_confidence(cached_hash, cached_hash)
+        command = str(context.get("_tok_command_cache_command") or _command_from_context(context)).strip()
+        stub = f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"
+        if command:
+            stub += f"|command:{command[:160]}"
+        if len(stub) >= len(raw_text):
+            return raw_text, 0
+        return stub, len(raw_text) - len(stub)
 
     confidence, reason = _compute_confidence(cached_hash, cached_hash)
     stub = f">>> tool:{tool_name}|unchanged|cached|confidence:{confidence}|reason:{reason}"

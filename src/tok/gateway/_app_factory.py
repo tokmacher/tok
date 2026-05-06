@@ -597,7 +597,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         }
                     )
                     if not behavior_signals.get("plan_finalization_passthrough", 0):
-                        body = apply_anthropic_optimizations(body)
+                        body = apply_anthropic_optimizations(body, behavior_signals=behavior_signals)
                     body_bytes = json.dumps(body).encode()
                     emit_live_trace(
                         active_session,
@@ -605,7 +605,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         trace_class="message",
                         action="summary_reference" if compressed else "pass_through",
                         result="ok",
-                        expectation="accept_non_exact_reference" if compressed else "accept_fallback",
+                        expectation="accept_non_exact_reference" if compressed else "accept_pass_through",
                         reason=(
                             "live metadata-only trace; request artifacts are not captured"
                             if compressed
@@ -1088,7 +1088,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             trace_class="response",
                             action="summary_reference" if total_output_saved else "pass_through",
                             result="ok",
-                            expectation="accept_non_exact_reference" if total_output_saved else "accept_fallback",
+                            expectation="accept_non_exact_reference" if total_output_saved else "accept_pass_through",
                             reason=(
                                 "live metadata-only trace; response artifacts are not captured"
                                 if total_output_saved

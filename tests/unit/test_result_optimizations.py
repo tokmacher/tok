@@ -1,6 +1,11 @@
 from tok.compression import tok_tool_result, truncate_large_result
 from tok.compression._tool_result_codecs import _compress_file_read, _compress_grep, _detect_tool_content_type
-from tok.gateway._anthropic_optimizations import _sift_stdout, bpe_translate_request, scrub_leaked_tok_context
+from tok.gateway._anthropic_optimizations import (
+    _sift_stdout,
+    bpe_translate_request,
+    scrub_leaked_tok_context,
+    sift_tool_results,
+)
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
 
@@ -16,6 +21,34 @@ def test_semantic_truncation() -> None:
     assert "... [TRUNCATED" in truncated
     assert "line 0:" in truncated
     assert "line 99:" in truncated
+
+
+def test_sift_tool_results_records_cache_marked_block_metrics() -> None:
+    raw = "\n".join(f"noise line {index}: {'x' * 80}" for index in range(140))
+    body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": raw,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+        ]
+    }
+    signals: dict[str, int] = {}
+
+    sift_tool_results(body, behavior_signals=signals)
+
+    compressed = body["messages"][0]["content"][0]["content"]
+    assert len(compressed) < len(raw)
+    assert signals["tok_sift_cache_marked_blocks"] == 1
+    assert signals["tok_sift_cache_marked_block_tokens"] == len(raw) // 4
+    assert signals["tok_sift_cache_marked_saved_tokens"] == (len(raw) - len(compressed)) // 4
 
 
 def test_semantic_truncation_prefers_structure_boundary() -> None:
@@ -120,6 +153,175 @@ def test_replayed_tok_cache_stub_serves_cached_raw_content() -> None:
 
     assert replayed == raw
     assert saved == 0
+
+
+def test_repeated_safe_command_result_uses_stable_cache_stub() -> None:
+    from tok.compression import _apply_result_cache
+
+    raw = "\n".join(f"tests/unit/test_result_optimizations.py::test_{i} PASSED" for i in range(80))
+    context = {"name": "bash", "args": {"command": "uv run pytest -q"}}
+    cache = {}
+
+    first, first_saved = _apply_result_cache(raw, context, cache)
+    assert "unchanged|cached" not in first
+    assert first_saved > 0
+
+    second, second_saved = _apply_result_cache(raw, context, cache)
+    assert second.startswith(">>> tool:bash|unchanged|cached|")
+    assert "command:pytest -q" in second
+    assert second_saved > 0
+
+
+def test_changed_safe_command_result_updates_cache_without_stale_stub() -> None:
+    from tok.compression import _apply_result_cache
+
+    context = {"name": "bash", "args": {"command": "git diff -- src/tok/foo.py"}}
+    cache = {}
+    raw_1 = "diff --git a/src/tok/foo.py b/src/tok/foo.py\n" + "\n".join(f"+first {i}" for i in range(80))
+    raw_2 = "diff --git a/src/tok/foo.py b/src/tok/foo.py\n" + "\n".join(f"+second {i}" for i in range(80))
+
+    _apply_result_cache(raw_1, context, cache)
+    changed, _ = _apply_result_cache(raw_2, context, cache)
+    assert "unchanged|cached" not in changed
+    assert "second" in next(iter(cache.values()))["raw"]
+
+    repeated, saved = _apply_result_cache(raw_2, context, cache)
+    assert repeated.startswith(">>> tool:bash|unchanged|cached|")
+    assert saved > 0
+
+
+def test_apply_result_cache_command_stored_signal() -> None:
+    from tok.compression import _apply_result_cache
+
+    raw = "\n".join(f"src/tok/foo.py:{i}: match" for i in range(80))
+    context = {"name": "bash", "args": {"command": "rg 'pattern' src/tok"}}
+    cache: dict[str, object] = {}
+    signals: dict[str, int] = {}
+
+    _apply_result_cache(raw, context, cache, cache_breakdown=signals)
+    assert signals.get("command_cache_stored", 0) == 1
+    assert "command_cache_hit" not in signals
+
+
+def test_apply_result_cache_command_hit_signal() -> None:
+    from tok.compression import _apply_result_cache
+
+    raw = "\n".join(f"src/tok/foo.py:{i}: match" for i in range(80))
+    context = {"name": "bash", "args": {"command": "rg 'pattern' src/tok"}}
+    cache: dict[str, object] = {}
+
+    _apply_result_cache(raw, context, cache)
+
+    signals: dict[str, int] = {}
+    _apply_result_cache(raw, context, cache, cache_breakdown=signals)
+    assert signals.get("command_cache_hit", 0) >= 1
+    assert "command_cache_stored" not in signals
+
+
+def test_apply_result_cache_ineligible_command_signal() -> None:
+    from tok.compression import _apply_result_cache
+
+    raw = "some output"
+    context = {"name": "bash", "args": {"command": "rm -rf /tmp/test"}}
+    cache: dict[str, object] = {}
+    signals: dict[str, int] = {}
+
+    _apply_result_cache(raw, context, cache, cache_breakdown=signals)
+    assert signals.get("command_cache_skip_ineligible_cmd", 0) == 1
+
+
+def test_apply_result_cache_changed_output_signal() -> None:
+    from tok.compression import _apply_result_cache
+
+    context = {"name": "bash", "args": {"command": "git diff -- src/tok/foo.py"}}
+    cache: dict[str, object] = {}
+    raw_1 = "\n".join(f"+first {i}" for i in range(80))
+    raw_2 = "\n".join(f"+second {i}" for i in range(80))
+
+    signals: dict[str, int] = {}
+    _apply_result_cache(raw_1, context, cache, cache_breakdown=signals)
+    assert signals.get("command_cache_stored", 0) == 1
+
+    signals.clear()
+    _apply_result_cache(raw_2, context, cache, cache_breakdown=signals)
+    assert signals.get("command_cache_replaced_changed", 0) == 1
+
+
+def test_compress_tool_results_command_cache_hit_signals() -> None:
+    from tok.compression import compress_tool_results
+
+    raw = "\n".join(f"src/tok/foo.py:{i}: match" for i in range(80))
+    tool_use_id_1 = "toolu_001"
+    tool_use_id_2 = "toolu_002"
+    context = {"name": "bash", "args": {"command": "rg 'pattern' src/tok"}}
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": tool_use_id_1, "name": "bash", "input": context["args"]}],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id_1, "content": raw}]},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": tool_use_id_2, "name": "bash", "input": context["args"]}],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id_2, "content": raw}]},
+    ]
+
+    id_to_context = {tool_use_id_1: context, tool_use_id_2: context}
+    result_cache: dict[str, object] = {}
+
+    _, breakdown = compress_tool_results(
+        messages,
+        result_cache=result_cache,
+        tool_use_id_to_context=id_to_context,
+    )
+
+    assert breakdown.get("command_cacheable_seen", 0) >= 2
+    assert breakdown.get("command_cache_stored", 0) >= 1
+    assert breakdown.get("command_cache_hit", 0) >= 1
+
+
+def test_safe_command_classifier_allows_common_read_only_commands() -> None:
+    from tok.compression import _apply_result_cache
+
+    commands = [
+        "rg pattern src/tok",
+        'rg -n "command_result_cache_hit|command_result_cache_saved_tokens" src/tok tests',
+        "grep -R pattern src/tok",
+        "sed -n '1,80p' src/tok/foo.py",
+        "git diff -- src/tok/foo.py",
+    ]
+    raw = "\n".join(f"src/tok/foo.py:{i}: pattern" for i in range(50))
+
+    for command in commands:
+        cache = {}
+        context = {"name": "bash", "args": {"command": command}}
+        _apply_result_cache(raw, context, cache)
+        repeated, saved = _apply_result_cache(raw, context, cache)
+        assert "unchanged|cached" in repeated
+        assert saved > 0
+
+
+def test_unsafe_or_failed_command_results_are_not_cached() -> None:
+    from tok.compression import _apply_result_cache
+
+    cases = [
+        ("rg pattern src/tok | head", "src/tok/foo.py:1:pattern"),
+        ("rg pattern* src/tok", "src/tok/foo.py:1:pattern"),
+        ("git add src/tok/foo.py", "added"),
+        ("rm -f src/tok/foo.py", "removed"),
+        ("uv run pytest -q", "FAILED tests/unit/test_x.py::test_x"),
+        ("unknown-tool --version", "unknown output"),
+    ]
+
+    for command, raw in cases:
+        cache = {}
+        context = {"name": "bash", "args": {"command": command}}
+        _apply_result_cache(raw, context, cache)
+        repeated, _ = _apply_result_cache(raw, context, cache)
+        assert "unchanged|cached" not in repeated
+        assert cache == {}
 
 
 def test_tok_tool_result_applies_truncation() -> None:

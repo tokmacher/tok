@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,12 @@ from ._cli_support import console, memory_root
 FIXTURE_FILE_ARG = typer.Argument(None, help="Path to a Tok Trace v0.1 fixture or live JSONL trace file.")
 JSON_OUTPUT_OPT = typer.Option(False, "--json", help="Emit machine-readable audit results.")
 LATEST_OPT = typer.Option(False, "--latest", help="Audit the newest trace in the active .tok/traces directory.")
+
+
+@dataclass(frozen=True)
+class _LiveTraceReceipt:
+    blocks: list[dict[str, Any]]
+    skipped_records: int = 0
 
 
 def register(app: typer.Typer) -> None:
@@ -87,7 +94,8 @@ def _resolve_audit_path(fixture_file: Path | None, *, latest: bool) -> Path | No
 
 
 def _print_live_trace_receipt(trace_file: Path, payload: list[dict[str, Any]]) -> None:
-    blocks = _load_live_trace_blocks(trace_file)
+    receipt = _load_live_trace_blocks(trace_file)
+    blocks = receipt.blocks
     if not blocks:
         return
 
@@ -102,25 +110,33 @@ def _print_live_trace_receipt(trace_file: Path, payload: list[dict[str, Any]]) -
     console.print("")
     console.print("[bold]Trace receipt[/bold]")
     console.print(
-        f"Blocks: {len(blocks)} | "
+        f"Audit results: {len(payload)} | "
         f"Pass: {status_counts['pass']} | "
         f"Warn: {status_counts['warn']} | "
         f"Fail: {status_counts['fail']}"
     )
-    console.print(f"Exact: {exact_count} | Non-exact: {non_exact_count} | Artifacts: {artifact_count}/{len(blocks)}")
+    console.print(
+        f"Live blocks: {len(blocks)} | "
+        f"Exact: {exact_count} | "
+        f"Non-exact: {non_exact_count} | "
+        f"Artifacts: {artifact_count}/{len(blocks)}"
+    )
+    if receipt.skipped_records:
+        console.print(f"Skipped receipt records: {receipt.skipped_records}")
     if reasons:
         console.print("Reasons: " + "; ".join(reasons))
 
 
-def _load_live_trace_blocks(trace_file: Path) -> list[dict[str, Any]]:
+def _load_live_trace_blocks(trace_file: Path) -> _LiveTraceReceipt:
     if trace_file.suffix != ".jsonl":
-        return []
+        return _LiveTraceReceipt([])
 
     blocks: list[dict[str, Any]] = []
+    skipped_records = 0
     try:
         lines = trace_file.read_text().splitlines()
     except (OSError, UnicodeDecodeError):
-        return []
+        return _LiveTraceReceipt([])
 
     for line in lines:
         if not line.strip():
@@ -128,13 +144,18 @@ def _load_live_trace_blocks(trace_file: Path) -> list[dict[str, Any]]:
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
-            return []
+            skipped_records += 1
+            continue
         if not isinstance(record, dict):
-            return []
+            skipped_records += 1
+            continue
         block = record.get("block") if "block" in record else record
         if not isinstance(block, dict):
-            return []
+            skipped_records += 1
+            continue
         extensions = block.get("extensions")
         if isinstance(extensions, dict) and "tok.live" in extensions:
             blocks.append(block)
-    return blocks
+        else:
+            skipped_records += 1
+    return _LiveTraceReceipt(blocks, skipped_records)

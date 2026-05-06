@@ -42,7 +42,12 @@
   {
     "id": "summary_reference_non_exact",
     "expected_status": "pass",
-    "summary": "summary reference is accepted only as non-exact model-facing state"
+    "summary": "summary reference is accepted only as non-exact model-facing state with local summary bytes"
+  },
+  {
+    "id": "healthy_pass_through_metadata",
+    "expected_status": "pass",
+    "summary": "healthy pass-through metadata uses the dedicated non-exact pass-through expectation"
   },
   {
     "id": "malformed_block_rejection",

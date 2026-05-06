@@ -30,6 +30,7 @@ from tok.utils.event_logging import log_semantic_dedup
 from . import (
     _CUT_REJECTION_REASONS,
     _SEMANTIC_HASH_MIN_CHARS,
+    COMMAND_LIKE_TOOLS,
     EDIT_LIKE_TOOLS,
     FILE_LIKE_TOOLS,
     QUESTION_PREFIXES,
@@ -37,6 +38,7 @@ from . import (
     RECENT_WINDOW_THRESHOLD,
     STOP_WORDS,
     _apply_result_cache,
+    _command_cache_context,
     _compute_semantic_hash,
     _make_semantic_cache_key,
     _should_include_tok_state,
@@ -88,6 +90,12 @@ def _detect_tool_content_type_impl(text: str) -> str:
 
 def _compress_git_log_impl(text: str) -> str:
     return _compress_git_log_impl_fn(text)
+
+
+def _result_cache_breakdown_key(kind: str, tool_name: str, compressed: str) -> str:
+    if tool_name in COMMAND_LIKE_TOOLS and "|unchanged|cached" in compressed:
+        return "command_cached"
+    return f"{kind}_cached" if "|unchanged|" in compressed else f"{kind}_diff"
 
 
 def _extract_normalized_path(context: dict[str, Any] | None) -> str:
@@ -1032,6 +1040,23 @@ def compress_tool_results_impl(
             return False
         if context:
             tool_name = str(context.get("name", "")).lower()
+            if (
+                tool_name in COMMAND_LIKE_TOOLS
+                and result_cache is not None
+                and not bypass_result_cache
+                and _command_cache_context(context, raw) is not None
+            ):
+                _apply_result_cache(
+                    raw,
+                    context,
+                    result_cache,
+                    compression_level=compression_level,
+                    bypass_cache=bypass_result_cache,
+                    ttl_seconds=RESULT_CACHE_TTL_SECONDS,
+                    preserve_exact_search_evidence=preserve_exact_search_evidence,
+                    cache_breakdown=breakdown,
+                )
+                breakdown["command_cacheable_seen"] = breakdown.get("command_cacheable_seen", 0) + 1
             if tool_name in FILE_LIKE_TOOLS:
                 args = context.get("args")
                 if isinstance(args, dict) and any(k in args for k in ("offset", "limit", "start", "end")):
@@ -1121,6 +1146,7 @@ def compress_tool_results_impl(
                         bypass_cache=bypass_result_cache,
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                         preserve_exact_search_evidence=preserve_exact_search_evidence,
+                        cache_breakdown=breakdown,
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
@@ -1128,8 +1154,10 @@ def compress_tool_results_impl(
                         )
                     if saved > 0:
                         kind = _detect_tool_content_type_impl(content)
-                        key = f"{kind}_cached" if "|unchanged|" in compressed else f"{kind}_diff"
+                        key = _result_cache_breakdown_key(kind, tool_name, compressed)
                         breakdown[key] = breakdown.get(key, 0) + saved
+                        if tool_name in COMMAND_LIKE_TOOLS:
+                            breakdown["command_cacheable_seen"] = breakdown.get("command_cacheable_seen", 0) + 1
                         msg["content"] = compressed
             continue
         for block in content:
@@ -1227,6 +1255,7 @@ def compress_tool_results_impl(
                             ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                             preserve_exact_search_evidence=preserve_exact_search_evidence,
                             tool_compatible=True,
+                            cache_breakdown=breakdown,
                         )
                         if saved > 0:
                             breakdown["search_repeat_cached"] = breakdown.get("search_repeat_cached", 0) + saved
@@ -1469,7 +1498,7 @@ def compress_tool_results_impl(
                         semantic_hash_cache[cache_key] = content_hash
 
             if (
-                tool_name in FILE_LIKE_TOOLS
+                tool_name in FILE_LIKE_TOOLS | COMMAND_LIKE_TOOLS
                 and result_cache is not None
                 and tool_use_id_to_context is not None
                 and not bypass_result_cache
@@ -1488,6 +1517,7 @@ def compress_tool_results_impl(
                         ttl_seconds=RESULT_CACHE_TTL_SECONDS,
                         preserve_exact_search_evidence=preserve_exact_search_evidence,
                         tool_compatible=True,
+                        cache_breakdown=breakdown,
                     )
                     if "stable_payload_validation_failed" in compressed:
                         breakdown["stable_payload_validation_failed"] = (
@@ -1495,8 +1525,10 @@ def compress_tool_results_impl(
                         )
                     if saved > 0:
                         kind = _detect_tool_content_type_impl(raw)
-                        key = f"{kind}_cached" if "|unchanged|" in compressed else f"{kind}_diff"
+                        key = _result_cache_breakdown_key(kind, tool_name, compressed)
                         breakdown[key] = breakdown.get(key, 0) + saved
+                        if tool_name in COMMAND_LIKE_TOOLS:
+                            breakdown["command_cacheable_seen"] = breakdown.get("command_cacheable_seen", 0) + 1
                         _record_non_exact_observation(
                             context, raw, form="reference" if "|unchanged|" in compressed else "summary"
                         )
@@ -1577,6 +1609,8 @@ def inject_system_additions_impl(
     include_tok_state = _should_include_tok_state(tok_state, tool_compatible=tool_compatible)
 
     if tool_compatible and not include_tok_state and not grammar and not todo and not deltas:
+        if not output_directive.strip():
+            return body
         current_sys_prompt = body.get("system", "")
         if isinstance(current_sys_prompt, str):
             body["system"] = current_sys_prompt + "\n\n" + output_directive if current_sys_prompt else output_directive

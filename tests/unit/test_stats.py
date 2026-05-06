@@ -147,6 +147,29 @@ class TestSavingsTracker:
         assert summary["tool_history_blocked_count"] == 1
         assert summary["invalid_tool_history_session_reset_count"] == 1
 
+    def test_order_only_tool_result_repair_does_not_degrade_session_quality(self, tracker) -> None:
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=100,
+            actual_output=50,
+            cache_read=0,
+            cache_write=0,
+            input_saved=20,
+            output_saved=10,
+            behavior_signals={
+                "tok_bridge_tool_result_order_repaired": 1,
+                "tok_bridge_tool_result_pairing_repaired": 1,
+                "tool_result_order_repair_non_degrading": 1,
+            },
+        )
+
+        summary = tracker.session_summary()
+
+        assert summary is not None
+        assert summary["session_quality"] == "clean"
+        assert summary["last_degradation_reason"] == ""
+        assert summary["tool_history_pairing_repaired_count"] == 0
+
     def test_session_summary_surfaces_provider_pairing_disagreement(self, tracker) -> None:
         tracker.record_call(
             model="claude-sonnet-4",
