@@ -533,6 +533,7 @@ class BridgeSession:
                 evicted = self._session_buckets.pop(key, None)
                 if evicted is not None:
                     evicted.tracker.merge_session_to_ledger()
+                    self._per_key_previous_tool_result_cache_blocks.pop(key, None)
                     _prune_auto_fingerprint_map_for_key(key)
         max_sessions = max(1, int(self.max_sessions))
         while len(self._session_buckets) > max_sessions:
@@ -543,6 +544,7 @@ class BridgeSession:
             evicted = self._session_buckets.pop(evict_key, None)
             if evicted is not None:
                 evicted.tracker.merge_session_to_ledger()
+                self._per_key_previous_tool_result_cache_blocks.pop(evict_key, None)
                 _prune_auto_fingerprint_map_for_key(evict_key)
 
     def resolve_session_key(self, headers: dict[str, str], body: dict[str, Any] | None = None) -> str:
@@ -727,9 +729,11 @@ class BridgeSession:
             return
         bucket.tracker.reset_session_stats()
         bucket.runtime_session.reset_session()
+        self._per_key_previous_tool_result_cache_blocks.pop(bucket.key, None)
         self._activate_session_bucket(bucket)
 
     def reset_all_sessions(self) -> None:
+        self._per_key_previous_tool_result_cache_blocks.clear()
         for bucket in self._session_buckets.values():
             bucket.tracker.reset_session_stats()
             bucket.runtime_session.reset_session()

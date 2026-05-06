@@ -149,7 +149,7 @@ def _exact_search_evidence_keys_in_messages(
             raw = text_of(cast("Any", block.get("content", ""))).strip()
             if not raw:
                 continue
-            if raw.startswith(">>>") or "|cached" in raw or "matches_compressed" in raw:
+            if raw.startswith(">>>"):
                 continue
             if search_result_evidence_level(raw) != "exact_content":
                 continue
