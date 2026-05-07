@@ -1,0 +1,38 @@
+{
+  "project": "tok",
+  "release_line": "0.1.x",
+  "supported_primary_path": "Claude Code through local Tok bridge",
+  "unsupported_claims": [
+    "hosted service",
+    "general agent framework",
+    "repo indexer",
+    "universal protocol implementation",
+    "stable Python SDK"
+  ],
+  "required_verification_commands": [
+    "tok --version",
+    "tok --help",
+    "tok claude --help",
+    "tok bridge status --help",
+    "tok doctor --help",
+    "tok stats --help",
+    "tok audit --help"
+  ],
+  "success_signals": [
+    "bridge running",
+    "Tok active",
+    "degraded to baseline: no",
+    "Fallbacks reported",
+    "stats available"
+  ],
+  "reporting_required_fields": [
+    "commands_run",
+    "pass_fail",
+    "environment",
+    "claude_available",
+    "bridge_running",
+    "degraded_to_baseline",
+    "fallback_count",
+    "stats_summary"
+  ]
+}

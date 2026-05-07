@@ -67,6 +67,7 @@ tmp/
 # Claude / AI tooling
 .claude/
 CLAUDE.md
+AGENTS.md
 
 # Campaign artifacts
 campaign_ledger.md

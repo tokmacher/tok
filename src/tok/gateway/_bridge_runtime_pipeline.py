@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from typing import Any, Literal, cast
 
 from fastapi import Response
@@ -14,6 +14,7 @@ from tok.universal_runtime import RuntimeRequest
 
 from . import _RUNTIME, BridgeSession, logger
 from ._bridge_preflight import _run_bridge_preflight
+from ._types import BridgePreparedPayload
 
 
 def _plan_finalization_min_saved_tokens() -> int:
@@ -29,23 +30,6 @@ def _plan_finalization_min_saved_tokens() -> int:
 
 
 _PLAN_FINALIZATION_MIN_SAVED_TOKENS = _plan_finalization_min_saved_tokens()
-
-
-@dataclass
-class BridgePreparedPayload:
-    body: dict[str, Any]
-    behavior_signals: dict[str, int]
-    request_policy: str
-    request_tool_compatible: bool
-    compressed: bool
-    saved_toks: int
-    tool_breakdown: dict[str, int]
-    prompt_metrics: dict[str, int]
-    retry_forbidden: bool
-    provider_safe_original_body: dict[str, Any] = field(default_factory=dict)
-    request_model: str = ""
-    request_messages: list[dict[str, Any]] = field(default_factory=list)
-    lifecycle: RequestLifecycle | None = None
 
 
 def _empty_prompt_metrics() -> dict[str, int]:
@@ -245,6 +229,7 @@ def prepare_bridge_payload(
     )
     requested_request_policy = request_policy
     requested_tool_compatible = request_tool_compatible
+    lifecycle = replace(lifecycle, request_preparation=True)
 
     prepared = _RUNTIME.prepare_request(
         RuntimeRequest(
@@ -381,5 +366,9 @@ def prepare_bridge_payload(
         request_model=request_model,
         request_messages=copy.deepcopy(request_messages),
         lifecycle=lifecycle,
+    )
+    logger.debug(
+        "request_lifecycle: %s",
+        {f: getattr(lifecycle, f) for f in lifecycle.__dataclass_fields__},
     )
     return payload, preflight_response

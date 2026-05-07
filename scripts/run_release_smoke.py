@@ -331,6 +331,26 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
         "tests/smoke/test_primary_non_streaming_smoke.py",
         "-q",
     ),
+    _pytest_step(
+        "Attribution capability manifest smoke",
+        "tests/smoke/test_attribution_capability_manifest_smoke.py",
+        "-q",
+    ),
+    _pytest_step(
+        "Attribution compression smoke",
+        "tests/smoke/test_attribution_compression_smoke.py",
+        "-q",
+    ),
+    _pytest_step(
+        "Attribution diagnostics smoke",
+        "tests/smoke/test_attribution_diagnostics_consistency_smoke.py",
+        "-q",
+    ),
+    _pytest_step(
+        "Attribution trace exactness smoke",
+        "tests/smoke/test_attribution_trace_exactness_smoke.py",
+        "-q",
+    ),
     _inline_python_step(
         "Validation-failure smoke",
         VALIDATION_FAILURE_CHECK,

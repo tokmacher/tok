@@ -360,6 +360,18 @@ def bridge_status() -> None:
                     border_style=status_border(verdict_style),
                 )
             )
+            capability = payload.get("capability")
+            if isinstance(capability, dict):
+                evidence_forms = capability.get("supported_evidence_forms", ())
+                if isinstance(evidence_forms, list | tuple):
+                    evidence_text = ", ".join(str(item) for item in evidence_forms)
+                else:
+                    evidence_text = str(evidence_forms or "")
+                console.print("[bold]Bridge capability:[/bold]")
+                console.print(f"  mode: {capability.get('bridge_mode', 'unknown')}")
+                console.print(f"  trace: {capability.get('trace_version', 'unknown')}")
+                console.print(f"  conformance: {capability.get('max_conformance_level', 'unknown')}")
+                console.print(f"  evidence: {evidence_text}")
             if baseline_only:
                 console.print(
                     "[dim]Next step: run `tok doctor`, then inspect `tok bridge logs 100` for the degradation reason.[/dim]"
