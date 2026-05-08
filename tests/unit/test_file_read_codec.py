@@ -608,3 +608,32 @@ class TestSignatureContinuationRegex:
     def test_non_continuation(self) -> None:
         assert _SIGNATURE_CONTINUATION_RE.match("def foo():") is None
         assert _SIGNATURE_CONTINUATION_RE.match("class Bar:") is None
+
+
+class TestObservabilityFileGuardsHotPromotion:
+    """Regression: observability files must bypass hot promotion skeletonization."""
+
+    def test_hot_observability_file_not_skeletonized(self) -> None:
+        text = (
+            "def greet(name: str) -> str:\n    return f'hello {name}'\n\ndef farewell():\n    pass\n\nimport os\n"
+            + "x = 1\n" * 50
+        )
+        context = {"args": {"path": "bridge.log"}, "file_heat": {"bridge.log": 10.0}}
+        result = _compress_file_read(text, tool_context=context)
+        assert result == text
+
+    def test_hot_observability_toml_dir_not_skeletonized(self) -> None:
+        text = (
+            "def greet(name: str) -> str:\n    return f'hello {name}'\n\ndef farewell():\n    pass\n\nimport os\n"
+            + "x = 1\n" * 50
+        )
+        context = {"args": {"path": ".tok/bridge.log"}, "file_heat": {".tok/bridge.log": 10.0}}
+        result = _compress_file_read(text, tool_context=context)
+        assert result == text
+
+    def test_hot_non_observability_python_file_is_skeletonized(self) -> None:
+        text = "def greet(name: str) -> str:\n    return f'hello {name}'\n"
+        context = {"args": {"path": "greet.py"}, "file_heat": {"greet.py": 3.0}}
+        result = _compress_file_read(text, tool_context=context)
+        assert result != text
+        assert "is_skeleton:true" in result

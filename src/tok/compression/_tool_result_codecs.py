@@ -783,12 +783,18 @@ def _compress_stack_traces(text: str) -> str:
 
     # Collect paths from all frame formats for common-prefix computation.
     paths = re.findall(r'File "([^"]+)"', text)
-    # Node.js frames: at func (path:line:col)
+    node_paths: set[str] = set()
     for m in re.finditer(r"at [\w.<>$\[\]]+ \((.+):\d+:\d+\)", text):
         paths.append(m.group(1))
-    # Java frames: at func (Class:line) — reconstruct plausible path from class
+        node_paths.add(m.group(1))
+    _JS_FILE_RE = re.compile(r"\.(js|ts|mjs|cjs|jsx|tsx)$", re.IGNORECASE)
     for m in re.finditer(r"at [\w.$]+\(([\w.$]+):(\d+)\)", text):
-        paths.append(m.group(1).replace(".", "/"))
+        candidate = m.group(1)
+        if candidate in node_paths:
+            continue
+        if _JS_FILE_RE.search(candidate):
+            continue
+        paths.append(candidate.replace(".", "/"))
     common_prefix = ""
     if len(paths) >= 2:
         try:

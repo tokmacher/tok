@@ -325,5 +325,25 @@ class DiagnosticsSnapshot:
 
     @classmethod
     def from_health_response(cls, payload: dict[str, Any]) -> DiagnosticsSnapshot:
-        data = {k: payload.get(k) for k in cls.__dataclass_fields__}
+        data: dict[str, Any] = {}
+        for name, field in cls.__dataclass_fields__.items():
+            val = payload.get(name, field.default)
+            ftype = field.type
+            if isinstance(ftype, str):
+                ftype_name = ftype
+            else:
+                ftype_name = getattr(ftype, "__name__", "")
+            if ftype_name == "int":
+                data[name] = int(val) if val is not None else 0
+            elif ftype_name == "float":
+                data[name] = float(val) if val is not None else 0.0
+            elif ftype_name == "bool":
+                if val is None:
+                    data[name] = False
+                elif isinstance(val, bool):
+                    data[name] = val
+                else:
+                    data[name] = bool(val)
+            else:
+                data[name] = str(val) if val is not None else ""
         return cls(**data)

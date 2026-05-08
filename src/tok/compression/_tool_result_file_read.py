@@ -555,6 +555,8 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 heat = file_heat.get(norm_path, 0.0) if isinstance(file_heat, dict) else 0.0
                 if heat == 0.0:
                     return text
+                if _is_observability_file(tool_context):
+                    return text
                 if heat >= _SKELETON_HEAT_THRESHOLD and _is_python_file(text, tool_context):
                     ast_skeleton = _extract_python_skeleton(text)
                     if ast_skeleton is not None:

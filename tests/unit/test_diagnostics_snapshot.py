@@ -233,3 +233,61 @@ def test_diagnostics_snapshot_roundtrip_from_health_response() -> None:
     payload = original.to_health_response()
     snap = DiagnosticsSnapshot.from_health_response(payload)
     assert snap.to_health_response() == payload
+
+
+class TestFromHealthResponseTypeCoercion:
+    """Regression: from_health_response must coerce types, not pass through None/str."""
+
+    def test_missing_keys_get_correct_defaults(self) -> None:
+        snap = DiagnosticsSnapshot.from_health_response({})
+        assert snap.port == 0
+        assert isinstance(snap.port, int)
+        assert snap.baseline_only is False
+        assert isinstance(snap.baseline_only, bool)
+        assert snap.fallback_count == 0
+        assert isinstance(snap.fallback_count, int)
+        assert snap.session_savings_pct == 0.0
+        assert isinstance(snap.session_savings_pct, float)
+        assert snap.api_base == ""
+        assert isinstance(snap.api_base, str)
+
+    def test_string_typed_int_fields_are_coerced(self) -> None:
+        payload = {"port": "9090", "fallback_count": "7", "calls": "42"}
+        snap = DiagnosticsSnapshot.from_health_response(payload)
+        assert snap.port == 9090
+        assert isinstance(snap.port, int)
+        assert snap.fallback_count == 7
+        assert isinstance(snap.fallback_count, int)
+        assert snap.calls == 42
+        assert isinstance(snap.calls, int)
+
+    def test_string_typed_float_fields_are_coerced(self) -> None:
+        payload = {"session_savings_pct": "33.3", "actual_cost_usd": "0.05"}
+        snap = DiagnosticsSnapshot.from_health_response(payload)
+        assert snap.session_savings_pct == 33.3
+        assert isinstance(snap.session_savings_pct, float)
+        assert snap.actual_cost_usd == 0.05
+        assert isinstance(snap.actual_cost_usd, float)
+
+    def test_none_values_use_field_defaults(self) -> None:
+        payload = {"port": None, "fallback_count": None, "api_base": None}
+        snap = DiagnosticsSnapshot.from_health_response(payload)
+        assert snap.port == 0
+        assert isinstance(snap.port, int)
+        assert snap.fallback_count == 0
+        assert snap.api_base == ""
+
+    def test_roundtrip_preserves_native_types(self) -> None:
+        original = DiagnosticsSnapshot(
+            port=9090,
+            fallback_count=5,
+            session_savings_pct=42.5,
+            baseline_only=True,
+            actual_tokens=9999,
+        )
+        payload = original.to_health_response()
+        roundtripped = DiagnosticsSnapshot.from_health_response(payload)
+        assert roundtripped.to_health_response() == payload
+        assert isinstance(roundtripped.port, int)
+        assert isinstance(roundtripped.session_savings_pct, float)
+        assert isinstance(roundtripped.baseline_only, bool)

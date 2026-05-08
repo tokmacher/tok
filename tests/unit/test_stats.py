@@ -982,3 +982,141 @@ class TestPeakSavingsPct:
         summary = reloaded.session_summary()
         assert summary is not None
         assert float(summary["peak_savings_pct"]) == peak
+
+
+class TestNetTokensSavedSubtraction:
+    """Regression: _subtract_session_from_ledger must subtract net, not gross."""
+
+    def test_net_tokens_saved_subtracts_net_not_gross(self, tracker) -> None:
+        from tok.utils.savings_tracker import SavingsTracker as _ST
+
+        ledger = {
+            "sessions": 2,
+            "total_turns": 10,
+            "total_tokens": 5000,
+            "total_prompt_tokens": 4000,
+            "total_completion_tokens": 1000,
+            "tokens_saved": 2000,
+            "net_tokens_saved": 1800,
+            "total_cost_usd": 0.1,
+            "estimated_baseline_cost_usd": 0.2,
+            "cost_saved_usd": 0.1,
+            "baseline_prompt_tokens": 4000,
+            "prepared_prompt_tokens": 3000,
+            "saved_prompt_tokens": 1000,
+            "hot_hint_tokens_added": 0,
+            "reacquisition_tokens_avoided_estimate": 0,
+            "reacquisition_cost_tokens": 0,
+        }
+        entry = {
+            "turns": 5,
+            "tokens": 2500,
+            "prompt_tokens": 2000,
+            "completion_tokens": 500,
+            "tokens_saved": 1000,
+            "actual_cost_usd": 0.05,
+            "baseline_cost_usd": 0.1,
+            "saved_usd": 0.05,
+            "reacquisition_cost_tokens": 200,
+        }
+        _ST._subtract_session_from_ledger(ledger, entry)
+
+        assert ledger["net_tokens_saved"] == 1800 - (1000 - 200)
+
+    def test_net_tokens_saved_clamps_to_zero(self, tracker) -> None:
+        from tok.utils.savings_tracker import SavingsTracker as _ST
+
+        ledger = {
+            "sessions": 1,
+            "total_turns": 5,
+            "total_tokens": 2500,
+            "total_prompt_tokens": 2000,
+            "total_completion_tokens": 500,
+            "tokens_saved": 1000,
+            "net_tokens_saved": 100,
+            "total_cost_usd": 0.05,
+            "estimated_baseline_cost_usd": 0.1,
+            "cost_saved_usd": 0.05,
+            "baseline_prompt_tokens": 2000,
+            "prepared_prompt_tokens": 1500,
+            "saved_prompt_tokens": 500,
+            "hot_hint_tokens_added": 0,
+            "reacquisition_tokens_avoided_estimate": 0,
+            "reacquisition_cost_tokens": 0,
+        }
+        entry = {
+            "turns": 5,
+            "tokens": 2500,
+            "prompt_tokens": 2000,
+            "completion_tokens": 500,
+            "tokens_saved": 1000,
+            "actual_cost_usd": 0.05,
+            "baseline_cost_usd": 0.1,
+            "saved_usd": 0.05,
+            "reacquisition_cost_tokens": 0,
+        }
+        _ST._subtract_session_from_ledger(ledger, entry)
+
+        assert ledger["net_tokens_saved"] == 0
+
+    def test_net_tokens_saved_uses_reacquisition_cost(self, tracker) -> None:
+        from tok.utils.savings_tracker import SavingsTracker as _ST
+
+        ledger = {
+            "sessions": 1,
+            "total_turns": 5,
+            "total_tokens": 2500,
+            "total_prompt_tokens": 2000,
+            "total_completion_tokens": 500,
+            "tokens_saved": 1000,
+            "net_tokens_saved": 800,
+            "total_cost_usd": 0.05,
+            "estimated_baseline_cost_usd": 0.1,
+            "cost_saved_usd": 0.05,
+            "baseline_prompt_tokens": 2000,
+            "prepared_prompt_tokens": 1500,
+            "saved_prompt_tokens": 500,
+            "hot_hint_tokens_added": 0,
+            "reacquisition_tokens_avoided_estimate": 0,
+            "reacquisition_cost_tokens": 0,
+        }
+        entry = {
+            "turns": 5,
+            "tokens": 2500,
+            "prompt_tokens": 2000,
+            "completion_tokens": 500,
+            "tokens_saved": 1000,
+            "actual_cost_usd": 0.05,
+            "baseline_cost_usd": 0.1,
+            "saved_usd": 0.05,
+            "reacquisition_cost_tokens": 500,
+        }
+        _ST._subtract_session_from_ledger(ledger, entry)
+
+        assert ledger["net_tokens_saved"] == 800 - (1000 - 500)
+
+
+class TestLifetimeSummaryNoDoubleCountHealthOverlay:
+    """Regression: lifetime_summary already includes inflight data; stats_command must not add it again."""
+
+    def test_lifetime_summary_includes_inflight_without_health_overlay(self, tracker) -> None:
+        tracker.ledger_path.write_text(
+            "@lifetime_savings\n  sessions: 1\n\n@per_session_log\n"
+            "  2026-04-01T10:00:00Z;prev1111;3;3000;0.030000;0.060000;0.030000;1500;0;0\n"
+        )
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=1000,
+            actual_output=200,
+            cache_read=0,
+            cache_write=0,
+            input_saved=400,
+            output_saved=0,
+        )
+
+        summary = tracker.lifetime_summary()
+
+        assert summary is not None
+        assert summary["sessions"] == 2
+        assert summary["actual_tokens"] == 4200
+        assert summary["tokens_saved"] == 1900

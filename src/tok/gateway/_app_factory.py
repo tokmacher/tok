@@ -91,6 +91,16 @@ def _build_response_signals(
 ) -> tuple[dict[str, int], int]:
     total_output_saved = 0
     response_signals: dict[str, int] = {}
+
+    passthrough_blocks = [
+        block for block in resp_json.get("content", []) if isinstance(block, dict) and block.get("type") != "text"
+    ]
+    passthrough_blocks, passthrough_signals = normalize_tool_use_blocks(
+        passthrough_blocks, seed_prefix="toolu_upstream"
+    )
+    for key, value in passthrough_signals.items():
+        behavior_signals[key] = behavior_signals.get(key, 0) + value
+
     if full_response_text:
         processed = _RUNTIME.process_response(
             full_response_text,
@@ -100,14 +110,6 @@ def _build_response_signals(
             tool_compatible=request_tool_compatible,
         )
         response_signals = processed.behavior_signals
-        passthrough_blocks = [
-            block for block in resp_json.get("content", []) if isinstance(block, dict) and block.get("type") != "text"
-        ]
-        passthrough_blocks, passthrough_signals = normalize_tool_use_blocks(
-            passthrough_blocks, seed_prefix="toolu_upstream"
-        )
-        for key, value in passthrough_signals.items():
-            behavior_signals[key] = behavior_signals.get(key, 0) + value
         new_content = _rebuild_content_preserving_position(
             resp_json.get("content", []),
             processed.content_blocks,
@@ -127,9 +129,20 @@ def _build_response_signals(
             total_output_saved,
         )
     else:
-        session_signals = active_session.runtime_session.consume_behavior_signals()
+        passthrough_idx = 0
+        for i, block in enumerate(resp_json.get("content", [])):
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                continue
+            if passthrough_idx < len(passthrough_blocks):
+                resp_json["content"][i] = passthrough_blocks[passthrough_idx]
+                passthrough_idx += 1
+
+        session_signals = active_session.consume_behavior_signals()
         if session_signals:
-            response_signals = dict(session_signals)
+            for k, v in session_signals.items():
+                response_signals[k] = response_signals.get(k, 0) + v
 
     _note_request_policy_recovery_watch(active_session, response_signals)
     return response_signals, total_output_saved

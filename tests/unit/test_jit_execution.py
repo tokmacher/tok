@@ -235,3 +235,28 @@ def test_process_response_does_not_execute_jit_marker_inside_fenced_code(jit_exe
 
     assert calls == []
     assert result.behavior_signals.get("jit_executed") is None
+
+
+class TestJITRegexModuleLevel:
+    """Regression: _JIT_RE must be compiled once at module level, not per call."""
+
+    def test_jit_re_is_module_constant(self) -> None:
+        import tok.runtime._runtime_orchestration as mod
+
+        assert hasattr(mod, "_JIT_RE")
+        import re
+
+        assert isinstance(mod._JIT_RE, re.Pattern)
+
+    def test_jit_re_matches_standard_syntax(self) -> None:
+        import tok.runtime._runtime_orchestration as mod
+
+        m = mod._JIT_RE.search("EXECUTE_JIT(@grep_view(pattern='test', file='x.py'))")
+        assert m is not None
+        assert m.group(1) == "grep_view"
+        assert m.group(2) == "pattern='test', file='x.py'"
+
+    def test_jit_re_no_match_without_at_sign(self) -> None:
+        import tok.runtime._runtime_orchestration as mod
+
+        assert mod._JIT_RE.search("EXECUTE_JIT(grep_view())") is None

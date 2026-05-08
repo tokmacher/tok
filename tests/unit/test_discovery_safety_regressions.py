@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from typing import Any
 
@@ -744,6 +745,36 @@ class TestSearchCostAdvisoryCooldown:
         assert "[tok advisory:" in adv1
         assert "[tok advisory:" in adv2
 
+    def test_concurrent_same_query_respects_cooldown(self) -> None:
+        """Regression: concurrent calls with the same query must not all emit advisories.
+
+        The cooldown check and update must be atomic. Before the fix, two threads
+        could both pass the cooldown check before either recorded the update.
+        """
+        clear_advisory_cooldown()
+        query_id = "concurrent_query"
+        results: list[str] = []
+        barrier = threading.Barrier(4)
+
+        def worker() -> None:
+            barrier.wait()
+            adv = _build_search_advisory(
+                match_count=60,
+                file_count=12,
+                query_identity=query_id,
+                current_turn=1,
+            )
+            results.append(adv)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        advisories = [r for r in results if r != ""]
+        assert len(advisories) <= 1, f"Expected at most 1 advisory, got {len(advisories)}"
+
 
 class TestSearchCostAdvisoryEvidenceIntegrity:
     """Tests ensuring advisory does not mutate discovery semantics."""
@@ -790,6 +821,12 @@ class TestSearchCostAdvisoryEvidenceIntegrity:
         ]
         tool_use_id_to_context = build_tool_use_id_to_context(messages)
         first_exact_evidence_seen: set[str] = set()
+        expected_key = evidence_identity_key(
+            "grep_search",
+            path="src",
+            query="needle",
+            args={"query": "needle", "path": "src"},
+        )
 
         compressed, _breakdown = compress_tool_results_impl(
             messages,
@@ -800,11 +837,126 @@ class TestSearchCostAdvisoryEvidenceIntegrity:
 
         # First result must stay raw (first exact observation)
         assert compressed[1]["content"][0]["content"] == search_output
-        # The evidence key should be tracked
-        evidence_key = evidence_identity_key(
-            "grep_search",
-            path="src",
-            query="needle",
-            args={"query": "needle", "path": "src"},
+        assert expected_key in first_exact_evidence_seen
+
+
+class TestSameTurnSeenPathsAcrossToolResultUserMessages:
+    """Regression: _same_turn_seen_paths must persist across tool-result-only
+    user messages within a logical turn, but clear on a real user message."""
+
+    def test_dedup_across_tool_result_only_user_messages(self) -> None:
+        file_content = (
+            "import os\nimport sys\nfrom typing import Optional\n\n"
+            "class DataProcessor:\n"
+            "    def __init__(self, config):\n"
+            "        self.config = config\n"
+            "        self.data = []\n"
+            "        self._cache = {}\n"
+            "    def process(self, items):\n"
+            "        results = []\n"
+            "        for item in items:\n"
+            "            if item in self._cache:\n"
+            "                results.append(self._cache[item])\n"
+            "            else:\n"
+            "                processed = item.upper()\n"
+            "                self._cache[item] = processed\n"
+            "                results.append(processed)\n"
+            "        return results\n"
+        ) * 6
+        messages = [
+            {"role": "user", "content": "read the file"},
+            _tool_use("t1", "Read", file_path="src/foo.py"),
+            _tool_result("t1", file_content),
+            _tool_use("t2", "Read", file_path="src/foo.py"),
+            _tool_result("t2", file_content),
+        ]
+        tool_use_id_to_context = build_tool_use_id_to_context(messages)
+        compressed, breakdown = compress_tool_results_impl(
+            messages,
+            tool_use_id_to_context=tool_use_id_to_context,
+            compression_level="balanced",
+            semantic_hash_cache={},
+            files_fully_delivered={"src/foo.py": 1},
+            current_turn=2,
+            keep_turns_window=10,
+            session_files_read=set(),
         )
-        assert evidence_key in first_exact_evidence_seen
+        has_t1_raw = False
+        has_t2_compressed = False
+        for msg in compressed:
+            for block in msg.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    raw = block.get("content", "")
+                    if block.get("tool_use_id") == "t1":
+                        has_t1_raw = raw == file_content
+                    elif block.get("tool_use_id") == "t2":
+                        has_t2_compressed = len(raw) < len(file_content)
+        assert has_t1_raw, "First read should be delivered verbatim"
+        assert has_t2_compressed, "Second read of same file in same logical turn should be compressed"
+
+    def test_real_user_message_clears_seen_paths_preventing_same_turn_bypass(self) -> None:
+        file_content = (
+            "import os\nimport sys\nfrom typing import Optional\n\n"
+            "class DataProcessor:\n"
+            "    def __init__(self, config):\n"
+            "        self.config = config\n"
+            "        self.data = []\n"
+            "        self._cache = {}\n"
+            "    def process(self, items):\n"
+            "        results = []\n"
+            "        for item in items:\n"
+            "            if item in self._cache:\n"
+            "                results.append(self._cache[item])\n"
+            "            else:\n"
+            "                processed = item.upper()\n"
+            "                self._cache[item] = processed\n"
+            "                results.append(processed)\n"
+            "        return results\n"
+        ) * 6
+        messages_with_real_user = [
+            {"role": "user", "content": "read the file"},
+            _tool_use("t1", "Read", file_path="src/qux.py"),
+            _tool_result("t1", file_content),
+            {"role": "user", "content": "now read it again"},
+            _tool_use("t2", "Read", file_path="src/qux.py"),
+            _tool_result("t2", file_content),
+        ]
+        messages_with_tool_result_only = [
+            {"role": "user", "content": "read the file"},
+            _tool_use("t1", "Read", file_path="src/qux.py"),
+            _tool_result("t1", file_content),
+            _tool_use("t2", "Read", file_path="src/qux.py"),
+            _tool_result("t2", file_content),
+        ]
+        common_kw = dict(
+            compression_level="balanced",
+            semantic_hash_cache={},
+            files_fully_delivered={"src/qux.py": 1},
+            current_turn=3,
+            keep_turns_window=10,
+            session_files_read=set(),
+            file_heat={"src/qux.py": 0.0},
+        )
+        import copy
+
+        ctx_a = build_tool_use_id_to_context(messages_with_real_user)
+        _, breakdown_real = compress_tool_results_impl(
+            copy.deepcopy(messages_with_real_user),
+            tool_use_id_to_context=ctx_a,
+            **common_kw,
+        )
+        ctx_b = build_tool_use_id_to_context(messages_with_tool_result_only)
+        compressed_tool_only, breakdown_tool = compress_tool_results_impl(
+            copy.deepcopy(messages_with_tool_result_only),
+            tool_use_id_to_context=ctx_b,
+            **common_kw,
+        )
+        t2_content_tool_only = ""
+        for msg in compressed_tool_only:
+            for block in msg.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    if block.get("tool_use_id") == "t2":
+                        t2_content_tool_only = block.get("content", "")
+        assert len(t2_content_tool_only) < len(file_content), (
+            "With tool-result-only user messages, same-turn dedup should compress the second read"
+        )

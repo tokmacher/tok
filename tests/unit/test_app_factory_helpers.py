@@ -184,3 +184,31 @@ def test_rebuild_and_record_response_calls_tracker() -> None:
     assert call_kwargs["input_saved"] == 10
     assert call_kwargs["output_saved"] == 20
     assert call_kwargs["behavior_signals"] == {"some_signal": 1}
+
+
+def test_build_response_signals_normalizes_tool_use_on_textless_response() -> None:
+    session = _make_session()
+    behavior_signals: dict[str, int] = {}
+    tool_use_block = {
+        "type": "tool_use",
+        "id": "",
+        "name": "Read",
+        "input": {"file_path": "src/foo.py"},
+    }
+    resp_json: dict[str, Any] = {
+        "content": [tool_use_block.copy()],
+        "model": "claude-sonnet-4",
+    }
+
+    response_signals, _ = _build_response_signals(
+        "",
+        resp_json,
+        session,
+        behavior_signals,
+        request_tool_compatible=False,
+    )
+
+    assert resp_json["content"][0]["id"] != "", "tool_use id must be normalized even when full_response_text is empty"
+    assert "tool_use_blank_id_synthesized" in behavior_signals, (
+        "normalization signals must be accumulated into behavior_signals"
+    )

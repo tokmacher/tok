@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re as _re
 from typing import TYPE_CHECKING, Any, cast
 
 from .config import (
@@ -66,6 +67,8 @@ _HINT_COOLDOWN_EXEMPT = frozenset(
         LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
     }
 )
+
+_JIT_RE = _re.compile(r"EXECUTE_JIT\(@(\w+)\(([^)]*)\)\)")
 
 
 def _apply_runtime_hint_cooldown(
@@ -269,9 +272,6 @@ def process_response_impl(
     jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,
 ) -> ProcessedRuntimeResponse:
     """Process a raw LLM response into structured content with drift handling."""
-    import re as _re
-
-    _JIT_RE = _re.compile(r"EXECUTE_JIT\(@(\w+)\(([^)]*)\)\)")
 
     from .types import ProcessedRuntimeResponse
 

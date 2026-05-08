@@ -67,3 +67,50 @@ def test_detect_recovery_needed_returns_true_when_no_visible_blocks() -> None:
 
 def test_detect_recovery_needed_returns_false_with_tool_use() -> None:
     assert _detect_recovery_needed(translated_blocks=[{"type": "tool_use"}], read_error=None) is False
+
+
+class TestDetectRecoveryNeeded:
+    """Regression: _detect_recovery_needed must correctly identify visible blocks."""
+
+    def test_returns_true_when_empty_blocks_and_read_error(self) -> None:
+        assert _detect_recovery_needed(translated_blocks=[], read_error="timeout") is True
+
+    def test_returns_false_with_nonempty_text(self) -> None:
+        assert _detect_recovery_needed(translated_blocks=[{"type": "text", "text": "hello"}], read_error=None) is False
+
+    def test_returns_false_with_thinking_block(self) -> None:
+        assert (
+            _detect_recovery_needed(translated_blocks=[{"type": "thinking", "thinking": "x"}], read_error=None) is False
+        )
+
+    def test_returns_false_with_redacted_thinking_block(self) -> None:
+        assert _detect_recovery_needed(translated_blocks=[{"type": "redacted_thinking"}], read_error=None) is False
+
+    def test_returns_true_with_only_empty_text_blocks(self) -> None:
+        assert (
+            _detect_recovery_needed(
+                translated_blocks=[{"type": "text", "text": ""}, {"type": "text", "text": "  "}],
+                read_error="eof",
+            )
+            is True
+        )
+
+    def test_returns_true_with_only_empty_text_no_error(self) -> None:
+        assert (
+            _detect_recovery_needed(
+                translated_blocks=[{"type": "text", "text": ""}],
+                read_error=None,
+            )
+            is False
+        )
+
+    def test_returns_false_with_tool_use_even_with_error(self) -> None:
+        assert _detect_recovery_needed(translated_blocks=[{"type": "tool_use"}], read_error="eof") is False
+
+    def test_mixed_blocks_with_one_visible(self) -> None:
+        blocks = [
+            {"type": "text", "text": ""},
+            {"type": "tool_use"},
+            {"type": "text", "text": "  "},
+        ]
+        assert _detect_recovery_needed(translated_blocks=blocks, read_error=None) is False

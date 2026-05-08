@@ -422,3 +422,33 @@ class TestEffectiveModelProfile:
         assert captured, "effective_model_profile was never accessed during prepare_request"
         for mp in captured:
             assert mp.compression_aggressiveness < base.compression_aggressiveness
+
+    def test_labour_39_scales_by_085(self) -> None:
+        s = self._session_with_labour(39)
+        base = s.model_profile.compression_aggressiveness
+        effective = s.effective_model_profile.compression_aggressiveness
+        assert abs(effective - base * 0.85) < 0.001
+
+    def test_labour_41_scales_by_070(self) -> None:
+        s = self._session_with_labour(41)
+        base = s.model_profile.compression_aggressiveness
+        effective = s.effective_model_profile.compression_aggressiveness
+        assert abs(effective - base * 0.70) < 0.001
+
+    def test_very_high_labour_never_drops_below_floor(self) -> None:
+        s = self._session_with_labour(1000)
+        assert s.effective_model_profile.compression_aggressiveness >= 0.1
+
+    def test_effective_profile_is_independent_per_call(self) -> None:
+        s = self._session_with_labour(25)
+        first = s.effective_model_profile
+        s._current_task_labour_index = 50
+        second = s.effective_model_profile
+        assert second.compression_aggressiveness < first.compression_aggressiveness
+
+    def test_other_profile_fields_unchanged(self) -> None:
+        s = self._session_with_labour(50)
+        base = s.model_profile
+        eff = s.effective_model_profile
+        for field in [f for f in base.__dataclass_fields__ if f != "compression_aggressiveness"]:
+            assert getattr(eff, field) == getattr(base, field), f"{field} changed unexpectedly"

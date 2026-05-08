@@ -58,7 +58,6 @@ def _build_search_advisory(
     """
     global _advisory_cooldown
 
-    # Check cooldown first
     with _advisory_lock:
         if query_identity and query_identity in _advisory_cooldown:
             last_turn = _advisory_cooldown[query_identity]

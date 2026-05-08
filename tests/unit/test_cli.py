@@ -2597,3 +2597,144 @@ class TestStabilityGate:
         assert result.exit_code == 1
         assert "FRONTIER FAIL" in result.output
         assert "Compression frontier gate: FAIL" in result.output
+
+
+class TestStatsTotalNoDoubleCounting:
+    """Regression: stats --total must not double-count inflight session tokens
+    when lifetime_summary() already overlays inflight data."""
+
+    def test_stats_total_no_double_count_with_bridge_running(self, tmp_path, monkeypatch) -> None:
+        ledger = tmp_path / "global_savings.tok"
+        ledger.write_text(
+            "@lifetime_savings\n  sessions: 1\n  total_turns: 5\n  total_tokens: 1000\n"
+            "  total_cost_usd: 0.010000\n  estimated_baseline_cost_usd: 0.020000\n"
+            "  tokens_saved: 500\n  cost_saved_usd: 0.005000\n  savings_pct: 33.3\n"
+            "  tok_fallback_activated: 0\n  baseline_only_session: 0\n\n"
+            "@per_session_log\n"
+            "  2026-05-01T10:00:00Z;aaa11111;5;1000;0.010000;0.020000;0.005000;500;0;0\n"
+        )
+        savings_file = tmp_path / "tok_savings.tok"
+        tracker = SavingsTracker(
+            savings_file=str(savings_file),
+            ledger_path=ledger,
+        )
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=800,
+            actual_output=200,
+            cache_read=0,
+            cache_write=0,
+            input_saved=300,
+            output_saved=0,
+        )
+
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(savings_file))
+
+        inflight_summary = tracker.lifetime_summary()
+        assert inflight_summary is not None
+        expected_sessions = inflight_summary["sessions"]
+        expected_tokens = inflight_summary["actual_tokens"]
+
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: 9999)
+
+        from unittest.mock import MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "actual_tokens": 1000,
+            "baseline_tokens": 1300,
+            "session_tokens_saved": 300,
+            "session_savings_pct": 23.1,
+            "session_cost_savings_pct": 0.0,
+            "actual_cost_usd": 0.01,
+            "baseline_cost_usd": 0.015,
+            "cost_saved_usd": 0.005,
+            "baseline_only": False,
+            "fallback_count": 0,
+            "calls": 1,
+            "session_quality": "clean",
+            "last_degradation_reason": "",
+            "request_policy": "",
+            "baseline_prompt_tokens": 0,
+            "prepared_prompt_tokens": 0,
+            "saved_prompt_tokens": 0,
+        }
+        monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *a, **kw: mock_resp)
+
+        result = runner.invoke(app, ["stats", "--total"])
+        assert result.exit_code == 0, result.output
+
+        sessions_match = re.search(r"Sessions\s+(\d+)", result.output)
+        assert sessions_match is not None, f"Could not find Sessions in output:\n{result.output}"
+        displayed_sessions = int(sessions_match.group(1))
+        assert displayed_sessions == expected_sessions, (
+            f"Expected {expected_sessions} sessions (lifetime_summary already includes inflight), "
+            f"got {displayed_sessions} — double-counting suspected"
+        )
+
+        tokens_match = re.search(r"Tokens \(with Tok / est\. no Tok\)\s+([\d,]+)\s*/\s*([\d,]+)", result.output)
+        assert tokens_match is not None, f"Could not find token counts in output:\n{result.output}"
+        displayed_actual = int(tokens_match.group(1).replace(",", ""))
+        assert displayed_actual == expected_tokens, (
+            f"Expected {expected_tokens} actual tokens, got {displayed_actual} — double-counting suspected"
+        )
+        savings_file = tmp_path / "tok_savings.tok"
+        tracker = SavingsTracker(
+            savings_file=str(savings_file),
+            ledger_path=ledger,
+        )
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=800,
+            actual_output=200,
+            cache_read=0,
+            cache_write=0,
+            input_saved=300,
+            output_saved=0,
+        )
+
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(savings_file))
+
+        inflight_summary = tracker.lifetime_summary()
+        assert inflight_summary is not None
+        inflight_tokens = inflight_summary["actual_tokens"]
+
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: 9999)
+
+        from unittest.mock import MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "actual_tokens": 1000,
+            "baseline_tokens": 1300,
+            "session_tokens_saved": 300,
+            "session_savings_pct": 23.1,
+            "session_cost_savings_pct": 0.0,
+            "actual_cost_usd": 0.01,
+            "baseline_cost_usd": 0.015,
+            "cost_saved_usd": 0.005,
+            "baseline_only": False,
+            "fallback_count": 0,
+            "calls": 1,
+            "session_quality": "clean",
+            "last_degradation_reason": "",
+            "request_policy": "",
+            "baseline_prompt_tokens": 0,
+            "prepared_prompt_tokens": 0,
+            "saved_prompt_tokens": 0,
+        }
+        monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *a, **kw: mock_resp)
+
+        result = runner.invoke(app, ["stats", "--total"])
+        assert result.exit_code == 0, result.output
+
+        displayed_tokens_match = re.findall(r"([\d,]+)\s+tokens", result.output.replace("\n", " "))
+        for token_str in displayed_tokens_match:
+            val = int(token_str.replace(",", ""))
+            assert val < inflight_tokens * 2, (
+                f"Displayed token value {val} suggests double-counting (inflight was {inflight_tokens})"
+            )

@@ -171,10 +171,6 @@ def _detect_recovery_needed(
         or block.get("type") == "redacted_thinking"
         for block in translated_blocks
     )
-    if has_visible_blocks and all(
-        block.get("type") == "text" and not str(block.get("text", "")).strip() for block in translated_blocks
-    ):
-        has_visible_blocks = False
     return (not has_visible_blocks) and (read_error is not None or len(translated_blocks) == 0)
 
 

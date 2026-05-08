@@ -725,7 +725,11 @@ class SavingsTracker:
             int(ledger["total_completion_tokens"]) - int(entry["completion_tokens"]),
         )
         ledger["tokens_saved"] = max(0, int(ledger["tokens_saved"]) - int(entry["tokens_saved"]))
-        ledger["net_tokens_saved"] = max(0, int(ledger["net_tokens_saved"]) - int(entry["tokens_saved"]))
+        ledger["net_tokens_saved"] = max(
+            0,
+            int(ledger["net_tokens_saved"])
+            - (int(entry["tokens_saved"]) - int(entry.get("reacquisition_cost_tokens", 0))),
+        )
         ledger["total_cost_usd"] = max(0.0, float(ledger["total_cost_usd"]) - float(entry["actual_cost_usd"]))
         ledger["estimated_baseline_cost_usd"] = max(
             0.0,
