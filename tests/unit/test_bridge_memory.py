@@ -1,3 +1,4 @@
+from tok.macros.ir import Instruction, Macro
 from tok.runtime.memory.bridge_memory import (
     HOT_LIMITS,
     PROMOTION_THRESHOLDS,
@@ -217,6 +218,23 @@ def test_wire_state_prioritizes_answer_facts_over_generic_facts() -> None:
     assert "answer_file:src/tok/compression.py" in wire
     assert "answer_verification:compress_history function" in wire
     assert "keep_turns:2" not in wire
+
+
+def test_wire_state_prioritizes_answer_file_target_in_files_field() -> None:
+    state = BridgeMemoryState()
+    state._upsert(state.hot, "files", "src/tok/runtime/policy/smart_policy.py", score_delta=1)
+    state._upsert(state.hot, "files", "src/tok/runtime/memory/bridge_memory.py", score_delta=1)
+    state._upsert(state.hot, "facts", "answer_file:src/tok/runtime/memory/bridge_memory.py", score_delta=3)
+    state._upsert(state.hot, "facts", "answer_verification:pytest tests/unit/test_bridge_memory.py", score_delta=3)
+
+    files = state._resolve_wire_files(
+        MemoryProjectionProfile(field_limits={"files": 2}, question_limit=0, fact_limit=2)
+    )
+
+    assert files[0].value == "src/tok/runtime/memory/bridge_memory.py"
+    assert files[1].value == "src/tok/runtime/policy/smart_policy.py"
+    wire = state.wire_state(MemoryProjectionProfile(field_limits={"files": 2}, question_limit=0, fact_limit=2))
+    assert "answer_file:src/tok/runtime/memory/bridge_memory.py" in wire
 
 
 def test_wire_state_keeps_answer_anchor_diversity_with_small_fact_limit() -> None:
@@ -648,3 +666,99 @@ def test_promote_hot_to_durable_allows_changed_fact_content_for_same_key() -> No
     assert metrics.get("durable_promotions", 0) == 1
     durable_facts = [entry.value for entry in state.durable.get("facts", [])]
     assert new_fact in durable_facts
+
+
+def test_resolve_wire_files_basename_only_answer_file_match() -> None:
+    """answer_file stored without a path prefix must still promote the full-path entry to first."""
+    state = BridgeMemoryState()
+    state._upsert(state.hot, "files", "src/tok/runtime/memory/bridge_memory.py", score_delta=1)
+    state._upsert(state.hot, "files", "src/tok/runtime/policy/smart_policy.py", score_delta=2)
+    # answer_file has only the basename — endswith branch must catch it
+    state._upsert(state.hot, "facts", "answer_file:bridge_memory.py", score_delta=3)
+    state._upsert(state.hot, "facts", "answer_verification:wire_state", score_delta=3)
+
+    files = state._resolve_wire_files(None)
+
+    assert files[0].value == "src/tok/runtime/memory/bridge_memory.py", (
+        f"Expected bridge_memory.py first, got {files[0].value!r}"
+    )
+
+
+def test_resolve_wire_files_preserves_score_order_without_answer_file() -> None:
+    """When no answer_file fact is present, _resolve_wire_files must return entries in score order."""
+    state = BridgeMemoryState()
+    state._upsert(state.hot, "files", "low.py", score_delta=1)
+    state._upsert(state.hot, "files", "mid.py", score_delta=2)
+    state._upsert(state.hot, "files", "top.py", score_delta=5)
+
+    files = state._resolve_wire_files(None)
+
+    values = [e.value for e in files]
+    assert values.index("top.py") < values.index("mid.py") < values.index("low.py"), (
+        f"Score order not preserved: {values}"
+    )
+
+
+def test_wire_state_fallback_context_emits_extra_blocks_without_state_line() -> None:
+    """is_fallback_context=True must return extra_blocks alone when state_parts is empty."""
+    state = BridgeMemoryState()
+    # Register a pointer so pointers.to_tok() is non-empty → extra_blocks will be populated
+    state.pointers.get_pointer("src/tok/runtime/memory/bridge_memory.py", score=5)
+
+    result = state.wire_state(is_fallback_context=True)
+
+    # state_parts is empty (no hot/durable memory ingested), extra_blocks is non-empty
+    assert result, "Expected non-empty output from is_fallback_context path"
+    assert not result.startswith(">>> "), f"State line must not be emitted in pure fallback context: {result!r}"
+
+
+def _make_macro(name: str, hit_count: int) -> Macro:
+    return Macro(
+        name=name,
+        inputs=("p0",),
+        instructions=(Instruction(op="read", args=["$p0"], target=None),),
+        hit_count=hit_count,
+    )
+
+
+def _state_with_memory(load_global_macros: bool = False) -> BridgeMemoryState:
+    """Return a BridgeMemoryState with minimal hot memory so wire_state emits a state line."""
+    state = BridgeMemoryState(load_global_macros=load_global_macros)
+    state.ingest_wire_state(">>> turns:1|goal:test")
+    return state
+
+
+class TestMacroWireStateInjection:
+    def test_high_hit_macro_appears_in_wire_state(self) -> None:
+        state = _state_with_memory()
+        state.macro_registry.register(_make_macro("m_high", hit_count=5))
+        wire = state.wire_state()
+        assert "@macros" in wire
+        assert "m_high" in wire
+        assert "|hits:5" in wire
+
+    def test_low_hit_macro_absent_from_wire_state(self) -> None:
+        state = _state_with_memory()
+        state.macro_registry.register(_make_macro("m_low", hit_count=1))
+        wire = state.wire_state()
+        assert "@macros" not in wire
+        assert "m_low" not in wire
+
+    def test_macro_block_absent_when_registry_empty(self) -> None:
+        state = _state_with_memory()
+        wire = state.wire_state()
+        assert "@macros" not in wire
+
+    def test_macro_wire_state_format(self) -> None:
+        state = _state_with_memory()
+        state.macro_registry.register(_make_macro("fmt_macro", hit_count=4))
+        wire = state.wire_state()
+        assert "|> @fmt_macro(p0) -> read($p0)|hits:4" in wire
+
+    def test_macro_limit_five(self) -> None:
+        state = _state_with_memory()
+        for i in range(10):
+            state.macro_registry.register(_make_macro(f"macro_{i}", hit_count=10 + i))
+        wire = state.wire_state()
+        count = wire.count("|> @macro_")
+        assert count <= 5

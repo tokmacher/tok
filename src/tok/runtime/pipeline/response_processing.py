@@ -1114,7 +1114,7 @@ def response_contract_for_mode(
     # the response is trying to speak Tok protocol.
     contract_text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     tok_detection_text = contract_text if contract_text.strip() else ""
-    has_tok_protocol = bool(IS_TOK.search(tok_detection_text))
+    has_tok_protocol = tok_detection_text.lstrip().startswith(">>>") and bool(IS_TOK.search(tok_detection_text))
 
     tok_blocks, malformed_signals, fallback_mode = parse_tok_response(tok_detection_text, session=session)
     visible_text = ""

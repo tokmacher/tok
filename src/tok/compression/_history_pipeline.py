@@ -1122,7 +1122,7 @@ def compress_tool_results_impl(
         return True
 
     for msg in messages:
-        if msg.get("role") == "user":
+        if msg.get("role") == "user" and not _is_tool_result_only_user_message(msg):
             _same_turn_seen_paths.clear()
         content = msg.get("content")
         if not isinstance(content, list):

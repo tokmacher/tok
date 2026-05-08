@@ -131,8 +131,9 @@ class TestSpeculativeMacroInjection:
         prepared = runtime.prepare_request(self._request_with_message(), session)
 
         system = prepared.body.get("system", "")
-        assert "@macro_a" not in system
-        assert "@macro_b" not in system
+        # Speculative-hint path ("Available macros: ...") must not fire.
+        # Macros may appear in the wire-state @macros block (expected).
+        assert "Available macros" not in system
 
     def test_speculative_signal_recorded(self) -> None:
         macro = self._simple_macro("sig_macro", hit_count=3)
@@ -141,7 +142,8 @@ class TestSpeculativeMacroInjection:
 
         runtime.prepare_request(self._request_with_message(), session)
         prepared = runtime.prepare_request(self._request_with_message(), session)
-        assert "@sig_macro" not in prepared.body.get("system", "")
+        # Speculative-hint path must not fire; macro appears via wire-state instead.
+        assert "Available macros" not in prepared.body.get("system", "")
 
 
 class TestComputeSemanticHash:

@@ -8,6 +8,7 @@ results are excessively large.
 from __future__ import annotations
 
 import re
+import threading
 
 _TOK_CLI_TOKEN_RE = re.compile(r"(?<![\w./-])tok(?![\w-])")
 
@@ -18,6 +19,7 @@ _GREP_ADVISORY_TOKEN_THRESHOLD = 2000  # Estimated tokens
 
 # Advisory cooldown state (per-query identity -> last advisory turn)
 _advisory_cooldown: dict[str, int] = {}
+_advisory_lock = threading.Lock()
 _ADVISORY_COOLDOWN_TURNS = 3
 
 
@@ -57,10 +59,11 @@ def _build_search_advisory(
     global _advisory_cooldown
 
     # Check cooldown first
-    if query_identity and query_identity in _advisory_cooldown:
-        last_turn = _advisory_cooldown[query_identity]
-        if current_turn - last_turn < _ADVISORY_COOLDOWN_TURNS:
-            return ""  # Still in cooldown
+    with _advisory_lock:
+        if query_identity and query_identity in _advisory_cooldown:
+            last_turn = _advisory_cooldown[query_identity]
+            if current_turn - last_turn < _ADVISORY_COOLDOWN_TURNS:
+                return ""  # Still in cooldown
 
     # Determine if advisory is warranted
     high_matches = match_count > _GREP_ADVISORY_MATCH_THRESHOLD
@@ -99,7 +102,8 @@ def _build_search_advisory(
 
     # Record in cooldown
     if query_identity:
-        _advisory_cooldown[query_identity] = current_turn
+        with _advisory_lock:
+            _advisory_cooldown[query_identity] = current_turn
 
     return advisory
 
@@ -107,4 +111,5 @@ def _build_search_advisory(
 def clear_advisory_cooldown() -> None:
     """Clear the advisory cooldown cache. Call between sessions."""
     global _advisory_cooldown
-    _advisory_cooldown = {}
+    with _advisory_lock:
+        _advisory_cooldown = {}

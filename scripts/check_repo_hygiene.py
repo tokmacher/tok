@@ -16,6 +16,7 @@ ALLOWED_TOP_LEVEL_FILES = frozenset(
         ".editorconfig",
         ".pre-commit-config.yaml",
         ".python-version",
+        "AGENTS.md",
         "CHANGELOG.md",
         "CLAUDE.md",
         "CODE_OF_CONDUCT.md",

@@ -266,10 +266,13 @@ def process_response_impl(
     session: RuntimeSession,
     behavior_signals: dict[str, int] | None = None,
     tool_compatible: bool = False,
-    jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,  # noqa: F841
+    jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,
 ) -> ProcessedRuntimeResponse:
     """Process a raw LLM response into structured content with drift handling."""
-    # TODO: wire jit_executor into response processing path
+    import re as _re
+
+    _JIT_RE = _re.compile(r"EXECUTE_JIT\(@(\w+)\(([^)]*)\)\)")
+
     from .types import ProcessedRuntimeResponse
 
     contract = response_contract_for_mode(text, tool_compatible=tool_compatible, session=session)
@@ -311,6 +314,28 @@ def process_response_impl(
     )
     if not strict_structured_answer and healed_text != text:
         merged_signals["tok_drift_healed"] = 1
+        contract = response_contract_for_mode(healed_text, tool_compatible=tool_compatible, session=session)
+
+    def _replace_jit_outside_fences(value: str) -> tuple[str, int]:
+        parts = _re.split(r"(```.*?```)", value, flags=_re.DOTALL)
+        executed = 0
+
+        def _replace_jit(m: _re.Match[str]) -> str:
+            nonlocal executed
+            result = jit_executor(session, m.group(1), m.group(2))
+            executed += 1
+            return str(result)
+
+        for idx, part in enumerate(parts):
+            if part.startswith("```"):
+                continue
+            parts[idx] = _JIT_RE.sub(_replace_jit, part)
+        return "".join(parts), executed
+
+    if jit_executor and _JIT_RE.search(healed_text):
+        healed_text, jit_executed_count = _replace_jit_outside_fences(healed_text)
+        if jit_executed_count:
+            merged_signals["jit_executed"] = merged_signals.get("jit_executed", 0) + jit_executed_count
         contract = response_contract_for_mode(healed_text, tool_compatible=tool_compatible, session=session)
 
     visible_text = "\n".join(
@@ -440,7 +465,7 @@ def process_response_impl(
 
                     session.mark_file_edited(normalize_path_target(edited_path))
 
-    if os.getenv("TOK_NEURO_REACTOR", "0") == "1" and "EXECUTE_JIT(@" in text:
+    if not jit_executor and os.getenv("TOK_NEURO_REACTOR", "0") == "1" and _JIT_RE.search(text):
         merged_signals["jit_detected_not_executed"] = 1
 
     session._drift_detected_previous_turn = bool(

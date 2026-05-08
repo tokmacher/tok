@@ -55,6 +55,22 @@ def test_uninstall_removes_marked_block(tmp_path) -> None:
     assert "alias ll='ls -la'" in content
 
 
+def test_uninstall_removes_legacy_unmarked_source_line(tmp_path) -> None:
+    fake_script = tmp_path / "tok_claude.sh"
+    fake_script.write_text("# Fake tok script for testing")
+
+    rc_path = tmp_path / ".zshrc"
+    rc_path.write_text(f"export PATH=/usr/bin\nsource \"{fake_script}\"\nalias ll='ls -la'\n")
+
+    removed = shell_integration.uninstall(home=tmp_path)
+
+    assert rc_path in removed
+    content = rc_path.read_text()
+    assert "tok_claude.sh" not in content
+    assert "export PATH=/usr/bin" in content
+    assert "alias ll='ls -la'" in content
+
+
 def test_detect_shell_rejects_unsupported_shell() -> None:
     """Test that unsupported shells raise RuntimeError with appropriate message."""
     with pytest.raises(RuntimeError, match=r"supports zsh and bash"):

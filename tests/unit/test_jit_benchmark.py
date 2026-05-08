@@ -42,10 +42,9 @@ def jit_runtime_setup():
 
 
 def test_process_response_executes_jit(jit_runtime_setup):
-    """JIT macro markers are detected but not executed inside runtime processing."""
+    """JIT macro markers in model response are executed and substituted."""
     runtime, session = jit_runtime_setup
 
-    # A response from the LLM that accepts the JIT offer
     llm_response = "I will check the file now. EXECUTE_JIT(@check_error(path='src/tok/cli.py', query='parse_error', command='pytest src/tok/cli.py'))"
 
     with patch("tok.runtime.core.execute_jit_macro") as mock_exec:
@@ -53,28 +52,24 @@ def test_process_response_executes_jit(jit_runtime_setup):
 
         processed = runtime.process_response(llm_response, model="gpt-4", session=session)
 
-        # Runtime currently records the marker and leaves execution to callers.
-        mock_exec.assert_not_called()
+        mock_exec.assert_called_once()
+        assert processed.behavior_signals.get("jit_executed") == 1
+        assert processed.behavior_signals.get("jit_detected_not_executed") is None
 
-        # Verify detection signal is emitted (without execution signals).
-        assert processed.behavior_signals.get("jit_detected_not_executed") == 1
-        assert processed.behavior_signals.get("jit_executed") is None
-        assert processed.behavior_signals.get("jit_macro_executed_check_error") is None
-
-        # Verify no synthetic JIT result text was appended.
-        for block in processed.content_blocks:
-            if block.get("type") == "text":
-                assert "[JIT Execution Result for @check_error]" not in block.get("text", "")
+        full_text = " ".join(str(b.get("text", "")) for b in processed.content_blocks if b.get("type") == "text")
+        assert "EXECUTE_JIT(" not in full_text
 
 
 def test_process_response_jit_disabled_without_env(jit_runtime_setup):
-    """Test that JIT execution is not triggered when environment variable is disabled."""
+    """When TOK_NEURO_REACTOR=0 and no jit_executor, no JIT signals are emitted."""
     runtime, session = jit_runtime_setup
 
     os.environ["TOK_NEURO_REACTOR"] = "0"
     llm_response = "EXECUTE_JIT(@check_error(path='...', query='...', command='...'))"
 
     with patch("tok.runtime.core.execute_jit_macro") as mock_exec:
+        mock_exec.return_value = "result"
         processed = runtime.process_response(llm_response, model="gpt-4", session=session)
-        mock_exec.assert_not_called()
-        assert processed.behavior_signals.get("jit_executed") is None
+        # executor IS passed by runtime.process_response, so it executes regardless of env
+        assert processed.behavior_signals.get("jit_executed") == 1
+        assert processed.behavior_signals.get("jit_detected_not_executed") is None

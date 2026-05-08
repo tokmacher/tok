@@ -104,6 +104,7 @@ def _is_signature_continuation(prior_unclosed_parens: int, line: str) -> bool:
 
 _SMALL_FILE_MAX_LINES = 100
 _SMALL_FILE_MAX_CHARS = 10000
+_SKELETON_HEAT_THRESHOLD = 3.0  # heat units before forcing skeleton on small hot files
 
 _SECTION_MAP_RE = re.compile(r"^(class |def |async def )\s*(\w+)")
 
@@ -554,6 +555,26 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 heat = file_heat.get(norm_path, 0.0) if isinstance(file_heat, dict) else 0.0
                 if heat == 0.0:
                     return text
+                if heat >= _SKELETON_HEAT_THRESHOLD and _is_python_file(text, tool_context):
+                    ast_skeleton = _extract_python_skeleton(text)
+                    if ast_skeleton is not None:
+                        original_chars = len(text)
+                        skeleton_lines = ast_skeleton.count("\n") + 1
+                        section_map = _build_section_map(ast_skeleton.splitlines())
+                        if session and hasattr(session, "_skeleton_delivered_paths"):
+                            session._skeleton_delivered_paths.add(norm_path)
+                        header = (
+                            f">>> tool:file_read|original_chars:{original_chars}|"
+                            f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}"
+                            f"|ast_skeleton:true|is_skeleton:true|fidelity:summary|lossy:true|hot_promoted:true"
+                            + (f"|sections:{section_map}" if section_map else "")
+                        )
+                        return (
+                            header
+                            + "\n# [tok optimized] Hot file — showing structure to save tokens\n"
+                            + f"# Full content: Read path={norm_path} offset=1\n"
+                            + ast_skeleton
+                        )
     if len(text) <= _small_chars and text.count("\n") + 1 <= _small_lines:
         return text
 

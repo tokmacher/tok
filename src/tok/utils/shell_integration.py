@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,18 @@ START_MARKER = "# >>> tok shell integration >>>"
 END_MARKER = "# <<< tok shell integration <<<"
 
 _DATA_SCRIPT = "tok_claude.sh"
+_LEGACY_SOURCE_RE = re.compile(
+    r"""(?mx)
+    ^[ \t]*
+    (?:source|\.)[ \t]+
+    (?P<quote>["']?)
+    [^"'\n]*tok_claude\.sh
+    (?P=quote)
+    [ \t]*
+    (?:\#.*)?
+    $
+    """
+)
 
 
 def _bundled_script_path() -> Path:
@@ -266,12 +279,18 @@ def uninstall(*, home: Path | None = None) -> list[Path]:
         if not rc_path.exists():
             continue
         content = rc_path.read_text()
+        original = content
         start = content.find(START_MARKER)
         end = content.find(END_MARKER)
-        if start == -1 or end == -1:
+        if start != -1 and end != -1:
+            end += len(END_MARKER)
+            content = content[:start] + content[end:]
+
+        content = _LEGACY_SOURCE_RE.sub("", content)
+        if content == original:
             continue
-        end += len(END_MARKER)
-        remainder = content[:start] + content[end:]
-        rc_path.write_text(remainder.strip("\n") + ("\n" if remainder.strip("\n") else ""))
+
+        remainder = content.strip("\n")
+        rc_path.write_text(remainder + ("\n" if remainder else ""))
         removed.append(rc_path)
     return removed

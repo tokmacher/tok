@@ -8,6 +8,7 @@ import hashlib
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from tok.compression import (
@@ -351,6 +352,20 @@ class BridgeMemoryState:
         body = " | ".join(body_parts)
         return f"  |> {sig} -> {body}"
 
+    @staticmethod
+    def _render_macro_block(macros: list[Macro]) -> str:
+        lines = ["@macros"]
+        for m in macros:
+            sig = f"@{m.name}({', '.join(m.inputs)})"
+            ops = " | ".join(
+                f"{ins.target}={ins.op}({', '.join(str(a) for a in ins.args)})"
+                if ins.target
+                else f"{ins.op}({', '.join(str(a) for a in ins.args)})"
+                for ins in m.instructions
+            )
+            lines.append(f"  |> {sig} -> {ops}|hits:{m.hit_count}")
+        return "\n".join(lines)
+
     def to_tok(self) -> str:
         lines = [f"@mem v:b1 t:{self.turn}"]
         lines.append(self.pointers.to_tok().strip())
@@ -483,6 +498,28 @@ class BridgeMemoryState:
             profile.field_limits.get("files", HOT_LIMITS.get("files", 2)) if profile else HOT_LIMITS.get("files", 2)
         )
         files = self._get_merged_entries("files", file_limit)
+        answer_file_targets = [
+            fact.value.split(":", 1)[1].strip()
+            for fact in self._get_merged_entries("facts", max(HOT_LIMITS.get("facts", 4), 16))
+            if fact.value.startswith("answer_file:") and fact.value.split(":", 1)[1].strip()
+        ]
+        if answer_file_targets and files:
+            prioritized: list[MemoryEntry] = []
+            seen_values: set[str] = set()
+            for target in answer_file_targets:
+                for entry in files:
+                    if (
+                        entry.value == target
+                        or entry.value.endswith("/" + target)
+                        or Path(entry.value).name == Path(target).name
+                    ):
+                        if entry.value not in seen_values:
+                            prioritized.append(entry)
+                            seen_values.add(entry.value)
+                        break
+            if prioritized:
+                prioritized.extend(entry for entry in files if entry.value not in seen_values)
+                files = prioritized[:file_limit]
         if self._file_heat:
             top_heat_files = self.top_hot_files(file_limit)
             existing = {f.value for f in files}
@@ -678,11 +715,14 @@ class BridgeMemoryState:
         self,
         markers: frozenset[str] | None,
     ) -> list[str]:
-        """Build pointer blocks for wire_state."""
+        """Build pointer and macro blocks for wire_state."""
         extra_blocks: list[str] = []
         ptr_tok = self.pointers.to_tok().strip()
         if ptr_tok:
             extra_blocks.append(ptr_tok)
+        relevant_macros = self._collect_relevant_macros(markers)
+        if relevant_macros:
+            extra_blocks.append(self._render_macro_block(relevant_macros))
         return extra_blocks
 
     def wire_state(

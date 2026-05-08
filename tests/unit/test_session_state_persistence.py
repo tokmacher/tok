@@ -557,3 +557,108 @@ class TestFreshSessionPointerInjection:
         )
         prepare_request_impl(runtime, req, rs)
         assert rs._is_first_request is False
+
+
+class TestCrossSessionMacroPersistence:
+    """distill_bridge_history must be called at session eviction to persist macro patterns."""
+
+    def test_distill_called_on_bucket_eviction(self, tmp_path) -> None:
+        """When a bucket is evicted, distill_bridge_history must run on its bridge_memory."""
+        from unittest.mock import patch
+
+        from tok.gateway import BridgeSession
+
+        distilled: list[str] = []
+
+        with patch(
+            "tok.gateway.distill_bridge_history",
+            side_effect=lambda _memory_state, **_kw: distilled.append("called") or [],
+        ):
+            session = BridgeSession(memory_dir=tmp_path / ".tok", max_sessions=1)
+            session.activate_session_for_request({"x-tok-session-id": "alpha"}, None)
+            session.activate_session_for_request({"x-tok-session-id": "beta"}, None)
+
+        assert distilled, "distill_bridge_history was not called during eviction"
+
+    def test_distill_called_on_flush_all(self, tmp_path) -> None:
+        """merge_all_trackers_to_ledger must also trigger distill_bridge_history on each bucket."""
+        from unittest.mock import patch
+
+        from tok.gateway import BridgeSession
+
+        distilled: list[str] = []
+
+        with patch(
+            "tok.gateway.distill_bridge_history",
+            side_effect=lambda _memory_state, **_kw: distilled.append("called") or [],
+        ):
+            session = BridgeSession(memory_dir=tmp_path / ".tok", max_sessions=5)
+            session.activate_session_for_request({"x-tok-session-id": "one"}, None)
+            session.activate_session_for_request({"x-tok-session-id": "two"}, None)
+            session.merge_all_trackers_to_ledger()
+
+        assert len(distilled) >= 2, f"Expected >=2 distill calls, got {len(distilled)}"
+
+    def test_distill_failure_does_not_block_ledger_merge(self, tmp_path) -> None:
+        """Macro mining is best-effort; a mining error must not lose savings stats."""
+        from unittest.mock import patch
+
+        from tok.gateway import BridgeSession
+
+        session = BridgeSession(memory_dir=tmp_path / ".tok")
+        bucket = session._session_buckets["default"]
+        bucket.tracker.record_call(
+            model="claude-sonnet-4-6",
+            actual_input=1000,
+            actual_output=200,
+            cache_read=0,
+            cache_write=0,
+            input_saved=500,
+            output_saved=0,
+        )
+
+        with patch("tok.gateway.distill_bridge_history", side_effect=RuntimeError("mine failed")):
+            session.merge_all_trackers_to_ledger()
+
+        assert bucket.tracker.ledger_path.exists()
+        summary = bucket.tracker.lifetime_summary()
+        assert summary is not None
+        assert summary["sessions"] >= 1
+        assert summary["tokens_saved"] >= 500
+
+
+class TestDefaultTrackerPromotion:
+    def test_default_tracker_flushed_before_promotion(self, tmp_path) -> None:
+        """Stats recorded on the default tracker must reach the ledger when the
+        default bucket is promoted to a keyed session. Previously the old tracker
+        was silently replaced without flushing, losing all pre-identification turns."""
+        from unittest.mock import patch
+
+        from tok.gateway import BridgeSession
+        from tok.stats import SavingsTracker
+
+        ledger_path = tmp_path / "global_savings.tok"
+        savings_file = str(tmp_path / "tok_savings.tok")
+
+        session = BridgeSession(memory_dir=tmp_path / ".tok")
+        default_tracker = SavingsTracker(savings_file=savings_file, ledger_path=ledger_path)
+        session.tracker = default_tracker
+        session._session_buckets["default"].tracker = default_tracker
+
+        session.tracker.record_call(
+            model="claude-sonnet-4-6",
+            actual_input=1000,
+            actual_output=200,
+            cache_read=0,
+            cache_write=0,
+            input_saved=500,
+            output_saved=0,
+        )
+
+        with patch("tok.gateway._default_savings_file", return_value=savings_file):
+            session.activate_session_for_request({"x-tok-session-id": "s1"}, None)
+
+        assert ledger_path.exists(), "Ledger not written on default tracker promotion"
+        text = ledger_path.read_text()
+        assert "sessions: 1" in text, "Pre-promotion session missing from ledger"
+        assert "tokens_saved: 500" in text, "Pre-promotion savings missing from ledger"

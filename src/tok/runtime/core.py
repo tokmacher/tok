@@ -644,6 +644,22 @@ class RuntimeSession:
 
         return get_model_profile(self.model)
 
+    @property
+    def effective_model_profile(self):
+        """Model profile with compression_aggressiveness scaled down under high labour."""
+        import dataclasses
+
+        base = self.model_profile
+        labour = self._current_task_labour_index
+        if labour >= 40:
+            scale = 0.70
+        elif labour >= 20:
+            scale = 0.85
+        else:
+            return base
+        adjusted = max(0.1, base.compression_aggressiveness * scale)
+        return dataclasses.replace(base, compression_aggressiveness=adjusted)
+
     def __post_init__(self) -> None:
         """Initialize memory directory and load persisted bridge memory."""
         explicit_memory_dir = self.memory_dir is not None

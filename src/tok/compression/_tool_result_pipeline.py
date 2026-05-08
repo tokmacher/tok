@@ -114,7 +114,7 @@ def tok_tool_result_impl(
     original_chars = len(content)
     registry = build_default_registry(
         compress_pytest=lambda text: _compress_pytest(text, command=_tool_command_hint(tool_context)),
-        compress_grep=_compress_grep,
+        compress_grep=lambda text: _compress_grep(text, tool_context=tool_context),
         compress_git_diff=_compress_git_diff,
         compress_ls=_compress_ls,
         compress_find=_compress_find,

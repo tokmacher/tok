@@ -524,6 +524,74 @@ class TestCompressFileRead:
         assert "skeleton" in result or result == text
 
 
+_SMALL_PYTHON = (
+    "def greet(name: str) -> str:\n"
+    "    return f'hello {name}'\n"
+    "\n"
+    "def farewell(name: str) -> str:\n"
+    "    return f'goodbye {name}'\n"
+)  # < 100 lines, < 10k chars — normally returned verbatim
+
+
+class TestHotFileSkeletonPromotion:
+    """Files with heat >= threshold must return skeleton even when below small-file size limits."""
+
+    def test_small_python_file_below_heat_threshold_returned_verbatim(self) -> None:
+        context = {"args": {"path": "greet.py"}, "file_heat": {"greet.py": 1.0}}
+        result = _compress_file_read(_SMALL_PYTHON, tool_context=context)
+        assert result == _SMALL_PYTHON
+
+    def test_small_python_file_at_heat_threshold_returns_skeleton(self) -> None:
+        context = {"args": {"path": "greet.py"}, "file_heat": {"greet.py": 3.0}}
+        result = _compress_file_read(_SMALL_PYTHON, tool_context=context)
+        assert result != _SMALL_PYTHON
+        assert "is_skeleton:true" in result
+
+    def test_small_python_file_above_heat_threshold_returns_skeleton(self) -> None:
+        context = {"args": {"path": "greet.py"}, "file_heat": {"greet.py": 6.0}}
+        result = _compress_file_read(_SMALL_PYTHON, tool_context=context)
+        assert "is_skeleton:true" in result
+
+    def test_skeleton_header_present_for_hot_small_file(self) -> None:
+        context = {"args": {"path": "greet.py"}, "file_heat": {"greet.py": 3.0}}
+        result = _compress_file_read(_SMALL_PYTHON, tool_context=context)
+        assert ">>> tool:file_read" in result
+        assert "ast_skeleton:true" in result
+
+    def test_hot_file_with_offset_arg_still_bypasses_skeleton(self) -> None:
+        context = {"args": {"path": "greet.py", "offset": 1}, "file_heat": {"greet.py": 5.0}}
+        result = _compress_file_read(_SMALL_PYTHON, tool_context=context)
+        assert result == _SMALL_PYTHON
+
+    def test_hot_file_with_verbatim_arg_still_bypasses_skeleton(self) -> None:
+        context = {"args": {"path": "greet.py", "verbatim": True}, "file_heat": {"greet.py": 5.0}}
+        result = _compress_file_read(_SMALL_PYTHON, tool_context=context)
+        assert result == _SMALL_PYTHON
+
+    def test_hot_small_non_python_file_is_returned_verbatim(self) -> None:
+        text = "name: tok\nversion: 1\n"
+        context = {"args": {"path": "config.yaml"}, "file_heat": {"config.yaml": 8.0}}
+        result = _compress_file_read(text, tool_context=context)
+        assert result == text
+
+    def test_hot_invalid_python_file_is_returned_verbatim(self) -> None:
+        text = "def broken(:\n    pass\n"
+        context = {"args": {"path": "broken.py"}, "file_heat": {"broken.py": 8.0}}
+        result = _compress_file_read(text, tool_context=context)
+        assert result == text
+
+    def test_hot_small_python_marks_skeleton_delivered_path(self) -> None:
+        class MockSession:
+            _skeleton_delivered_paths: set[str] = set()
+
+        session = MockSession()
+        context = {"args": {"path": "./greet.py"}, "file_heat": {"greet.py": 3.0}}
+        result = _compress_file_read(_SMALL_PYTHON, tool_context=context, session=session)
+
+        assert "is_skeleton:true" in result
+        assert "greet.py" in session._skeleton_delivered_paths
+
+
 class TestSignatureContinuationRegex:
     def test_comma_at_end(self) -> None:
         assert _SIGNATURE_CONTINUATION_RE.match(",") is not None

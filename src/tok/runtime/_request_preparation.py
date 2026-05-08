@@ -1138,7 +1138,7 @@ def prepare_request_impl(
                 recently_edited_files=dict(session._recently_edited_files),
                 file_heat=dict(session.bridge_memory._file_heat),
                 session=session,
-                model_profile=session.model_profile,
+                model_profile=session.effective_model_profile,
             )
             tool_saved = sum(type_breakdown.values()) // 4
             if tool_saved > 0:
@@ -1271,7 +1271,7 @@ def prepare_request_impl(
                 first_exact_evidence_seen=_first_exact_evidence_seen_for_compression(),
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
                 session_files_read=session._files_read_this_session,
-                model_profile=session.model_profile,
+                model_profile=session.effective_model_profile,
             )
             if request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(recent):
                 bridge_candidate_had_invalid = False

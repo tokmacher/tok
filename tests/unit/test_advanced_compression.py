@@ -75,7 +75,7 @@ def test_json_skeletonization() -> None:
     raw_json = json.dumps(large_data)
     compressed = tok_tool_result(raw_json)
     assert ">>> tool:json_skeleton" in compressed
-    assert "... 99 more items" in compressed
+    assert '"_omitted": 99' in compressed
     assert "..." in compressed
 
 

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import uvicorn
 
+from tok.macros.integration import distill_bridge_history
 from tok.runtime.pipeline.request_validation import (
     normalize_tool_use_blocks,
     summarize_message_structure,
@@ -518,6 +519,14 @@ class BridgeSession:
         self.smoothness_tracker = bucket.smoothness_tracker
         return bucket
 
+    def _evict_bucket(self, bucket: _BridgeSessionBucket) -> None:
+        """Persist ledger and mine macros from an evicted session bucket."""
+        try:
+            distill_bridge_history(bucket.runtime_session.bridge_memory)
+        except Exception as exc:
+            logger.warning("distill_bridge_history error on eviction: %s", exc)
+        bucket.tracker.merge_session_to_ledger()
+
     def _cleanup_session_buckets(self, *, keep_key: str) -> None:
         def _prune_auto_fingerprint_map_for_key(session_key: str) -> None:
             stale = [fp for fp, mapped in self._auto_fingerprint_to_key.items() if mapped == session_key]
@@ -532,7 +541,7 @@ class BridgeSession:
             if now - bucket.last_seen > ttl:
                 evicted = self._session_buckets.pop(key, None)
                 if evicted is not None:
-                    evicted.tracker.merge_session_to_ledger()
+                    self._evict_bucket(evicted)
                     self._per_key_previous_tool_result_cache_blocks.pop(key, None)
                     _prune_auto_fingerprint_map_for_key(key)
         max_sessions = max(1, int(self.max_sessions))
@@ -543,7 +552,7 @@ class BridgeSession:
             evict_key = min(candidates, key=lambda item: item[1])[0]
             evicted = self._session_buckets.pop(evict_key, None)
             if evicted is not None:
-                evicted.tracker.merge_session_to_ledger()
+                self._evict_bucket(evicted)
                 self._per_key_previous_tool_result_cache_blocks.pop(evict_key, None)
                 _prune_auto_fingerprint_map_for_key(evict_key)
 
@@ -623,6 +632,7 @@ class BridgeSession:
                 self._session_buckets.pop("default", None)
                 default_bucket.key = key
                 if default_bucket.tracker.savings_file == _default_savings_file():
+                    default_bucket.tracker.merge_session_to_ledger()
                     default_bucket.tracker = self._new_savings_tracker(key)
                 bucket = default_bucket
             else:
@@ -755,12 +765,11 @@ class BridgeSession:
         """
         seen: set[int] = set()
         for bucket in list(self._session_buckets.values()):
-            tracker = bucket.tracker
-            tracker_id = id(tracker)
+            tracker_id = id(bucket.tracker)
             if tracker_id in seen:
                 continue
             seen.add(tracker_id)
-            tracker.merge_session_to_ledger()
+            self._evict_bucket(bucket)
 
     def capture_request(self, body: dict[str, Any]) -> None:
         """Append raw request body to capture file (strips sensitive headers)."""

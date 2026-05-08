@@ -146,6 +146,30 @@ def stats_command(
             ),
         }
 
+    if health_payload and lifetime_summary and int(health_payload.get("actual_tokens", 0)) > 0:
+        actual_tokens = int(lifetime_summary["actual_tokens"]) + int(health_payload.get("actual_tokens", 0))
+        tokens_saved = int(lifetime_summary["tokens_saved"]) + int(health_payload.get("session_tokens_saved", 0))
+        baseline_tokens = actual_tokens + tokens_saved
+        actual_cost = float(lifetime_summary["actual_cost_usd"]) + float(health_payload.get("actual_cost_usd", 0.0))
+        baseline_cost = float(lifetime_summary["baseline_cost_usd"]) + float(
+            health_payload.get("baseline_cost_usd", 0.0)
+        )
+        cost_saved = float(lifetime_summary["cost_saved_usd"]) + float(health_payload.get("cost_saved_usd", 0.0))
+        lifetime_summary = {
+            **lifetime_summary,
+            "sessions": int(lifetime_summary["sessions"]) + 1,
+            "total_turns": int(lifetime_summary["total_turns"]) + int(health_payload.get("calls", 0)),
+            "actual_tokens": actual_tokens,
+            "baseline_tokens": baseline_tokens,
+            "tokens_saved": tokens_saved,
+            "savings_pct": round(tokens_saved / baseline_tokens * 100, 1) if baseline_tokens > 0 else 0.0,
+            "cost_savings_pct": round(cost_saved / baseline_cost * 100, 1) if baseline_cost > 0 else 0.0,
+            "actual_cost_usd": actual_cost,
+            "baseline_cost_usd": baseline_cost,
+            "cost_saved_usd": cost_saved,
+            "fallback_count": int(lifetime_summary["fallback_count"]) + int(health_payload.get("fallback_count", 0)),
+        }
+
     if not total:
         if session_summary:
             pct = float(session_summary["savings_pct"])

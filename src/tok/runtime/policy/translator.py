@@ -10,8 +10,6 @@ logger = logging.getLogger("tok.translator")
 
 IS_TOK = re.compile(r"(^>>>|^@[A-Za-z_][A-Za-z0-9_]*|\s+\|>|^\|>)", re.MULTILINE)
 
-_line_start_tok = re.compile(r"^>>>", re.MULTILINE)
-
 _KNOWN_TOK_BLOCKS = frozenset(
     {
         "thought",
@@ -33,9 +31,12 @@ _KNOWN_TOK_BLOCKS = frozenset(
 
 
 def _is_likely_tok(text: str) -> bool:
+    # A genuine Tok response always opens with a >>> header on the very first
+    # non-whitespace line.  A prose response that merely *mentions* Tok syntax
+    # (e.g. code examples) must not be misidentified as a Tok response.
+    if not text.lstrip().startswith(">>>"):
+        return False
     markers = set(IS_TOK.findall(text))
-    if _line_start_tok.search(text):
-        return True
     at_blocks = {m[1:] for m in markers if m.startswith("@")}
     if at_blocks & _KNOWN_TOK_BLOCKS:
         return True

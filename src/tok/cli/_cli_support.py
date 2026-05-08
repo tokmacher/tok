@@ -492,16 +492,21 @@ def savings_headline(
 
     savings_pct_val = summary["savings_pct"]
     cost_savings_pct_val = summary.get("cost_savings_pct", summary["savings_pct"])
+    peak_pct_val = summary.get("peak_savings_pct", savings_pct_val)
     cost_saved_val = summary["cost_saved_usd"]
     tokens_saved_val = summary["tokens_saved"]
     pct = float(savings_pct_val) if isinstance(savings_pct_val, int | float | str) else 0.0
+    peak_pct = float(peak_pct_val) if isinstance(peak_pct_val, int | float | str) else pct
     cost_pct = float(cost_savings_pct_val) if isinstance(cost_savings_pct_val, int | float | str) else 0.0
     saved_usd = float(cost_saved_val) if isinstance(cost_saved_val, int | float | str) else 0.0
     tokens_saved = int(tokens_saved_val) if isinstance(tokens_saved_val, int | float | str) else 0
+    pct_label = f"{pct:.1f}% saved"
+    if peak_pct > pct + 5:
+        pct_label = f"{pct:.1f}% saved (peak {peak_pct:.0f}%)"
     return (
         f"Saved {tokens_saved:,} tokens",
-        f"{pct:.1f}% saved",
-        f"{savings_verdict(pct)} • ~${saved_usd:.4f} est. cost saved ({cost_pct:.1f}% cost)",
+        pct_label,
+        f"{savings_verdict(peak_pct)} • ~${saved_usd:.4f} est. cost saved ({cost_pct:.1f}% cost)",
     )
 
 
