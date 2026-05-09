@@ -97,3 +97,6 @@ release_ready.txt
 
 # Benchmark results
 Benchmark/assets/
+
+# Agent smoke output
+out/
