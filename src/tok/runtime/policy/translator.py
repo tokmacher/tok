@@ -30,15 +30,20 @@ _KNOWN_TOK_BLOCKS = frozenset(
 )
 
 
+_CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+
+
 def _is_likely_tok(text: str) -> bool:
-    # A genuine Tok response always opens with a >>> header on the very first
-    # non-whitespace line.  A prose response that merely *mentions* Tok syntax
-    # (e.g. code examples) must not be misidentified as a Tok response.
-    if not text.lstrip().startswith(">>>"):
+    # Strip fenced code blocks first to avoid false positives from
+    # languages that use |> as a pipe operator (Elixir, F#, etc.).
+    clean = _CODE_FENCE_RE.sub("", text)
+    if not clean.strip():
         return False
-    markers = set(IS_TOK.findall(text))
+    markers = set(IS_TOK.findall(clean))
     at_blocks = {m[1:] for m in markers if m.startswith("@")}
     if at_blocks & _KNOWN_TOK_BLOCKS:
+        return True
+    if re.search(r"^>>>", clean, re.MULTILINE):
         return True
     return len(markers) >= 2
 

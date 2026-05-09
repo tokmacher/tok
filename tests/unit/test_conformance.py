@@ -188,3 +188,25 @@ def test_translate_response_tools_complex_nesting() -> None:
     # search/replace.
     assert blocks[0]["input"]["search"].strip() == "old"
     assert blocks[0]["input"]["replace"].strip() == "new"
+
+
+def test_has_tok_protocol_at_thought_without_chevron() -> None:
+    text = "@thought\nTesting"
+    contract = response_contract_for_mode(text, tool_compatible=False)
+    assert contract.mode == "tok-empty"
+    assert contract.behavior_signals["malformed_tok_response"] == 1
+
+
+def test_has_tok_protocol_triple_chevron_with_markdown_body() -> None:
+    text = ">>> t:1|usr:test|agt:reply|state:active\n## Result\nPlain markdown"
+    contract = response_contract_for_mode(text, tool_compatible=False)
+    assert contract.mode == "tok-empty"
+    assert contract.behavior_signals["malformed_tok_markdown_fallback"] == 1
+    assert contract.behavior_signals["malformed_tok_response"] == 1
+    assert contract.behavior_signals["fail_open_compat_response"] == 1
+
+
+def test_has_tok_protocol_elixir_code_not_tok() -> None:
+    text = "```elixir\n[1, 2, 3]\n|> Enum.map(fn x -> x * 2 end)\n```"
+    contract = response_contract_for_mode(text, tool_compatible=False)
+    assert contract.mode == "markdown"
