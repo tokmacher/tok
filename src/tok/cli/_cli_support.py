@@ -670,6 +670,26 @@ def interaction_quality_rows(
     return rows
 
 
+def json_envelope(
+    command: str,
+    *,
+    ok: bool,
+    status: str,
+    data: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
+    next_steps: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema": "tok-cli-result/v0.1",
+        "command": command,
+        "ok": ok,
+        "status": status,
+        "data": data or {},
+        "warnings": warnings or [],
+        "next_steps": next_steps or [],
+    }
+
+
 __all__ = [
     "LOG_FILE",
     "PID_FILE",
@@ -680,6 +700,7 @@ __all__ = [
     "find_pids_on_port",
     "get_running_bridge_pid",
     "interaction_quality_rows",
+    "json_envelope",
     "memory_root",
     "msg_text",
     "read_pid",

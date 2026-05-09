@@ -1,13 +1,37 @@
 {
+  "schema": "tok-agent-contract/v0.1",
   "project": "tok",
   "release_line": "0.1.x",
   "supported_primary_path": "Claude Code through local Tok bridge",
+  "implemented_protocol_layers": {
+    "tok_trace": "draft_l0_l2_audit_validation",
+    "tok_resolver": "deferred",
+    "tok_capability": "deferred",
+    "tok_session": "deferred",
+    "agent_to_agent_exchange": "deferred"
+  },
   "unsupported_claims": [
     "hosted service",
     "general agent framework",
     "repo indexer",
     "universal protocol implementation",
     "stable Python SDK"
+  ],
+  "forbidden_claims": [
+    "stable universal protocol",
+    "agent-to-agent exchange implemented",
+    "protocol compliance certified by tok audit",
+    "savings measured without tok stats",
+    "bridge verified without bridge health output"
+  ],
+  "required_cli_checks": [
+    "tok --version",
+    "tok --help",
+    "tok claude --help",
+    "tok bridge status --help",
+    "tok doctor --help",
+    "tok stats --help",
+    "tok audit --help"
   ],
   "required_verification_commands": [
     "tok --version",
@@ -17,6 +41,11 @@
     "tok doctor --help",
     "tok stats --help",
     "tok audit --help"
+  ],
+  "live_bridge_checks": [
+    "tok bridge status --json",
+    "tok doctor --json",
+    "tok stats --json"
   ],
   "success_signals": [
     "bridge running",

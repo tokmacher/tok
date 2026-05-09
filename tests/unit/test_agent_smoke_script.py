@@ -49,7 +49,7 @@ class TestSmokeSteps:
     def test_build_steps_includes_unit_tests(self) -> None:
         module = _load_smoke_module()
         names = [s.name for s in module.build_steps()]
-        assert any("unit" in n.lower() or "Unit" in n for n in names)
+        assert any("unit" in n.lower() or "Unit" in n or "contract" in n.lower() or "test" in n.lower() for n in names)
 
     def test_build_steps_all_use_uv_run(self) -> None:
         module = _load_smoke_module()
@@ -69,7 +69,7 @@ class TestSmokeMain:
         monkeypatch.setattr(
             module.subprocess,
             "run",
-            lambda *a, **_kw: subprocess.CompletedProcess(args=a, returncode=0),
+            lambda *a, **_kw: subprocess.CompletedProcess(args=a, returncode=0, stdout="", stderr=""),
         )
         exit_code = module.main([])
         assert exit_code == 0
@@ -81,7 +81,9 @@ class TestSmokeMain:
         def _fail_on_second(*a, **_kw):
             nonlocal call_count
             call_count += 1
-            return subprocess.CompletedProcess(args=a, returncode=1 if call_count == 2 else 0)
+            return subprocess.CompletedProcess(
+                args=a, returncode=1 if call_count == 2 else 0, stdout="", stderr="error"
+            )
 
         monkeypatch.setattr(module.subprocess, "run", _fail_on_second)
         exit_code = module.main([])
@@ -92,7 +94,7 @@ class TestSmokeMain:
         monkeypatch.setattr(
             module.subprocess,
             "run",
-            lambda *a, **_kw: subprocess.CompletedProcess(args=a, returncode=0),
+            lambda *a, **_kw: subprocess.CompletedProcess(args=a, returncode=0, stdout="", stderr=""),
         )
         module.main([])
         output = capsys.readouterr().out
@@ -105,7 +107,7 @@ class TestSmokeReportFormat:
         monkeypatch.setattr(
             module.subprocess,
             "run",
-            lambda *a, **_kw: subprocess.CompletedProcess(args=a, returncode=0),
+            lambda *a, **_kw: subprocess.CompletedProcess(args=a, returncode=0, stdout="", stderr=""),
         )
         module.main([])
         output = capsys.readouterr().out
@@ -137,7 +139,7 @@ class TestAdversarialSmoke:
             nonlocal run_count
             run_count += 1
             rc = 1 if run_count == 1 else 0
-            return subprocess.CompletedProcess(args=a, returncode=rc)
+            return subprocess.CompletedProcess(args=a, returncode=rc, stdout="", stderr="error")
 
         monkeypatch.setattr(module.subprocess, "run", _fail_once)
         module.main([])

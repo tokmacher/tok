@@ -62,11 +62,16 @@ def bridge_stop(
     bridge_stop_command(force=force)
 
 
-def bridge_status() -> None:
+def bridge_status(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON status"),
+    ] = False,
+) -> None:
     """Check bridge status."""
     from ._bridge import bridge_status as bridge_status_command
 
-    bridge_status_command()
+    bridge_status_command(json_output=json_output)
 
 
 def bridge_logs(

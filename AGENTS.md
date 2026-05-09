@@ -21,6 +21,10 @@ Do not describe Tok 0.1.x as:
 - a universal protocol implementation
 - a stable Python SDK
 
+Tok Resolver, Tok Capability, Tok Session, and agent-to-agent exchange are not yet
+implemented. Do not claim they are. `tok audit` validates trace structure, not general
+protocol compliance.
+
 ## Golden path
 
 From a cold clone:

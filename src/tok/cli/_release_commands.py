@@ -64,6 +64,10 @@ def stats(
         bool,
         typer.Option("--reset", help="Reset lifetime stats (clear global ledger)"),
     ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON stats"),
+    ] = False,
 ) -> None:
     """Show token savings and fallback state."""
     from ._release import stats_command
@@ -78,6 +82,7 @@ def stats(
         since=since,
         window=window,
         reset=reset,
+        json_output=json_output,
     )
 
 
@@ -117,11 +122,15 @@ def doctor(
             help="Print a pasteable environment report (safe to share)",
         ),
     ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Emit machine-readable JSON diagnostics"),
+    ] = False,
 ) -> None:
     """Check bridge health and runtime contract conformance."""
     from ._release import doctor_command
 
-    doctor_command(verbose=verbose, report=report)
+    doctor_command(verbose=verbose, report=report, json_output=json_output)
 
 
 def gate_check(

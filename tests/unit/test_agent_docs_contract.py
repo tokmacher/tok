@@ -11,11 +11,15 @@ AGENT_CONTRACT_JSON = ROOT / "docs" / "agent-contract.json"
 PYPROJECT_TOML = ROOT / "pyproject.toml"
 
 REQUIRED_CONTRACT_KEYS = (
+    "schema",
     "project",
     "release_line",
     "supported_primary_path",
+    "implemented_protocol_layers",
     "unsupported_claims",
+    "forbidden_claims",
     "required_verification_commands",
+    "live_bridge_checks",
     "success_signals",
     "reporting_required_fields",
 )
@@ -208,3 +212,102 @@ class TestAdversarialContractDrift:
         cmds_text = " ".join(_parse_contract()["required_verification_commands"])
         for hidden in EXPERIMENTAL_CLI_ROOT_COMMANDS:
             assert hidden not in cmds_text, f"Agent contract references hidden command '{hidden}'"
+
+
+class TestContractSchema:
+    def test_schema_field_exists(self) -> None:
+        assert _parse_contract()["schema"] == "tok-agent-contract/v0.1"
+
+    def test_schema_is_string(self) -> None:
+        assert isinstance(_parse_contract()["schema"], str)
+
+
+class TestProtocolLayers:
+    def test_tok_trace_is_draft(self) -> None:
+        layers = _parse_contract()["implemented_protocol_layers"]
+        assert layers.get("tok_trace") == "draft_l0_l2_audit_validation"
+
+    def test_tok_resolver_is_deferred(self) -> None:
+        layers = _parse_contract()["implemented_protocol_layers"]
+        assert layers.get("tok_resolver") == "deferred"
+
+    def test_tok_capability_is_deferred(self) -> None:
+        layers = _parse_contract()["implemented_protocol_layers"]
+        assert layers.get("tok_capability") == "deferred"
+
+    def test_tok_session_is_deferred(self) -> None:
+        layers = _parse_contract()["implemented_protocol_layers"]
+        assert layers.get("tok_session") == "deferred"
+
+    def test_agent_to_agent_exchange_is_deferred(self) -> None:
+        layers = _parse_contract()["implemented_protocol_layers"]
+        assert layers.get("agent_to_agent_exchange") == "deferred"
+
+
+class TestForbiddenClaims:
+    def test_forbidden_claims_is_list(self) -> None:
+        claims = _parse_contract()["forbidden_claims"]
+        assert isinstance(claims, list)
+        assert len(claims) >= 5
+
+    def test_forbidden_claims_mention_universal_protocol(self) -> None:
+        text = " ".join(_parse_contract()["forbidden_claims"]).lower()
+        assert "universal protocol" in text
+
+    def test_forbidden_claims_mention_agent_to_agent(self) -> None:
+        text = " ".join(_parse_contract()["forbidden_claims"]).lower()
+        assert "agent-to-agent" in text
+
+    def test_forbidden_claims_mention_audit(self) -> None:
+        text = " ".join(_parse_contract()["forbidden_claims"]).lower()
+        assert "audit" in text
+
+    def test_forbidden_claims_mention_savings_without_stats(self) -> None:
+        text = " ".join(_parse_contract()["forbidden_claims"]).lower()
+        assert "tok stats" in text
+
+    def test_forbidden_claims_mention_bridge_health(self) -> None:
+        text = " ".join(_parse_contract()["forbidden_claims"]).lower()
+        assert "bridge" in text
+
+    def test_each_forbidden_claim_in_agents_md(self) -> None:
+        agents_content = AGENTS_MD.read_text().lower()
+        for claim in _parse_contract()["forbidden_claims"]:
+            words = claim.lower().split()
+            keywords = [w for w in words if len(w) > 3]
+            short_words = [w for w in words if len(w) <= 3 and w not in ("the", "a", "an", "by", "is", "it", "to")]
+            if keywords:
+                assert any(kw in agents_content for kw in keywords), (
+                    f"Forbidden claim '{claim}' has no keyword match in AGENTS.md"
+                )
+            elif short_words:
+                assert any(sw in agents_content for sw in short_words), (
+                    f"Forbidden claim '{claim}' has no word match in AGENTS.md"
+                )
+
+
+class TestLiveBridgeChecks:
+    def test_live_bridge_checks_is_list(self) -> None:
+        checks = _parse_contract()["live_bridge_checks"]
+        assert isinstance(checks, list)
+        assert len(checks) >= 3
+
+    def test_live_bridge_checks_include_json_flag(self) -> None:
+        checks = _parse_contract()["live_bridge_checks"]
+        for check in checks:
+            assert "--json" in check, f"Live bridge check '{check}' missing --json flag"
+
+    def test_live_bridge_checks_mention_status_doctor_stats(self) -> None:
+        checks_text = " ".join(_parse_contract()["live_bridge_checks"]).lower()
+        assert "bridge status" in checks_text or "status" in checks_text
+        assert "doctor" in checks_text
+        assert "stats" in checks_text
+
+
+class TestRequiredCliChecksAlias:
+    def test_required_cli_checks_field_exists(self) -> None:
+        assert "required_cli_checks" in _parse_contract()
+
+    def test_required_cli_checks_matches_required_verification_commands(self) -> None:
+        data = _parse_contract()
+        assert data["required_cli_checks"] == data["required_verification_commands"]

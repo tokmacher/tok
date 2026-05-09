@@ -31,6 +31,7 @@ from ._cli_support import (
     get_bridge_health_response,
     get_running_bridge_pid,
     interaction_quality_rows,
+    json_envelope,
     memory_root,
     msg_text,
     render_stats_panel,
@@ -65,6 +66,7 @@ def stats_command(
     since: str | None = None,
     window: int = 5,
     reset: bool = False,
+    json_output: bool = False,
 ) -> None:
     """Show token savings and fallback state."""
     tracker = SavingsTracker()
@@ -89,11 +91,6 @@ def stats_command(
         except Exception:
             pass
 
-    # When the bridge is running it writes per-bucket stats to key-specific files
-    # that the default SavingsTracker path doesn't see.  Fall back to health endpoint
-    # data so "Current Session" always reflects the live bucket.
-    # Only apply when showing the default view — not when --last-session or --total
-    # were requested, which expect a different data source.
     local_calls = int(session_summary["calls"]) if session_summary else 0
     health_calls = int(health_payload.get("calls", 0)) if health_payload else 0
     if (
@@ -145,6 +142,52 @@ def stats_command(
                 health_payload.get("evidence_compression_blocked_for_safety_count", 0)
             ),
         }
+
+    if json_output:
+        warnings: list[str] = []
+        data: dict[str, Any] = {"bridge_running": pid is not None, "port": port}
+        if pid:
+            data["pid"] = pid
+        if session_summary:
+            data["session"] = {
+                "calls": int(session_summary.get("calls", 0)),
+                "actual_tokens": int(session_summary.get("actual_tokens", 0)),
+                "baseline_tokens": int(session_summary.get("baseline_tokens", 0)),
+                "tokens_saved": int(session_summary.get("tokens_saved", 0)),
+                "savings_pct": float(session_summary.get("savings_pct", 0.0)),
+                "actual_cost_usd": float(session_summary.get("actual_cost_usd", 0.0)),
+                "baseline_cost_usd": float(session_summary.get("baseline_cost_usd", 0.0)),
+                "cost_saved_usd": float(session_summary.get("cost_saved_usd", 0.0)),
+                "fallback_count": int(session_summary.get("fallback_count", 0)),
+                "baseline_only": bool(session_summary.get("baseline_only", False)),
+                "session_quality": str(session_summary.get("session_quality", "clean")),
+                "degradation_reason": str(session_summary.get("last_degradation_reason", "") or "none"),
+            }
+        else:
+            warnings.append("No current session data")
+        if lifetime_summary:
+            data["lifetime"] = {
+                "sessions": int(lifetime_summary.get("sessions", 0)),
+                "total_turns": int(lifetime_summary.get("total_turns", 0)),
+                "actual_tokens": int(lifetime_summary.get("actual_tokens", 0)),
+                "baseline_tokens": int(lifetime_summary.get("baseline_tokens", 0)),
+                "tokens_saved": int(lifetime_summary.get("tokens_saved", 0)),
+                "savings_pct": float(lifetime_summary.get("savings_pct", 0.0)),
+                "actual_cost_usd": float(lifetime_summary.get("actual_cost_usd", 0.0)),
+                "baseline_cost_usd": float(lifetime_summary.get("baseline_cost_usd", 0.0)),
+                "cost_saved_usd": float(lifetime_summary.get("cost_saved_usd", 0.0)),
+                "fallback_count": int(lifetime_summary.get("fallback_count", 0)),
+                "baseline_only_requests": int(lifetime_summary.get("baseline_only_requests", 0)),
+            }
+        envelope = json_envelope(
+            "tok stats",
+            ok=True,
+            status="ok" if not warnings else "warn",
+            data=data,
+            warnings=warnings,
+        )
+        print(json.dumps(envelope, indent=2))
+        return
 
     if not total:
         if session_summary:
@@ -572,10 +615,11 @@ def _tok_version() -> str:
     return _src_version or "unknown"
 
 
-def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
+def doctor_command(*, verbose: bool = False, report: bool = False, json_output: bool = False) -> None:
     """Check bridge health and runtime contract conformance."""
-    console.print("[bold]Tok Doctor — Runtime Health Check[/bold]")
-    console.print("=" * 52)
+    if not json_output:
+        console.print("[bold]Tok Doctor — Runtime Health Check[/bold]")
+        console.print("=" * 52)
 
     issues = False
     port = env_int("TOK_BRIDGE_PORT", 9090)
@@ -583,12 +627,17 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
     tracker = SavingsTracker()
     session_summary = tracker.session_summary()
     doctor_report_summary: dict[str, Any] = dict(session_summary or {})
+    json_data: dict[str, Any] = {"bridge_running": pid is not None, "port": port}
+    json_warnings: list[str] = []
     if pid:
-        console.print(f"[green]✅ Bridge process: PID {pid}[/green]")
+        json_data["pid"] = pid
+        if not json_output:
+            console.print(f"[green]✅ Bridge process: PID {pid}[/green]")
         try:
             resp = get_bridge_health_response(port, timeout=2.0, attempts=2, backoff_seconds=0.2)
             if resp.status_code == 200:
-                console.print(f"[green]✅ Health endpoint reachable on :{port}[/green]")
+                if not json_output:
+                    console.print(f"[green]✅ Health endpoint reachable on :{port}[/green]")
                 payload = resp.json()
                 baseline_only = bool(payload.get("baseline_only"))
                 mode = str(payload.get("mode", "unknown"))
@@ -700,77 +749,103 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
                         ),
                     }
                 )
-                console.print(
-                    render_stats_panel(
-                        "Current Session",
-                        headline=f"{headline} • {headline_pct}",
-                        headline_style=(
-                            savings_style(float(session_summary["savings_pct"])) if session_summary else "bold yellow"
-                        ),
-                        subhead=f"{verdict} • {subhead}",
-                        rows=session_status_rows(
-                            summary=session_view_summary,
-                            tok_active=True,
-                            baseline_only=baseline_only,
-                            mode=mode,
-                            api_base=str(payload.get("api_base", "")) or None,
-                            fallback_count=fallback_count,
-                            session_quality=str(payload.get("session_quality", "clean")),
-                            degradation_reason=str(payload.get("last_degradation_reason", "")),
-                            session_signals=session_signals_text(signal_payload),
-                        ),
-                        border_style=status_border(verdict_style),
-                    )
-                )
-
-                iq_rows = interaction_quality_rows(
-                    smoothness_score=int(payload.get("smoothness_score", 0)),
-                    labour_index=int(payload.get("labour_index", 0)),
-                    current_mode=str(payload.get("current_mode", "")),
-                    stream_instability_events=int(payload.get("stream_instability_events", 0)),
-                    thinking_mutation_events=int(payload.get("thinking_mutation_events", 0)),
-                    repeated_active_file_reads=int(payload.get("repeated_active_file_reads", 0)),
-                    task_score=int(payload.get("task_score", 0)),
-                )
-                if iq_rows:
-                    console.print(
-                        render_stats_panel(
-                            "Interaction Quality",
-                            headline="Session flow metrics",
-                            headline_style="bold cyan",
-                            subhead="Lower labour index = smoother session",
-                            rows=iq_rows,
-                            border_style="cyan",
-                        )
-                    )
-                if baseline_only:
-                    console.print(
-                        "[yellow]⚠️ Tok verdict:[/yellow] bridge is alive but the current session has degraded to baseline."
-                    )
-                    issues = True
-                elif mode == "baseline":
-                    console.print(
-                        "[yellow]⚠️ Tok verdict:[/yellow] bridge is running in baseline mode, so compression is disabled by default."
-                    )
-                elif tokens_saved > 0:
-                    console.print(
-                        "[green]✅ Tok verdict:[/green] compression is active and saving tokens on the current session."
-                    )
+                if json_output:
+                    json_data["health_reachable"] = True
+                    json_data["tok_active"] = not baseline_only
+                    json_data["mode"] = mode
+                    json_data["baseline_only"] = baseline_only
+                    json_data["degraded_to_baseline"] = baseline_only
+                    json_data["fallback_count"] = fallback_count
+                    json_data["session_quality"] = str(payload.get("session_quality", "clean"))
+                    json_data["tokens_saved"] = tokens_saved
+                    json_data["savings_pct"] = float(payload.get("session_savings_pct", 0.0))
+                    json_data["cost_saved_usd"] = float(payload.get("cost_saved_usd", 0.0))
+                    if baseline_only:
+                        json_warnings.append("Session degraded to baseline")
                 else:
                     console.print(
-                        "[yellow]⚠️ Tok verdict:[/yellow] bridge is healthy, but no current-session savings are visible yet."
+                        render_stats_panel(
+                            "Current Session",
+                            headline=f"{headline} • {headline_pct}",
+                            headline_style=(
+                                savings_style(float(session_summary["savings_pct"]))
+                                if session_summary
+                                else "bold yellow"
+                            ),
+                            subhead=f"{verdict} • {subhead}",
+                            rows=session_status_rows(
+                                summary=session_view_summary,
+                                tok_active=True,
+                                baseline_only=baseline_only,
+                                mode=mode,
+                                api_base=str(payload.get("api_base", "")) or None,
+                                fallback_count=fallback_count,
+                                session_quality=str(payload.get("session_quality", "clean")),
+                                degradation_reason=str(payload.get("last_degradation_reason", "")),
+                                session_signals=session_signals_text(signal_payload),
+                            ),
+                            border_style=status_border(verdict_style),
+                        )
                     )
-                console.print(
-                    f"[bold]Recommendation:[/bold] {session_recommendation(baseline_only=baseline_only, session_quality=str(payload.get('session_quality', 'clean'))).split(': ', 1)[1]}"
-                )
+
+                    iq_rows = interaction_quality_rows(
+                        smoothness_score=int(payload.get("smoothness_score", 0)),
+                        labour_index=int(payload.get("labour_index", 0)),
+                        current_mode=str(payload.get("current_mode", "")),
+                        stream_instability_events=int(payload.get("stream_instability_events", 0)),
+                        thinking_mutation_events=int(payload.get("thinking_mutation_events", 0)),
+                        repeated_active_file_reads=int(payload.get("repeated_active_file_reads", 0)),
+                        task_score=int(payload.get("task_score", 0)),
+                    )
+                    if iq_rows:
+                        console.print(
+                            render_stats_panel(
+                                "Interaction Quality",
+                                headline="Session flow metrics",
+                                headline_style="bold cyan",
+                                subhead="Lower labour index = smoother session",
+                                rows=iq_rows,
+                                border_style="cyan",
+                            )
+                        )
+                    if baseline_only:
+                        console.print(
+                            "[yellow]⚠️ Tok verdict:[/yellow] bridge is alive but the current session has degraded to baseline."
+                        )
+                        issues = True
+                    elif mode == "baseline":
+                        console.print(
+                            "[yellow]⚠️ Tok verdict:[/yellow] bridge is running in baseline mode, so compression is disabled by default."
+                        )
+                    elif tokens_saved > 0:
+                        console.print(
+                            "[green]✅ Tok verdict:[/green] compression is active and saving tokens on the current session."
+                        )
+                    else:
+                        console.print(
+                            "[yellow]⚠️ Tok verdict:[/yellow] bridge is healthy, but no current-session savings are visible yet."
+                        )
+                    console.print(
+                        f"[bold]Recommendation:[/bold] {session_recommendation(baseline_only=baseline_only, session_quality=str(payload.get('session_quality', 'clean'))).split(': ', 1)[1]}"
+                    )
             else:
-                console.print(f"[red]❌ Health endpoint responded {resp.status_code} on :{port}[/red]")
+                if json_output:
+                    json_data["health_reachable"] = False
+                    json_warnings.append(f"Health endpoint responded {resp.status_code}")
+                else:
+                    console.print(f"[red]❌ Health endpoint responded {resp.status_code} on :{port}[/red]")
                 issues = True
         except Exception as exc:
-            console.print(f"[red]❌ Unable to reach health endpoint on :{port} ({exc.__class__.__name__})[/red]")
+            if json_output:
+                json_data["health_reachable"] = False
+                json_warnings.append(f"Unable to reach health endpoint: {exc.__class__.__name__}")
+            else:
+                console.print(f"[red]❌ Unable to reach health endpoint on :{port} ({exc.__class__.__name__})[/red]")
             issues = True
     else:
-        console.print("[red]❌ Bridge process not running[/red]")
+        json_warnings.append("Bridge process not running")
+        if not json_output:
+            console.print("[red]❌ Bridge process not running[/red]")
         issues = True
 
     memory_dir = memory_root()
@@ -778,30 +853,45 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
     fallback_path = memory_dir / "memory.tok"
 
     if not memory_dir.exists():
-        console.print(f"[yellow]⚠️ Memory directory not initialized: {memory_dir}[/yellow]")
+        json_warnings.append(f"Memory directory not initialized: {memory_dir}")
+        if not json_output:
+            console.print(f"[yellow]⚠️ Memory directory not initialized: {memory_dir}[/yellow]")
         issues = True
     elif structured_path.exists() and structured_path.stat().st_size > 0:
-        console.print(f"[green]✅ Structured memory present: {structured_path}[/green]")
+        json_data["memory_structured"] = True
+        if not json_output:
+            console.print(f"[green]✅ Structured memory present: {structured_path}[/green]")
     elif fallback_path.exists() and fallback_path.stat().st_size > 0:
-        console.print(f"[yellow]⚠️ Structured memory missing; wire fallback in use ({fallback_path})[/yellow]")
+        json_data["memory_structured"] = False
+        json_warnings.append("Structured memory missing; wire fallback in use")
+        if not json_output:
+            console.print(f"[yellow]⚠️ Structured memory missing; wire fallback in use ({fallback_path})[/yellow]")
         issues = True
     else:
-        console.print(f"[red]❌ No bridge memory files found in {memory_dir}[/red]")
+        json_data["memory_structured"] = False
+        json_warnings.append(f"No bridge memory files found in {memory_dir}")
+        if not json_output:
+            console.print(f"[red]❌ No bridge memory files found in {memory_dir}[/red]")
         issues = True
     signals = tracker.behavior_signals()
     structured_hits = signals.get("cold_start_structured_memory", 0)
     fallback_hits = signals.get("cold_start_wire_fallback", 0)
-    console.print(f"[bold]Cold-start signals:[/bold] structured={structured_hits} fallback={fallback_hits}")
+    json_data["cold_start_structured"] = structured_hits
+    json_data["cold_start_fallback"] = fallback_hits
+    if not json_output:
+        console.print(f"[bold]Cold-start signals:[/bold] structured={structured_hits} fallback={fallback_hits}")
     if fallback_hits > structured_hits:
-        console.print("[yellow]⚠️ Wire fallback exceeded structured memory — check bridge state[/yellow]")
+        json_warnings.append("Wire fallback exceeded structured memory")
+        if not json_output:
+            console.print("[yellow]⚠️ Wire fallback exceeded structured memory — check bridge state[/yellow]")
         issues = True
 
-    if verbose and signals:
+    if verbose and signals and not json_output:
         console.print("\n[bold]Behavior signals (session):[/bold]")
         for key, value in sorted(signals.items(), key=lambda kv: (-kv[1], kv[0])):
             console.print(f"  {key:<32} {value:>4}")
 
-    if report:
+    if report and not json_output:
         collector_db = os.getenv("TOK_COLLECTOR_DB", "telemetry.db")
         report_lines = [
             "Tok Doctor report (safe to share)",
@@ -830,6 +920,19 @@ def doctor_command(*, verbose: bool = False, report: bool = False) -> None:
         console.print("```")
         console.print("\n".join(str(line) for line in report_lines))
         console.print("```")
+
+    if json_output:
+        envelope = json_envelope(
+            "tok doctor",
+            ok=not issues,
+            status="ok" if not issues else "error",
+            data=json_data,
+            warnings=json_warnings,
+        )
+        print(json.dumps(envelope, indent=2))
+        if issues:
+            raise typer.Exit(1)
+        return
 
     if issues:
         console.print("\n[red]Doctor found issues — see above for remediation.[/red]")
