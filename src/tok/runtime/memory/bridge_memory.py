@@ -364,6 +364,7 @@ class BridgeMemoryState:
                 for ins in m.instructions
             )
             lines.append(f"  |> {sig} -> {ops}|hits:{m.hit_count}")
+        lines.append("  # Use @name(args) as a tool call to execute the sequence.")
         return "\n".join(lines)
 
     def to_tok(self) -> str:

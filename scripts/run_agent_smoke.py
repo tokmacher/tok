@@ -76,7 +76,10 @@ def _determine_claim_level(
             for r in live_bridge_results:
                 try:
                     data = json.loads(r.stdout)
-                    if data.get("data", {}).get("tokens_saved", 0) > 0:
+                    ts = data.get("data", {}).get("tokens_saved", 0) or data.get("data", {}).get("session", {}).get(
+                        "tokens_saved", 0
+                    )
+                    if ts > 0:
                         return "live_bridge_with_measured_savings"
                 except (json.JSONDecodeError, KeyError):
                     pass
@@ -142,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {result.name}: {result.status}")
 
     overall = "FAIL" if failed else "PASS"
+    if live_bridge_requested and live_bridge_results is not None:
+        if any(r.status == "FAIL" for r in live_bridge_results):
+            overall = "FAIL"
     claim_level = _determine_claim_level(results, live_bridge_requested, live_bridge_results)
 
     _write_report(
@@ -154,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\nAgent smoke: {overall} (claim_level={claim_level})")
     print(f"Report: {REPORT_PATH}")
-    return 1 if failed else 0
+    return 1 if overall == "FAIL" else 0
 
 
 if __name__ == "__main__":

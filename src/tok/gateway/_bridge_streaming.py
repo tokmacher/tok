@@ -131,6 +131,15 @@ def _parse_sse_stream(
     return sse_events, accumulated, sse_model, sse_usage, stream_blocks, stream_order
 
 
+def _expand_macros_in_stream_blocks(blocks: list[dict[str, Any]], session: BridgeSession) -> list[dict[str, Any]]:
+    from tok.macros.expansion import expand_tool_use_blocks
+
+    registry = session.runtime_session.bridge_memory.macro_registry
+    if not registry.macros:
+        return blocks
+    return expand_tool_use_blocks(blocks, registry)
+
+
 def _materialize_stream_blocks(
     stream_blocks: dict[int, dict[str, Any]],
     stream_order: list[int],
@@ -141,6 +150,11 @@ def _materialize_stream_blocks(
     tool_blocks = _materialize_stream_tool_blocks(stream_blocks, stream_order)
     if tool_blocks:
         _merge_signal_counts(stream_behavior_signals, _observe_stream_tool_blocks(session, tool_blocks))
+        from tok.macros.expansion import expand_tool_use_blocks
+
+        registry = session.runtime_session.bridge_memory.macro_registry
+        if registry.macros:
+            tool_blocks = expand_tool_use_blocks(tool_blocks, registry)
     thinking_blocks = [
         stream_blocks[idx]
         for idx in stream_order
@@ -606,6 +620,7 @@ async def buffer_strip_restream_impl(
                                 passthrough_blocks,
                                 seed_prefix="toolu_recovery",
                             )
+                            passthrough_blocks = _expand_macros_in_stream_blocks(passthrough_blocks, session)
                             _merge_signal_counts(stream_behavior_signals, passthrough_signals)
                             retry_text = "".join(
                                 str(block.get("text", ""))

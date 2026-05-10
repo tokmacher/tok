@@ -82,6 +82,15 @@ def _handle_retried_without_tok(
     return compressed, saved_toks, tool_breakdown, prompt_metrics
 
 
+def _expand_macros_in_blocks(blocks: list[dict[str, Any]], active_session: BridgeSession) -> list[dict[str, Any]]:
+    from tok.macros.expansion import expand_tool_use_blocks
+
+    registry = active_session.runtime_session.bridge_memory.macro_registry
+    if not registry.macros:
+        return blocks
+    return expand_tool_use_blocks(blocks, registry)
+
+
 def _build_response_signals(
     full_response_text: str,
     resp_json: dict[str, Any],
@@ -98,6 +107,7 @@ def _build_response_signals(
     passthrough_blocks, passthrough_signals = normalize_tool_use_blocks(
         passthrough_blocks, seed_prefix="toolu_upstream"
     )
+    passthrough_blocks = _expand_macros_in_blocks(passthrough_blocks, active_session)
     for key, value in passthrough_signals.items():
         behavior_signals[key] = behavior_signals.get(key, 0) + value
 

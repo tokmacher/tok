@@ -444,13 +444,47 @@ def bridge_status(*, json_output: bool = False) -> None:
                 )
             return
         except (TypeError, ValueError, KeyError):
-            console.print(f"[yellow]Bridge process alive (PID {pid}) but health payload is malformed[/yellow]")
-            console.print(
-                "[dim]Next step: inspect `tok bridge logs 100` and restart with `tok bridge start --foreground`.[/dim]"
-            )
+            if json_output:
+                envelope = json_envelope(
+                    "tok bridge status",
+                    ok=False,
+                    status="error",
+                    data={
+                        "bridge_running": True,
+                        "port": port,
+                        "pid": pid,
+                        "health_reachable": True,
+                        "malformed_payload": True,
+                    },
+                    warnings=["Health payload malformed"],
+                    next_steps=["Inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`."],
+                )
+                print(json.dumps(envelope, indent=2))
+            else:
+                console.print(f"[yellow]Bridge process alive (PID {pid}) but health payload is malformed[/yellow]")
+                console.print(
+                    "[dim]Next step: inspect `tok bridge logs 100` and restart with `tok bridge start --foreground`.[/dim]"
+                )
             raise typer.Exit(1) from None
 
-    console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
-    console.print(
-        "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
-    )
+    if json_output:
+        envelope = json_envelope(
+            "tok bridge status",
+            ok=False,
+            status="error",
+            data={
+                "bridge_running": True,
+                "port": port,
+                "pid": pid,
+                "health_reachable": True,
+                "http_status": r.status_code,
+            },
+            warnings=[f"Bridge returned HTTP {r.status_code}"],
+            next_steps=["Inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`."],
+        )
+        print(json.dumps(envelope, indent=2))
+    else:
+        console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
+        console.print(
+            "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
+        )

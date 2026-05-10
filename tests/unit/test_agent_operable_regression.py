@@ -238,6 +238,39 @@ class TestBridgeStatusJsonRegression:
         roundtripped = json.loads(json.dumps(parsed))
         assert roundtripped == parsed
 
+    def test_bridge_non_200_response_returns_json(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 12345)
+        fake = _make_fake_health_response(status_code=502)
+        monkeypatch.setattr("tok.cli._bridge.get_bridge_health_response", lambda *a, **kw: fake())
+        result = runner.invoke(app, ["bridge", "status", "--json"])
+        data = json.loads(result.output)
+        assert data["ok"] is False
+        assert data["status"] == "error"
+        assert data["data"]["bridge_running"] is True
+        assert data["data"]["http_status"] == 502
+
+    def test_bridge_malformed_payload_returns_json(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 12345)
+
+        class BadJsonResponse:
+            status_code = 200
+
+            def json(self):
+                raise ValueError("bad json")
+
+        monkeypatch.setattr(
+            "tok.cli._bridge.get_bridge_health_response",
+            lambda *a, **kw: BadJsonResponse(),
+        )
+        result = runner.invoke(app, ["bridge", "status", "--json"])
+        data = json.loads(result.output)
+        assert data["ok"] is False
+        assert data["status"] == "error"
+        assert data["data"]["bridge_running"] is True
+        assert data["data"]["malformed_payload"] is True
+        for tag in ("[bold]", "[green]", "[yellow]", "[red]", "[dim]"):
+            assert tag not in result.output
+
 
 # ---------------------------------------------------------------------------
 # 3. tok stats --json regression
@@ -555,6 +588,57 @@ class TestSmokeRunnerRegression:
         parsed = json.loads(raw)
         roundtripped = json.loads(json.dumps(parsed))
         assert roundtripped == parsed
+
+    def test_live_bridge_failure_overall_fail(self, monkeypatch, tmp_path) -> None:
+        module = self._load_smoke_module()
+        monkeypatch.setattr(module, "OUT_DIR", tmp_path)
+        monkeypatch.setattr(module, "REPORT_PATH", tmp_path / "agent_smoke_report.json")
+        call_count = 0
+        base_step_count = len(module.build_steps())
+
+        def _fail_on_live(*a, **_kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= base_step_count:
+                return subprocess.CompletedProcess(args=a, returncode=0, stdout="{}", stderr="")
+            return subprocess.CompletedProcess(args=a, returncode=1, stdout="", stderr="error")
+
+        monkeypatch.setattr(module.subprocess, "run", _fail_on_live)
+        exit_code = module.main(["--live-bridge"])
+        report = json.loads((tmp_path / "agent_smoke_report.json").read_text())
+        assert report["overall"] == "FAIL"
+        assert report["live_bridge_result"] == "fail"
+        assert exit_code == 1
+
+    def test_live_bridge_measured_savings_from_nested_stats(self, monkeypatch, tmp_path) -> None:
+        module = self._load_smoke_module()
+        monkeypatch.setattr(module, "OUT_DIR", tmp_path)
+        monkeypatch.setattr(module, "REPORT_PATH", tmp_path / "agent_smoke_report.json")
+        call_count = 0
+        base_step_count = len(module.build_steps())
+
+        def _nested_savings(*a, **_kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= base_step_count:
+                return subprocess.CompletedProcess(args=a, returncode=0, stdout="{}", stderr="")
+            stats_json = json.dumps(
+                {
+                    "schema": "tok-cli-result/v0.1",
+                    "command": "tok stats",
+                    "ok": True,
+                    "status": "ok",
+                    "data": {"session": {"tokens_saved": 100}},
+                    "warnings": [],
+                    "next_steps": [],
+                }
+            )
+            return subprocess.CompletedProcess(args=a, returncode=0, stdout=stats_json, stderr="")
+
+        monkeypatch.setattr(module.subprocess, "run", _nested_savings)
+        module.main(["--live-bridge"])
+        report = json.loads((tmp_path / "agent_smoke_report.json").read_text())
+        assert report["claim_level"] == "live_bridge_with_measured_savings"
 
 
 # ---------------------------------------------------------------------------

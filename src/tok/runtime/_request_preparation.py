@@ -755,6 +755,10 @@ def prepare_request_impl(
             session.pending_behavior_signals["jit_offer_context_filtered"] = 1
 
     _speculative_macro_hint: str | None = None
+    if session.bridge_memory.macro_registry.macros:
+        from tok.macros.expansion import macro_hint_for_session
+
+        _speculative_macro_hint = macro_hint_for_session(session.bridge_memory.macro_registry)
 
     id_to_context = build_tool_use_id_to_context(translated_messages, session)
     exact_search_evidence_keys_in_request = _exact_search_evidence_keys_in_messages(translated_messages, id_to_context)
@@ -790,6 +794,8 @@ def prepare_request_impl(
         and _is_first_turn_broad_audit_batch(request, session, normalized_tool_events)
     )
     runtime_hints: list[str] = []
+    if _speculative_macro_hint:
+        runtime_hints.append(_speculative_macro_hint)
     injected_state_payload = ""
     history_skip_reason = ""
     should_skip_history = False
