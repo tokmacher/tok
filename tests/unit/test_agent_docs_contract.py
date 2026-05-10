@@ -35,7 +35,10 @@ REQUIRED_AGENTS_MD_SECTIONS = (
 
 
 def _read_pyproject_version() -> str:
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
 
     data = tomllib.loads(PYPROJECT_TOML.read_text())
     return data["project"]["version"]
