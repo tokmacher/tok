@@ -3,9 +3,9 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "tok-protocol-dependencies",
-  "documentNamespace": "https://tok-protocol.dev/sbom/d2f0094a-d957-4857-af57-fed7b2cbbf7f",
+  "documentNamespace": "https://tok-protocol.dev/sbom/79214aa3-ef82-4c6a-8bcf-aa9bdb0ccc00",
   "creationInfo": {
-    "created": "2026-05-07T19:46:02.050572Z",
+    "created": "2026-05-12T15:05:03.084360Z",
     "creators": [
       "Tool: tok-security-pipeline-1.0.0",
       "Organization: tokmacher"
@@ -1872,8 +1872,8 @@
     {
       "name": "urllib3",
       "SPDXID": "SPDXRef-urllib3",
-      "versionInfo": "2.6.3",
-      "downloadLocation": "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz",
+      "versionInfo": "2.7.0",
+      "downloadLocation": "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
@@ -1882,13 +1882,13 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/urllib3@2.6.3"
+          "referenceLocator": "pkg:pypi/urllib3@2.7.0"
         }
       ],
       "checksums": [
         {
           "algorithm": "SHA256",
-          "checksumValue": "1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed"
+          "checksumValue": "231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c"
         }
       ]
     },

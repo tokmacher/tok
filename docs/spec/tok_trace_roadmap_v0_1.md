@@ -1,6 +1,6 @@
 # Tok Trace Roadmap
 
-Status: draft for 0.1.8
+Status: draft for 0.1.x
 
 Tok Trace should grow from audit evidence, not from protocol ambition. The first useful
 version is a small verifier-friendly trace format for bridge sessions.
@@ -138,8 +138,8 @@ transport work begins.
   implementation.
 - **0.1.8:** named adversarial fixture packs, audit UX, conformance docs, bridge-profile
   boundary docs, and standalone-reader preparation.
-- **0.1.9:** standalone reference reader and Resolver design; Routing remains
-  design-only.
+- **0.1.9:** agent-operability layer, bridge capability manifest, and evidence-exactness
+  taxonomy. Resolver/reader design remains deferred.
 - **0.2.0:** local Tok Resolver beta with content-addressed local store, resolver
   manifest, explicit missing/available/referral states, and no global network routing.
 - **0.2.x:** scoped resolver routing: local -> configured peer -> configured gateway; no

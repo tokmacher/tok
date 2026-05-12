@@ -1,12 +1,12 @@
 # Tok 0.2 Architecture Roadmap
 
-This document is a roadmap, not the current runtime contract. Tok 0.1.7 remains a
+This document is a roadmap, not the current runtime contract. Tok 0.1.x remains a
 bridge-first release; the live contract is still described in
 [architecture.md](./architecture.md). The purpose of this page is to make the intended
 0.2 direction visible to future agents before they edit gateway, runtime, compression,
 or release-surface code.
 
-## Current 0.1.7 Posture
+## Current 0.1.x Posture
 
 - The Claude bridge is the supported product surface.
 - `src/tok/gateway/` owns HTTP transport, auth/header shaping, upstream forwarding,
@@ -65,7 +65,7 @@ Rules to preserve:
 ## Not Implemented Yet
 
 These are 0.2 contracts to design before coding. They are intentionally not live
-abstractions in 0.1.7.
+abstractions in 0.1.x.
 
 ### Request Lifecycle Contract
 
@@ -122,7 +122,7 @@ workflow spans as part of the 0.2 bridge architecture.
 
 ### Config Strictness Table
 
-0.1.7 may warn and keep safe defaults for some invalid environment values. 0.2 should
+0.1.x may warn and keep safe defaults for some invalid environment values. 0.2 should
 centralize config parsing and classify each setting:
 
 - **startup-fatal**: port, bind host, API base, auth/transport mode, release gates;
@@ -165,7 +165,7 @@ edits or conclusions.
   model-facing references so compression can be defended without claiming summaries are
   original bytes.
 
-0.1.7 should document this contract and preserve existing tests. 0.2 should enforce it
+0.1.x should document this contract and preserve existing tests. 0.2 should enforce it
 mechanically with a narrow evidence-safety test suite.
 
 ## 0.2 Prep Rule

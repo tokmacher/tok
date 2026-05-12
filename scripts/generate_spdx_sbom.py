@@ -144,7 +144,7 @@ def main() -> None:
     sbom = generate_spdx_sbom(packages)
 
     output_file = Path("sbom.spdx")
-    output_file.write_text(json.dumps(sbom, indent=2))
+    output_file.write_text(json.dumps(sbom, indent=2) + "\n")
 
 
 if __name__ == "__main__":

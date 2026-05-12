@@ -1,20 +1,20 @@
 # Tok Protocol Layers v0.1 Draft
 
-Status: roadmap for 0.1.7 and later
+Status: roadmap for 0.1.x and later
 
 Tok should grow as a layered protocol family, not as one overloaded trace format. The
-0.1.7 release ships only the first visible layer: draft trace audit for bridge behavior.
+0.1.x releases ship only the first visible layer: draft trace audit for bridge behavior.
 Later layers should be added only after fixtures, audit behavior, and independent
 readers prove the lower layers.
 
 ## Layers
 
-| Layer          | Purpose                                                                                                 | 0.1.7 status                                               |
+| Layer          | Purpose                                                                                                 | 0.1.x status                                               |
 | -------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | Tok Trace      | Retrospective audit records for what Tok observed, compressed, referenced, passed through, or degraded. | Draft, visible through `tok audit`.                        |
 | Tok Resolver   | Content-addressed availability and retrieval semantics for exact bytes by hash.                         | Deferred. Local fixture and metadata artifact checks only. |
-| Tok Capability | Runtime declarations for supported references, deltas, fallbacks, fixture packs, and encodings.         | Deferred. No handshake in 0.1.7.                           |
-| Tok Session    | Ordered compact-state exchange between agents/tools.                                                    | Deferred. No agent-to-agent protocol in 0.1.7.             |
+| Tok Capability | Runtime declarations for supported references, deltas, fallbacks, fixture packs, and encodings.         | Deferred. No handshake in 0.1.x.                           |
+| Tok Session    | Ordered compact-state exchange between agents/tools.                                                    | Deferred. No agent-to-agent protocol in 0.1.x.             |
 
 Tok Trace is evidence. Tok Resolver is availability. Tok Capability is negotiation. Tok
 Session is exchange. Keeping those roles separate prevents v0.1 trace blocks from
@@ -60,7 +60,7 @@ Routing asks four questions:
 | L4    | Negotiate capabilities with another runtime.                                              |
 | L5    | Exchange compact verified state agent-to-agent.                                           |
 
-Tok 0.1.7 targets L1/L2 only. L3 and above require new design work, adversarial
+Tok 0.1.x targets L1/L2 only. L3 and above require new design work, adversarial
 fixtures, and at least one reader that validates fixtures without importing Tok runtime
 internals.
 
@@ -94,7 +94,7 @@ Future Resolver and Routing fixture packs should add:
 - remote unavailable but trace remains valid
 - conflicting resolver manifests
 
-0.1.7 includes tests for the cases the current draft verifier can defend locally. Future
+0.1.x includes tests for the cases the current draft verifier can defend locally. Future
 releases should promote this list into a named adversarial fixture pack before making
 stable protocol or interoperability claims.
 
