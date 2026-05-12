@@ -81,15 +81,18 @@ from ._session_persistence import (
     bridge_memory_file,
     episode_ledger_file,
     fallback_memory_file,
+    hot_summaries_file,
     initialize_session_storage,
     load_bridge_memory,
     load_episode_ledger,
     load_fallback_memory,
+    load_hot_summaries,
     load_result_cache,
     result_cache_file,
     save_bridge_memory,
     save_episode_ledger,
     save_fallback_memory,
+    save_hot_summaries,
     save_result_cache,
 )
 from ._session_persistence import record_episode as record_episode_impl
@@ -260,6 +263,7 @@ class RuntimeSession:
     _pending_macro_heal_turn: int = field(default=0, init=False, repr=False)
     _recent_repeat_target_events: list[RepeatTargetEvent] = field(default_factory=list, init=False, repr=False)
     _hot_summary_records: dict[str, HotSummaryRecord] = field(default_factory=dict, init=False, repr=False)
+    _hot_hints_loaded_from_disk: int = field(default=0, init=False, repr=False)
     _observed_tool_result_ids: dict[str, None] = field(default_factory=dict, init=False, repr=False)
     _prepared_prompt_token_cache: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _predictive_cache_warm_keys: set[str] = field(default_factory=set, init=False, repr=False)
@@ -373,7 +377,9 @@ class RuntimeSession:
         self._pending_macro_heal = ""
         self._pending_macro_heal_turn = 0
         self._recent_repeat_target_events.clear()
+        save_hot_summaries(self)
         self._hot_summary_records.clear()
+        self._hot_hints_loaded_from_disk = 0
         self._observed_tool_result_ids.clear()
         self._prepared_prompt_token_cache.clear()
         self._predictive_cache_warm_keys.clear()
@@ -644,6 +650,22 @@ class RuntimeSession:
 
         return get_model_profile(self.model)
 
+    @property
+    def effective_model_profile(self):
+        """Model profile with compression_aggressiveness scaled down under high labour."""
+        import dataclasses
+
+        base = self.model_profile
+        labour = self._current_task_labour_index
+        if labour >= 40:
+            scale = 0.70
+        elif labour >= 20:
+            scale = 0.85
+        else:
+            return base
+        adjusted = max(0.1, base.compression_aggressiveness * scale)
+        return dataclasses.replace(base, compression_aggressiveness=adjusted)
+
     def __post_init__(self) -> None:
         """Initialize memory directory and load persisted bridge memory."""
         explicit_memory_dir = self.memory_dir is not None
@@ -660,6 +682,7 @@ class RuntimeSession:
     def _save_bridge_memory(self) -> None:
         """Persist bridge memory to disk."""
         save_bridge_memory(self)
+        save_hot_summaries(self)
 
     def _result_cache_file(self) -> Path:
         """Return the path to the result cache file."""
@@ -696,6 +719,18 @@ class RuntimeSession:
     def _save_episode_ledger(self) -> None:
         """Persist episode ledger to disk."""
         save_episode_ledger(self)
+
+    def _hot_summaries_file(self) -> Path:
+        """Return the path to the hot summaries file."""
+        return hot_summaries_file(self)
+
+    def _load_hot_summaries(self) -> dict[str, Any]:
+        """Load hot summary records from disk."""
+        return load_hot_summaries(self)
+
+    def _save_hot_summaries(self) -> None:
+        """Persist hot summary records to disk."""
+        save_hot_summaries(self)
 
     def record_episode(self, entry: EpisodeEntry) -> None:
         record_episode_impl(self, entry)

@@ -5,6 +5,8 @@ These tests verify the pure scoring functions and penalty calculations
 without any runtime wiring.
 """
 
+from __future__ import annotations
+
 import pytest
 
 from tok.runtime.smoothness.models import (
@@ -318,3 +320,135 @@ def test_labour_index_calculation() -> None:
     ]
     report = score_turn("turn_1", "task_1", events)
     assert report.labour_index == 5
+
+
+# ---------------------------------------------------------------------------
+# Labour-index-aware compression policy
+# ---------------------------------------------------------------------------
+
+
+class TestEffectiveModelProfile:
+    """effective_model_profile must scale compression_aggressiveness by labour index."""
+
+    def _session_with_labour(self, labour: int):
+        from tok.runtime.core import RuntimeSession
+
+        s = RuntimeSession(model="claude-sonnet-4-5")
+        s._current_task_labour_index = labour
+        return s
+
+    def test_low_labour_returns_base_profile_unchanged(self) -> None:
+        s = self._session_with_labour(0)
+        assert s.effective_model_profile.compression_aggressiveness == s.model_profile.compression_aggressiveness
+
+    def test_labour_19_returns_base_profile_unchanged(self) -> None:
+        s = self._session_with_labour(19)
+        assert s.effective_model_profile.compression_aggressiveness == s.model_profile.compression_aggressiveness
+
+    def test_labour_20_scales_aggressiveness_down(self) -> None:
+        s = self._session_with_labour(20)
+        base = s.model_profile.compression_aggressiveness
+        effective = s.effective_model_profile.compression_aggressiveness
+        assert effective < base
+        assert abs(effective - base * 0.85) < 0.001
+
+    def test_labour_40_scales_aggressiveness_further(self) -> None:
+        s = self._session_with_labour(40)
+        base = s.model_profile.compression_aggressiveness
+        effective = s.effective_model_profile.compression_aggressiveness
+        assert effective < base
+        assert abs(effective - base * 0.70) < 0.001
+
+    def test_effective_profile_does_not_mutate_base(self) -> None:
+        s = self._session_with_labour(50)
+        base_agg = s.model_profile.compression_aggressiveness
+        _ = s.effective_model_profile
+        assert s.model_profile.compression_aggressiveness == base_agg
+
+    def test_high_labour_used_in_tool_context_file_heat_path(self) -> None:
+        """compress_file_read must use effective profile aggressiveness when session has high labour."""
+        from tok.runtime.core import RuntimeSession
+
+        s = RuntimeSession(model="claude-sonnet-4-5")
+        s._current_task_labour_index = 60
+
+        # Model profile has compression_aggressiveness=1.0 for sonnet; scaled to 0.7
+        # Still above 0.5 so compression is allowed — but the profile object is different
+        eff = s.effective_model_profile
+        assert eff.compression_aggressiveness < s.model_profile.compression_aggressiveness
+
+    def test_request_preparation_passes_effective_profile_under_high_labour(self) -> None:
+        """_request_preparation calls effective_model_profile, not model_profile, for compression."""
+        from unittest.mock import patch
+
+        from tok.runtime.core import RuntimeSession, UniversalTokRuntime
+        from tok.runtime.types import RuntimeRequest
+
+        session = RuntimeSession(model="claude-sonnet-4-5")
+        session._current_task_labour_index = 60  # triggers 0.70 scale
+
+        captured: list[object] = []
+        base = session.model_profile
+
+        def fake_effective(_self_inner=None):
+            import dataclasses
+
+            prof = session.model_profile
+            adjusted = dataclasses.replace(prof, compression_aggressiveness=prof.compression_aggressiveness * 0.70)
+            captured.append(adjusted)
+            return adjusted
+
+        with patch.object(
+            type(session), "effective_model_profile", new_callable=lambda: property(lambda s: fake_effective())
+        ):
+            runtime = UniversalTokRuntime()
+            req = RuntimeRequest(
+                model="claude-sonnet-4-5",
+                messages=[
+                    {"role": "user", "content": "hi"},
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"path": "a.py"}}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "x = 1\n" * 50}],
+                    },
+                ],
+                tool_compatible=True,
+            )
+            runtime.prepare_request(req, session)
+
+        assert captured, "effective_model_profile was never accessed during prepare_request"
+        for mp in captured:
+            assert mp.compression_aggressiveness < base.compression_aggressiveness
+
+    def test_labour_39_scales_by_085(self) -> None:
+        s = self._session_with_labour(39)
+        base = s.model_profile.compression_aggressiveness
+        effective = s.effective_model_profile.compression_aggressiveness
+        assert abs(effective - base * 0.85) < 0.001
+
+    def test_labour_41_scales_by_070(self) -> None:
+        s = self._session_with_labour(41)
+        base = s.model_profile.compression_aggressiveness
+        effective = s.effective_model_profile.compression_aggressiveness
+        assert abs(effective - base * 0.70) < 0.001
+
+    def test_very_high_labour_never_drops_below_floor(self) -> None:
+        s = self._session_with_labour(1000)
+        assert s.effective_model_profile.compression_aggressiveness >= 0.1
+
+    def test_effective_profile_is_independent_per_call(self) -> None:
+        s = self._session_with_labour(25)
+        first = s.effective_model_profile
+        s._current_task_labour_index = 50
+        second = s.effective_model_profile
+        assert second.compression_aggressiveness < first.compression_aggressiveness
+
+    def test_other_profile_fields_unchanged(self) -> None:
+        s = self._session_with_labour(50)
+        base = s.model_profile
+        eff = s.effective_model_profile
+        for field in [f for f in base.__dataclass_fields__ if f != "compression_aggressiveness"]:
+            assert getattr(eff, field) == getattr(base, field), f"{field} changed unexpectedly"

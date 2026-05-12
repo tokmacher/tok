@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import dataclasses
 import json
 import math
 import random  # noqa: F401 - compatibility anchor for gateway tests
 import time
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
@@ -16,6 +18,7 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
+from tok.runtime._diagnostics import DiagnosticsSnapshot
 from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
 from tok.runtime.smoothness import SmoothnessEventType
 from tok.spec.live_trace import emit_live_trace
@@ -32,7 +35,8 @@ from ._anthropic_optimizations import apply_anthropic_optimizations
 from ._bridge_comparison import _safe_headers
 from ._bridge_request_handler import send_with_tok_fail_open_retry
 from ._bridge_runtime_pipeline import prepare_bridge_payload
-from ._bridge_streaming import _emit_sse_block, buffer_strip_restream_impl, passthrough_stream_impl
+from ._bridge_streaming import _emit_sse_block, _run_macro_mining, buffer_strip_restream_impl, passthrough_stream_impl
+from ._types import build_capability_manifest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -54,6 +58,237 @@ def _upstream_target_url(api_base: str, path: str, query: str) -> str:
     if query:
         target_url += f"?{query}"
     return target_url
+
+
+def _handle_retried_without_tok(
+    behavior_signals: dict[str, int],
+    active_session: BridgeSession,
+    request_state: dict[str, bool],
+) -> tuple[bool, int, dict[str, int], dict[str, int]]:
+    compressed = False
+    saved_toks = 0
+    tool_breakdown: dict[str, int] = {}
+    prompt_metrics = {
+        "baseline_prompt_tokens": 0,
+        "prepared_prompt_tokens": 0,
+        "saved_prompt_tokens": 0,
+        "hot_hint_tokens_added": 0,
+        "reacquisition_tokens_avoided_estimate": 0,
+    }
+    behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
+    behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
+    logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
+    _record_fallback_once(active_session, request_state)
+    return compressed, saved_toks, tool_breakdown, prompt_metrics
+
+
+def _expand_macros_in_blocks(blocks: list[dict[str, Any]], active_session: BridgeSession) -> list[dict[str, Any]]:
+    from tok.macros.expansion import expand_tool_use_blocks
+
+    registry = active_session.runtime_session.bridge_memory.macro_registry
+    if not registry.macros:
+        return blocks
+    return expand_tool_use_blocks(blocks, registry)
+
+
+def _build_response_signals(
+    full_response_text: str,
+    resp_json: dict[str, Any],
+    active_session: BridgeSession,
+    behavior_signals: dict[str, int],
+    request_tool_compatible: bool,
+) -> tuple[dict[str, int], int]:
+    total_output_saved = 0
+    response_signals: dict[str, int] = {}
+
+    passthrough_blocks = [
+        block for block in resp_json.get("content", []) if isinstance(block, dict) and block.get("type") != "text"
+    ]
+    passthrough_blocks, passthrough_signals = normalize_tool_use_blocks(
+        passthrough_blocks, seed_prefix="toolu_upstream"
+    )
+    passthrough_blocks = _expand_macros_in_blocks(passthrough_blocks, active_session)
+    for key, value in passthrough_signals.items():
+        behavior_signals[key] = behavior_signals.get(key, 0) + value
+
+    if full_response_text:
+        processed = _RUNTIME.process_response(
+            full_response_text,
+            model=str(resp_json.get("model", "")),
+            session=active_session.runtime_session,
+            behavior_signals=behavior_signals or None,
+            tool_compatible=request_tool_compatible,
+        )
+        response_signals = processed.behavior_signals
+        new_content = _rebuild_content_preserving_position(
+            resp_json.get("content", []),
+            processed.content_blocks,
+            passthrough_blocks,
+        )
+        resp_json["content"] = new_content
+        total_output_saved = processed.output_saved_tokens
+
+        session_signals = active_session.consume_behavior_signals()
+        if session_signals:
+            for k, v in session_signals.items():
+                response_signals[k] = response_signals.get(k, 0) + v
+
+        logger.info(
+            "Response: %d blocks, ~%d saved",
+            len(new_content),
+            total_output_saved,
+        )
+    else:
+        passthrough_idx = 0
+        for i, block in enumerate(resp_json.get("content", [])):
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                continue
+            if passthrough_idx < len(passthrough_blocks):
+                resp_json["content"][i] = passthrough_blocks[passthrough_idx]
+                passthrough_idx += 1
+        while passthrough_idx < len(passthrough_blocks):
+            resp_json["content"].append(passthrough_blocks[passthrough_idx])
+            passthrough_idx += 1
+
+        session_signals = active_session.consume_behavior_signals()
+        if session_signals:
+            for k, v in session_signals.items():
+                response_signals[k] = response_signals.get(k, 0) + v
+
+    _note_request_policy_recovery_watch(active_session, response_signals)
+    return response_signals, total_output_saved
+
+
+def _rebuild_and_record_response(
+    resp_json: dict[str, Any],
+    active_session: BridgeSession,
+    saved_toks: int,
+    compressed: bool,
+    tool_breakdown: dict[str, int],
+    response_signals: dict[str, int],
+    prompt_metrics: dict[str, int],
+    total_output_saved: int,
+    request_policy: str,
+    request_tool_compatible: bool,
+) -> None:
+    usage = resp_json.get("usage", {})
+    if not (resp_json.get("model") and usage):
+        return
+
+    active_session.tracker.record_call(
+        model=resp_json["model"],
+        actual_input=usage.get("input_tokens", 0),
+        actual_output=usage.get("output_tokens", 0),
+        cache_read=usage.get("cache_read_input_tokens", 0),
+        cache_write=usage.get("cache_creation_input_tokens", 0),
+        input_saved=saved_toks if compressed else 0,
+        output_saved=total_output_saved,
+        type_breakdown=tool_breakdown if compressed else None,
+        behavior_signals=response_signals or None,
+        prompt_metrics=prompt_metrics if compressed else None,
+    )
+    try:
+        asyncio.get_running_loop().create_task(_run_macro_mining(active_session))
+    except RuntimeError:
+        pass
+
+    turn_report = active_session.smoothness_tracker.finish_turn()
+    event_counts: dict[str, int] = {}
+    for event in turn_report.events:
+        key = event.event_type.value
+        event_counts[key] = event_counts.get(key, 0) + 1
+
+    active_session.runtime_session.update_smoothness_state(
+        turn_score=turn_report.score,
+        labour_index=turn_report.labour_index,
+        tok_mode=turn_report.mode,
+        event_counts=event_counts,
+    )
+
+    active_session.capture_event(
+        {
+            "event": "response",
+            "model": resp_json["model"],
+            "request_policy": request_policy,
+            "tool_compatible": request_tool_compatible,
+            "baseline_only": active_session.runtime_session._baseline_only,
+            "persistence_failures": active_session.runtime_session._persistence_failures,
+            "fallback_count": int(active_session.tracker.behavior_signals().get("tok_fallback_activated", 0)),
+            "behavior_signals": response_signals or {},
+            "session_quality": str((active_session.tracker.session_summary() or {}).get("session_quality", "clean")),
+            "session_tokens_saved": int((active_session.tracker.session_summary() or {}).get("tokens_saved", 0)),
+            "session_savings_pct": float((active_session.tracker.session_summary() or {}).get("savings_pct", 0.0)),
+            "last_degradation_reason": str(
+                (active_session.tracker.session_summary() or {}).get("last_degradation_reason", "")
+            ),
+        }
+    )
+    emit_live_trace(
+        active_session,
+        "response_processed",
+        trace_class="response",
+        action="summary_reference" if total_output_saved else "pass_through",
+        result="ok",
+        expectation="accept_non_exact_reference" if total_output_saved else "accept_pass_through",
+        reason=(
+            "live metadata-only trace; response artifacts are not captured"
+            if total_output_saved
+            else "response passed through without live artifact capture"
+        ),
+        direction="response",
+        metadata={
+            "output_saved_tokens": int(total_output_saved),
+            "behavior_signals": response_signals or {},
+            "request_policy": request_policy,
+            "tool_compatible": bool(request_tool_compatible),
+            "baseline_only": bool(active_session.runtime_session._baseline_only),
+        },
+    )
+
+
+def _handle_nonstreaming_failopen(
+    exc: Exception,
+    active_session: BridgeSession,
+    behavior_signals: dict[str, int],
+    request_state: dict[str, bool],
+    resp_json: dict[str, Any],
+    saved_toks: int,
+    compressed: bool,
+    tool_breakdown: dict[str, int],
+    prompt_metrics: dict[str, int],
+) -> None:
+    if not active_session.fail_open:
+        raise exc
+
+    logger.warning("Non-streaming processing error (fail-open): %s", exc)
+    behavior_signals["processing_error"] = behavior_signals.get("processing_error", 0) + 1
+    behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
+    _record_fallback_once(active_session, request_state)
+    try:
+        model = resp_json.get("model", "")
+        usage = resp_json.get("usage", {})
+        session_signals = active_session.consume_behavior_signals()
+        error_signals: dict[str, int] = {"processing_error": 1, "tok_fallback_activated": 1}
+        if session_signals:
+            for k, v in session_signals.items():
+                error_signals[k] = error_signals.get(k, 0) + v
+        if model and usage:
+            active_session.tracker.record_call(
+                model=model,
+                actual_input=usage.get("input_tokens", 0),
+                actual_output=usage.get("output_tokens", 0),
+                cache_read=usage.get("cache_read_input_tokens", 0),
+                cache_write=usage.get("cache_creation_input_tokens", 0),
+                input_saved=saved_toks if compressed else 0,
+                output_saved=0,
+                type_breakdown=tool_breakdown if compressed else None,
+                behavior_signals=error_signals,
+                prompt_metrics=prompt_metrics if compressed else None,
+            )
+    except Exception as _exc:
+        logger.debug("Failed to record usage in fail-open path: %s", _exc)
 
 
 async def _aclose_if_possible(resource: object | None) -> None:
@@ -254,173 +489,36 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 signals[key] = signals.get(key, 0) + int(value)
         else:
             signals = session.aggregate_behavior_signals()
-        return {
-            "status": "ok",
-            "bridge": "tok",
-            "port": session.port,
-            "api_base": session.api_base,
-            "mode": _request_policy_mode_label(session.request_policy_default),
-            "request_policy": session.request_policy_default,
-            "baseline_only": report_session.runtime_session._baseline_only,
-            "persistence_failures": report_session.runtime_session._persistence_failures,
-            "fallback_count": max(
-                int(session_summary.get("fallback_count", 0)),
-                int(signals.get("tok_fallback_activated", 0)),
+        snap = DiagnosticsSnapshot.from_session(
+            port=session.port,
+            api_base=session.api_base,
+            request_policy_default=session.request_policy_default,
+            mode_label=_request_policy_mode_label(session.request_policy_default),
+            baseline_only=report_session.runtime_session._baseline_only,
+            persistence_failures=report_session.runtime_session._persistence_failures,
+            session_summary=session_summary,
+            signals=signals,
+        )
+        # Override fields that require the live runtime_session object.
+        rs = report_session.runtime_session
+        snap = dataclasses.replace(
+            snap,
+            smoothness_score=rs.latest_turn_smoothness_score,
+            labour_index=rs.latest_turn_labour_index,
+            current_mode=rs.current_tok_mode.name,
+            task_score=rs.current_task_smoothness_score,
+            stream_instability_events=sum(v for k, v in rs.smoothness_event_counts.items() if "stream" in k.lower()),
+            thinking_mutation_events=int(rs.smoothness_event_counts.get("thinking_block_mutation", 0)),
+            stream_recovery_attempt_count=max(
+                snap.stream_recovery_attempt_count,
+                sum(v for k, v in rs.smoothness_event_counts.items() if "stream_recovery" in k.lower()),
             ),
-            "actual_tokens": int(session_summary.get("actual_tokens", 0)),
-            "baseline_tokens": int(session_summary.get("baseline_tokens", 0)),
-            "session_tokens_saved": int(session_summary.get("tokens_saved", 0)),
-            "baseline_prompt_tokens": int(session_summary.get("baseline_prompt_tokens", 0)),
-            "prepared_prompt_tokens": int(session_summary.get("prepared_prompt_tokens", 0)),
-            "saved_prompt_tokens": int(session_summary.get("saved_prompt_tokens", 0)),
-            "session_savings_pct": float(session_summary.get("savings_pct", 0.0)),
-            "session_cost_savings_pct": float(
-                session_summary.get("cost_savings_pct", session_summary.get("savings_pct", 0.0))
-            ),
-            "actual_cost_usd": float(session_summary.get("actual_cost_usd", 0.0)),
-            "baseline_cost_usd": float(session_summary.get("baseline_cost_usd", 0.0)),
-            "cost_saved_usd": float(session_summary.get("cost_saved_usd", 0.0)),
-            "semantic_drift_count": int(
-                session_summary.get(
-                    "semantic_drift_count",
-                    signals.get("semantic_drift_detected", 0),
-                )
-            ),
-            "fail_open_count": int(
-                session_summary.get(
-                    "fail_open_count",
-                    signals.get("fail_open_compat_response", 0),
-                )
-            ),
-            "non_tok_count": int(session_summary.get("non_tok_count", signals.get("non_tok_response", 0))),
-            "answer_anchor_miss_count": int(session_summary.get("answer_anchor_miss_count", 0)),
-            "repeat_search_count": int(signals.get("repeat_search", 0)),
-            "repeat_file_read_count": int(signals.get("repeat_file_read", 0)),
-            "shell_file_read_normalized_count": int(signals.get("shell_file_read_normalized", 0)),
-            "shell_file_snapshot_captured_count": int(signals.get("shell_file_snapshot_captured", 0)),
-            "repeat_target_hot_count": int(signals.get("repeat_target_hot", 0)),
-            "repeat_target_stuck_count": int(signals.get("repeat_target_stuck", 0)),
-            "hot_recent_hint_count": int(signals.get("hot_recent_hint_injected", 0)),
-            "hot_hint_tokens_added": int(
-                session_summary.get(
-                    "hot_hint_tokens_added",
-                    signals.get("hot_hint_tokens_added", 0),
-                )
-            ),
-            "reacquisition_tokens_avoided_estimate": int(
-                session_summary.get(
-                    "reacquisition_tokens_avoided_estimate",
-                    signals.get("reacquisition_tokens_avoided_estimate", 0),
-                )
-            ),
-            "state_resend_full_count": int(signals.get("state_resend_full_turn", 0)),
-            "state_resend_delta_count": int(signals.get("state_resend_delta_turn", 0)),
-            "state_resend_suppressed_count": int(signals.get("state_resend_suppressed_turn", 0)),
-            "stream_recovery_attempt_count": max(
-                int(session_summary.get("stream_recovery_attempt_count", 0)),
-                int(signals.get("stream_recovery_started", 0)),
-                sum(
-                    v
-                    for k, v in report_session.runtime_session.smoothness_event_counts.items()
-                    if "stream_recovery" in k.lower()
-                ),
-            ),
-            "stream_recovery_success_text_count": int(session_summary.get("stream_recovery_success_text_count", 0)),
-            "stream_recovery_success_tool_use_count": int(
-                session_summary.get("stream_recovery_success_tool_use_count", 0)
-            ),
-            "stream_recovery_fallback_count": int(session_summary.get("stream_recovery_fallback_count", 0)),
-            "stream_recovery_empty_success_count": int(
-                session_summary.get(
-                    "stream_recovery_empty_success_count",
-                    signals.get("stream_recovery_empty_success", 0),
-                )
-            ),
-            "stream_recovery_read_error_count": int(
-                session_summary.get(
-                    "stream_recovery_read_error_count",
-                    signals.get("stream_recovery_read_error", 0),
-                )
-            ),
-            "tool_history_repaired_count": int(session_summary.get("tool_history_repaired_count", 0)),
-            "tool_history_pairing_repaired_count": int(session_summary.get("tool_history_pairing_repaired_count", 0)),
-            "tool_history_quarantined_count": int(session_summary.get("tool_history_quarantined_count", 0)),
-            "tool_history_blocked_count": max(
-                int(session_summary.get("tool_history_blocked_count", 0)),
-                int(signals.get("tok_bridge_invalid_tool_history_blocked", 0)),
-            ),
-            "invalid_tool_history_session_reset_count": int(
-                session_summary.get("invalid_tool_history_session_reset_count", 0)
-            ),
-            "provider_pairing_disagreement_count": int(session_summary.get("provider_pairing_disagreement_count", 0)),
-            "assistant_tool_use_text_interleaving_blocked_count": int(
-                session_summary.get(
-                    "assistant_tool_use_text_interleaving_blocked_count",
-                    signals.get(
-                        "tok_bridge_assistant_tool_use_text_interleaving_blocked",
-                        0,
-                    ),
-                )
-            ),
-            "preflight_block_original_payload_count": int(
-                session_summary.get(
-                    "preflight_block_original_payload_count",
-                    signals.get("preflight_block_original_payload", 0),
-                )
-            ),
-            "preflight_block_rewritten_payload_count": int(
-                session_summary.get(
-                    "preflight_block_rewritten_payload_count",
-                    signals.get("preflight_block_rewritten_payload", 0),
-                )
-            ),
-            "request_policy_natural_first_count": int(session_summary.get("request_policy_natural_first_count", 0)),
-            "request_policy_tool_compatible_count": int(session_summary.get("request_policy_tool_compatible_count", 0)),
-            "request_policy_escalations_count": int(session_summary.get("request_policy_escalations_count", 0)),
-            "request_policy_deescalations_count": int(session_summary.get("request_policy_deescalations_count", 0)),
-            "request_policy_interleaving_downgrades_count": int(
-                session_summary.get("request_policy_interleaving_downgrades_count", 0)
-            ),
-            "request_policy_reason_stream_recovery_count": int(
-                session_summary.get(
-                    "request_policy_reason_stream_recovery_count",
-                    signals.get("request_policy_reason_stream_recovery", 0),
-                )
-            ),
-            "request_policy_reason_tool_recovery_count": int(
-                session_summary.get(
-                    "request_policy_reason_tool_recovery_count",
-                    signals.get("request_policy_reason_tool_recovery", 0),
-                )
-            ),
-            "request_policy_reason_structured_tool_loop_count": int(
-                session_summary.get(
-                    "request_policy_reason_structured_tool_loop_count",
-                    signals.get("request_policy_reason_structured_tool_loop", 0),
-                )
-            ),
-            "request_policy_held_by_recovery_count": int(
-                session_summary.get(
-                    "request_policy_held_by_recovery_count",
-                    signals.get("request_policy_held_by_recovery", 0)
-                    + signals.get("request_policy_recovery_sticky_continuations", 0),
-                )
-            ),
-            "session_quality": str(session_summary.get("session_quality", "clean")),
-            "last_degradation_reason": str(session_summary.get("last_degradation_reason", "")),
-            "calls": int(session_summary.get("calls", 0)),
-            "smoothness_score": report_session.runtime_session.latest_turn_smoothness_score,
-            "labour_index": report_session.runtime_session.latest_turn_labour_index,
-            "current_mode": report_session.runtime_session.current_tok_mode.name,
-            "stream_instability_events": sum(
-                v for k, v in report_session.runtime_session.smoothness_event_counts.items() if "stream" in k.lower()
-            ),
-            "thinking_mutation_events": int(
-                report_session.runtime_session.smoothness_event_counts.get("thinking_block_mutation", 0)
-            ),
-            "task_score": report_session.runtime_session.current_task_smoothness_score,
-            "repeated_active_file_reads": int(signals.get("repeat_file_read", 0)),
-        }
+        )
+        health_response = snap.to_health_response()
+        health_response["capability"] = asdict(
+            build_capability_manifest(bridge_mode=str(health_response.get("mode", "unknown")))
+        )
+        return health_response
 
     @app.post("/reset-session")
     async def reset_session_endpoint(request: Request) -> dict[str, str]:
@@ -929,20 +1027,11 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 _record_rate_limit_hit(session)
                 return await _build_upstream_rate_limit_response(response)
             if retried_without_tok:
-                compressed = False
-                saved_toks = 0
-                tool_breakdown = {}
-                prompt_metrics = {
-                    "baseline_prompt_tokens": 0,
-                    "prepared_prompt_tokens": 0,
-                    "saved_prompt_tokens": 0,
-                    "hot_hint_tokens_added": 0,
-                    "reacquisition_tokens_avoided_estimate": 0,
-                }
-                behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
-                behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
-                logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
-                _record_fallback_once(active_session, request_state)
+                compressed, saved_toks, tool_breakdown, prompt_metrics = _handle_retried_without_tok(
+                    behavior_signals,
+                    active_session,
+                    request_state,
+                )
 
             content = response.content
 
@@ -956,19 +1045,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             if path == "v1/messages" and response.status_code == 200:
                 try:
                     resp_json = json.loads(content)
-                    total_output_saved = 0
                     full_response_text = ""
-                    passthrough_blocks = [
-                        block
-                        for block in resp_json.get("content", [])
-                        if isinstance(block, dict) and block.get("type") != "text"
-                    ]
-                    (
-                        passthrough_blocks,
-                        passthrough_signals,
-                    ) = normalize_tool_use_blocks(passthrough_blocks, seed_prefix="toolu_upstream")
-                    for key, value in passthrough_signals.items():
-                        behavior_signals[key] = behavior_signals.get(key, 0) + value
 
                     logger.info(
                         "Raw response content: %s",
@@ -981,172 +1058,38 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                             if isinstance(text_content, str):
                                 full_response_text += text_content
 
-                    response_signals: dict[str, int] = {}
-                    if full_response_text:
-                        processed = _RUNTIME.process_response(
-                            full_response_text,
-                            model=str(resp_json.get("model", "")),
-                            session=active_session.runtime_session,
-                            behavior_signals=behavior_signals or None,
-                            tool_compatible=request_tool_compatible,
-                        )
-                        response_signals = processed.behavior_signals
-                        new_content = _rebuild_content_preserving_position(
-                            resp_json.get("content", []),
-                            processed.content_blocks,
-                            passthrough_blocks,
-                        )
-                        resp_json["content"] = new_content
-                        total_output_saved = processed.output_saved_tokens
-
-                        session_signals = active_session.consume_behavior_signals()
-                        if session_signals:
-                            response_signals = response_signals or {}
-                            for k, v in session_signals.items():
-                                response_signals[k] = response_signals.get(k, 0) + v
-
-                        logger.info(
-                            "Response: %d blocks, ~%d saved",
-                            len(new_content),
-                            total_output_saved,
-                        )
-                    else:
-                        session_signals = active_session.runtime_session.consume_behavior_signals()
-                        if session_signals:
-                            response_signals = dict(session_signals)
-
-                    _note_request_policy_recovery_watch(active_session, response_signals)
-
-                    usage = resp_json.get("usage", {})
-                    if resp_json.get("model") and usage:
-                        active_session.tracker.record_call(
-                            model=resp_json["model"],
-                            actual_input=usage.get("input_tokens", 0),
-                            actual_output=usage.get("output_tokens", 0),
-                            cache_read=usage.get("cache_read_input_tokens", 0),
-                            cache_write=usage.get("cache_creation_input_tokens", 0),
-                            input_saved=saved_toks if compressed else 0,
-                            output_saved=total_output_saved,
-                            type_breakdown=tool_breakdown if compressed else None,
-                            behavior_signals=response_signals or None,
-                            prompt_metrics=prompt_metrics if compressed else None,
-                        )
-
-                        # Finish smoothness turn
-                        turn_report = active_session.smoothness_tracker.finish_turn()
-
-                        # Update session state with smoothness data
-                        event_counts: dict[str, int] = {}
-                        for event in turn_report.events:
-                            key = event.event_type.value
-                            event_counts[key] = event_counts.get(key, 0) + 1
-
-                        active_session.runtime_session.update_smoothness_state(
-                            turn_score=turn_report.score,
-                            labour_index=turn_report.labour_index,
-                            tok_mode=turn_report.mode,
-                            event_counts=event_counts,
-                        )
-
-                        logger.info(
-                            "Smoothness turn complete | turn_id=%s | score=%d | labour_index=%d | mode=%s | events=%d",
-                            turn_report.turn_id,
-                            turn_report.score,
-                            turn_report.labour_index,
-                            turn_report.mode.value,
-                            len(turn_report.events),
-                        )
-                        active_session.capture_event(
-                            {
-                                "event": "response",
-                                "model": resp_json["model"],
-                                "request_policy": request_policy,
-                                "tool_compatible": request_tool_compatible,
-                                "baseline_only": active_session.runtime_session._baseline_only,
-                                "persistence_failures": active_session.runtime_session._persistence_failures,
-                                "fallback_count": int(
-                                    active_session.tracker.behavior_signals().get("tok_fallback_activated", 0)
-                                ),
-                                "behavior_signals": response_signals or {},
-                                "session_quality": str(
-                                    (active_session.tracker.session_summary() or {}).get("session_quality", "clean")
-                                ),
-                                "session_tokens_saved": int(
-                                    (active_session.tracker.session_summary() or {}).get("tokens_saved", 0)
-                                ),
-                                "session_savings_pct": float(
-                                    (active_session.tracker.session_summary() or {}).get("savings_pct", 0.0)
-                                ),
-                                "last_degradation_reason": str(
-                                    (active_session.tracker.session_summary() or {}).get("last_degradation_reason", "")
-                                ),
-                            }
-                        )
-                        emit_live_trace(
-                            active_session,
-                            "response_processed",
-                            trace_class="response",
-                            action="summary_reference" if total_output_saved else "pass_through",
-                            result="ok",
-                            expectation="accept_non_exact_reference" if total_output_saved else "accept_pass_through",
-                            reason=(
-                                "live metadata-only trace; response artifacts are not captured"
-                                if total_output_saved
-                                else "response passed through without live artifact capture"
-                            ),
-                            direction="response",
-                            metadata={
-                                "output_saved_tokens": int(total_output_saved),
-                                "behavior_signals": response_signals or {},
-                                "request_policy": request_policy,
-                                "tool_compatible": bool(request_tool_compatible),
-                                "baseline_only": bool(active_session.runtime_session._baseline_only),
-                            },
-                        )
+                    response_signals, total_output_saved = _build_response_signals(
+                        full_response_text,
+                        resp_json,
+                        active_session,
+                        behavior_signals,
+                        request_tool_compatible,
+                    )
+                    _rebuild_and_record_response(
+                        resp_json,
+                        active_session,
+                        saved_toks,
+                        compressed,
+                        tool_breakdown,
+                        response_signals,
+                        prompt_metrics,
+                        total_output_saved,
+                        request_policy,
+                        request_tool_compatible,
+                    )
                     content = json.dumps(resp_json).encode()
                 except Exception as exc:
-                    if active_session.fail_open:
-                        logger.warning(
-                            "Non-streaming processing error (fail-open): %s",
-                            exc,
-                        )
-                        behavior_signals["processing_error"] = behavior_signals.get("processing_error", 0) + 1
-                        behavior_signals["tok_fallback_activated"] = (
-                            behavior_signals.get("tok_fallback_activated", 0) + 1
-                        )
-                        _record_fallback_once(active_session, request_state)
-                        try:
-                            _model = resp_json.get("model", "")
-                            _usage = resp_json.get("usage", {})
-                            session_signals = active_session.consume_behavior_signals()
-                            error_signals = {
-                                "processing_error": 1,
-                                "tok_fallback_activated": 1,
-                            }
-                            if session_signals:
-                                for k, v in session_signals.items():
-                                    error_signals[k] = error_signals.get(k, 0) + v
-
-                            if _model and _usage:
-                                active_session.tracker.record_call(
-                                    model=_model,
-                                    actual_input=_usage.get("input_tokens", 0),
-                                    actual_output=_usage.get("output_tokens", 0),
-                                    cache_read=_usage.get("cache_read_input_tokens", 0),
-                                    cache_write=_usage.get("cache_creation_input_tokens", 0),
-                                    input_saved=saved_toks if compressed else 0,
-                                    output_saved=0,
-                                    type_breakdown=tool_breakdown if compressed else None,
-                                    behavior_signals=error_signals,
-                                    prompt_metrics=prompt_metrics if compressed else None,
-                                )
-                        except Exception as _exc:
-                            logger.debug(
-                                "Failed to record usage in fail-open path: %s",
-                                _exc,
-                            )
-                    else:
-                        raise
+                    _handle_nonstreaming_failopen(
+                        exc,
+                        active_session,
+                        behavior_signals,
+                        request_state,
+                        resp_json,
+                        saved_toks,
+                        compressed,
+                        tool_breakdown,
+                        prompt_metrics,
+                    )
 
             if thinking_forced_non_stream and response.status_code == 200 and resp_json:
                 sse_headers = _safe_headers(response.headers)

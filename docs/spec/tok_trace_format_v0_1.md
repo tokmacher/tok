@@ -1,6 +1,6 @@
 # Tok Trace Format v0.1 Draft
 
-Status: draft for 0.1.7
+Status: draft for 0.1.x
 
 Tok Trace Format v0.1 is an audit format for Tok bridge sessions. It records what the
 bridge observed, stored, referenced, delta-compressed, summarized, or passed through

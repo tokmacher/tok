@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re as _re
+import shlex
 from typing import TYPE_CHECKING, Any, cast
+
+from tok.compression._tool_taxonomy import EDIT_LIKE_TOOLS, LISTING_LIKE_TOOLS, SEARCH_LIKE_TOOLS
 
 from .config import (
     ANSWER_READY_REPAIR_HINT,
@@ -66,6 +70,34 @@ _HINT_COOLDOWN_EXEMPT = frozenset(
         LATE_ANSWER_ASSEMBLY_ANSWER_ONLY_REPAIR_HINT,
     }
 )
+
+_JIT_RE = _re.compile(r"EXECUTE_JIT\(@(\w+)\(([^)]*)\)\)")
+
+_BASH_TOOL_NAMES = frozenset({"bash", "run_bash", "shell", "computer", "run_terminal"})
+_READ_TOOL_NAMES = frozenset({"read", "view", "cat", "get_file", "read_file"})
+
+
+def _tool_call_to_cmd_str(tool_name: str, tool_input: Any) -> str:
+    """Normalize a tool_use block to a cmd string for rolling_cmds / PatternReactor."""
+    if not isinstance(tool_input, dict):
+        return ""
+    tool_lower = tool_name.lower()
+    if tool_lower in _BASH_TOOL_NAMES:
+        cmd = str(tool_input.get("command") or tool_input.get("input") or "").strip()
+        return cmd[:256] if cmd else ""
+    if tool_lower in _READ_TOOL_NAMES:
+        path = str(tool_input.get("file_path") or tool_input.get("path") or "").strip()
+        return f"view {path}"[:256] if path else ""
+    if tool_lower in EDIT_LIKE_TOOLS:
+        path = str(tool_input.get("file_path") or tool_input.get("path") or "").strip()
+        return f"edit {shlex.quote(path)}"[:256] if path else ""
+    if tool_lower in SEARCH_LIKE_TOOLS:
+        query = str(tool_input.get("query") or tool_input.get("pattern") or tool_input.get("command") or "").strip()
+        return f"search {shlex.quote(query)}"[:256] if query else ""
+    if tool_lower in LISTING_LIKE_TOOLS:
+        path = str(tool_input.get("path") or tool_input.get("directory") or ".").strip()
+        return f"ls {shlex.quote(path)}"[:256]
+    return ""
 
 
 def _apply_runtime_hint_cooldown(
@@ -266,10 +298,10 @@ def process_response_impl(
     session: RuntimeSession,
     behavior_signals: dict[str, int] | None = None,
     tool_compatible: bool = False,
-    jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,  # noqa: F841
+    jit_executor: Callable[[RuntimeSession, str, str], str] | None = None,
 ) -> ProcessedRuntimeResponse:
     """Process a raw LLM response into structured content with drift handling."""
-    # TODO: wire jit_executor into response processing path
+
     from .types import ProcessedRuntimeResponse
 
     contract = response_contract_for_mode(text, tool_compatible=tool_compatible, session=session)
@@ -311,6 +343,28 @@ def process_response_impl(
     )
     if not strict_structured_answer and healed_text != text:
         merged_signals["tok_drift_healed"] = 1
+        contract = response_contract_for_mode(healed_text, tool_compatible=tool_compatible, session=session)
+
+    def _replace_jit_outside_fences(value: str) -> tuple[str, int]:
+        parts = _re.split(r"(```.*?```)", value, flags=_re.DOTALL)
+        executed = 0
+
+        def _replace_jit(m: _re.Match[str]) -> str:
+            nonlocal executed
+            result = jit_executor(session, m.group(1), m.group(2))
+            executed += 1
+            return str(result)
+
+        for idx, part in enumerate(parts):
+            if part.startswith("```"):
+                continue
+            parts[idx] = _JIT_RE.sub(_replace_jit, part)
+        return "".join(parts), executed
+
+    if jit_executor and _JIT_RE.search(healed_text):
+        healed_text, jit_executed_count = _replace_jit_outside_fences(healed_text)
+        if jit_executed_count:
+            merged_signals["jit_executed"] = merged_signals.get("jit_executed", 0) + jit_executed_count
         contract = response_contract_for_mode(healed_text, tool_compatible=tool_compatible, session=session)
 
     visible_text = "\n".join(
@@ -427,6 +481,9 @@ def process_response_impl(
             loop_detected = session.observe_tool_action(cast("str", block["name"]), str(input_key)[:120])
             if loop_detected:
                 merged_signals["loop_detected"] = 1
+            cmd_str = _tool_call_to_cmd_str(cast("str", block["name"]), tool_input)
+            if cmd_str:
+                session.bridge_memory._upsert(session.bridge_memory.hot, "cmds", cmd_str, score_delta=1)
             tool_name_lower = cast("str", block["name"]).lower()
             if tool_name_lower in ("edit_file", "edit", "write_file", "write", "replace", "create_file"):
                 edited_path = (
@@ -440,7 +497,7 @@ def process_response_impl(
 
                     session.mark_file_edited(normalize_path_target(edited_path))
 
-    if os.getenv("TOK_NEURO_REACTOR", "0") == "1" and "EXECUTE_JIT(@" in text:
+    if not jit_executor and os.getenv("TOK_NEURO_REACTOR", "0") == "1" and _JIT_RE.search(text):
         merged_signals["jit_detected_not_executed"] = 1
 
     session._drift_detected_previous_turn = bool(

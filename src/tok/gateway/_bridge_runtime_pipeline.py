@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import copy
 import os
-from dataclasses import dataclass, field
+from dataclasses import replace
 from typing import Any, Literal, cast
 
 from fastapi import Response
 
+from tok.runtime._request_lifecycle import RequestLifecycle
 from tok.universal_runtime import RuntimeRequest
 
 from . import _RUNTIME, BridgeSession, logger
 from ._bridge_preflight import _run_bridge_preflight
+from ._types import BridgePreparedPayload
 
 
 def _plan_finalization_min_saved_tokens() -> int:
@@ -28,22 +30,6 @@ def _plan_finalization_min_saved_tokens() -> int:
 
 
 _PLAN_FINALIZATION_MIN_SAVED_TOKENS = _plan_finalization_min_saved_tokens()
-
-
-@dataclass
-class BridgePreparedPayload:
-    body: dict[str, Any]
-    behavior_signals: dict[str, int]
-    request_policy: str
-    request_tool_compatible: bool
-    compressed: bool
-    saved_toks: int
-    tool_breakdown: dict[str, int]
-    prompt_metrics: dict[str, int]
-    retry_forbidden: bool
-    provider_safe_original_body: dict[str, Any] = field(default_factory=dict)
-    request_model: str = ""
-    request_messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _empty_prompt_metrics() -> dict[str, int]:
@@ -156,6 +142,7 @@ def prepare_bridge_payload(
 ) -> tuple[BridgePreparedPayload, Response | None]:
     active_request_state = request_state if request_state is not None else {"fallback_recorded": False}
 
+    lifecycle = RequestLifecycle()
     compressed = False
     saved_toks = 0
     tool_breakdown: dict[str, int] = {}
@@ -190,6 +177,7 @@ def prepare_bridge_payload(
     request_messages = provider_safe_original_body.get("messages", [])
     if not isinstance(request_messages, list):
         request_messages = []
+    lifecycle = replace(lifecycle, initial_preflight=True, model_extraction=True)
 
     payload = BridgePreparedPayload(
         body=copy.deepcopy(provider_safe_original_body),
@@ -204,6 +192,7 @@ def prepare_bridge_payload(
         provider_safe_original_body=copy.deepcopy(provider_safe_original_body),
         request_model=request_model,
         request_messages=copy.deepcopy(request_messages),
+        lifecycle=lifecycle,
     )
     if preflight_response is not None:
         return payload, preflight_response
@@ -228,6 +217,7 @@ def prepare_bridge_payload(
         request_tool_compatible = True
         request_policy = session.request_policy_default
     source_behavior_signals = dict(behavior_signals)
+    lifecycle = replace(lifecycle, tool_compatibility_check=True)
 
     logger.info(
         "Request mode: model=%s, request_policy=%s, tool_compatible_allowed=%s (tools present: %s, header=%s)",
@@ -239,6 +229,7 @@ def prepare_bridge_payload(
     )
     requested_request_policy = request_policy
     requested_tool_compatible = request_tool_compatible
+    lifecycle = replace(lifecycle, request_preparation=True)
 
     prepared = _RUNTIME.prepare_request(
         RuntimeRequest(
@@ -259,6 +250,7 @@ def prepare_bridge_payload(
         session.runtime_session,
         result_cache=session.result_cache,
     )
+    lifecycle = replace(lifecycle, runtime_preparation=True)
     request_policy = prepared.request_policy
     request_tool_compatible = prepared.effective_tool_compatible
     compressed = prepared.compressed
@@ -307,6 +299,7 @@ def prepare_bridge_payload(
         ",".join(policy_reasons) if policy_reasons else "<none>",
         prepared.request_policy_escalated,
     )
+    lifecycle = replace(lifecycle, signals_and_metrics=True)
 
     prepared_body = copy.deepcopy(provider_safe_original_body)
     prepared_body["messages"] = prepared.body.get("messages", [])
@@ -328,6 +321,7 @@ def prepare_bridge_payload(
         path=path,
     )
     retry_forbidden = retry_forbidden or prepared_retry_forbidden
+    lifecycle = replace(lifecycle, prepared_preflight=True)
     if behavior_signals.get("tok_bridge_pairing_degraded_to_provider_safe", 0):
         if saved_toks > 0:
             behavior_signals["tok_compression_worked_before_pairing_degraded"] = 1
@@ -355,7 +349,9 @@ def prepare_bridge_payload(
     if plan_finalization_passthrough:
         request_tool_compatible = False
         tool_breakdown = {}
+    lifecycle = replace(lifecycle, plan_finalization_guard=True)
 
+    lifecycle = replace(lifecycle, final_payload_construction=True)
     payload = BridgePreparedPayload(
         body=prepared_body,
         behavior_signals=dict(behavior_signals),
@@ -369,5 +365,10 @@ def prepare_bridge_payload(
         provider_safe_original_body=copy.deepcopy(provider_safe_original_body),
         request_model=request_model,
         request_messages=copy.deepcopy(request_messages),
+        lifecycle=lifecycle,
+    )
+    logger.debug(
+        "request_lifecycle: %s",
+        {f: getattr(lifecycle, f) for f in lifecycle.__dataclass_fields__},
     )
     return payload, preflight_response

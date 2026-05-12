@@ -115,3 +115,19 @@ Conformance tests should lock down:
 - malformed/non-inverted response handling
 - exact evidence before non-exact compression
 - exact reacquisition before edit-like work after skeleton/summary delivery
+
+## Evidence Exactness Taxonomy
+
+Evidence forms observed by the bridge:
+
+| Form        | Meaning                                                          | Edit Authorization          |
+| ----------- | ---------------------------------------------------------------- | --------------------------- |
+| `exact`     | Verbatim first-hand observation content                          | Yes                         |
+| `summary`   | Lossy natural-language summary                                   | No; requires re-observation |
+| `skeleton`  | Structural outline such as headings, definitions, and signatures | No; requires re-observation |
+| `reference` | Pointer or stable stub such as a hash-based marker               | No; requires re-observation |
+
+Hard rule: non-exact evidence must not authorize edit-like behavior such as Read, Edit,
+Multi-Edit, or Write without exact reacquisition.
+
+Source: `src/tok/runtime/evidence_safety.py`

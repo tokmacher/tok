@@ -75,7 +75,7 @@ def test_json_skeletonization() -> None:
     raw_json = json.dumps(large_data)
     compressed = tok_tool_result(raw_json)
     assert ">>> tool:json_skeleton" in compressed
-    assert "... 99 more items" in compressed
+    assert '"_omitted": 99' in compressed
     assert "..." in compressed
 
 
@@ -111,3 +111,57 @@ def test_general_result_caching() -> None:
 def test_detect_stack_trace() -> None:
     trace = 'Traceback (most recent call last):\n  File "main.py", line 1\n    raise E\nException: E'
     assert _detect_tool_content_type(trace) == "stack_trace"
+
+
+class TestStackTraceMixedFormats:
+    """Regression: Java stack frame regex must not match Node.js frames."""
+
+    def test_mixed_node_and_java_frames_no_mangled_prefix(self) -> None:
+        trace = "\n".join(
+            [
+                "Traceback (most recent call last):",
+                '  File "/Users/dev/project/src/app.py", line 42, in handle_request',
+                "    process(data)",
+                "at Module._compile (module.js:653:30)",
+                "at Object.Module._extensions..js (internal/module.js:711:10)",
+                "at com.example.service.UserService.findById (UserService.java:42)",
+                "at com.example.controller.UserController.getUser (UserController.java:15)",
+                "ValueError: bad data",
+            ]
+        )
+        compressed = tok_tool_result(trace + "\n" + "extra data\n" * 100)
+        assert "module" not in compressed.replace("module.js", "").replace("Module", "") or "module/" not in compressed
+
+    def test_node_frame_path_not_corrupted_by_java_regex(self) -> None:
+        from tok.compression._tool_result_codecs import _compress_stack_traces
+
+        trace = "\n".join(
+            [
+                "at Object.<anonymous> (/Users/dev/project/node_modules/foo/index.js:10:5)",
+                "at com.example.Service.run (Service.java:20)",
+            ]
+        )
+        result = _compress_stack_traces(trace)
+        assert "module/" not in result.replace("node_modules/", "")
+
+    def test_java_path_collection_excludes_js_file_paths(self) -> None:
+        import re
+
+        text = "at Module._compile (module.js:653)\nat com.example.Service.run(Service.java:20)"
+        node_paths: set[str] = set()
+        for m in re.finditer(r"at [\w.<>$\[\]]+ \((.+):\d+:\d+\)", text):
+            node_paths.add(m.group(1))
+        _JS_FILE_RE = re.compile(r"\.(js|ts|mjs|cjs|jsx|tsx)$", re.IGNORECASE)
+        paths: list[str] = []
+        all_candidates: list[str] = []
+        for m in re.finditer(r"at [\w.$]+\(([\w.$]+):(\d+)\)", text):
+            candidate = m.group(1)
+            all_candidates.append(candidate)
+            if candidate in node_paths:
+                continue
+            if _JS_FILE_RE.search(candidate):
+                continue
+            paths.append(candidate.replace(".", "/"))
+        assert all_candidates, f"Java regex matched nothing; text={text!r}"
+        assert "module/js" not in paths
+        assert "Service/java" in paths

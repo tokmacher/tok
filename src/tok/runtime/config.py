@@ -29,6 +29,9 @@ _SHORT_SESSION_THRESHOLD: int = _env_int("TOK_SHORT_SESSION_THRESHOLD", 8)
 
 _HOT_HINT_MIN_TURN: int = _env_int("TOK_HOT_HINT_MIN_TURN", 10)
 
+# Lower turn threshold when hot records are warm from a prior session on disk.
+_HOT_HINT_WARM_MIN_TURN: int = _env_int("TOK_HOT_HINT_WARM_MIN_TURN", 3)
+
 _SHORT_MEMORY_TURN_CEILING: int = _env_int("TOK_SHORT_MEMORY_TURN_CEILING", 14)
 
 # Known project-type marker filenames used for Local Mesh Discovery.
@@ -299,6 +302,7 @@ __all__ = [
     "_FALLBACK_THRESHOLD",
     "_PROJECT_MARKER_FILES",
     "_HOT_HINT_MIN_TURN",
+    "_HOT_HINT_WARM_MIN_TURN",
     "_SHORT_MEMORY_TURN_CEILING",
     "_SHORT_SESSION_THRESHOLD",
     "_TOOL_REQUIRED_PROMPT_PATTERNS",

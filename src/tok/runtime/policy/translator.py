@@ -10,8 +10,6 @@ logger = logging.getLogger("tok.translator")
 
 IS_TOK = re.compile(r"(^>>>|^@[A-Za-z_][A-Za-z0-9_]*|\s+\|>|^\|>)", re.MULTILINE)
 
-_line_start_tok = re.compile(r"^>>>", re.MULTILINE)
-
 _KNOWN_TOK_BLOCKS = frozenset(
     {
         "thought",
@@ -32,12 +30,20 @@ _KNOWN_TOK_BLOCKS = frozenset(
 )
 
 
+_CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+
+
 def _is_likely_tok(text: str) -> bool:
-    markers = set(IS_TOK.findall(text))
-    if _line_start_tok.search(text):
-        return True
+    # Strip fenced code blocks first to avoid false positives from
+    # languages that use |> as a pipe operator (Elixir, F#, etc.).
+    clean = _CODE_FENCE_RE.sub("", text)
+    if not clean.strip():
+        return False
+    markers = set(IS_TOK.findall(clean))
     at_blocks = {m[1:] for m in markers if m.startswith("@")}
     if at_blocks & _KNOWN_TOK_BLOCKS:
+        return True
+    if re.search(r"^>>>", clean, re.MULTILINE):
         return True
     return len(markers) >= 2
 

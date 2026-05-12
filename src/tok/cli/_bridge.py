@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -22,6 +23,7 @@ from ._cli_support import (
     env_int,
     get_bridge_health_response,
     get_running_bridge_pid,
+    json_envelope,
     memory_root,
     render_stats_panel,
     runtime_verdict,
@@ -262,22 +264,46 @@ def bridge_stop(force: bool = False) -> None:
         )
 
 
-def bridge_status() -> None:
+def bridge_status(*, json_output: bool = False) -> None:
     """Check bridge status."""
     port = env_int("TOK_BRIDGE_PORT", 9090)
     pid = get_running_bridge_pid(port)
     if pid is None:
-        console.print("[yellow]Bridge not running[/yellow]")
-        console.print("[dim]Next step: run `tok bridge start`, then re-run `tok bridge status` or `tok doctor`.[/dim]")
+        if json_output:
+            envelope = json_envelope(
+                "tok bridge status",
+                ok=False,
+                status="error",
+                data={"bridge_running": False, "port": port},
+                warnings=["Bridge not running"],
+                next_steps=["Run `tok bridge start`, then re-run `tok bridge status` or `tok doctor`."],
+            )
+            print(json.dumps(envelope, indent=2))
+        else:
+            console.print("[yellow]Bridge not running[/yellow]")
+            console.print(
+                "[dim]Next step: run `tok bridge start`, then re-run `tok bridge status` or `tok doctor`.[/dim]"
+            )
         raise typer.Exit(1)
 
     try:
         r = get_bridge_health_response(port, timeout=2.0, attempts=2, backoff_seconds=0.2)
     except Exception:
-        console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
-        console.print(
-            "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
-        )
+        if json_output:
+            envelope = json_envelope(
+                "tok bridge status",
+                ok=False,
+                status="error",
+                data={"bridge_running": True, "port": port, "pid": pid, "health_reachable": False},
+                warnings=["Bridge process alive but not responding"],
+                next_steps=["Inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`."],
+            )
+            print(json.dumps(envelope, indent=2))
+        else:
+            console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
+            console.print(
+                "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
+            )
         return
 
     if r.status_code == 200:
@@ -331,6 +357,34 @@ def bridge_status() -> None:
                 savings_pct=float(payload.get("session_savings_pct", 0.0)),
                 tokens_saved=int(payload.get("session_tokens_saved", 0)),
             )
+            capability = payload.get("capability")
+            conformance = "unknown"
+            if isinstance(capability, dict):
+                conformance = str(capability.get("max_conformance_level", "unknown"))
+            if json_output:
+                envelope = json_envelope(
+                    "tok bridge status",
+                    ok=True,
+                    status="ok",
+                    data={
+                        "bridge_running": True,
+                        "port": port,
+                        "pid": pid,
+                        "health_reachable": True,
+                        "tok_active": not baseline_only,
+                        "mode": mode,
+                        "conformance": conformance,
+                        "baseline_only": baseline_only,
+                        "degraded_to_baseline": baseline_only,
+                        "fallback_count": fallback_count,
+                        "session_quality": str(payload.get("session_quality", "clean")),
+                        "tokens_saved": int(session_summary["tokens_saved"]),
+                        "savings_pct": float(session_summary["savings_pct"]),
+                        "cost_saved_usd": float(session_summary["cost_saved_usd"]),
+                    },
+                )
+                print(json.dumps(envelope, indent=2))
+                return
             console.print(f"[green]Bridge running on :{port} (PID {pid})[/green]")
             console.print(
                 render_stats_panel(
@@ -360,6 +414,18 @@ def bridge_status() -> None:
                     border_style=status_border(verdict_style),
                 )
             )
+            capability = payload.get("capability")
+            if isinstance(capability, dict):
+                evidence_forms = capability.get("supported_evidence_forms", ())
+                if isinstance(evidence_forms, list | tuple):
+                    evidence_text = ", ".join(str(item) for item in evidence_forms)
+                else:
+                    evidence_text = str(evidence_forms or "")
+                console.print("[bold]Bridge capability:[/bold]")
+                console.print(f"  mode: {capability.get('bridge_mode', 'unknown')}")
+                console.print(f"  trace: {capability.get('trace_version', 'unknown')}")
+                console.print(f"  conformance: {capability.get('max_conformance_level', 'unknown')}")
+                console.print(f"  evidence: {evidence_text}")
             if baseline_only:
                 console.print(
                     "[dim]Next step: run `tok doctor`, then inspect `tok bridge logs 100` for the degradation reason.[/dim]"
@@ -378,13 +444,47 @@ def bridge_status() -> None:
                 )
             return
         except (TypeError, ValueError, KeyError):
-            console.print(f"[yellow]Bridge process alive (PID {pid}) but health payload is malformed[/yellow]")
-            console.print(
-                "[dim]Next step: inspect `tok bridge logs 100` and restart with `tok bridge start --foreground`.[/dim]"
-            )
+            if json_output:
+                envelope = json_envelope(
+                    "tok bridge status",
+                    ok=False,
+                    status="error",
+                    data={
+                        "bridge_running": True,
+                        "port": port,
+                        "pid": pid,
+                        "health_reachable": True,
+                        "malformed_payload": True,
+                    },
+                    warnings=["Health payload malformed"],
+                    next_steps=["Inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`."],
+                )
+                print(json.dumps(envelope, indent=2))
+            else:
+                console.print(f"[yellow]Bridge process alive (PID {pid}) but health payload is malformed[/yellow]")
+                console.print(
+                    "[dim]Next step: inspect `tok bridge logs 100` and restart with `tok bridge start --foreground`.[/dim]"
+                )
             raise typer.Exit(1) from None
 
-    console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
-    console.print(
-        "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
-    )
+    if json_output:
+        envelope = json_envelope(
+            "tok bridge status",
+            ok=False,
+            status="error",
+            data={
+                "bridge_running": True,
+                "port": port,
+                "pid": pid,
+                "health_reachable": True,
+                "http_status": r.status_code,
+            },
+            warnings=[f"Bridge returned HTTP {r.status_code}"],
+            next_steps=["Inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`."],
+        )
+        print(json.dumps(envelope, indent=2))
+    else:
+        console.print(f"[yellow]Bridge process alive (PID {pid}) but not responding[/yellow]")
+        console.print(
+            "[dim]Next step: inspect `tok bridge logs 100` or restart with `tok bridge start --foreground`.[/dim]"
+        )

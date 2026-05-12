@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.9 (2026-05-07)
+
+### Added
+
+- **Agent operation runbook**: root `AGENTS.md` with golden path, verification commands,
+  reporting rules, safe editing rules, and explicit claim boundaries.
+- **Machine-readable agent contract**: `docs/agent-contract.json` with supported paths,
+  unsupported claims, required verification commands, success signals, and reporting
+  fields.
+- **Agent smoke check**: `scripts/run_agent_smoke.py` and `scripts/agent_smoke.sh` for
+  fast agent verification from a cold clone.
+- **Agent report template**: `docs/agent-report-template.md` for structured verification
+  reports.
+- **Agent docs contract test**: `tests/unit/test_agent_docs_contract.py` prevents
+  agent-facing docs from rotting against the real CLI surface.
+- **Agent smoke script test**: `tests/unit/test_agent_smoke_script.py` validates the
+  smoke script structure and fail-fast behavior.
+- **README agent pointer**: brief "Agent Operation" section pointing to `AGENTS.md`.
+- **Bridge Capability Manifest**: runtime declaration of supported bridge protocol
+  groundwork at `/health` and `tok bridge status`.
+- **Evidence exactness bridge standard**: taxonomy for `exact`, `summary`, `skeleton`,
+  and `reference` evidence forms.
+- **Protocol groundwork status**: planning document for trace receipts, evidence
+  exactness, compression decisions, behavior signals, and the capability manifest.
+
+### Notes
+
+- This release does not expand Tok's runtime surface or change compression behavior. It
+  adds an explicit agent-operability layer so coding agents can verify the repo, run the
+  right tests, and report honestly from a cold clone.
+
 ## 0.1.8 (2026-05-06)
 
 ### Improved

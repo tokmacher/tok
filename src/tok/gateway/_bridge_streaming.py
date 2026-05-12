@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -28,7 +29,7 @@ from ._signal_constants import _merge_signal_counts
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
 
-__all__ = ["buffer_strip_restream_impl", "passthrough_stream_impl"]
+__all__ = ["_run_macro_mining", "buffer_strip_restream_impl", "passthrough_stream_impl"]
 
 
 def _env_int(name: str, fallback: int) -> int:
@@ -43,6 +44,162 @@ def _env_int(name: str, fallback: int) -> int:
 
 
 _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = _env_int("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", 2)
+
+
+def _parse_sse_stream(
+    text: str,
+) -> tuple[list[str], list[str], str, dict[str, Any], dict[int, dict[str, Any]], list[int]]:
+    sse_events = text.split("\n\n")
+    accumulated: list[str] = []
+    sse_model: str = "unknown"
+    sse_usage: dict[str, Any] = {}
+    stream_blocks: dict[int, dict[str, Any]] = {}
+    stream_order: list[int] = []
+
+    for event_str in sse_events:
+        for line in event_str.split("\n"):
+            if not line.startswith("data: "):
+                continue
+            try:
+                d = json.loads(line[6:])
+                etype = d.get("type", "")
+                if etype == "message_start":
+                    msg = d.get("message", {})
+                    sse_model = msg.get("model", sse_model)
+                    sse_usage = msg.get("usage", sse_usage)
+                elif etype == "content_block_start":
+                    index = d.get("index")
+                    block = d.get("content_block", {})
+                    if not isinstance(index, int) or not isinstance(block, dict):
+                        continue
+                    if index not in stream_blocks:
+                        stream_order.append(index)
+                    block_type = block.get("type", "text")
+                    if block_type == "tool_use":
+                        stream_blocks[index] = {
+                            "type": "tool_use",
+                            "id": block.get("id", ""),
+                            "name": block.get("name", "unknown"),
+                            "input": dict(block.get("input", {})) if isinstance(block.get("input", {}), dict) else {},
+                            "partial_json": [],
+                        }
+                    elif block_type == "thinking":
+                        stream_blocks[index] = {
+                            "type": "thinking",
+                            "thinking": str(block.get("thinking", "")),
+                            "signature": "",
+                        }
+                    else:
+                        stream_blocks[index] = {
+                            "type": "text",
+                            "text": str(block.get("text", "")),
+                        }
+                elif etype == "message_delta":
+                    sse_usage.update(d.get("usage", {}))
+                elif etype == "content_block_delta":
+                    index = d.get("index")
+                    delta = d.get("delta", {})
+                    delta_type = delta.get("type", "")
+                    if not isinstance(index, int):
+                        continue
+                    block = stream_blocks.setdefault(index, {"type": "text", "text": ""})
+                    if index not in stream_order:
+                        stream_order.append(index)
+                    if delta_type == "text_delta":
+                        piece = delta.get("text", "")
+                        accumulated.append(piece)
+                        block["type"] = "text"
+                        block["text"] = str(block.get("text", "")) + piece
+                    elif delta_type == "input_json_delta":
+                        block["type"] = "tool_use"
+                        partials = block.setdefault("partial_json", [])
+                        if isinstance(partials, list):
+                            partials.append(delta.get("partial_json", ""))
+                    elif delta_type == "thinking_delta":
+                        block["type"] = "thinking"
+                        block["thinking"] = str(block.get("thinking", "")) + delta.get("thinking", "")
+                    elif delta_type == "signature_delta":
+                        block["type"] = "thinking"
+                        block["signature"] = str(block.get("signature", "")) + delta.get("signature", "")
+                    logger.debug(
+                        "Delta type: %s, partial: %s",
+                        delta_type,
+                        str(delta)[:50],
+                    )
+            except (json.JSONDecodeError, KeyError) as exc:
+                logger.debug("SSE parse error (content accumulation): %s", exc)
+
+    return sse_events, accumulated, sse_model, sse_usage, stream_blocks, stream_order
+
+
+async def _run_macro_mining(session: BridgeSession) -> None:
+    try:
+        from tok.macros.integration import distill_bridge_history
+
+        memory = session.runtime_session.bridge_memory
+        markers = session.runtime_session._project_markers or None
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: distill_bridge_history(memory, project_markers=markers)
+        )
+    except Exception:
+        logger.debug("PatternReactor: mining skipped", exc_info=True)
+
+
+def _expand_macros_in_stream_blocks(blocks: list[dict[str, Any]], session: BridgeSession) -> list[dict[str, Any]]:
+    from tok.macros.expansion import expand_tool_use_blocks
+
+    registry = session.runtime_session.bridge_memory.macro_registry
+    if not registry.macros:
+        return blocks
+    return expand_tool_use_blocks(blocks, registry)
+
+
+def _materialize_stream_blocks(
+    stream_blocks: dict[int, dict[str, Any]],
+    stream_order: list[int],
+    *,
+    session: BridgeSession,
+    stream_behavior_signals: dict[str, int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    tool_blocks = _materialize_stream_tool_blocks(stream_blocks, stream_order)
+    if tool_blocks:
+        _merge_signal_counts(stream_behavior_signals, _observe_stream_tool_blocks(session, tool_blocks))
+        from tok.macros.expansion import expand_tool_use_blocks
+
+        registry = session.runtime_session.bridge_memory.macro_registry
+        if registry.macros:
+            tool_blocks = expand_tool_use_blocks(tool_blocks, registry)
+    thinking_blocks = [
+        stream_blocks[idx]
+        for idx in stream_order
+        if idx in stream_blocks
+        and isinstance(stream_blocks[idx], dict)
+        and stream_blocks[idx].get("type") == "thinking"
+    ]
+    text_blocks_from_start = [
+        stream_blocks[idx]
+        for idx in stream_order
+        if idx in stream_blocks
+        and isinstance(stream_blocks[idx], dict)
+        and stream_blocks[idx].get("type") == "text"
+        and str(stream_blocks[idx].get("text", "")).strip()
+    ]
+    return tool_blocks, thinking_blocks, text_blocks_from_start
+
+
+def _detect_recovery_needed(
+    *,
+    translated_blocks: list[dict[str, Any]],
+    read_error: str | None,
+) -> bool:
+    has_visible_blocks = any(
+        block.get("type") == "tool_use"
+        or (block.get("type") == "text" and str(block.get("text", "")).strip())
+        or block.get("type") == "thinking"
+        or block.get("type") == "redacted_thinking"
+        for block in translated_blocks
+    )
+    return (not has_visible_blocks) and (read_error is not None or len(translated_blocks) == 0)
 
 
 def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
@@ -222,6 +379,8 @@ def _stream_recovery_allowed_now(
 
 def _observe_stream_tool_blocks(session: BridgeSession, tool_blocks: list[dict[str, Any]]) -> dict[str, int]:
     """Record semantic runtime side effects for streamed tool-only responses."""
+    from tok.runtime._runtime_orchestration import _tool_call_to_cmd_str
+
     signals: dict[str, int] = {}
     runtime_session = session.runtime_session
     for block in tool_blocks:
@@ -233,6 +392,9 @@ def _observe_stream_tool_blocks(session: BridgeSession, tool_blocks: list[dict[s
         input_key = next(iter(tool_input.values()), "") if isinstance(tool_input, dict) and tool_input else ""
         if runtime_session.observe_tool_action(tool_name, str(input_key)[:120]):
             signals["loop_detected"] = 1
+        cmd_str = _tool_call_to_cmd_str(tool_name, tool_input)
+        if cmd_str:
+            runtime_session.bridge_memory._upsert(runtime_session.bridge_memory.hot, "cmds", cmd_str, score_delta=1)
         if tool_name.lower() in ("edit_file", "edit", "write_file", "write", "replace", "create_file"):
             edited_path = ""
             if isinstance(tool_input, dict):
@@ -339,89 +501,7 @@ async def buffer_strip_restream_impl(
             read_error = str(e)
             _record_stream_read_error(session, "buffering", read_error)
         text = raw.decode("utf-8", errors="replace")
-        sse_events = text.split("\n\n")
-
-        accumulated: list[str] = []
-        sse_model: str = "unknown"
-        sse_usage: dict[str, Any] = {}
-        stream_blocks: dict[int, dict[str, Any]] = {}
-        stream_order: list[int] = []
-        response_signals: dict[str, int] = {}
-
-        for event_str in sse_events:
-            for line in event_str.split("\n"):
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    d = json.loads(line[6:])
-                    etype = d.get("type", "")
-                    if etype == "message_start":
-                        msg = d.get("message", {})
-                        sse_model = msg.get("model", sse_model)
-                        sse_usage = msg.get("usage", sse_usage)
-                    elif etype == "content_block_start":
-                        index = d.get("index")
-                        block = d.get("content_block", {})
-                        if not isinstance(index, int) or not isinstance(block, dict):
-                            continue
-                        if index not in stream_blocks:
-                            stream_order.append(index)
-                        block_type = block.get("type", "text")
-                        if block_type == "tool_use":
-                            stream_blocks[index] = {
-                                "type": "tool_use",
-                                "id": block.get("id", ""),
-                                "name": block.get("name", "unknown"),
-                                "input": dict(block.get("input", {}))
-                                if isinstance(block.get("input", {}), dict)
-                                else {},
-                                "partial_json": [],
-                            }
-                        elif block_type == "thinking":
-                            stream_blocks[index] = {
-                                "type": "thinking",
-                                "thinking": str(block.get("thinking", "")),
-                                "signature": "",
-                            }
-                        else:
-                            stream_blocks[index] = {
-                                "type": "text",
-                                "text": str(block.get("text", "")),
-                            }
-                    elif etype == "message_delta":
-                        sse_usage.update(d.get("usage", {}))
-                    elif etype == "content_block_delta":
-                        index = d.get("index")
-                        delta = d.get("delta", {})
-                        delta_type = delta.get("type", "")
-                        if not isinstance(index, int):
-                            continue
-                        block = stream_blocks.setdefault(index, {"type": "text", "text": ""})
-                        if index not in stream_order:
-                            stream_order.append(index)
-                        if delta_type == "text_delta":
-                            piece = delta.get("text", "")
-                            accumulated.append(piece)
-                            block["type"] = "text"
-                            block["text"] = str(block.get("text", "")) + piece
-                        elif delta_type == "input_json_delta":
-                            block["type"] = "tool_use"
-                            partials = block.setdefault("partial_json", [])
-                            if isinstance(partials, list):
-                                partials.append(delta.get("partial_json", ""))
-                        elif delta_type == "thinking_delta":
-                            block["type"] = "thinking"
-                            block["thinking"] = str(block.get("thinking", "")) + delta.get("thinking", "")
-                        elif delta_type == "signature_delta":
-                            block["type"] = "thinking"
-                            block["signature"] = str(block.get("signature", "")) + delta.get("signature", "")
-                        logger.debug(
-                            "Delta type: %s, partial: %s",
-                            delta_type,
-                            str(delta)[:50],
-                        )
-                except (json.JSONDecodeError, KeyError) as exc:
-                    logger.debug("SSE parse error (content accumulation): %s", exc)
+        sse_events, accumulated, sse_model, sse_usage, stream_blocks, stream_order = _parse_sse_stream(text)
 
         full_text = "".join(accumulated)
         logger.info(
@@ -440,26 +520,12 @@ async def buffer_strip_restream_impl(
 
         processed: Any | None = None  # Will hold ProcessedRuntimeResponse when available
 
-        tool_blocks = _materialize_stream_tool_blocks(stream_blocks, stream_order)
-        if tool_blocks:
-            _merge_signal_counts(stream_behavior_signals, _observe_stream_tool_blocks(session, tool_blocks))
-        thinking_blocks = [
-            stream_blocks[idx]
-            for idx in stream_order
-            if idx in stream_blocks
-            and isinstance(stream_blocks[idx], dict)
-            and stream_blocks[idx].get("type") == "thinking"
-        ]
-        # Extract text blocks from stream_blocks to ensure content_block_start
-        # text is considered for has_visible_blocks even without text_delta events
-        text_blocks_from_start = [
-            stream_blocks[idx]
-            for idx in stream_order
-            if idx in stream_blocks
-            and isinstance(stream_blocks[idx], dict)
-            and stream_blocks[idx].get("type") == "text"
-            and str(stream_blocks[idx].get("text", "")).strip()
-        ]
+        tool_blocks, thinking_blocks, text_blocks_from_start = _materialize_stream_blocks(
+            stream_blocks,
+            stream_order,
+            session=session,
+            stream_behavior_signals=stream_behavior_signals,
+        )
         content_blocks = _response_contract_for_mode(full_text, tool_compatible=tool_compatible).content_blocks
         translated_blocks = thinking_blocks + content_blocks + tool_blocks + text_blocks_from_start
         logger.info(
@@ -490,18 +556,7 @@ async def buffer_strip_restream_impl(
             logger.info("Content blocks count: %d", len(content_blocks))
             translated_blocks = content_blocks
 
-        has_visible_blocks = any(
-            block.get("type") == "tool_use"
-            or (block.get("type") == "text" and str(block.get("text", "")).strip())
-            or block.get("type") == "thinking"
-            or block.get("type") == "redacted_thinking"
-            for block in translated_blocks
-        )
-        if has_visible_blocks and all(
-            block.get("type") == "text" and not str(block.get("text", "")).strip() for block in translated_blocks
-        ):
-            has_visible_blocks = False
-        recovery_required = not has_visible_blocks and (read_error is not None or len(translated_blocks) == 0)
+        recovery_required = _detect_recovery_needed(translated_blocks=translated_blocks, read_error=read_error)
         _cost_recorded_by_fallback = False
         if recovery_required:
             recovery_allowed, _recovery_reason = _stream_recovery_allowed_now(session)
@@ -584,6 +639,7 @@ async def buffer_strip_restream_impl(
                                 passthrough_blocks,
                                 seed_prefix="toolu_recovery",
                             )
+                            passthrough_blocks = _expand_macros_in_stream_blocks(passthrough_blocks, session)
                             _merge_signal_counts(stream_behavior_signals, passthrough_signals)
                             retry_text = "".join(
                                 str(block.get("text", ""))
@@ -801,6 +857,7 @@ async def buffer_strip_restream_impl(
                 behavior_signals=response_signals or None,
                 prompt_metrics=prompt_metrics,
             )
+            asyncio.create_task(_run_macro_mining(session))
 
         content_emitted = False
         for event_str in sse_events:

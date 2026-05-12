@@ -86,6 +86,9 @@ viz/
 archive/
 research/
 results/
+docs/maintainers/autoresearch.md
+scripts/run_autoresearch_probe.py
+tests/unit/test_autoresearch_probe_script.py
 human_checklist.txt
 refactoring_plan.txt
 release-plan.txt
@@ -94,3 +97,6 @@ release_ready.txt
 
 # Benchmark results
 Benchmark/assets/
+
+# Agent smoke output
+out/

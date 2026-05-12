@@ -117,7 +117,7 @@ def _detect_tool_content_type(text: str, path: str = "") -> str:
         re.search(r"^--- a/", text, re.MULTILINE) and re.search(r"^\+\+\+ b/", text, re.MULTILINE)
     ):
         return "git_diff"
-    if re.match(r"^(USER\s+PID\s+%CPU|UID\s+PID\s+PPID)", text) or "COMMAND" in text[:200]:
+    if re.match(r"^(USER\s+PID\s+%CPU|UID\s+PID\s+PPID)", text) or re.match(r"^\S+\s+\S+\s+COMMAND\b", text[:200]):
         return "ps_output"
     if re.search(r"^(HOME|PATH|SHELL|USER|LANG)=", text, re.MULTILINE) and "=" in text:
         return "env_output"
@@ -342,13 +342,13 @@ def _compress_grep(text: str, tool_context: dict[str, Any] | None = None) -> str
                         path, snippet = "", line
                 else:
                     path, snippet = "", line
-        key = path or "__other__"
+        key = path or ""
         if key not in by_file:
             by_file[key] = []
             order.append(key)
         by_file[key].append((lnum, snippet.strip()))
 
-    single_file_mode = all(k == "__other__" or k == "" for k in order)
+    single_file_mode = all(k == "" for k in order)
     if single_file_mode and command:
         # Avoid a complex regex on attacker-controlled strings (CodeQL flagged potential backtracking).
         # This only tries to infer a "filename-ish" token to label grep output that lacks paths.
@@ -367,22 +367,19 @@ def _compress_grep(text: str, tool_context: dict[str, Any] | None = None) -> str
             if any(sep in tok for sep in ("/", "\\")):
                 continue
             # Keep it conservative: only adopt tokens that look like a file-ish identifier.
-            if "." not in tok and not tok.startswith("~"):
+            # Allow extensionless names (Makefile, Dockerfile) if they look like paths/identifiers.
+            if "." not in tok and not tok.startswith("~") and not tok[0].isupper() and "/" not in tok:
                 continue
             fname = tok
             break
 
-        if fname:
-            if "__other__" in by_file:
-                entry = by_file.pop("__other__")
-                by_file[fname] = entry
-                order = [fname] + [k for k in order if k not in (fname, "__other__")]
-            elif "" in by_file:
+        if fname and fname not in by_file:
+            if "" in by_file:
                 entry = by_file.pop("")
                 by_file[fname] = entry
-                order = [fname] + [k for k in order if k not in (fname, "")]
+                order = [fname] + [k for k in order if k != fname and k != ""]
 
-    file_count = len([k for k in order if k not in ("__other__", "")])
+    file_count = len([k for k in order if k])
     if file_count == 0 and total > 0:
         file_count = 1
 
@@ -395,17 +392,24 @@ def _compress_grep(text: str, tool_context: dict[str, Any] | None = None) -> str
 
     result = [f">>> tool:grep|lines:{total}|files:{file_count}"]
     for key in order:
+        display_key = "(unscoped)" if not key else key
         snippets = by_file[key]
         limit = min(per_file_limit, len(snippets))
         shown = snippets[:limit]
         for lnum, s in shown:
             if lnum:
-                result.append(f"{key}:{lnum}: {s[:80]}")
+                if key:
+                    result.append(f"{key}:{lnum}: {s[:80]}")
+                else:
+                    result.append(f"{lnum}: {s[:80]}")
             else:
-                result.append(f"{key}: {s[:80]}")
+                if key:
+                    result.append(f"{key}: {s[:80]}")
+                else:
+                    result.append(s[:80])
         remaining = len(snippets) - limit
         if remaining > 0:
-            result.append(f"{key}: ... ({remaining} more matches)")
+            result.append(f"{display_key}: ... ({remaining} more matches)")
 
     compressed = "\n".join(result)
     if len(compressed) >= len(text):
@@ -497,8 +501,10 @@ def _compress_ls(text: str) -> str:
             else:
                 names.append(name)
                 # If we have size info (typical ls -la), keep it
+                # Standard ls -la: perms links owner group size month day time name
+                # parts[4] is the size field; parts[-5] is wrong (picks up date)
                 if len(parts) >= 5:
-                    size = parts[-5]
+                    size = parts[4]
                     name_to_info[name] = size
         else:
             names.append(line.strip())
@@ -562,7 +568,7 @@ def _compress_find(text: str) -> str:
     result_lines = [header]
     for group_key in sorted(groups):
         group_paths = groups[group_key]
-        result_lines.append(f"  {group_key}/ ({len(group_paths)} files):")
+        result_lines.append(f"  {group_key.rstrip('/')}/ ({len(group_paths)} files):")
         for gp in group_paths:
             result_lines.append(f"    {gp}")
 
@@ -775,7 +781,20 @@ def _compress_stack_traces(text: str) -> str:
         r"(node_modules|site-packages|dist-packages|/lib/python|/usr/lib|/usr/include|/Library/Frameworks|/usr/local/Cellar)"
     )
 
+    # Collect paths from all frame formats for common-prefix computation.
     paths = re.findall(r'File "([^"]+)"', text)
+    node_paths: set[str] = set()
+    for m in re.finditer(r"at [\w.<>$\[\]]+ \((.+):\d+:\d+\)", text):
+        paths.append(m.group(1))
+        node_paths.add(m.group(1))
+    _JS_FILE_RE = re.compile(r"\.(js|ts|mjs|cjs|jsx|tsx)$", re.IGNORECASE)
+    for m in re.finditer(r"at [\w.$]+\(([\w.$]+):(\d+)\)", text):
+        candidate = m.group(1)
+        if candidate in node_paths:
+            continue
+        if _JS_FILE_RE.search(candidate):
+            continue
+        paths.append(candidate.replace(".", "/"))
     common_prefix = ""
     if len(paths) >= 2:
         try:
@@ -803,7 +822,7 @@ def _compress_stack_traces(text: str) -> str:
             result.append(f"  at {func} ({path}:{line_num})")
             continue
 
-        match = re.search(r"at (\w+) \((.+):(\d+):(\d+)\)", line)
+        match = re.search(r"at ([\w.<>$\[\]]+) \((.+):(\d+):(\d+)\)", line)
         if match:
             func, path, lnum, _col = (
                 match.group(1),
@@ -831,18 +850,26 @@ def _compress_stack_traces(text: str) -> str:
     return compressed
 
 
-def _compress_json_response(data: str | dict[str, Any] | list[Any], depth: int = 0) -> str | dict[str, Any] | list[Any]:
+def _compress_json_response(
+    data: str | dict[str, Any] | list[Any], depth: int = 0, *, _max_depth: int = 20
+) -> str | dict[str, Any] | list[Any]:
+    if depth >= _max_depth:
+        if isinstance(data, dict):
+            return f"{{... {len(data)} keys}}"
+        if isinstance(data, list):
+            return f"[... {len(data)} items]"
+        return data
     if isinstance(data, dict):
         if len(data) > 20 and depth > 1:
             return f"{{... {len(data)} keys}}"
-        return {key: _compress_json_response(value, depth + 1) for key, value in data.items()}
+        return {key: _compress_json_response(value, depth + 1, _max_depth=_max_depth) for key, value in data.items()}
     if isinstance(data, list):
         if len(data) > 10:
             return [
-                _compress_json_response(data[0], depth + 1),
-                f"... {len(data) - 1} more items",
+                _compress_json_response(data[0], depth + 1, _max_depth=_max_depth),
+                {"_omitted": len(data) - 1},
             ]
-        return [_compress_json_response(item, depth + 1) for item in data]
+        return [_compress_json_response(item, depth + 1, _max_depth=_max_depth) for item in data]
     if isinstance(data, str) and len(data) > 200:
         return data[:197] + "..."
     return data
@@ -855,11 +882,16 @@ def _compress_grep_context(text: str) -> str:
 
     result = []
     current_file = None
-    current_block: list[str] = []
     last_line_num = -1
 
     for line in lines:
+        # Try strict regex first (fast path, no hyphens in path)
         match = re.match(r"^([^\s-][^-]*)-(\d+)-(.*)", line)
+        if not match:
+            # Fallback: allow hyphens in path using non-greedy match.
+            # \S+? finds the shortest prefix before -digits-content, so
+            # src/my-app.py-10-content correctly yields path=src/my-app.py.
+            match = re.match(r"^([^\s-]\S+?)-(\d+)-(.*)", line)
         if match:
             path, lnum, content = (
                 match.group(1),
@@ -867,8 +899,6 @@ def _compress_grep_context(text: str) -> str:
                 match.group(3),
             )
             if path != current_file:
-                if current_block:
-                    result.append(f"  [{last_line_num}]")
                 current_file = path
                 result.append(f"file://{path}:")
                 result.append(f"  [{lnum}] {content}")
@@ -928,7 +958,7 @@ def _compress_env_ps(text: str, kind: str) -> str:
         if len(kept) > 20:
             kept = [*kept[:20], f"... {len(kept) - 20} more active processes"]
 
-        header = f">>> tool:ps|total_lines:{len(lines)}|interesting:{len(kept) - 1}"
+        header = f">>> tool:ps|total_lines:{len(lines)}|interesting:{max(0, len(kept) - 1)}"
         return header + "\n" + "\n".join(kept)
 
     if kind == "env_output":

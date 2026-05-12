@@ -461,7 +461,12 @@ def test_health_endpoint(monkeypatch) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    capability = payload.pop("capability")
+    assert capability["trace_version"] == "tok-trace/v0.1-draft"
+    assert capability["bridge_mode"] == "natural-first"
+    assert "exact" in capability["supported_evidence_forms"]
+    assert payload == {
         "status": "ok",
         "bridge": "tok",
         "port": 9191,

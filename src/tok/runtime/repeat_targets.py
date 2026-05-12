@@ -948,3 +948,4 @@ class HotSummaryRecord:
     unchanged_result_count: int = 0
     evidence_intent: EvidenceIntent | None = None
     skeleton: str = ""
+    tokens_saved: int = 0

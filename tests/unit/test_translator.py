@@ -1,6 +1,7 @@
 """Tests for tok.translator — output-side Tok -> readable English."""
 
 from tok.runtime.policy.translator import (
+    _is_likely_tok,
     postprocess_response,
     strip_markdown_fallback,
     tok_to_readable,
@@ -109,3 +110,42 @@ class TestPostprocessResponse:
         text = ">>> t:1|usr:x|agt:y|state:z\n@thought\n  |> only thoughts"
         _result, mode = postprocess_response(text)
         assert mode == "tok-empty"
+
+
+class TestIsLikelyTokRegression:
+    def test_at_thought_without_header(self) -> None:
+        assert _is_likely_tok("@thought\nTesting")
+
+    def test_at_thought_with_pipe_content(self) -> None:
+        assert _is_likely_tok("@thought\n  |> hidden reasoning")
+
+    def test_bare_triple_chevron_header(self) -> None:
+        assert _is_likely_tok(">>> t:1|usr:test|agt:reply|state:active")
+
+    def test_triple_chevron_with_markdown_body(self) -> None:
+        assert _is_likely_tok(">>> t:1|usr:test|agt:reply|state:active\n## Result\nPlain markdown")
+
+    def test_triple_chevron_with_known_at_block(self) -> None:
+        assert _is_likely_tok(">>> t:1|s:d|agt:r|state:active\n@msg role:assistant\n  |> done")
+
+    def test_plain_text_rejected(self) -> None:
+        assert not _is_likely_tok("Just some plain text")
+
+    def test_plain_markdown_rejected(self) -> None:
+        assert not _is_likely_tok("## Hello\nThis is a normal response.")
+
+    def test_elixir_pipe_in_code_block_rejected(self) -> None:
+        text = "```elixir\n[1, 2, 3]\n|> Enum.map(fn x -> x * 2 end)\n|> Enum.filter(fn x -> x > 2 end)\n```"
+        assert not _is_likely_tok(text)
+
+    def test_fsharp_pipe_in_code_block_rejected(self) -> None:
+        text = "```fsharp\n[1; 2; 3]\n|> List.map (fun x -> x * 2)\n```"
+        assert not _is_likely_tok(text)
+
+    def test_at_thought_postprocess_mode_is_tok_empty(self) -> None:
+        _result, mode = postprocess_response("@thought\nTesting")
+        assert mode == "tok-empty"
+
+    def test_triple_chevron_with_markdown_postprocess_mode(self) -> None:
+        _result, mode = postprocess_response(">>> t:1|usr:test|agt:reply|state:active\n## Result\nPlain markdown")
+        assert mode == "tok-native"

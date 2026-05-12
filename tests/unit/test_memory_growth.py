@@ -11,7 +11,7 @@ from tok.runtime.memory.bridge_memory import BridgeMemoryState
 
 
 def test_bridge_memory_growth_stays_bounded() -> None:
-    state = BridgeMemoryState()
+    state = BridgeMemoryState(load_global_macros=False)
     tok_lengths: list[int] = []
     json_lengths: list[int] = []
     history: list[dict[str, int]] = []

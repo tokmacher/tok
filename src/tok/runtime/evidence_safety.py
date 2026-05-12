@@ -1,11 +1,68 @@
-"""Session-local evidence exactness ledger for bridge compression safety."""
+"""Session-local evidence exactness ledger for bridge compression safety.
+
+Evidence form taxonomy (0.1.9):
+
+- ``exact``: verbatim, first-hand observation content (what was actually read/searched).
+- ``summary``: a lossy natural-language summary of an observation.
+- ``skeleton``: a structural outline (e.g. headings, defs) that is not full content.
+- ``reference``: a pointer or stable stub (e.g. hash-based stable result marker).
+
+Hard rule: non-exact evidence must not authorize edit-like behavior without
+re-observation (exact reacquisition).
+"""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Literal
 
 EvidenceForm = Literal["exact", "summary", "skeleton", "reference"]
+
+logger = logging.getLogger("tok.evidence_safety")
+
+EVIDENCE_DECISION_REASON_CODES = frozenset(
+    {
+        "exact_search_observation",
+        "first_occurrence_guard",
+        "first_session",
+        "zero_heat",
+        "detection_type_raw",
+        "pytest_failed",
+        "size_below_threshold",
+        "no_compressor",
+        "skip_file_skeleton",
+        "zero_savings",
+        "compressed",
+    }
+)
+
+
+def record_evidence_decision(
+    *,
+    decision: str,
+    reason: str,
+    tool: str,
+    kind: str | None = None,
+    path: str | None = None,
+    input_chars: int | None = None,
+    output_chars: int | None = None,
+    saved: int | None = None,
+) -> None:
+    if reason not in EVIDENCE_DECISION_REASON_CODES:
+        logger.warning("evidence_decision: unknown reason=%s decision=%s tool=%s", reason, decision, tool)
+    parts = [f"evidence_decision: decision={decision} reason={reason} tool={tool}"]
+    if kind is not None:
+        parts.append(f"kind={kind}")
+    if path:
+        parts.append(f"path={path}")
+    if input_chars is not None:
+        parts.append(f"input_chars={int(input_chars)}")
+    if output_chars is not None:
+        parts.append(f"output_chars={int(output_chars)}")
+    if saved is not None:
+        parts.append(f"saved={int(saved)}")
+    logger.debug(" ".join(parts))
 
 
 @dataclass

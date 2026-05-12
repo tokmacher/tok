@@ -105,3 +105,158 @@ def test_jit_arg_parsing():
     assert args["pattern"] == "test"
     assert args["file"] == "path/to/file.py"
     assert args["count"] == "5"
+
+
+# ---------------------------------------------------------------------------
+# RED tests: process_response_impl must execute EXECUTE_JIT tokens in text
+# ---------------------------------------------------------------------------
+
+
+def test_process_response_executes_jit_token_in_text(jit_execution_setup):
+    """EXECUTE_JIT(@name(args)) in model response must be replaced with execution result."""
+    from unittest.mock import patch as _patch
+
+    from tok.runtime._runtime_orchestration import process_response_impl
+
+    registry, session, macro = jit_execution_setup
+    macro.hit_count = 5
+
+    raw_response = ">>> t:1|g:find pattern\nEXECUTE_JIT(@grep_view(pattern='reactor', file='src/tok/neuro/ir.py'))\n"
+
+    with _patch("tok.macros.ir.execute_ir", return_value="Found 3 matches in ir.py"):
+        runtime = UniversalTokRuntime()
+        result = process_response_impl(
+            runtime,
+            raw_response,
+            model="claude-3-5-sonnet-20241022",
+            session=session,
+            jit_executor=execute_jit_macro,
+        )
+
+    # The EXECUTE_JIT token must not appear in the returned content
+    full_text = " ".join(str(b.get("text", "")) for b in result.content_blocks if b.get("type") == "text")
+    assert "EXECUTE_JIT(" not in full_text, f"Raw JIT token leaked into output: {full_text!r}"
+    # The execution result must appear somewhere (inline or via signal)
+    assert result.behavior_signals.get("jit_executed", 0) == 1, (
+        f"jit_executed signal missing; signals={result.behavior_signals}"
+    )
+
+
+def test_process_response_jit_signal_absent_without_token(jit_execution_setup):
+    """Responses without EXECUTE_JIT must not set jit_executed."""
+    from tok.runtime._runtime_orchestration import process_response_impl
+
+    _registry, session, _macro = jit_execution_setup
+    raw_response = ">>> t:1|g:regular response\n"
+
+    runtime = UniversalTokRuntime()
+    result = process_response_impl(
+        runtime,
+        raw_response,
+        model="claude-3-5-sonnet-20241022",
+        session=session,
+        jit_executor=execute_jit_macro,
+    )
+
+    assert result.behavior_signals.get("jit_executed", 0) == 0
+
+
+def test_process_response_jit_no_executor_emits_not_executed_signal(jit_execution_setup, monkeypatch):
+    """Without a jit_executor, EXECUTE_JIT in text must set jit_detected_not_executed."""
+    from tok.runtime._runtime_orchestration import process_response_impl
+
+    _registry, session, _macro = jit_execution_setup
+    monkeypatch.setenv("TOK_NEURO_REACTOR", "1")
+
+    raw_response = ">>> t:1|g:find\nEXECUTE_JIT(@grep_view(pattern='x', file='y.py'))\n"
+
+    runtime = UniversalTokRuntime()
+    result = process_response_impl(
+        runtime,
+        raw_response,
+        model="claude-3-5-sonnet-20241022",
+        session=session,
+        jit_executor=None,
+    )
+
+    assert result.behavior_signals.get("jit_detected_not_executed", 0) == 1
+
+
+def test_process_response_jit_no_executor_and_env_disabled_leaves_marker_unsignaled(jit_execution_setup, monkeypatch):
+    """Without an executor and without the reactor flag, JIT markers are inert text."""
+    from tok.runtime._runtime_orchestration import process_response_impl
+
+    _registry, session, _macro = jit_execution_setup
+    monkeypatch.setenv("TOK_NEURO_REACTOR", "0")
+
+    raw_response = ">>> t:1|g:find\nEXECUTE_JIT(@grep_view(pattern='x', file='y.py'))\n"
+
+    runtime = UniversalTokRuntime()
+    result = process_response_impl(
+        runtime,
+        raw_response,
+        model="claude-3-5-sonnet-20241022",
+        session=session,
+        jit_executor=None,
+    )
+
+    full_text = " ".join(str(b.get("text", "")) for b in result.content_blocks if b.get("type") == "text")
+    assert "EXECUTE_JIT(" in full_text
+    assert result.behavior_signals.get("jit_executed") is None
+    assert result.behavior_signals.get("jit_detected_not_executed") is None
+
+
+def test_process_response_does_not_execute_jit_marker_inside_fenced_code(jit_execution_setup):
+    """A documented JIT marker in a code fence must not run as a command."""
+    from tok.runtime._runtime_orchestration import process_response_impl
+
+    _registry, session, _macro = jit_execution_setup
+    raw_response = (
+        "Here is the literal syntax:\n"
+        "```text\n"
+        "EXECUTE_JIT(@grep_view(pattern='reactor', file='src/tok/neuro/ir.py'))\n"
+        "```\n"
+    )
+
+    runtime = UniversalTokRuntime()
+    calls: list[tuple[str, str]] = []
+
+    def fail_if_called(_session: RuntimeSession, name: str, args: str) -> str:
+        calls.append((name, args))
+        raise AssertionError("JIT executor must not run for fenced examples")
+
+    result = process_response_impl(
+        runtime,
+        raw_response,
+        model="claude-3-5-sonnet-20241022",
+        session=session,
+        jit_executor=fail_if_called,
+    )
+
+    assert calls == []
+    assert result.behavior_signals.get("jit_executed") is None
+
+
+class TestJITRegexModuleLevel:
+    """Regression: _JIT_RE must be compiled once at module level, not per call."""
+
+    def test_jit_re_is_module_constant(self) -> None:
+        import tok.runtime._runtime_orchestration as mod
+
+        assert hasattr(mod, "_JIT_RE")
+        import re
+
+        assert isinstance(mod._JIT_RE, re.Pattern)
+
+    def test_jit_re_matches_standard_syntax(self) -> None:
+        import tok.runtime._runtime_orchestration as mod
+
+        m = mod._JIT_RE.search("EXECUTE_JIT(@grep_view(pattern='test', file='x.py'))")
+        assert m is not None
+        assert m.group(1) == "grep_view"
+        assert m.group(2) == "pattern='test', file='x.py'"
+
+    def test_jit_re_no_match_without_at_sign(self) -> None:
+        import tok.runtime._runtime_orchestration as mod
+
+        assert mod._JIT_RE.search("EXECUTE_JIT(grep_view())") is None

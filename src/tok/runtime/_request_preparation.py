@@ -328,7 +328,16 @@ def observe_repeat_target_result_impl(
 
     key = f"{family}|{logical_target}"
     record = session_self._hot_summary_records.get(key)
-    unchanged_result = bool(record and record.result_digest == digest)
+    _text_lower = text.lower()
+    _is_suppression_message = bool(
+        record
+        and (
+            "unchanged since" in _text_lower
+            or "|unchanged|cached" in _text_lower
+            or ("wasted call" in _text_lower and "unchanged" in _text_lower)
+        )
+    )
+    unchanged_result = bool(record and (record.result_digest == digest or _is_suppression_message))
     session_self._recent_repeat_target_events.append(
         RepeatTargetEvent(
             turn_index=current_turn,
@@ -361,6 +370,13 @@ def observe_repeat_target_result_impl(
     skeleton = ""
     if family == "file_read":
         skeleton = build_file_skeleton(text, max_chars=280, max_lines=14)
+
+    # When the result is unchanged (suppression message), keep the prior real summary/cost/skeleton
+    # so the hot-hint path can inject meaningful content rather than the dedup placeholder.
+    if unchanged_result and record and record.summary:
+        summary = record.summary
+        token_cost = record.token_cost
+        skeleton = record.skeleton
 
     updated = HotSummaryRecord(
         tool_family=family,
@@ -736,6 +752,8 @@ def prepare_request_impl(
     )
 
     rolling_cmds = session.bridge_memory.rolling_cmds
+    jit_macro = None
+    threshold = _env_int_or_default("TOK_JIT_HIT_THRESHOLD", _DEFAULT_JIT_HIT_THRESHOLD)
     if rolling_cmds:
         recent_instructions: list[Instruction] = []
         for entry in rolling_cmds[-_RECENT_COMMAND_WINDOW:]:
@@ -745,7 +763,6 @@ def prepare_request_impl(
             recent_instructions.append(Instruction(op=parts[0], args=tuple(parts[1:])))
 
         jit_macro = session.bridge_memory.macro_registry.match_recent_sequence(recent_instructions)
-        threshold = _env_int_or_default("TOK_JIT_HIT_THRESHOLD", _DEFAULT_JIT_HIT_THRESHOLD)
         if jit_macro and jit_macro.hit_count >= threshold and _jit_context_matches(jit_macro, session):
             session.pending_behavior_signals["jit_offer_available"] = 1
             session.pending_behavior_signals[f"jit_offer_{jit_macro.name}"] = 1
@@ -755,6 +772,10 @@ def prepare_request_impl(
             session.pending_behavior_signals["jit_offer_context_filtered"] = 1
 
     _speculative_macro_hint: str | None = None
+    if jit_macro and jit_macro.hit_count >= threshold and rolling_cmds and _jit_context_matches(jit_macro, session):
+        from tok.runtime.policy.macro_handling import execute_macro_proactively
+
+        _speculative_macro_hint = execute_macro_proactively(session, jit_macro, session.bridge_memory.rolling_cmds)
 
     id_to_context = build_tool_use_id_to_context(translated_messages, session)
     exact_search_evidence_keys_in_request = _exact_search_evidence_keys_in_messages(translated_messages, id_to_context)
@@ -789,7 +810,6 @@ def prepare_request_impl(
         and not stream_recovery_history_floor_active
         and _is_first_turn_broad_audit_batch(request, session, normalized_tool_events)
     )
-    runtime_hints: list[str] = []
     injected_state_payload = ""
     history_skip_reason = ""
     should_skip_history = False
@@ -996,7 +1016,7 @@ def prepare_request_impl(
             request_policy == "natural_first" and request.tool_compatible and not effective_tool_compatible
         )
 
-        runtime_hints = []
+        runtime_hints = [h for h in [_speculative_macro_hint] if h]
         if session.consume_loop_detected():
             behavior_signals["loop_terminated"] = 1
         if behavior_signals.get("repeat_command_stable_no_change", 0) > 0:
@@ -1138,7 +1158,7 @@ def prepare_request_impl(
                 recently_edited_files=dict(session._recently_edited_files),
                 file_heat=dict(session.bridge_memory._file_heat),
                 session=session,
-                model_profile=session.model_profile,
+                model_profile=session.effective_model_profile,
             )
             tool_saved = sum(type_breakdown.values()) // 4
             if tool_saved > 0:
@@ -1253,7 +1273,7 @@ def prepare_request_impl(
             history_baseline_prompt_tokens = session.prepared_prompt_tokens(body)
             h_profile: dict[str, Any] = dict(policy.history_profiles[mode])
             h_profile["_no_pointers"] = True
-            bridge_keep_turns = max(keep_turns, 2) if request.adapter_kind == "claude-bridge" else keep_turns
+            bridge_keep_turns = max(keep_turns, 4) if request.adapter_kind == "claude-bridge" else keep_turns
             bridge_profile = dict(h_profile)
             if request.adapter_kind == "claude-bridge":
                 bridge_profile["_bridge_cut_search"] = 1
@@ -1271,7 +1291,7 @@ def prepare_request_impl(
                 first_exact_evidence_seen=_first_exact_evidence_seen_for_compression(),
                 preserve_exact_search_evidence=preserve_exact_search_evidence,
                 session_files_read=session._files_read_this_session,
-                model_profile=session.model_profile,
+                model_profile=session.effective_model_profile,
             )
             if request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(recent):
                 bridge_candidate_had_invalid = False

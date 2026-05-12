@@ -9,6 +9,7 @@ import os
 import statistics
 import threading
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tok.runtime.policy.semantic_validation import (
@@ -126,6 +127,9 @@ class SavingsTracker:
                 for line in f:
                     if line.startswith(">>> session:"):
                         stats["session_start"] = line.split(" session:", 1)[1].strip()
+                    elif line.startswith(">>> peak_savings_pct:"):
+                        with contextlib.suppress(ValueError):
+                            stats["peak_savings_pct"] = float(line.split(":", 1)[1].strip())
                     elif line.startswith(">>> m:"):
                         model_name, m = self._parse_model_line(line)
                         stats["models"][model_name] = m
@@ -140,6 +144,8 @@ class SavingsTracker:
         """Save stats atomically to prevent race conditions."""
         try:
             lines = [f">>> session:{stats.get('session_start', 'unknown')}"]
+            if "peak_savings_pct" in stats:
+                lines.append(f">>> peak_savings_pct:{stats['peak_savings_pct']:.1f}")
             for model, m in sorted(stats["models"].items()):
                 parts = [model]
                 for full_k, short_k in STATS_KEY_MAP_INV.items():
@@ -257,6 +263,19 @@ class SavingsTracker:
                 + m.get("cache_write_tokens", 0)
                 for m in stats["models"].values()
             )
+            _cum_saved = sum(
+                max(
+                    0,
+                    m.get("input_saved_tokens", 0)
+                    + m.get("output_saved_tokens", 0)
+                    + m.get("reacquisition_tokens_avoided_estimate", 0)
+                    - m.get("hot_hint_tokens_added", 0),
+                )
+                for m in stats["models"].values()
+            )
+            _cum_baseline = total_tokens + _cum_saved
+            _cum_pct = _cum_saved / _cum_baseline * 100 if _cum_baseline > 0 else 0.0
+            stats["peak_savings_pct"] = max(stats.get("peak_savings_pct", 0.0), _cum_pct)
             self.save_stats(stats)
             if self._lifetime_flush_every_turns > 0 and total_turns % self._lifetime_flush_every_turns == 0:
                 flush_now = True
@@ -314,7 +333,13 @@ class SavingsTracker:
         )
         actual_completion_tokens = sum(m.get("actual_output_tokens", 0) for m in models.values())
         actual_tokens = actual_prompt_tokens + actual_completion_tokens
-        saved_tokens = sum(m.get("input_saved_tokens", 0) + m.get("output_saved_tokens", 0) for m in models.values())
+        saved_tokens = sum(
+            m.get("input_saved_tokens", 0)
+            + m.get("output_saved_tokens", 0)
+            + m.get("reacquisition_tokens_avoided_estimate", 0)
+            - m.get("hot_hint_tokens_added", 0)
+            for m in models.values()
+        )
         baseline_prompt_tokens = sum(m.get("baseline_prompt_tokens", 0) for m in models.values())
         prepared_prompt_tokens = sum(m.get("prepared_prompt_tokens", 0) for m in models.values())
         saved_prompt_tokens = sum(m.get("saved_prompt_tokens", 0) for m in models.values())
@@ -421,6 +446,7 @@ class SavingsTracker:
             "hot_hint_tokens_added": hot_hint_tokens_added,
             "reacquisition_tokens_avoided_estimate": reacquisition_tokens_avoided_estimate,
             "savings_pct": round(savings_pct, 1),
+            "peak_savings_pct": round(float(stats.get("peak_savings_pct", savings_pct)), 1),
             "cost_savings_pct": round(cost_savings_pct, 1),
             "actual_cost_usd": actual_cost,
             "baseline_cost_usd": baseline_cost,
@@ -498,7 +524,12 @@ class SavingsTracker:
             result["actual_input_tokens"] + result["cache_read_tokens"] + result["cache_write_tokens"]
         )
         result["total_tokens"] = result["prompt_tokens"] + result["actual_output_tokens"]
-        result["saved_tokens"] = result["input_saved_tokens"] + result["output_saved_tokens"]
+        result["saved_tokens"] = (
+            result["input_saved_tokens"]
+            + result["output_saved_tokens"]
+            + result["reacquisition_tokens_avoided_estimate"]
+            - result["hot_hint_tokens_added"]
+        )
         result["net_tokens_saved"] = result["saved_tokens"] - result.get("reacquisition_cost_tokens", 0)
         result["saved_usd"] = result["baseline_cost_usd"] - result["actual_cost_usd"]
         return result
@@ -712,7 +743,11 @@ class SavingsTracker:
             int(ledger["total_completion_tokens"]) - int(entry["completion_tokens"]),
         )
         ledger["tokens_saved"] = max(0, int(ledger["tokens_saved"]) - int(entry["tokens_saved"]))
-        ledger["net_tokens_saved"] = max(0, int(ledger["net_tokens_saved"]) - int(entry["tokens_saved"]))
+        ledger["net_tokens_saved"] = max(
+            0,
+            int(ledger["net_tokens_saved"])
+            - (int(entry["tokens_saved"]) - int(entry.get("reacquisition_cost_tokens", 0))),
+        )
         ledger["total_cost_usd"] = max(0.0, float(ledger["total_cost_usd"]) - float(entry["actual_cost_usd"]))
         ledger["estimated_baseline_cost_usd"] = max(
             0.0,
@@ -843,7 +878,13 @@ class SavingsTracker:
             f"- calls: {summary['calls']}\n"
             f"- actual tokens: {int(summary['actual_tokens']):,}\n"
             f"- baseline tokens: {int(summary['baseline_tokens']):,}\n"
-            f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%)\n"
+            f"- saved: {int(summary['tokens_saved']):,} ({float(summary['savings_pct']):.1f}%"
+            + (
+                f", peak {float(summary['peak_savings_pct']):.0f}%"
+                if float(summary.get("peak_savings_pct", 0)) > float(summary["savings_pct"]) + 5
+                else ""
+            )
+            + ")\n"
             f"- actual cost: ${float(summary['actual_cost_usd']):.4f}\n"
             f"- baseline cost: ${float(summary['baseline_cost_usd']):.4f}\n"
             f"- est. cost saved: ~${float(summary['cost_saved_usd']):.4f}\n"
@@ -898,10 +939,90 @@ class SavingsTracker:
             f"- baseline-only requests: {int(summary['baseline_only_requests'])}"
         )
 
-    def lifetime_summary(self) -> dict[str, int | float] | None:
-        """Return canonical user-facing savings fields for the lifetime ledger."""
-        if not self._ledger_path.exists():
+    def _inflight_session_agg(self) -> dict[str, Any] | None:
+        """Read the current in-flight session without writing to disk.
+
+        Returns a dict with the same shape as _aggregate_session() plus
+        'sess_id' and 'signals', or None if the session has no recorded calls.
+        This is used by lifetime_summary() to overlay the live session on top
+        of the persisted ledger so tok stats shows up-to-date lifetime numbers
+        without requiring a clean shutdown first.
+        """
+        with self._lock:
+            stats = self.load_stats()
+        models = stats.get("models", {})
+        if not models or all(m.get("calls", 0) == 0 for m in models.values()):
             return None
+        sess = self._aggregate_session(models)
+        date_str = stats.get("session_start", "")
+        sess["sess_id"] = (
+            hashlib.md5(f"{date_str}:{self._savings_file}".encode()).hexdigest()[:8]  # nosec B324
+            if date_str
+            else ""
+        )
+        sess["signals"] = self.behavior_signals()
+        return sess
+
+    def _inflight_session_aggs(self) -> list[dict[str, Any]]:
+        """Return live session snapshots, including bridge session bucket files."""
+        inflight: dict[str, dict[str, Any]] = {}
+        ledger_mtime = self._ledger_path.stat().st_mtime if self._ledger_path.exists() else 0.0
+        current_path = Path(self._savings_file)
+        current = self._inflight_session_agg()
+        if current and (not self._ledger_path.exists() or current_path.stat().st_mtime > ledger_mtime):
+            inflight[str(current.get("sess_id", ""))] = current
+
+        stats_dir = self._ledger_path.parent / "session_stats"
+        if stats_dir.exists():
+            for path in stats_dir.glob("*.tok"):
+                if path == current_path:
+                    continue
+                if self._ledger_path.exists() and path.stat().st_mtime <= ledger_mtime:
+                    continue
+                tracker = type(self)(savings_file=str(path), ledger_path=self._ledger_path)
+                snapshot = tracker._inflight_session_agg()
+                if snapshot:
+                    inflight[str(snapshot.get("sess_id", ""))] = snapshot
+        return list(inflight.values())
+
+    def lifetime_summary(self) -> dict[str, int | float] | None:
+        """Return canonical user-facing savings fields for the lifetime ledger.
+
+        Overlays the current in-flight session on top of persisted ledger data
+        so the display stays current without requiring a clean bridge shutdown.
+        Double-counting is avoided by checking whether the current session's ID
+        is already present in the per-session log (which happens when
+        TOK_LIFETIME_FLUSH_EVERY_TURNS is enabled or a prior flush ran).
+        """
+        inflight_sessions = self._inflight_session_aggs()
+
+        if not self._ledger_path.exists():
+            if not inflight_sessions:
+                return None
+            actual_tokens = sum(int(sess["total_tokens"]) for sess in inflight_sessions)
+            saved_tokens = sum(int(sess["saved_tokens"]) for sess in inflight_sessions)
+            baseline_tokens = actual_tokens + saved_tokens
+            actual_cost = sum(float(sess["actual_cost_usd"]) for sess in inflight_sessions)
+            baseline_cost = sum(float(sess["baseline_cost_usd"]) for sess in inflight_sessions)
+            cost_saved = sum(float(sess["saved_usd"]) for sess in inflight_sessions)
+            savings_pct = saved_tokens / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
+            cost_savings_pct = cost_saved / baseline_cost * 100 if baseline_cost > 0 else 0.0
+            return {
+                "sessions": len(inflight_sessions),
+                "total_turns": sum(int(sess["calls"]) for sess in inflight_sessions),
+                "actual_tokens": actual_tokens,
+                "baseline_tokens": baseline_tokens,
+                "tokens_saved": saved_tokens,
+                "savings_pct": round(savings_pct, 1),
+                "cost_savings_pct": round(cost_savings_pct, 1),
+                "actual_cost_usd": actual_cost,
+                "baseline_cost_usd": baseline_cost,
+                "cost_saved_usd": cost_saved,
+                "fallback_count": sum(int(sess["signals"].get(FALLBACK_SIGNAL, 0)) for sess in inflight_sessions),
+                "baseline_only_requests": sum(
+                    int(sess["signals"].get(BASELINE_ONLY_SIGNAL, 0)) for sess in inflight_sessions
+                ),
+            }
 
         ledger: dict[str, str] = {}
         for line in self._ledger_path.read_text().splitlines():
@@ -911,22 +1032,40 @@ class SavingsTracker:
                 ledger[k.strip()] = v.strip()
 
         entries = self._load_session_log_entries()
+
         if entries:
+            by_session = {str(entry["session_id"]): entry for entry in entries}
+            for sess in inflight_sessions:
+                by_session[str(sess["sess_id"])] = {
+                    "date": "",
+                    "session_id": str(sess["sess_id"]),
+                    "turns": int(sess["calls"]),
+                    "tokens": int(sess["total_tokens"]),
+                    "actual_cost_usd": float(sess["actual_cost_usd"]),
+                    "baseline_cost_usd": float(sess["baseline_cost_usd"]),
+                    "saved_usd": float(sess["saved_usd"]),
+                    "tokens_saved": int(sess["saved_tokens"]),
+                    FALLBACK_SIGNAL: int(sess["signals"].get(FALLBACK_SIGNAL, 0)),
+                    BASELINE_ONLY_SIGNAL: int(sess["signals"].get(BASELINE_ONLY_SIGNAL, 0)),
+                }
+            entries = list(by_session.values())
             actual_tokens = sum(int(entry["tokens"]) for entry in entries)
             saved_tokens = sum(int(entry["tokens_saved"]) for entry in entries)
-            baseline_tokens = actual_tokens + saved_tokens
             actual_cost = sum(float(entry["actual_cost_usd"]) for entry in entries)
             baseline_cost = sum(float(entry["baseline_cost_usd"]) for entry in entries)
             cost_saved = sum(float(entry["saved_usd"]) for entry in entries)
-            cost_savings_pct = cost_saved / baseline_cost * 100 if baseline_cost > 0 else 0.0
-            savings_pct = saved_tokens / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
-
             fallback_count = sum(int(entry.get(FALLBACK_SIGNAL, 0)) for entry in entries)
             baseline_only_count = sum(int(entry.get(BASELINE_ONLY_SIGNAL, 0)) for entry in entries)
+            total_turns = sum(int(entry["turns"]) for entry in entries)
+            sessions = len(entries)
+
+            baseline_tokens = actual_tokens + saved_tokens
+            savings_pct = saved_tokens / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
+            cost_savings_pct = cost_saved / baseline_cost * 100 if baseline_cost > 0 else 0.0
 
             return {
-                "sessions": len(entries),
-                "total_turns": sum(int(entry["turns"]) for entry in entries),
+                "sessions": sessions,
+                "total_turns": total_turns,
                 "actual_tokens": actual_tokens,
                 "baseline_tokens": baseline_tokens,
                 "tokens_saved": saved_tokens,
@@ -939,20 +1078,39 @@ class SavingsTracker:
                 "baseline_only_requests": baseline_only_count,
             }
 
-        if ledger.get("sessions", "0") == "0":
+        # Old-format ledger with no @per_session_log entries.
+        if ledger.get("sessions", "0") == "0" and not inflight_sessions:
             return None
 
         actual_tokens = int(ledger.get("total_tokens", 0))
         saved_tokens = int(ledger.get("tokens_saved", 0))
-        baseline_tokens = actual_tokens + saved_tokens
         actual_cost = float(ledger.get("total_cost_usd", 0.0))
         baseline_cost = float(ledger.get("estimated_baseline_cost_usd", 0.0))
+        cost_saved_ledger = float(ledger.get("cost_saved_usd", 0.0))
+        sessions = int(ledger.get("sessions", 0))
+        total_turns = int(ledger.get("total_turns", 0))
+        fallback_count = int(ledger.get(FALLBACK_SIGNAL, 0))
+        baseline_only_count = int(ledger.get(BASELINE_ONLY_SIGNAL, 0))
+
+        for sess in inflight_sessions:
+            signals = sess["signals"]
+            actual_tokens += int(sess["total_tokens"])
+            saved_tokens += int(sess["saved_tokens"])
+            actual_cost += float(sess["actual_cost_usd"])
+            baseline_cost += float(sess["baseline_cost_usd"])
+            cost_saved_ledger += float(sess["saved_usd"])
+            fallback_count += int(signals.get(FALLBACK_SIGNAL, 0))
+            baseline_only_count += int(signals.get(BASELINE_ONLY_SIGNAL, 0))
+            total_turns += int(sess["calls"])
+            sessions += 1
+
+        baseline_tokens = actual_tokens + saved_tokens
         cost_savings_pct = (baseline_cost - actual_cost) / baseline_cost * 100 if baseline_cost > 0 else 0.0
         savings_pct = saved_tokens / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
 
         return {
-            "sessions": int(ledger.get("sessions", 0)),
-            "total_turns": int(ledger.get("total_turns", 0)),
+            "sessions": sessions,
+            "total_turns": total_turns,
             "actual_tokens": actual_tokens,
             "baseline_tokens": baseline_tokens,
             "tokens_saved": saved_tokens,
@@ -960,9 +1118,9 @@ class SavingsTracker:
             "cost_savings_pct": round(cost_savings_pct, 1),
             "actual_cost_usd": actual_cost,
             "baseline_cost_usd": baseline_cost,
-            "cost_saved_usd": float(ledger.get("cost_saved_usd", 0.0)),
-            "fallback_count": int(ledger.get(FALLBACK_SIGNAL, 0)),
-            "baseline_only_requests": int(ledger.get(BASELINE_ONLY_SIGNAL, 0)),
+            "cost_saved_usd": cost_saved_ledger,
+            "fallback_count": fallback_count,
+            "baseline_only_requests": baseline_only_count,
         }
 
     def last_session_summary(self) -> dict[str, int | float | str] | None:

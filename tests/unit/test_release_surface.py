@@ -31,12 +31,12 @@ def test_package_metadata_version_matches_runtime_version() -> None:
     assert metadata["project"]["version"] == tok.__version__
 
 
-def test_release_version_is_0_1_8() -> None:
+def test_release_version_is_0_1_9() -> None:
     pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     metadata = tomllib.loads(pyproject.read_text())
 
-    assert tok.__version__ == "0.1.8"
-    assert metadata["project"]["version"] == "0.1.8"
+    assert tok.__version__ == "0.1.9"
+    assert metadata["project"]["version"] == "0.1.9"
 
 
 def test_release_surface_gate_passes_for_supported_bridge_story() -> None:

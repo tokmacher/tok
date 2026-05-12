@@ -1,6 +1,6 @@
 # Tok Specs
 
-This directory contains draft specification work for Tok 0.1.8 and later.
+This directory contains draft specification work for Tok 0.1.9 and later.
 
 The current draft is `tok-trace/v0.1-draft`, an audit format for Tok bridge sessions. It
 is bridge-first protocol groundwork: fixture and live-audit evidence only, not a

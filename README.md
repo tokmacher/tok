@@ -84,6 +84,22 @@ This is draft trace/audit groundwork, not universal protocol stability. Tok Capa
 Tok Session, resolver networking, binary encodings, and agent-to-agent protocol behavior
 remain future work.
 
+## What Changed In 0.1.9
+
+Tok `0.1.9` adds bridge-backed protocol groundwork:
+
+- Bridge Capability Manifest: runtime declaration of supported features at `/health` and
+  `tok bridge status`.
+- Evidence exactness taxonomy: `exact`, `summary`, `skeleton`, and `reference` forms
+  documented in the bridge standard.
+- Attribution smoke tests: automated checks for compression observability, diagnostics
+  consistency, trace exactness labels, and manifest visibility.
+- Live attribution test framework: manual release gate with four Claude Code session
+  types and pass/fail criteria.
+
+Tok Protocol v0.1 remains draft-scoped and will be published in `0.2.0` after live
+validation.
+
 ## Trace Audit
 
 Enable trace sidecars only when you want to inspect what Tok did:
@@ -279,6 +295,12 @@ uv build
 For release-specific checks, see
 [`docs/release-checklist.md`](docs/release-checklist.md) and
 [`docs/CICD_INTEGRATION.md`](docs/CICD_INTEGRATION.md).
+
+## Agent Operation
+
+Coding agents should start with [`AGENTS.md`](AGENTS.md). It defines the supported 0.1.x
+surface, verification commands, live-bridge reporting rules, and claims agents must not
+make without evidence.
 
 ## Privacy
 
