@@ -762,6 +762,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     json_data["cost_saved_usd"] = float(payload.get("cost_saved_usd", 0.0))
                     if baseline_only:
                         json_warnings.append("Session degraded to baseline")
+                        issues = True
                 else:
                     console.print(
                         render_stats_panel(

@@ -429,6 +429,8 @@ class TestDoctorJsonRegression:
         assert data["data"]["degraded_to_baseline"] is True
         assert data["data"]["baseline_only"] is True
         assert any("degraded" in w.lower() for w in data["warnings"])
+        assert data["ok"] is False
+        assert result.exit_code != 0
 
     def test_doctor_missing_memory_dir(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 12345)

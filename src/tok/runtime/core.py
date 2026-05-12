@@ -379,6 +379,7 @@ class RuntimeSession:
         self._recent_repeat_target_events.clear()
         save_hot_summaries(self)
         self._hot_summary_records.clear()
+        self._hot_hints_loaded_from_disk = 0
         self._observed_tool_result_ids.clear()
         self._prepared_prompt_token_cache.clear()
         self._predictive_cache_warm_keys.clear()
