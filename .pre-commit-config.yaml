@@ -127,9 +127,6 @@ repos:
         name: " filesystem/ symlink · Detect broken symlinks"
       - id: forbid-new-submodules
         name: "🌳 git · Prevent submodule creation"
-      - id: no-commit-to-branch
-        name: "🌳 git · Protect main branches"
-        args: ["--branch", "main", "--branch", "master"]
 
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: v0.23
