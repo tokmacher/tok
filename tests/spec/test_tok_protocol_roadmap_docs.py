@@ -75,7 +75,7 @@ def test_protocol_docs_name_adversarial_pack_manifest_and_release_ladder() -> No
     assert "trace-l1-l2-core-adversarial" in layers
     assert "trace-l1-l2-core-adversarial" in roadmap
     assert "**0.1.8:** named adversarial fixture packs" in roadmap
-    assert "**0.1.9:** standalone reference reader and Resolver design" in roadmap
+    assert "**0.1.9:** agent-operability layer, bridge capability manifest, and evidence-exactness" in roadmap
     assert "**0.2.0:** local Tok Resolver beta" in roadmap
 
 
