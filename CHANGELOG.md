@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.9 (2026-05-07)
+## 0.1.9 (2026-05-12)
 
 ### Added
 
@@ -24,12 +24,35 @@
   and `reference` evidence forms.
 - **Protocol groundwork status**: planning document for trace receipts, evidence
   exactness, compression decisions, behavior signals, and the capability manifest.
+- **Macro expansion engine**: tool mapping and macro expansion for enhanced
+  functionality.
+- **Hot summary handling**: enhanced hot summary handling and predictive hints for
+  eligible repeat targets.
+- **Request lifecycle scaffolding**: request lifecycle decomposition for improved
+  pipeline clarity.
+
+### Improved
+
+- **Shell integration**: improved shell integration coverage and performance metrics.
+- **Protocol detection**: simplified Tok protocol detection logic.
+- **Runtime and compression**: refactored compression and runtime state management for
+  reduced cross-module drift.
+- **Dependency age gate**: relaxed threshold to 5 days; restored urllib3 to 2.7.0 (fixes
+  CVE-2026-44431, CVE-2026-44432).
+
+### Fixed
+
+- **Doctor JSON diagnostics**: `tok doctor --json` now correctly sets `ok: false` and
+  exits non-zero when the session has degraded to baseline, matching the non-JSON path.
+- **Hot-hint state reset**: `reset_session()` now clears `_hot_hints_loaded_from_disk`,
+  preventing stale warm-session eligibility after a session reset.
+- **Spec test alignment**: roadmap doc test updated to match actual 0.1.9 wording.
 
 ### Notes
 
-- This release does not expand Tok's runtime surface or change compression behavior. It
-  adds an explicit agent-operability layer so coding agents can verify the repo, run the
-  right tests, and report honestly from a cold clone.
+- This release does not expand Tok's compression behavior. It adds an explicit
+  agent-operability layer, macro expansion groundwork, and hot-summary hint
+  improvements.
 
 ## 0.1.8 (2026-05-06)
 
