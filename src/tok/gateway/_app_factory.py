@@ -148,6 +148,9 @@ def _build_response_signals(
             if passthrough_idx < len(passthrough_blocks):
                 resp_json["content"][i] = passthrough_blocks[passthrough_idx]
                 passthrough_idx += 1
+        while passthrough_idx < len(passthrough_blocks):
+            resp_json["content"].append(passthrough_blocks[passthrough_idx])
+            passthrough_idx += 1
 
         session_signals = active_session.consume_behavior_signals()
         if session_signals:

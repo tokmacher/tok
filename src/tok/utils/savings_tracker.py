@@ -264,7 +264,14 @@ class SavingsTracker:
                 for m in stats["models"].values()
             )
             _cum_saved = sum(
-                m.get("input_saved_tokens", 0) + m.get("output_saved_tokens", 0) for m in stats["models"].values()
+                max(
+                    0,
+                    m.get("input_saved_tokens", 0)
+                    + m.get("output_saved_tokens", 0)
+                    + m.get("reacquisition_tokens_avoided_estimate", 0)
+                    - m.get("hot_hint_tokens_added", 0),
+                )
+                for m in stats["models"].values()
             )
             _cum_baseline = total_tokens + _cum_saved
             _cum_pct = _cum_saved / _cum_baseline * 100 if _cum_baseline > 0 else 0.0

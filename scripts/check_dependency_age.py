@@ -43,7 +43,7 @@ def check_dependencies(lock_path: Path = Path("uv.lock")) -> list[str]:
             continue
 
         package_age_days = (datetime.now(timezone.utc) - min(upload_times)).days
-        if package_age_days < 90:
+        if package_age_days < 180:
             violations.append(f"{package['name']}@{package['version']} is only {package_age_days} days old")
 
     return violations
@@ -55,7 +55,7 @@ def main() -> int:
         print("SECURITY REVIEW REQUIRED:")
         for violation in violations:
             print(f"  - {violation}")
-        print("\nDependencies must be at least 90 days old for automatic approval")
+        print("\nDependencies must be at least 180 days old for automatic approval")
         print("Manual security review required before merging")
         return 1
 

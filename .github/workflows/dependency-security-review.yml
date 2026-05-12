@@ -53,7 +53,7 @@ jobs:
 
               This PR contains dependency updates that require security review:
 
-              - Dependencies must be at least 90 days old
+              - Dependencies must be at least 180 days old
               - Security audit must pass
               - Manual review by tokmacher members required
 
@@ -62,7 +62,7 @@ jobs:
               - [ ] Check package integrity and signatures
               - [ ] Review changelog for security changes
               - [ ] Test functionality with new versions
-              - [ ] Confirm 90-day age requirement met
+              - [ ] Confirm 180-day age requirement met
 
               ### Approval Process:
               1. Complete security review checklist

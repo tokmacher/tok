@@ -763,8 +763,6 @@ def prepare_request_impl(
             recent_instructions.append(Instruction(op=parts[0], args=tuple(parts[1:])))
 
         jit_macro = session.bridge_memory.macro_registry.match_recent_sequence(recent_instructions)
-        if jit_macro:
-            session.bridge_memory.macro_registry.record_use(jit_macro.name)
         if jit_macro and jit_macro.hit_count >= threshold and _jit_context_matches(jit_macro, session):
             session.pending_behavior_signals["jit_offer_available"] = 1
             session.pending_behavior_signals[f"jit_offer_{jit_macro.name}"] = 1
@@ -774,7 +772,7 @@ def prepare_request_impl(
             session.pending_behavior_signals["jit_offer_context_filtered"] = 1
 
     _speculative_macro_hint: str | None = None
-    if jit_macro and jit_macro.hit_count >= threshold and rolling_cmds:
+    if jit_macro and jit_macro.hit_count >= threshold and rolling_cmds and _jit_context_matches(jit_macro, session):
         from tok.runtime.policy.macro_handling import execute_macro_proactively
 
         _speculative_macro_hint = execute_macro_proactively(session, jit_macro, session.bridge_memory.rolling_cmds)

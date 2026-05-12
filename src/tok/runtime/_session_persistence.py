@@ -356,6 +356,7 @@ def load_hot_summaries(session: RuntimeSession) -> dict[str, Any]:
                 unchanged_result_count=int(value.get("unchanged_result_count", 0)),
                 evidence_intent=evidence_intent,
                 skeleton=str(value.get("skeleton", "")),
+                tokens_saved=int(value.get("tokens_saved", 0)),
             )
             records[key] = record
         return records
