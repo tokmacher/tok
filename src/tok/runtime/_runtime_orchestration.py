@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re as _re
+import shlex
 from typing import TYPE_CHECKING, Any, cast
+
+from tok.compression._tool_taxonomy import EDIT_LIKE_TOOLS, LISTING_LIKE_TOOLS, SEARCH_LIKE_TOOLS
 
 from .config import (
     ANSWER_READY_REPAIR_HINT,
@@ -69,6 +72,32 @@ _HINT_COOLDOWN_EXEMPT = frozenset(
 )
 
 _JIT_RE = _re.compile(r"EXECUTE_JIT\(@(\w+)\(([^)]*)\)\)")
+
+_BASH_TOOL_NAMES = frozenset({"bash", "run_bash", "shell", "computer", "run_terminal"})
+_READ_TOOL_NAMES = frozenset({"read", "view", "cat", "get_file", "read_file"})
+
+
+def _tool_call_to_cmd_str(tool_name: str, tool_input: Any) -> str:
+    """Normalize a tool_use block to a cmd string for rolling_cmds / PatternReactor."""
+    if not isinstance(tool_input, dict):
+        return ""
+    tool_lower = tool_name.lower()
+    if tool_lower in _BASH_TOOL_NAMES:
+        cmd = str(tool_input.get("command") or tool_input.get("input") or "").strip()
+        return cmd[:256] if cmd else ""
+    if tool_lower in _READ_TOOL_NAMES:
+        path = str(tool_input.get("file_path") or tool_input.get("path") or "").strip()
+        return f"view {path}"[:256] if path else ""
+    if tool_lower in EDIT_LIKE_TOOLS:
+        path = str(tool_input.get("file_path") or tool_input.get("path") or "").strip()
+        return f"edit {shlex.quote(path)}"[:256] if path else ""
+    if tool_lower in SEARCH_LIKE_TOOLS:
+        query = str(tool_input.get("query") or tool_input.get("pattern") or tool_input.get("command") or "").strip()
+        return f"search {shlex.quote(query)}"[:256] if query else ""
+    if tool_lower in LISTING_LIKE_TOOLS:
+        path = str(tool_input.get("path") or tool_input.get("directory") or ".").strip()
+        return f"ls {shlex.quote(path)}"[:256]
+    return ""
 
 
 def _apply_runtime_hint_cooldown(
@@ -452,6 +481,9 @@ def process_response_impl(
             loop_detected = session.observe_tool_action(cast("str", block["name"]), str(input_key)[:120])
             if loop_detected:
                 merged_signals["loop_detected"] = 1
+            cmd_str = _tool_call_to_cmd_str(cast("str", block["name"]), tool_input)
+            if cmd_str:
+                session.bridge_memory._upsert(session.bridge_memory.hot, "cmds", cmd_str, score_delta=1)
             tool_name_lower = cast("str", block["name"]).lower()
             if tool_name_lower in ("edit_file", "edit", "write_file", "write", "replace", "create_file"):
                 edited_path = (

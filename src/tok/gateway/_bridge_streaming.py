@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -28,7 +29,7 @@ from ._signal_constants import _merge_signal_counts
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
 
-__all__ = ["buffer_strip_restream_impl", "passthrough_stream_impl"]
+__all__ = ["_run_macro_mining", "buffer_strip_restream_impl", "passthrough_stream_impl"]
 
 
 def _env_int(name: str, fallback: int) -> int:
@@ -129,6 +130,19 @@ def _parse_sse_stream(
                 logger.debug("SSE parse error (content accumulation): %s", exc)
 
     return sse_events, accumulated, sse_model, sse_usage, stream_blocks, stream_order
+
+
+async def _run_macro_mining(session: BridgeSession) -> None:
+    try:
+        from tok.macros.integration import distill_bridge_history
+
+        memory = session.runtime_session.bridge_memory
+        markers = session.runtime_session._project_markers or None
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: distill_bridge_history(memory, project_markers=markers)
+        )
+    except Exception:
+        logger.debug("PatternReactor: mining skipped", exc_info=True)
 
 
 def _expand_macros_in_stream_blocks(blocks: list[dict[str, Any]], session: BridgeSession) -> list[dict[str, Any]]:
@@ -365,6 +379,8 @@ def _stream_recovery_allowed_now(
 
 def _observe_stream_tool_blocks(session: BridgeSession, tool_blocks: list[dict[str, Any]]) -> dict[str, int]:
     """Record semantic runtime side effects for streamed tool-only responses."""
+    from tok.runtime._runtime_orchestration import _tool_call_to_cmd_str
+
     signals: dict[str, int] = {}
     runtime_session = session.runtime_session
     for block in tool_blocks:
@@ -376,6 +392,9 @@ def _observe_stream_tool_blocks(session: BridgeSession, tool_blocks: list[dict[s
         input_key = next(iter(tool_input.values()), "") if isinstance(tool_input, dict) and tool_input else ""
         if runtime_session.observe_tool_action(tool_name, str(input_key)[:120]):
             signals["loop_detected"] = 1
+        cmd_str = _tool_call_to_cmd_str(tool_name, tool_input)
+        if cmd_str:
+            runtime_session.bridge_memory._upsert(runtime_session.bridge_memory.hot, "cmds", cmd_str, score_delta=1)
         if tool_name.lower() in ("edit_file", "edit", "write_file", "write", "replace", "create_file"):
             edited_path = ""
             if isinstance(tool_input, dict):
@@ -838,6 +857,7 @@ async def buffer_strip_restream_impl(
                 behavior_signals=response_signals or None,
                 prompt_metrics=prompt_metrics,
             )
+            asyncio.create_task(_run_macro_mining(session))
 
         content_emitted = False
         for event_str in sse_events:

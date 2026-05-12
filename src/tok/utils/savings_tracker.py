@@ -326,7 +326,13 @@ class SavingsTracker:
         )
         actual_completion_tokens = sum(m.get("actual_output_tokens", 0) for m in models.values())
         actual_tokens = actual_prompt_tokens + actual_completion_tokens
-        saved_tokens = sum(m.get("input_saved_tokens", 0) + m.get("output_saved_tokens", 0) for m in models.values())
+        saved_tokens = sum(
+            m.get("input_saved_tokens", 0)
+            + m.get("output_saved_tokens", 0)
+            + m.get("reacquisition_tokens_avoided_estimate", 0)
+            - m.get("hot_hint_tokens_added", 0)
+            for m in models.values()
+        )
         baseline_prompt_tokens = sum(m.get("baseline_prompt_tokens", 0) for m in models.values())
         prepared_prompt_tokens = sum(m.get("prepared_prompt_tokens", 0) for m in models.values())
         saved_prompt_tokens = sum(m.get("saved_prompt_tokens", 0) for m in models.values())
@@ -511,7 +517,12 @@ class SavingsTracker:
             result["actual_input_tokens"] + result["cache_read_tokens"] + result["cache_write_tokens"]
         )
         result["total_tokens"] = result["prompt_tokens"] + result["actual_output_tokens"]
-        result["saved_tokens"] = result["input_saved_tokens"] + result["output_saved_tokens"]
+        result["saved_tokens"] = (
+            result["input_saved_tokens"]
+            + result["output_saved_tokens"]
+            + result["reacquisition_tokens_avoided_estimate"]
+            - result["hot_hint_tokens_added"]
+        )
         result["net_tokens_saved"] = result["saved_tokens"] - result.get("reacquisition_cost_tokens", 0)
         result["saved_usd"] = result["baseline_cost_usd"] - result["actual_cost_usd"]
         return result

@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Any
 from tok.utils.event_logging import log_macro_used
 
 if TYPE_CHECKING:
+    from tok.macros.ir import Macro
     from tok.runtime.core import RuntimeSession
+    from tok.runtime.memory.bridge_memory import MemoryEntry
     from tok.runtime.memory.tok_state import BridgeMemoryState
 
 logger = logging.getLogger("tok.runtime")
@@ -101,7 +103,10 @@ def _jit_context_matches(macro: Any, session: "RuntimeSession") -> bool:
     if required_file:
         top_files = session.bridge_memory.top_hot_files(n=5)
         if required_file not in top_files:
-            return False
+            if not required_file.endswith("/"):
+                return False
+            if not any(f.startswith(required_file) for f in top_files):
+                return False
     required_marker = reqs.get("marker_file")
     if required_marker:
         session_markers: frozenset[str] = getattr(session, "_project_markers", frozenset())
@@ -118,6 +123,21 @@ def execute_jit_macro(session: "RuntimeSession", macro_name: str, args_raw: str)
 
     inputs = _parse_jit_args(args_raw)
 
+    _HINT_FAMILY_MAP = {"view": "file_read", "edit": "file_read", "search": "search", "ls": "listing"}
+    if macro.instructions:
+        first_op = macro.instructions[0].op
+        family = _HINT_FAMILY_MAP.get(first_op)
+        if family and inputs:
+            logical_target = next(iter(inputs.values()))
+            record = session._hot_summary_records.get(f"{family}|{logical_target}")
+            if record and record.summary:
+                from tok.runtime._session_observation import _build_hot_hint
+
+                hint, _ = _build_hot_hint(record, max(1, session.bridge_memory.turn))
+                session.bridge_memory.macro_registry.record_use(macro_name)
+                log_macro_used(macro_name)
+                return hint
+
     try:
         from tok.macros.ir import TokIR, execute_ir
 
@@ -133,3 +153,67 @@ def execute_jit_macro(session: "RuntimeSession", macro_name: str, args_raw: str)
     except Exception as e:
         logger.exception("JIT execution failure for @%s: %s", macro_name, e)
         return f"Error during JIT execution of @{macro_name}: {e}"
+
+
+def execute_macro_proactively(
+    session: "RuntimeSession",
+    macro: "Macro",
+    rolling_cmds: "list[MemoryEntry]",
+) -> str | None:
+    """Server-side macro execution: pre-inject cached results without model cooperation.
+
+    Finds the most recent occurrence of the macro's op sequence in rolling_cmds,
+    extracts the concrete file/search targets, and returns hot-hint text for each
+    instruction that has a cached summary. The result is injected as a system-prompt
+    hint — the model receives the information it would have re-acquired, for free.
+    """
+    from tok.runtime._session_observation import _build_hot_hint
+
+    _FAMILY = {"view": "file_read", "edit": "file_read", "search": "search", "ls": "listing"}
+
+    macro_ops = [ins.op for ins in macro.instructions]
+    macro_len = len(macro_ops)
+
+    cmds_as_ops: list[str] = []
+    cmds_as_entries: list[MemoryEntry] = []
+    for entry in rolling_cmds:
+        parts = entry.value.strip().split()
+        if parts:
+            cmds_as_ops.append(parts[0])
+            cmds_as_entries.append(entry)
+
+    # Find the last occurrence of the macro's op sequence
+    best_offset = -1
+    for i in range(len(cmds_as_ops) - macro_len + 1):
+        if cmds_as_ops[i : i + macro_len] == macro_ops:
+            best_offset = i
+
+    if best_offset < 0:
+        return None
+
+    matched_entries = cmds_as_entries[best_offset : best_offset + macro_len]
+    current_turn = max(1, session.bridge_memory.turn)
+    hints: list[str] = []
+    seen_targets: set[str] = set()
+
+    for ins, entry in zip(macro.instructions, matched_entries, strict=False):
+        family = _FAMILY.get(ins.op)
+        if not family:
+            continue
+        parts = entry.value.strip().split()
+        # First non-flag token after the op is the logical target
+        target = next((p for p in parts[1:] if not p.startswith("-")), None)
+        if not target or target in seen_targets:
+            continue
+        seen_targets.add(target)
+        record = session._hot_summary_records.get(f"{family}|{target}")
+        if record and record.summary:
+            hint, _ = _build_hot_hint(record, current_turn)
+            hints.append(hint)
+
+    if not hints:
+        return None
+
+    session.bridge_memory.macro_registry.record_use(macro.name)
+    log_macro_used(macro.name)
+    return "\n\n".join(hints)

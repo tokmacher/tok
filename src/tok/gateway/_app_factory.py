@@ -35,7 +35,7 @@ from ._anthropic_optimizations import apply_anthropic_optimizations
 from ._bridge_comparison import _safe_headers
 from ._bridge_request_handler import send_with_tok_fail_open_retry
 from ._bridge_runtime_pipeline import prepare_bridge_payload
-from ._bridge_streaming import _emit_sse_block, buffer_strip_restream_impl, passthrough_stream_impl
+from ._bridge_streaming import _emit_sse_block, _run_macro_mining, buffer_strip_restream_impl, passthrough_stream_impl
 from ._types import build_capability_manifest
 
 if TYPE_CHECKING:
@@ -186,6 +186,10 @@ def _rebuild_and_record_response(
         behavior_signals=response_signals or None,
         prompt_metrics=prompt_metrics if compressed else None,
     )
+    try:
+        asyncio.get_running_loop().create_task(_run_macro_mining(active_session))
+    except RuntimeError:
+        pass
 
     turn_report = active_session.smoothness_tracker.finish_turn()
     event_counts: dict[str, int] = {}

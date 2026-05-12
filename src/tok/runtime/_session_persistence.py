@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import tempfile
+import time as time_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +39,10 @@ def initialize_session_storage(session: RuntimeSession, *, explicit_memory_dir: 
     session.bridge_memory = load_bridge_memory(session)
     session.result_cache = load_result_cache(session)
     session.episode_ledger = load_episode_ledger(session)
+    warm_records = load_hot_summaries(session)
+    if warm_records:
+        session._hot_summary_records.update(warm_records)
+        session._hot_hints_loaded_from_disk = len(warm_records)
     loaded_fallback_memory = load_fallback_memory(session)
     session.fallback_memory = provided_fallback_memory or loaded_fallback_memory
     if session.fallback_memory and not session.bridge_memory.wire_state():
@@ -292,6 +298,94 @@ def save_episode_ledger(session: RuntimeSession) -> None:
         session_logger_for(session).warning(
             "Failed to save episode ledger to %s: %s",
             episode_ledger_file(session),
+            exc,
+        )
+
+
+_HOT_SUMMARIES_TTL_SECONDS: int = 3 * 3600  # 3 hours
+
+
+def hot_summaries_file(session: RuntimeSession) -> Path:
+    """Return the path to the hot summaries file for this session."""
+    assert session.memory_dir is not None
+    return session.memory_dir / "hot_summaries.tok"
+
+
+def load_hot_summaries(session: RuntimeSession) -> dict[str, Any]:
+    """Load hot summary records from disk, normalising turn counters for the new session."""
+    from .repeat_targets import EvidenceIntent, HotSummaryRecord
+
+    path = hot_summaries_file(session)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            return {}
+        current_time = time_module.time()
+        records: dict[str, HotSummaryRecord] = {}
+        for key, value in data.items():
+            if not isinstance(value, dict):
+                continue
+            timestamp = value.get("_timestamp", 0)
+            if current_time - timestamp > _HOT_SUMMARIES_TTL_SECONDS:
+                continue
+            evidence_intent: EvidenceIntent | None = None
+            ei_data = value.get("evidence_intent")
+            if isinstance(ei_data, dict):
+                try:
+                    evidence_intent = EvidenceIntent(**{k: v for k, v in ei_data.items() if k != "_timestamp"})
+                except Exception:
+                    pass
+            record = HotSummaryRecord(
+                tool_family=str(value.get("tool_family", "")),
+                logical_target=str(value.get("logical_target", "")),
+                display_target=str(value.get("display_target", "")),
+                summary=str(value.get("summary", "")),
+                token_cost=int(value.get("token_cost", 0)),
+                result_digest=str(value.get("result_digest", "")),
+                last_seen_turn=int(value.get("last_seen_turn", 0)),
+                exact_evidence_key=str(value.get("exact_evidence_key", "")),
+                # Normalise promotion turns: eligible from turn 1 in the new session
+                hot_promotion_turn=1 if int(value.get("hot_promotion_turn", 0)) > 0 else 0,
+                stuck_promotion_turn=1 if int(value.get("stuck_promotion_turn", 0)) > 0 else 0,
+                last_injected_turn=0,  # must re-fire in the new session
+                repeat_count=int(value.get("repeat_count", 0)),
+                recent_window_count=int(value.get("recent_window_count", 0)),
+                stuck_window_count=int(value.get("stuck_window_count", 0)),
+                unchanged_result_count=int(value.get("unchanged_result_count", 0)),
+                evidence_intent=evidence_intent,
+                skeleton=str(value.get("skeleton", "")),
+            )
+            records[key] = record
+        return records
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        session_logger_for(session).warning("Hot summaries corrupted at %s: %s — starting empty", path, exc)
+    except Exception as exc:
+        session_logger_for(session).warning("Failed to load hot summaries from %s: %s", path, exc)
+    return {}
+
+
+def save_hot_summaries(session: RuntimeSession) -> None:
+    """Persist hot summary records to disk."""
+    try:
+        assert session.memory_dir is not None
+        session.memory_dir.mkdir(parents=True, exist_ok=True)
+        current_time = time_module.time()
+        records: dict[str, Any] = {}
+        for key, record in session._hot_summary_records.items():
+            d = dataclasses.asdict(record)
+            d["_timestamp"] = current_time
+            records[key] = d
+        path = hot_summaries_file(session)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(records))
+        tmp.replace(path)
+    except Exception as exc:
+        session._persistence_failures += 1
+        session_logger_for(session).warning(
+            "Failed to save hot summaries to %s: %s",
+            hot_summaries_file(session),
             exc,
         )
 
