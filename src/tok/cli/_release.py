@@ -56,6 +56,87 @@ from ._gate import (
 )
 
 
+def _health_session_summary(health_payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "actual_tokens": int(health_payload.get("actual_tokens", 0)),
+        "baseline_tokens": int(health_payload.get("baseline_tokens", 0)),
+        "tokens_saved": int(health_payload.get("session_tokens_saved", 0)),
+        "savings_pct": float(health_payload.get("session_savings_pct", 0.0)),
+        "cost_savings_pct": float(
+            health_payload.get("session_cost_savings_pct", health_payload.get("session_savings_pct", 0.0))
+        ),
+        "actual_cost_usd": float(health_payload.get("actual_cost_usd", 0.0)),
+        "baseline_cost_usd": float(health_payload.get("baseline_cost_usd", 0.0)),
+        "cost_saved_usd": float(health_payload.get("cost_saved_usd", 0.0)),
+        "baseline_only": bool(health_payload.get("baseline_only", False)),
+        "fallback_count": int(health_payload.get("fallback_count", 0)),
+        "calls": int(health_payload.get("calls", 0)),
+        "session_quality": str(health_payload.get("session_quality", "clean")),
+        "last_degradation_reason": str(health_payload.get("last_degradation_reason", "")),
+        "request_policy": str(health_payload.get("request_policy", "")),
+        "baseline_prompt_tokens": int(health_payload.get("baseline_prompt_tokens", 0)),
+        "prepared_prompt_tokens": int(health_payload.get("prepared_prompt_tokens", 0)),
+        "saved_prompt_tokens": int(health_payload.get("saved_prompt_tokens", 0)),
+        "preflight_block_original_payload_count": int(health_payload.get("preflight_block_original_payload_count", 0)),
+        "preflight_block_rewritten_payload_count": int(
+            health_payload.get("preflight_block_rewritten_payload_count", 0)
+        ),
+        "stream_recovery_empty_success_count": int(health_payload.get("stream_recovery_empty_success_count", 0)),
+        "stream_recovery_read_error_count": int(health_payload.get("stream_recovery_read_error_count", 0)),
+        "evidence_exact_observed_count": int(health_payload.get("evidence_exact_observed_count", 0)),
+        "evidence_non_exact_reference_count": int(health_payload.get("evidence_non_exact_reference_count", 0)),
+        "evidence_non_exact_summary_count": int(health_payload.get("evidence_non_exact_summary_count", 0)),
+        "evidence_non_exact_skeleton_count": int(health_payload.get("evidence_non_exact_skeleton_count", 0)),
+        "evidence_exact_reacquisition_required_count": int(
+            health_payload.get("evidence_exact_reacquisition_required_count", 0)
+        ),
+        "evidence_exact_reacquisition_satisfied_count": int(
+            health_payload.get("evidence_exact_reacquisition_satisfied_count", 0)
+        ),
+        "evidence_compression_blocked_for_safety_count": int(
+            health_payload.get("evidence_compression_blocked_for_safety_count", 0)
+        ),
+    }
+
+
+def _overlay_health_session_on_lifetime(
+    lifetime_summary: dict[str, int | float] | None,
+    health_payload: dict[str, Any] | None,
+) -> dict[str, int | float] | None:
+    if not health_payload or int(health_payload.get("actual_tokens", 0)) <= 0:
+        return lifetime_summary
+    session_actual = int(health_payload.get("actual_tokens", 0))
+    session_saved = int(health_payload.get("session_tokens_saved", 0))
+    session_actual_cost = float(health_payload.get("actual_cost_usd", 0.0))
+    session_baseline_cost = float(health_payload.get("baseline_cost_usd", 0.0))
+    session_cost_saved = float(health_payload.get("cost_saved_usd", session_baseline_cost - session_actual_cost))
+    session_count = max(1, int(health_payload.get("session_count", 1)))
+    result = dict(lifetime_summary or {})
+    result["sessions"] = int(result.get("sessions", 0)) + session_count
+    result["total_turns"] = int(result.get("total_turns", 0)) + int(health_payload.get("calls", 0))
+    result["actual_tokens"] = int(result.get("actual_tokens", 0)) + session_actual
+    result["tokens_saved"] = int(result.get("tokens_saved", 0)) + session_saved
+    result["baseline_tokens"] = int(result["actual_tokens"]) + int(result["tokens_saved"])
+    result["actual_cost_usd"] = float(result.get("actual_cost_usd", 0.0)) + session_actual_cost
+    result["baseline_cost_usd"] = float(result.get("baseline_cost_usd", 0.0)) + session_baseline_cost
+    result["cost_saved_usd"] = float(result.get("cost_saved_usd", 0.0)) + session_cost_saved
+    result["fallback_count"] = int(result.get("fallback_count", 0)) + int(health_payload.get("fallback_count", 0))
+    result["baseline_only_requests"] = int(result.get("baseline_only_requests", 0)) + int(
+        bool(health_payload.get("baseline_only", False))
+    )
+    result["savings_pct"] = (
+        round(int(result["tokens_saved"]) / int(result["baseline_tokens"]) * 100, 1)
+        if int(result["baseline_tokens"]) > 0
+        else 0.0
+    )
+    result["cost_savings_pct"] = (
+        round(float(result["cost_saved_usd"]) / float(result["baseline_cost_usd"]) * 100, 1)
+        if float(result["baseline_cost_usd"]) > 0
+        else 0.0
+    )
+    return result
+
+
 def stats_command(
     session: bool = False,
     total: bool = False,
@@ -76,7 +157,6 @@ def stats_command(
         console.print("[green]Lifetime stats have been reset.[/green]")
         return
     session_summary = tracker.session_summary()
-    lifetime_summary = tracker.lifetime_summary()
     last_completed = tracker.last_session_summary()
     recent_completed = tracker.recent_summary(recent) if recent else None
     since_completed = tracker.since_summary(since) if since else None
@@ -94,6 +174,8 @@ def stats_command(
 
     local_calls = int(session_summary["calls"]) if session_summary else 0
     health_calls = int(health_payload.get("calls", 0)) if health_payload else 0
+    lifetime_summary = tracker.lifetime_summary(include_inflight=health_payload is None)
+    lifetime_summary = _overlay_health_session_on_lifetime(lifetime_summary, health_payload)
     if (
         not last_session
         and not total
@@ -101,48 +183,7 @@ def stats_command(
         and int(health_payload.get("actual_tokens", 0)) > 0
         and health_calls >= local_calls
     ):
-        session_summary = {
-            "actual_tokens": int(health_payload.get("actual_tokens", 0)),
-            "baseline_tokens": int(health_payload.get("baseline_tokens", 0)),
-            "tokens_saved": int(health_payload.get("session_tokens_saved", 0)),
-            "savings_pct": float(health_payload.get("session_savings_pct", 0.0)),
-            "cost_savings_pct": float(
-                health_payload.get("session_cost_savings_pct", health_payload.get("session_savings_pct", 0.0))
-            ),
-            "actual_cost_usd": float(health_payload.get("actual_cost_usd", 0.0)),
-            "baseline_cost_usd": float(health_payload.get("baseline_cost_usd", 0.0)),
-            "cost_saved_usd": float(health_payload.get("cost_saved_usd", 0.0)),
-            "baseline_only": bool(health_payload.get("baseline_only", False)),
-            "fallback_count": int(health_payload.get("fallback_count", 0)),
-            "calls": int(health_payload.get("calls", 0)),
-            "session_quality": str(health_payload.get("session_quality", "clean")),
-            "last_degradation_reason": str(health_payload.get("last_degradation_reason", "")),
-            "request_policy": str(health_payload.get("request_policy", "")),
-            "baseline_prompt_tokens": int(health_payload.get("baseline_prompt_tokens", 0)),
-            "prepared_prompt_tokens": int(health_payload.get("prepared_prompt_tokens", 0)),
-            "saved_prompt_tokens": int(health_payload.get("saved_prompt_tokens", 0)),
-            "preflight_block_original_payload_count": int(
-                health_payload.get("preflight_block_original_payload_count", 0)
-            ),
-            "preflight_block_rewritten_payload_count": int(
-                health_payload.get("preflight_block_rewritten_payload_count", 0)
-            ),
-            "stream_recovery_empty_success_count": int(health_payload.get("stream_recovery_empty_success_count", 0)),
-            "stream_recovery_read_error_count": int(health_payload.get("stream_recovery_read_error_count", 0)),
-            "evidence_exact_observed_count": int(health_payload.get("evidence_exact_observed_count", 0)),
-            "evidence_non_exact_reference_count": int(health_payload.get("evidence_non_exact_reference_count", 0)),
-            "evidence_non_exact_summary_count": int(health_payload.get("evidence_non_exact_summary_count", 0)),
-            "evidence_non_exact_skeleton_count": int(health_payload.get("evidence_non_exact_skeleton_count", 0)),
-            "evidence_exact_reacquisition_required_count": int(
-                health_payload.get("evidence_exact_reacquisition_required_count", 0)
-            ),
-            "evidence_exact_reacquisition_satisfied_count": int(
-                health_payload.get("evidence_exact_reacquisition_satisfied_count", 0)
-            ),
-            "evidence_compression_blocked_for_safety_count": int(
-                health_payload.get("evidence_compression_blocked_for_safety_count", 0)
-            ),
-        }
+        session_summary = _health_session_summary(health_payload)
 
     if json_output:
         warnings: list[str] = []

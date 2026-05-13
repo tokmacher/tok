@@ -1,20 +1,22 @@
 # Tok Protocol Layers v0.1 Draft
 
-Status: roadmap for 0.1.x and later
+Status: roadmap for 0.1.x, updated for 0.2.0 local resolver beta
 
 Tok should grow as a layered protocol family, not as one overloaded trace format. The
-0.1.x releases ship only the first visible layer: draft trace audit for bridge behavior.
+0.1.x releases ship the first visible layer (draft trace audit). Tok 0.2.0 adds L3a
+local resolver beta for content-addressed local storage. Remote resolver routing,
+capability handshakes, session exchange, and agent-to-agent behavior remain deferred.
 Later layers should be added only after fixtures, audit behavior, and independent
 readers prove the lower layers.
 
 ## Layers
 
-| Layer          | Purpose                                                                                                 | 0.1.x status                                               |
-| -------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Tok Trace      | Retrospective audit records for what Tok observed, compressed, referenced, passed through, or degraded. | Draft, visible through `tok audit`.                        |
-| Tok Resolver   | Content-addressed availability and retrieval semantics for exact bytes by hash.                         | Deferred. Local fixture and metadata artifact checks only. |
-| Tok Capability | Runtime declarations for supported references, deltas, fallbacks, fixture packs, and encodings.         | Deferred. No handshake in 0.1.x.                           |
-| Tok Session    | Ordered compact-state exchange between agents/tools.                                                    | Deferred. No agent-to-agent protocol in 0.1.x.             |
+| Layer          | Purpose                                                                                                 | 0.2.0 status                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Tok Trace      | Retrospective audit records for what Tok observed, compressed, referenced, passed through, or degraded. | Draft, visible through `tok audit`.            |
+| Tok Resolver   | Content-addressed availability and retrieval semantics for exact bytes by hash.                         | L3a local resolver beta. No remote routing.    |
+| Tok Capability | Runtime declarations for supported references, deltas, fallbacks, fixture packs, and encodings.         | Deferred. No handshake in 0.2.0.               |
+| Tok Session    | Ordered compact-state exchange between agents/tools.                                                    | Deferred. No agent-to-agent protocol in 0.2.0. |
 
 Tok Trace is evidence. Tok Resolver is availability. Tok Capability is negotiation. Tok
 Session is exchange. Keeping those roles separate prevents v0.1 trace blocks from
@@ -60,9 +62,9 @@ Routing asks four questions:
 | L4    | Negotiate capabilities with another runtime.                                              |
 | L5    | Exchange compact verified state agent-to-agent.                                           |
 
-Tok 0.1.x targets L1/L2 only. L3 and above require new design work, adversarial
-fixtures, and at least one reader that validates fixtures without importing Tok runtime
-internals.
+Tok 0.2.0 targets L1/L2 audit plus L3a local resolver beta. Remote resolver routing
+(L3b), referral following (L3c), capability negotiation (L4), and session exchange (L5)
+require new design work, adversarial fixtures, and at least one independent reader.
 
 ## Named Adversarial Packs
 
@@ -94,13 +96,13 @@ Future Resolver and Routing fixture packs should add:
 - remote unavailable but trace remains valid
 - conflicting resolver manifests
 
-0.1.x includes tests for the cases the current draft verifier can defend locally. Future
+Tok includes tests for the cases the current draft verifier can defend locally. Future
 releases should promote this list into a named adversarial fixture pack before making
 stable protocol or interoperability claims.
 
-L3+ cases must remain documented as future packs until Tok implements the corresponding
-Resolver, Capability, or Session semantics. They should not be fake-passed by the L1/L2
-audit verifier.
+L3a local resolver cases are now testable. L3b/L3c/L4/L5 cases must remain documented as
+future packs until Tok implements remote routing, capability, or session semantics. They
+should not be fake-passed by the L1/L2 audit verifier.
 
 ## Stability Bar
 

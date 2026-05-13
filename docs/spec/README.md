@@ -1,6 +1,6 @@
 # Tok Specs
 
-This directory contains draft specification work for Tok 0.1.9 and later.
+This directory contains draft specification work for Tok 0.2.0 and later.
 
 The current draft is `tok-trace/v0.1-draft`, an audit format for Tok bridge sessions. It
 is bridge-first protocol groundwork: fixture and live-audit evidence only, not a
@@ -27,9 +27,10 @@ The first implementation milestone is fixture validation plus metadata-only live
 validation. Sanitized metadata artifact capture can make live trace audits pass locally;
 raw prompt/response/tool artifact capture remains deferred.
 
-Tok 0.1.8 targets Trace L0-L2 audit conformance only. Resolver networking, capability
-handshakes, session exchange, signed provenance, and agent-to-agent behavior are future
-layers.
+Tok 0.2.0 targets Trace L0-L2 audit conformance plus L3a local resolver beta. Remote
+resolver routing (L3b), referral following (L3c), capability handshakes (L4), session
+exchange (L5), signed provenance, and agent-to-agent behavior remain deferred.
+`tok audit` validates fixture-level trace conformance, not full protocol stability.
 
 The current bridge grammar is adapter-local. `>>>` working-memory lines, Tok markers,
 Markdown recovery, and Claude Code bridge shaping are not Tok Session core semantics.

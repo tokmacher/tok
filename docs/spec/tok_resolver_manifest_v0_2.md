@@ -17,7 +17,8 @@ This spec defines the manifest format and the on-disk layout for the local store
 Path:
 
 - User-wide manifest: `~/.tok/resolver/manifest.tok`
-- Project manifest: `~/.tok/projects/<project-digest>/manifest.tok`
+- Project manifest: `~/.tok/projects/<project-digest>/manifest.tok` (reserved, not
+  implemented in 0.2.0)
 
 Format: UTF-8 JSON.
 

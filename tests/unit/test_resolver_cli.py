@@ -80,3 +80,39 @@ def test_resolver_get_out_writes_file(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["resolver", "get", uri, "--out", str(out)])
     assert result.exit_code == 0
     assert out.read_bytes() == b"hello"
+
+
+def test_resolver_put_stores_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
+    file = tmp_path / "hello.txt"
+    file.write_text("hello world")
+    result = runner.invoke(app, ["resolver", "put", str(file)])
+    assert result.exit_code == 0
+    assert "sha256:" in result.output
+    assert "tok-resolver://sha256:" in result.output
+    assert "Bytes:  11" in result.output
+
+
+def test_resolver_put_stored_object_retrievable(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
+    file = tmp_path / "data.bin"
+    file.write_bytes(b"resolver put test")
+    result = runner.invoke(app, ["resolver", "put", str(file)])
+    assert result.exit_code == 0
+    digest = ""
+    for line in result.output.splitlines():
+        if line.startswith("Digest:"):
+            digest = line.split("Digest:", 1)[1].strip()
+            break
+    assert digest
+    uri = f"tok-resolver://{digest}"
+    get_result = runner.invoke(app, ["resolver", "get", uri])
+    assert get_result.exit_code == 0
+    assert "resolver put test" in get_result.output
+
+
+def test_resolver_put_missing_file_exits_cleanly(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
+    result = runner.invoke(app, ["resolver", "put", str(tmp_path / "nope.txt")])
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output

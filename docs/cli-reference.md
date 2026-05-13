@@ -92,11 +92,20 @@ tok resolver --help
 tok resolver init
 tok resolver status
 tok resolver store
+tok resolver put <path>
 tok resolver get tok-resolver://sha256:... --out ./artifact.bin
 ```
 
 The resolver is a local content-addressed store. Tok 0.2.0 does not do remote routing,
 referral following, or any network resolution.
+
+Use:
+
+- `tok resolver init` to create the resolver manifest and store directory
+- `tok resolver status` to check whether the manifest exists
+- `tok resolver store` to show object count
+- `tok resolver put <path>` to store file bytes and print the digest and resolver URI
+- `tok resolver get <uri>` to retrieve content by resolver URI
 
 Configuration:
 
@@ -142,7 +151,7 @@ Exactness terms:
 - `fallback`: Tok used raw/baseline behavior because compact representation was unsafe.
 
 Advanced maintainer utilities remain available, but they are intentionally hidden from
-the default help surface in `0.1.x` so new users land on one clear workflow. Hidden
+the default help surface in `0.2.0` so new users land on one clear workflow. Hidden
 commands such as capture review, release gating, conversion helpers, and developer tools
 are maintainer-only for this release and may change without compatibility guarantees.
 

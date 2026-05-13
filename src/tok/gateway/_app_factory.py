@@ -515,6 +515,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             ),
         )
         health_response = snap.to_health_response()
+        health_response["session_count"] = 1 if explicit_session_key else session.aggregate_session_count()
         health_response["capability"] = asdict(
             build_capability_manifest(bridge_mode=str(health_response.get("mode", "unknown")))
         )
@@ -538,6 +539,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         session.activate_session_for_request(dict(request.headers), request_body_obj)
         session.reset_active_session()
         return {"status": "ok", "action": "session_reset"}
+
+    @app.post("/flush-ledger")
+    async def flush_ledger_endpoint() -> dict[str, str]:
+        """Persist live session buckets into the lifetime ledger before shutdown."""
+        session.merge_all_trackers_to_ledger()
+        return {"status": "ok", "action": "ledger_flushed"}
 
     @app.api_route(
         "/{path:path}",

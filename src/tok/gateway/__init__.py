@@ -525,6 +525,9 @@ class BridgeSession:
             distill_bridge_history(bucket.runtime_session.bridge_memory)
         except Exception as exc:
             logger.warning("distill_bridge_history error on eviction: %s", exc)
+        if bucket.runtime_session.pending_behavior_signals:
+            bucket.tracker.record_behavior_signals(bucket.runtime_session.pending_behavior_signals)
+            bucket.runtime_session.pending_behavior_signals.clear()
         bucket.tracker.merge_session_to_ledger()
 
     def _cleanup_session_buckets(self, *, keep_key: str) -> None:
@@ -714,6 +717,12 @@ class BridgeSession:
                 merged[key] = rep_summary[key]
 
         return merged
+
+    def aggregate_session_count(self) -> int:
+        """Return the number of live session buckets with recorded calls."""
+        return sum(
+            1 for bucket in self._session_buckets.values() if (bucket.tracker.session_summary() or {}).get("calls", 0)
+        )
 
     def aggregate_behavior_signals(self) -> dict[str, int]:
         """Merge tracked and pending behavior signals across all live buckets."""

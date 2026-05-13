@@ -139,3 +139,23 @@ def test_release_smoke_includes_tok_trace_spec_contract_gate() -> None:
     commands = {" ".join(step.command) for step in steps}
 
     assert "uv run pytest tests/spec -q" in commands
+
+
+def test_resolver_smoke_reconstructs_uri_from_digest_line() -> None:
+    module = _load_module()
+    steps = module.build_steps(
+        benchmark_mode="none",
+        benchmark_output=Path("unused"),
+        model="anthropic/test-model",
+        catalog_root=Path("benchmarks"),
+        repeats=1,
+        pricing_prompt=None,
+        pricing_completion=None,
+        provider_options=None,
+    )
+
+    resolver_step = next(step for step in steps if step.name == "Resolver smoke")
+    resolver_command = " ".join(resolver_step.command)
+
+    assert "digest_line = [l for l in put_out.output.splitlines() if l.startswith('Digest:')][0]" in resolver_command
+    assert "put_uri = format_resolver_uri(put_digest)" in resolver_command

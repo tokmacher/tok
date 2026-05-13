@@ -10,8 +10,9 @@ Claude Code and the upstream model API, reduces repeated file/search/tool contex
 it can do so safely, and fails open to normal uncompressed behavior when fidelity is at
 risk.
 
-Tok `0.1.x` is deliberately narrow: Claude Code routed through a local bridge. It is not
-a hosted service, agent framework, repo indexer, or general prompt-compression SDK.
+Tok `0.2.0` is deliberately narrow: Claude Code routed through a local bridge with a
+local resolver beta. It is not a hosted service, agent framework, repo indexer, or
+general prompt-compression SDK.
 
 ## Quickstart
 
@@ -99,6 +100,22 @@ Tok `0.1.9` adds bridge-backed protocol groundwork:
 
 Tok Protocol v0.1 remains draft-scoped and enters beta in `0.2.0` after live validation.
 
+## What Changed In 0.2.0
+
+Tok `0.2.0` adds a local resolver beta alongside the supported bridge path:
+
+- `tok resolver` provides a local content-addressed store with `init`, `status`,
+  `store`, `put`, and `get` commands.
+- Resolver-backed `tok audit` resolves `tok-resolver://sha256:...` URIs against the
+  local store.
+- Standalone stdlib-only fixture reader validates trace fixture conformance without
+  importing Tok runtime internals.
+- Live trace digest gate enforces canonical payload hashes during bridge sessions.
+
+This is a local resolver beta, not a stable protocol claim. There is no network routing,
+no remote resolution, no referral following, and no agent-to-agent exchange in 0.2.0.
+Tok Capability, Tok Session, and agent-to-agent exchange remain deferred.
+
 ## Trace Audit
 
 Enable trace sidecars only when you want to inspect what Tok did:
@@ -174,7 +191,7 @@ Tok is a local proxy. It does not manage API keys. If Claude Code works without 
 
 ## Supported Surface
 
-The public `0.1.x` workflow is:
+The public `0.2.0` workflow is:
 
 ```bash
 tok init
@@ -185,6 +202,9 @@ tok doctor
 tok stats
 tok audit --latest
 tok bridge stop
+tok resolver init
+tok resolver put <file>
+tok resolver get tok-resolver://sha256:...
 ```
 
 The supported mode is the default `tool-compatible` bridge mode. For comparison or
@@ -208,7 +228,7 @@ That path is useful for debugging and experiments, but the low-friction public i
 story is `pip install tok-protocol` followed by `tok claude`.
 
 Experimental Python submodule APIs and internal compression features exist, but they are
-not part of the supported `0.1.x` contract and may change without compatibility
+not part of the supported `0.2.0` contract and may change without compatibility
 guarantees.
 
 ## Troubleshooting
@@ -297,15 +317,15 @@ For release-specific checks, see
 
 ## Agent Operation
 
-Coding agents should start with [`AGENTS.md`](AGENTS.md). It defines the supported 0.1.x
+Coding agents should start with [`AGENTS.md`](AGENTS.md). It defines the supported 0.2.0
 surface, verification commands, live-bridge reporting rules, and claims agents must not
 make without evidence.
 
 ## Privacy
 
 Tok runs locally. No data leaves your machine except the model/API calls Claude Code
-would already make. Optional `0.1.7` trace sidecars are local metadata files and do not
-store raw prompts, responses, or tool outputs by default.
+would already make. Optional trace sidecars are local metadata files and do not store
+raw prompts, responses, or tool outputs by default.
 
 ## Support Tok
 

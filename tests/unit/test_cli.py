@@ -968,6 +968,7 @@ class TestCLI:
             return
 
         monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+        monkeypatch.setattr(_bridge, "_flush_bridge_ledger", lambda port: None)
 
         _bridge.bridge_stop()
         output = capsys.readouterr().out
@@ -975,6 +976,35 @@ class TestCLI:
         assert "Last Session" in output
         assert "Saved 100 tokens" in output
         assert "Verdict" in output
+
+    def test_bridge_stop_flushes_ledger_before_sigterm(self, monkeypatch, tmp_path, capsys) -> None:
+        from tok.cli import _bridge
+
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
+        monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
+
+        calls: list[str] = []
+
+        def fake_flush(port: int) -> None:
+            assert port == 9090
+            calls.append("flush")
+
+        def fake_kill(pid, sig) -> None:
+            assert pid == 123
+            if sig == signal.SIGTERM:
+                calls.append("sigterm")
+                return
+            if sig == 0:
+                raise ProcessLookupError
+
+        monkeypatch.setattr(_bridge, "_flush_bridge_ledger", fake_flush)
+        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+
+        _bridge.bridge_stop()
+
+        assert calls[:2] == ["flush", "sigterm"]
+        assert "Bridge stopped" in capsys.readouterr().out
 
     def test_bridge_stop_refuses_in_self_bridged_context_without_force(self, monkeypatch, tmp_path) -> None:
         from tok.cli import _bridge
@@ -1020,6 +1050,7 @@ class TestCLI:
             return
 
         monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+        monkeypatch.setattr(_bridge, "_flush_bridge_ledger", lambda port: None)
 
         _bridge.bridge_stop(force=True)
         output = capsys.readouterr().out
@@ -1046,6 +1077,7 @@ class TestCLI:
             return
 
         monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+        monkeypatch.setattr(_bridge, "_flush_bridge_ledger", lambda port: None)
 
         _bridge.bridge_stop()
         output = capsys.readouterr().out
@@ -1081,6 +1113,7 @@ class TestCLI:
 
         monkeypatch.setattr(_bridge, "PID_FILE", UnlinkDeniedPath())
         monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+        monkeypatch.setattr(_bridge, "_flush_bridge_ledger", lambda port: None)
 
         result = runner.invoke(app, ["bridge", "stop"])
 
@@ -2654,6 +2687,7 @@ class TestStatsTotalNoDoubleCounting:
             "baseline_only": False,
             "fallback_count": 0,
             "calls": 1,
+            "session_count": 1,
             "session_quality": "clean",
             "last_degradation_reason": "",
             "request_policy": "",
@@ -2680,6 +2714,113 @@ class TestStatsTotalNoDoubleCounting:
         assert displayed_actual == expected_tokens, (
             f"Expected {expected_tokens} actual tokens, got {displayed_actual} — double-counting suspected"
         )
+
+    def test_stats_total_uses_health_session_count_for_live_overlay(self, tmp_path, monkeypatch) -> None:
+        ledger = tmp_path / "global_savings.tok"
+        ledger.write_text(
+            "@lifetime_savings\n  sessions: 10\n  total_turns: 20\n  total_tokens: 1000\n"
+            "  total_cost_usd: 0.010000\n  estimated_baseline_cost_usd: 0.020000\n"
+            "  tokens_saved: 500\n  cost_saved_usd: 0.005000\n  savings_pct: 33.3\n"
+            "  tok_fallback_activated: 0\n  baseline_only_session: 0\n\n"
+            "@per_session_log\n"
+            "  2026-05-01T10:00:00Z;aaa11111;20;1000;0.010000;0.020000;0.005000;500;0;0\n"
+        )
+        savings_file = tmp_path / "tok_savings.tok"
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(savings_file))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: 9999)
+
+        from unittest.mock import MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "actual_tokens": 2000,
+            "baseline_tokens": 3000,
+            "session_tokens_saved": 1000,
+            "session_savings_pct": 33.3,
+            "session_cost_savings_pct": 50.0,
+            "actual_cost_usd": 0.020,
+            "baseline_cost_usd": 0.040,
+            "cost_saved_usd": 0.020,
+            "baseline_only": False,
+            "fallback_count": 0,
+            "calls": 5,
+            "session_count": 3,
+            "session_quality": "clean",
+            "last_degradation_reason": "",
+            "request_policy": "",
+        }
+        monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *a, **kw: mock_resp)
+
+        result = runner.invoke(app, ["stats", "--total"])
+
+        assert result.exit_code == 0, result.output
+        sessions_match = re.search(r"Sessions\s+(\d+)", result.output)
+        assert sessions_match is not None, result.output
+        assert int(sessions_match.group(1)) == 4
+
+    def test_stats_total_uses_bridge_health_instead_of_stale_inflight_file(self, tmp_path, monkeypatch) -> None:
+        ledger = tmp_path / "global_savings.tok"
+        ledger.write_text(
+            "@lifetime_savings\n  sessions: 1\n  total_turns: 5\n  total_tokens: 1000\n"
+            "  total_cost_usd: 0.010000\n  estimated_baseline_cost_usd: 0.020000\n"
+            "  tokens_saved: 500\n  cost_saved_usd: 0.005000\n  savings_pct: 33.3\n"
+            "  tok_fallback_activated: 0\n  baseline_only_session: 0\n\n"
+            "@per_session_log\n"
+            "  2026-05-01T10:00:00Z;aaa11111;5;1000;0.010000;0.020000;0.005000;500;0;0\n"
+        )
+        savings_file = tmp_path / "tok_savings.tok"
+        stale = SavingsTracker(
+            savings_file=str(savings_file),
+            ledger_path=ledger,
+        )
+        stale.record_call(
+            model="claude-sonnet-4",
+            actual_input=5000,
+            actual_output=0,
+            cache_read=0,
+            cache_write=0,
+            input_saved=2500,
+            output_saved=0,
+        )
+
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(savings_file))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: 9999)
+
+        from unittest.mock import MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "actual_tokens": 2000,
+            "baseline_tokens": 3000,
+            "session_tokens_saved": 1000,
+            "session_savings_pct": 33.3,
+            "session_cost_savings_pct": 50.0,
+            "actual_cost_usd": 0.020,
+            "baseline_cost_usd": 0.040,
+            "cost_saved_usd": 0.020,
+            "baseline_only": False,
+            "fallback_count": 0,
+            "calls": 2,
+            "session_count": 1,
+            "session_quality": "clean",
+            "last_degradation_reason": "",
+            "request_policy": "",
+        }
+        monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *a, **kw: mock_resp)
+
+        result = runner.invoke(app, ["stats", "--total"])
+
+        assert result.exit_code == 0, result.output
+        tokens_match = re.search(r"Tokens \(with Tok / est\. no Tok\)\s+([\d,]+)\s*/\s*([\d,]+)", result.output)
+        assert tokens_match is not None, result.output
+        displayed_actual = int(tokens_match.group(1).replace(",", ""))
+        displayed_baseline = int(tokens_match.group(2).replace(",", ""))
+        assert displayed_actual == 3000
+        assert displayed_baseline == 4500
         savings_file = tmp_path / "tok_savings.tok"
         tracker = SavingsTracker(
             savings_file=str(savings_file),

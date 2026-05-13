@@ -985,7 +985,7 @@ class SavingsTracker:
                     inflight[str(snapshot.get("sess_id", ""))] = snapshot
         return list(inflight.values())
 
-    def lifetime_summary(self) -> dict[str, int | float] | None:
+    def lifetime_summary(self, *, include_inflight: bool = True) -> dict[str, int | float] | None:
         """Return canonical user-facing savings fields for the lifetime ledger.
 
         Overlays the current in-flight session on top of persisted ledger data
@@ -994,7 +994,7 @@ class SavingsTracker:
         is already present in the per-session log (which happens when
         TOK_LIFETIME_FLUSH_EVERY_TURNS is enabled or a prior flush ran).
         """
-        inflight_sessions = self._inflight_session_aggs()
+        inflight_sessions = self._inflight_session_aggs() if include_inflight else []
 
         if not self._ledger_path.exists():
             if not inflight_sessions:
@@ -1317,6 +1317,22 @@ class SavingsTracker:
                 merged[key] = merged.get(key, 0) + value
         return merged
 
+    def record_behavior_signals(self, behavior_signals: dict[str, int]) -> None:
+        """Persist signal-only runtime state without changing token/call counts."""
+        clean = {str(k): int(v) for k, v in behavior_signals.items() if int(v) != 0}
+        if not clean:
+            return
+        with self._lock:
+            stats = self.load_stats()
+            models = stats.get("models", {})
+            if not models:
+                return
+            model_name = sorted(models)[0]
+            signals = models[model_name].setdefault("behavior_signals", {})
+            for key, value in clean.items():
+                signals[key] = int(signals.get(key, 0)) + value
+            self.save_stats(stats)
+
     def behavior_summary(self) -> dict[str, str | int]:
         """Interpret current session behavior signals into operator-friendly status."""
         signals = self.behavior_signals()
@@ -1377,17 +1393,20 @@ class SavingsTracker:
                 reacquisition_avoided = int(parts[23]) if len(parts) > 23 and parts[23] else 0
                 reacquisition_cost_tokens = int(parts[24]) if len(parts) > 24 and parts[24] else 0
                 actual_tokens = int(parts[3])
+                turns = int(parts[2])
                 baseline_tokens = actual_tokens + tokens_saved
                 cost_savings_pct = ((baseline_cost - actual_cost) / baseline_cost) * 100 if baseline_cost > 0 else 0.0
                 savings_pct = tokens_saved / baseline_tokens * 100 if baseline_tokens > 0 else 0.0
             except ValueError:
+                continue
+            if turns <= 0 and actual_tokens <= 0 and tokens_saved <= 0:
                 continue
 
             entries.append(
                 {
                     "date": parts[0],
                     "session_id": parts[1],
-                    "turns": int(parts[2]),
+                    "turns": turns,
                     "tokens": actual_tokens,
                     "actual_cost_usd": actual_cost,
                     "baseline_cost_usd": baseline_cost,

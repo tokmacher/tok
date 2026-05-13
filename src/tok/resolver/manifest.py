@@ -93,6 +93,10 @@ class ResolverManifest:
         manifest_version = data.get("manifest_version")
         if manifest_version != "tok-resolver/v0.1":
             raise ValueError(f"Unsupported manifest_version: {manifest_version!r}")
+        if data.get("max_conformance_level") != "L3a":
+            raise ValueError("max_conformance_level must be 'L3a' in 0.2.0")
+        if data.get("routing_scope") != "local_only":
+            raise ValueError("routing_scope must be 'local_only' in 0.2.0")
 
         privacy_data = data.get("privacy") or {}
         if privacy_data.get("allow_remote_resolution") is not False:
@@ -121,7 +125,19 @@ class ResolverManifest:
         except Exception as exc:
             raise ValueError("resolver_id must be a UUID string") from exc
 
-        storage = data.get("storage_policy") or {}
+        storage = data.get("storage_policy")
+        if not isinstance(storage, dict):
+            raise ValueError("storage_policy must be an object")
+        max_total_bytes = storage.get("max_total_bytes")
+        object_ttl_seconds = storage.get("object_ttl_seconds")
+        eviction_policy = storage.get("eviction_policy")
+        if not isinstance(max_total_bytes, int) or isinstance(max_total_bytes, bool) or max_total_bytes <= 0:
+            raise ValueError("storage_policy.max_total_bytes must be a positive integer")
+        if not isinstance(object_ttl_seconds, int) or isinstance(object_ttl_seconds, bool) or object_ttl_seconds <= 0:
+            raise ValueError("storage_policy.object_ttl_seconds must be a positive integer")
+        if eviction_policy != "lru":
+            raise ValueError("storage_policy.eviction_policy must be 'lru' in 0.2.0")
+
         return ResolverManifest(
             manifest_version="tok-resolver/v0.1",
             resolver_id=resolver_id.strip(),
@@ -134,8 +150,8 @@ class ResolverManifest:
                 metadata_export_policy="local_only",
             ),
             storage_policy=ResolverStoragePolicy(
-                max_total_bytes=int(storage.get("max_total_bytes") or 0),
-                object_ttl_seconds=int(storage.get("object_ttl_seconds") or 0),
+                max_total_bytes=max_total_bytes,
+                object_ttl_seconds=object_ttl_seconds,
                 eviction_policy="lru",
             ),
             configured_peers=(),

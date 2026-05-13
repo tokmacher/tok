@@ -6,7 +6,7 @@ import typer
 
 from tok.resolver.manifest import ResolverManifest
 from tok.resolver.paths import global_manifest_path, resolver_root
-from tok.resolver.store import ContentStore, parse_resolver_uri
+from tok.resolver.store import ContentStore, format_resolver_uri, parse_resolver_uri
 
 from ._cli_support import console
 
@@ -57,6 +57,28 @@ def store_status() -> None:
     if objects_dir.exists():
         count = sum(1 for p in objects_dir.rglob("*") if p.is_file())
     console.print(f"Objects: {count}")
+
+
+@resolver_app.command("put")
+def put(path: Path) -> None:
+    """Store file bytes in the local resolver and print digest/URI."""
+    try:
+        if not path.is_file():
+            console.print(f"[red]File not found: {path}[/red]")
+            raise typer.Exit(code=1)
+        data = path.read_bytes()
+        store = ContentStore(resolver_root())
+        digest = store.put(data)
+        uri = format_resolver_uri(digest)
+        console.print(f"Digest: {digest}")
+        console.print(f"URI:    {uri}")
+        console.print(f"Bytes:  {len(data)}")
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
 
 @resolver_app.command("get")

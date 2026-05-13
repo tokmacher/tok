@@ -17,6 +17,7 @@ from tok.stats import SavingsTracker
 
 from . import _cli_support as _cli_support_mod
 from ._cli_support import (
+    bridge_health_urls,
     console,
     env_int,
     get_bridge_health_response,
@@ -77,6 +78,23 @@ def _is_self_bridged_invocation(port: int) -> bool:
     if target_host == bridge_host:
         return True
     return target_host in _LOCAL_HOST_ALIASES and bridge_host in _LOCAL_HOST_ALIASES
+
+
+def _flush_bridge_ledger(port: int) -> None:
+    """Best-effort flush of live bridge session buckets before terminating."""
+    try:
+        import httpx
+    except Exception:
+        return
+
+    for health_url in bridge_health_urls(port=port):
+        flush_url = health_url.rsplit("/", 1)[0] + "/flush-ledger"
+        try:
+            response = httpx.post(flush_url, timeout=2.0)
+        except Exception:
+            continue
+        if response.status_code == 200:
+            return
 
 
 def bridge_start(
@@ -227,6 +245,7 @@ def bridge_stop(force: bool = False) -> None:
 
     for p in [pid]:
         try:
+            _flush_bridge_ledger(port)
             os.kill(p, signal.SIGTERM)
             for _ in range(10):
                 time.sleep(0.1)

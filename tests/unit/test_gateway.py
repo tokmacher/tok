@@ -540,6 +540,63 @@ def test_health_endpoint(monkeypatch) -> None:
     }
 
 
+def test_flush_ledger_endpoint_persists_live_session(tmp_path: Path) -> None:
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=1200,
+        actual_output=200,
+        cache_read=0,
+        cache_write=0,
+        input_saved=600,
+        output_saved=100,
+    )
+    session = BridgeSession(memory_dir=tmp_path / ".tok", tracker=tracker)
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.post("/flush-ledger")
+
+    assert response.status_code == 200
+    assert response.json()["action"] == "ledger_flushed"
+    last = tracker.last_session_summary()
+    assert last is not None
+    assert last["actual_tokens"] == 1400
+    assert last["baseline_tokens"] == 2100
+    assert last["tokens_saved"] == 700
+
+
+def test_flush_ledger_endpoint_persists_pending_runtime_signals(tmp_path: Path) -> None:
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=1200,
+        actual_output=200,
+        cache_read=0,
+        cache_write=0,
+        input_saved=600,
+        output_saved=100,
+        behavior_signals={"tok_fallback_activated": 1},
+    )
+    session = BridgeSession(memory_dir=tmp_path / ".tok", tracker=tracker)
+    session.runtime_session.pending_behavior_signals["tok_fallback_activated"] = 1
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.post("/flush-ledger")
+
+    assert response.status_code == 200
+    summary = tracker.lifetime_summary(include_inflight=False)
+    assert summary is not None
+    assert summary["fallback_count"] == 2
+
+
 def test_non_streaming_processing_error_records_visible_fallback(monkeypatch, tmp_path) -> None:
     from tok.gateway import _app_factory
 
@@ -1075,6 +1132,7 @@ def test_health_endpoint_aggregates_behavior_signals_across_sessions(tmp_path) -
     assert aggregate_response.status_code == 200
     aggregate = aggregate_response.json()
     assert aggregate["actual_tokens"] == 210
+    assert aggregate["session_count"] == 2
     assert aggregate["repeat_search_count"] == 5
     assert aggregate["repeat_file_read_count"] == 1
     assert aggregate["repeat_target_hot_count"] == 1
@@ -1083,6 +1141,7 @@ def test_health_endpoint_aggregates_behavior_signals_across_sessions(tmp_path) -
     assert alpha_response.status_code == 200
     alpha = alpha_response.json()
     assert alpha["actual_tokens"] == 120
+    assert alpha["session_count"] == 1
     assert alpha["repeat_search_count"] == 2
     assert alpha["repeat_target_hot_count"] == 0
     assert alpha["stream_recovery_attempt_count"] == 0

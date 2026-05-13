@@ -861,6 +861,20 @@ class TestSavingsTracker:
         assert summary["tokens_saved"] == 1950
         assert summary["actual_tokens"] == 4200
 
+    def test_lifetime_summary_ignores_empty_session_log_rows(self, tracker) -> None:
+        tracker.ledger_path.write_text(
+            "@lifetime_savings\n  sessions: 2\n\n@per_session_log\n"
+            "  2026-04-01T10:00:00Z;empty000;0;0;0.000000;0.000000;0.000000;0;0;0\n"
+            "  2026-04-01T10:01:00Z;real1111;3;3000;0.030000;0.060000;0.030000;1500;0;0\n"
+        )
+
+        summary = tracker.lifetime_summary(include_inflight=False)
+
+        assert summary is not None
+        assert summary["sessions"] == 1
+        assert summary["total_turns"] == 3
+        assert summary["actual_tokens"] == 3000
+
     def test_lifetime_summary_shows_inflight_when_no_ledger_exists(self, tracker) -> None:
         """If the ledger file does not exist yet, return the in-flight session as the sole entry."""
         assert not tracker.ledger_path.exists()

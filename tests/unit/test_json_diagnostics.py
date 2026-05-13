@@ -102,6 +102,9 @@ class TestBridgeStatusJson:
         assert data["schema"] == "tok-cli-result/v0.1"
         assert data["command"] == "tok bridge status"
         if data["data"]["bridge_running"]:
-            assert data["ok"] is True
-            assert "tokens_saved" in data["data"]
-            assert "savings_pct" in data["data"]
+            # A running PID does not guarantee the health endpoint is reachable.
+            # Only require ok=true when the bridge is both running and reachable.
+            if data["data"].get("health_reachable") is True:
+                assert data["ok"] is True
+                assert "tokens_saved" in data["data"]
+                assert "savings_pct" in data["data"]
