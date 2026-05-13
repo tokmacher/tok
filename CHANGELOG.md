@@ -61,9 +61,8 @@
 
 ### Notes
 
-- This release does not expand Tok's compression behavior. It adds an explicit
-  agent-operability layer, macro expansion groundwork, and hot-summary hint
-  improvements.
+- This release focuses on the local resolver beta and audit/reader proof. It does not
+  add any network routing or referral following.
 
 ## 0.1.8 (2026-05-06)
 

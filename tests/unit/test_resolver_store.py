@@ -70,3 +70,18 @@ def test_resolver_uri_rejects_non_digest() -> None:
 
     with pytest.raises(ValueError, match="Unsupported resolver URI"):
         parse_resolver_uri("file:///tmp/nope")
+
+
+def test_get_rejects_symlink(tmp_path: Path) -> None:
+    from tok.resolver.store import ContentStore
+
+    store = ContentStore(tmp_path)
+    digest = store.put(b"hello")
+    object_path = store._object_path(digest)
+    target = tmp_path / "target.txt"
+    target.write_text("not hello")
+    object_path.unlink()
+    object_path.symlink_to(target)
+
+    with pytest.raises(ValueError, match="symlink"):
+        store.get(digest)

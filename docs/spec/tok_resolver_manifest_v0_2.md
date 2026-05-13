@@ -16,7 +16,7 @@ This spec defines the manifest format and the on-disk layout for the local store
 
 Path:
 
-- Global manifest: `~/.tok/resolver/manifest.tok`
+- User-wide manifest: `~/.tok/resolver/manifest.tok`
 - Project manifest: `~/.tok/projects/<project-digest>/manifest.tok`
 
 Format: UTF-8 JSON.
@@ -36,6 +36,9 @@ Format: UTF-8 JSON.
   - `max_total_bytes`: integer (default `536870912` = 512MB)
   - `object_ttl_seconds`: integer (default `2592000` = 30 days)
   - `eviction_policy`: `"lru"`
+
+Note: `storage_policy` fields are declared intent for 0.2.x enforcement. Tok 0.2.0 does
+not enforce quotas or TTL eviction in the store yet.
 
 ### Optional fields
 

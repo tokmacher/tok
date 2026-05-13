@@ -16,16 +16,23 @@ resolver_app = typer.Typer(help="Local resolver beta commands")
 @resolver_app.command("init")
 def init_resolver() -> None:
     """Initialize the local resolver store and manifest."""
-    root = resolver_root()
-    root.mkdir(parents=True, exist_ok=True)
-    manifest_path = global_manifest_path()
-    if manifest_path.exists():
-        console.print(f"Resolver manifest already exists: {manifest_path}")
-        raise typer.Exit(code=0)
-    manifest = ResolverManifest.default()
-    manifest.save(manifest_path)
-    console.print(f"Initialized resolver at {root}")
-    console.print(f"Manifest: {manifest_path}")
+    try:
+        root = resolver_root()
+        root.mkdir(parents=True, exist_ok=True)
+        manifest_path = global_manifest_path()
+        if manifest_path.exists():
+            console.print(f"Resolver manifest already exists: {manifest_path}")
+            raise typer.Exit(code=0)
+        manifest = ResolverManifest.default()
+        manifest.save(manifest_path)
+        console.print(f"Initialized resolver at {root}")
+        console.print(f"Manifest: {manifest_path}")
+    except ValueError as exc:
+        console.print(f"[red]Resolver init failed: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        console.print(f"[red]Resolver init failed: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
 
 @resolver_app.command("status")
@@ -62,18 +69,29 @@ def get(
     ),
 ) -> None:
     """Fetch resolver content by tok-resolver URI."""
-    digest = parse_resolver_uri(uri)
-    store = ContentStore(resolver_root())
-    data = store.get(digest)
+    try:
+        digest = parse_resolver_uri(uri)
+        store = ContentStore(resolver_root())
+        data = store.get(digest)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
     if data is None:
         console.print(f"[red]Missing object for {digest}[/red]")
         raise typer.Exit(code=1)
     if out is None:
         console.print(data.decode("utf-8", errors="replace"))
         return
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(data)
-    console.print(f"Wrote {len(data)} bytes to {out}")
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+        console.print(f"Wrote {len(data)} bytes to {out}")
+    except OSError as exc:
+        console.print(f"[red]Failed to write to {out}: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
 
 
 def register(app: typer.Typer) -> None:

@@ -1,7 +1,7 @@
 """
-Release-surface manifest for Tok 0.1.
+Release-surface manifest for Tok 0.2.
 
-This manifest defines the defended 0.1.x public surface.
+This manifest defines the defended 0.2.x public surface.
 Anything not listed here is explicitly not part of the defended surface.
 """
 

@@ -82,7 +82,10 @@ class ResolverManifest:
 
     @staticmethod
     def load(path: Path) -> ResolverManifest:
-        data = json.loads(path.read_text())
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            raise ValueError("resolver_manifest_invalid: corrupted JSON") from exc
         return ResolverManifest.from_dict(data)
 
     @staticmethod
@@ -110,10 +113,18 @@ class ResolverManifest:
         if supported != ("sha256",) and supported != ["sha256"]:
             raise ValueError("supported_hash_algorithms must be ['sha256'] in 0.2.0")
 
+        resolver_id = data.get("resolver_id")
+        if not isinstance(resolver_id, str) or not resolver_id.strip():
+            raise ValueError("resolver_id must be a non-empty string")
+        try:
+            uuid.UUID(resolver_id)
+        except Exception as exc:
+            raise ValueError("resolver_id must be a UUID string") from exc
+
         storage = data.get("storage_policy") or {}
         return ResolverManifest(
             manifest_version="tok-resolver/v0.1",
-            resolver_id=str(data.get("resolver_id") or ""),
+            resolver_id=resolver_id.strip(),
             supported_hash_algorithms=("sha256",),
             max_conformance_level="L3a",
             routing_scope="local_only",

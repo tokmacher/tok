@@ -6,14 +6,15 @@ This repository is agent-operable. Follow this file before making claims about T
 
 Tok is a local Claude Code bridge for deterministic context compression.
 
-Supported 0.1.x path:
+Supported 0.2.x path:
 
 - local bridge
 - Claude Code
 - `tok claude`
 - diagnostics through `tok bridge status`, `tok doctor`, `tok stats`, and `tok audit`
+- local resolver beta commands through `tok resolver`
 
-Do not describe Tok 0.1.x as:
+Do not describe Tok 0.2.x as:
 
 - a hosted service
 - a general agent framework
@@ -21,9 +22,10 @@ Do not describe Tok 0.1.x as:
 - a universal protocol implementation
 - a stable Python SDK
 
-Tok Resolver, Tok Capability, Tok Session, and agent-to-agent exchange are not yet
-implemented. Do not claim they are. `tok audit` validates trace structure, not general
-protocol compliance.
+Tok Resolver is implemented as a local-only beta. Tok Capability, Tok Session, and
+agent-to-agent exchange are not yet implemented. Do not claim they are. `tok audit`
+validates trace structure, not general protocol compliance. Local resolver beta does not
+imply a stable protocol.
 
 ## Golden path
 
@@ -38,6 +40,7 @@ uv run tok bridge status --help
 uv run tok doctor --help
 uv run tok stats --help
 uv run tok audit --help
+uv run tok resolver --help
 ```
 
 For source validation:
@@ -94,7 +97,7 @@ Never claim:
 ## Safe editing rules
 
 Prefer small changes. Do not widen the public API casually. Do not add new protocol
-claims in 0.1.x docs. Do not change compression behavior without targeted regression
+claims in 0.2.x docs. Do not change compression behavior without targeted regression
 tests. Do not edit generated artifacts unless explicitly instructed. Update docs when
 changing CLI behavior.
 

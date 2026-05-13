@@ -97,8 +97,7 @@ Tok `0.1.9` adds bridge-backed protocol groundwork:
 - Live attribution test framework: manual release gate with four Claude Code session
   types and pass/fail criteria.
 
-Tok Protocol v0.1 remains draft-scoped and will be published in `0.2.0` after live
-validation.
+Tok Protocol v0.1 remains draft-scoped and enters beta in `0.2.0` after live validation.
 
 ## Trace Audit
 

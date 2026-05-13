@@ -173,6 +173,36 @@ def validate_block(block: dict[str, Any]) -> list[str]:
             errors.append("accept_exact_requires_available_local_content")
         _require_content_identity(content, errors)
 
+    if expectation == "accept_reference":
+        if action != "reference":
+            errors.append("accept_reference_requires_reference_action")
+        if exact is not True:
+            errors.append("accept_reference_requires_exact_content")
+        _require_content_identity(content, errors)
+
+    if expectation == "accept_non_exact_reference":
+        if action not in NON_EXACT_REFERENCE_ACTIONS:
+            errors.append("accept_non_exact_reference_requires_non_exact_reference_action")
+        if exact is not False:
+            errors.append("accept_non_exact_reference_requires_non_exact_content")
+
+    if expectation == "accept_pass_through":
+        if action != "pass_through" or observation.get("result") != "ok":
+            errors.append("accept_pass_through_requires_ok_pass_through")
+        if exact is not False:
+            errors.append("accept_pass_through_requires_non_exact_content")
+
+    if expectation == "accept_fallback":
+        if not (
+            action == "fallback"
+            or observation.get("result") in FALLBACK_RESULTS
+            or resolver_state in FALLBACK_RESOLVER_STATES
+        ):
+            errors.append("accept_fallback_requires_fallback_or_degradation")
+
+    if observation.get("result") == "ok" and resolver_state == "unresolvable_fallback_required":
+        errors.append("ok_result_cannot_require_unresolvable_fallback")
+
     if expectation == "accept_delta":
         if action != "delta":
             errors.append("accept_delta_requires_delta_action")
@@ -419,6 +449,8 @@ def audit_fixture_file(path: Path) -> list[AuditResult]:
 
     context = AuditContext(path.parent)
     results: list[AuditResult] = []
+    seen_block_ids: set[str] = set()
+    last_position_by_session: dict[str, tuple[int, int]] = {}
     for fixture in fixtures:
         if not isinstance(fixture, dict):
             results.append(AuditResult(id="fixture", status="fail", errors=("fixture_not_object",)))
@@ -429,6 +461,28 @@ def audit_fixture_file(path: Path) -> list[AuditResult]:
             results.append(AuditResult(id=fixture_id, status="fail", errors=("missing_or_invalid_block",)))
             continue
         results.append(audit_block(block, fixture_id=fixture_id, context=context))
+
+        envelope = block.get("envelope")
+        if not isinstance(envelope, dict):
+            continue
+        block_id = envelope.get("block_id")
+        if isinstance(block_id, str) and block_id:
+            if block_id in seen_block_ids:
+                results.append(AuditResult(id=block_id, status="fail", errors=("duplicate_block_id",)))
+            seen_block_ids.add(block_id)
+
+        session_id = envelope.get("session_id")
+        turn = envelope.get("turn")
+        step = envelope.get("step")
+        if not isinstance(session_id, str) or not isinstance(turn, int) or not isinstance(step, int):
+            continue
+        position = (turn, step)
+        previous = last_position_by_session.get(session_id)
+        if previous is not None and position < previous:
+            results.append(
+                AuditResult(id=str(block_id or fixture_id), status="fail", errors=("out_of_order_trace_block",))
+            )
+        last_position_by_session[session_id] = position
     return results
 
 

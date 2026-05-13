@@ -12,6 +12,7 @@ _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 class ContentStore:
     def __init__(self, root: Path) -> None:
         self._root = root
+        self._root_resolved = root.resolve()
 
     @property
     def root(self) -> Path:
@@ -23,7 +24,16 @@ class ContentStore:
         hex_digest = digest.split(":", 1)[1]
         prefix = hex_digest[:2]
         rest = hex_digest[2:]
-        return self._root / "objects" / prefix / rest
+        path = self._root / "objects" / prefix / rest
+        try:
+            resolved = path.resolve()
+        except FileNotFoundError:
+            resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(self._root_resolved)
+        except ValueError as exc:
+            raise ValueError("Resolver object path escapes root") from exc
+        return path
 
     def has(self, digest: str) -> bool:
         if not _SHA256_RE.fullmatch(digest):
@@ -34,6 +44,8 @@ class ContentStore:
         path = self._object_path(digest)
         if not path.is_file():
             return None
+        if path.is_symlink():
+            raise ValueError("Refusing to read resolver object through symlink")
         data = path.read_bytes()
         expected = digest.split(":", 1)[1]
         actual = hashlib.sha256(data).hexdigest()

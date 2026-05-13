@@ -98,6 +98,11 @@ tok resolver get tok-resolver://sha256:... --out ./artifact.bin
 The resolver is a local content-addressed store. Tok 0.2.0 does not do remote routing,
 referral following, or any network resolution.
 
+Configuration:
+
+- `TOK_RESOLVER_ROOT`: overrides the resolver root directory. Default is
+  `~/.tok/resolver/`.
+
 `TOK_TRACE=1` enables opt-in sidecar traces under `~/.tok/traces/`.
 `TOK_TRACE_CAPTURE_ARTIFACTS=1` writes sanitized metadata artifacts next to the trace so
 audit can verify local hashes and byte sizes. This does not capture raw prompts,
