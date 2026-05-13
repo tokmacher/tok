@@ -11,6 +11,7 @@ import logging
 import shlex
 from typing import Any
 
+from ._feature_flags import TOK_ENABLE_PYTEST_FAIL_COMPRESSION
 from ._registry import build_default_registry
 from ._tool_result_codecs import (
     _compress_config_json,
@@ -111,6 +112,9 @@ def tok_tool_result_impl(
             _args.get("path") or _args.get("file_path") or _args.get("AbsolutePath") or _args.get("TargetFile") or ""
         )
     kind = detect_tool_content_type_impl(content, path=_tool_path)
+    if kind == "pytest" and " FAILED" in content and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
+        _logger.debug("tool_result: decision=preserved reason=pytest_failed flag=off")
+        return content
     original_chars = len(content)
     registry = build_default_registry(
         compress_pytest=lambda text: _compress_pytest(text, command=_tool_command_hint(tool_context)),

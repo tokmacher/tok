@@ -811,8 +811,8 @@ def compress_tool_results_impl(
             return None
         diff_lines = list(
             difflib.unified_diff(
-                previous.splitlines(keepends=True),
-                current.splitlines(keepends=True),
+                previous.splitlines(),
+                current.splitlines(),
                 fromfile=f"a/{path}",
                 tofile=f"b/{path}",
                 n=3,
@@ -822,7 +822,7 @@ def compress_tool_results_impl(
         if not diff_lines:
             return None
         changed_lines = max(1, _count_changed_diff_lines(diff_lines))
-        diff_text = "".join(diff_lines)
+        diff_text = "\n".join(diff_lines)
         return f">>> tool:file_reread_diff|path:{path}|changed_lines:{changed_lines}\n{diff_text}"
 
     def _extract_stack_frames(trace_text: str) -> tuple[list[str], str]:
@@ -1397,10 +1397,22 @@ def compress_tool_results_impl(
             ):
                 previous_full = last_full_file_by_path.get(norm_path)
                 if previous_full:
+                    if len(raw) > 500_000:
+                        last_full_file_by_path[norm_path] = raw
+                        _record_feature_telemetry("file_reread_diff", "skipped")
+                        continue
                     _record_feature_telemetry("file_reread_diff", "attempted")
                     reread_candidate = _build_file_reread_diff(norm_path, previous_full, raw)
                     if reread_candidate is not None:
                         reread_saved = len(raw) - len(reread_candidate)
+                        if len(reread_candidate) > len(raw) * 0.5:
+                            _record_feature_telemetry("file_reread_diff", "fallback")
+                            last_full_file_by_path[norm_path] = raw
+                            continue
+                        if reread_saved <= len(raw) * 0.05:
+                            _record_feature_telemetry("file_reread_diff", "fallback")
+                            last_full_file_by_path[norm_path] = raw
+                            continue
                         if reread_saved > 0:
                             breakdown["file_reread_diff"] = breakdown.get("file_reread_diff", 0) + reread_saved
                             block["content"] = reread_candidate

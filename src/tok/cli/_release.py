@@ -67,6 +67,7 @@ def stats_command(
     window: int = 5,
     reset: bool = False,
     json_output: bool = False,
+    detail: bool = False,
 ) -> None:
     """Show token savings and fallback state."""
     tracker = SavingsTracker()
@@ -219,6 +220,8 @@ def stats_command(
                     border_style=status_border(verdict_style),
                 )
             )
+            if detail:
+                _render_stats_detail(session_summary=session_summary, health_payload=health_payload or {})
 
             iq_rows = interaction_quality_rows(
                 smoothness_score=int(health_payload.get("smoothness_score", 0)) if health_payload else None,
@@ -425,6 +428,85 @@ def stats_command(
                     )
         elif not total:
             console.print("[dim]No lifetime data yet[/dim]")
+
+
+def _render_stats_detail(*, session_summary: dict[str, Any], health_payload: dict[str, Any]) -> None:
+    from ._cli_support import render_stats_panel
+
+    rows: list[tuple[str, str]] = []
+
+    bloat = health_payload.get("bloat_attribution")
+    if isinstance(bloat, dict):
+        footprint = bloat.get("request_footprint")
+        if isinstance(footprint, dict):
+            prepared = footprint.get("prepared")
+            baseline = footprint.get("baseline")
+            if isinstance(prepared, dict):
+                rows.append(("Prepared total tokens", str(prepared.get("total_tokens", "unknown"))))
+            if isinstance(baseline, dict):
+                rows.append(("Baseline total tokens", str(baseline.get("total_tokens", "unknown"))))
+
+        tool_retention = bloat.get("tool_result_retention")
+        if isinstance(tool_retention, dict):
+            for key in ("message_count", "tokens", "heavy_block_count"):
+                if key in tool_retention:
+                    rows.append((f"Tool retention {key}", str(tool_retention.get(key))))
+
+        state = bloat.get("state_resend")
+        if isinstance(state, dict):
+            for key in ("mode", "full_count", "delta_count", "suppressed_count", "tokens"):
+                if key in state:
+                    rows.append((f"State resend {key}", str(state.get(key))))
+
+        history = bloat.get("history_retention")
+        if isinstance(history, dict):
+            for key in ("dropped_tokens", "skip_reason"):
+                if key in history:
+                    rows.append((f"History {key}", str(history.get(key))))
+
+    rows.extend(_evidence_form_legend_rows())
+
+    macro_rows = _macro_activity_rows(health_payload)
+    rows.extend(macro_rows)
+
+    bloat_flag = health_payload.get("tok_prompt_bloat_detected")
+    if isinstance(bloat_flag, bool):
+        rows.append(("Prompt bloat detected", "yes" if bloat_flag else "no"))
+        leaked_est = health_payload.get("tok_prompt_bloat_leaked_chars_estimate")
+        if bloat_flag and leaked_est is not None:
+            rows.append(("Prompt bloat leaked chars (est.)", str(leaked_est)))
+
+    if not rows:
+        rows = [("Detail", "No extra detail available in this session.")]
+
+    console.print(
+        render_stats_panel(
+            "Detail",
+            headline="Extra detail",
+            headline_style="bold",
+            subhead="Bloat attribution, evidence forms, and macro activity (when available).",
+            rows=rows,
+            border_style="blue",
+        )
+    )
+
+
+def _evidence_form_legend_rows() -> list[tuple[str, str]]:
+    return [
+        ("Evidence forms", ""),
+        ("  exact", "verbatim first-hand observation content"),
+        ("  summary", "lossy natural-language summary"),
+        ("  skeleton", "structural outline, not full content"),
+        ("  reference", "pointer or stable stub"),
+    ]
+
+
+def _macro_activity_rows(health_payload: dict[str, Any]) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = [("Macro activity", "")]
+    for key in ("speculative_macros_injected", "macro_savings_attributed"):
+        if key in health_payload:
+            rows.append((f"  {key}", str(health_payload.get(key))))
+    return rows if len(rows) > 1 else []
 
 
 def replay_command(

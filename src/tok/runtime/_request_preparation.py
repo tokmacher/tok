@@ -1492,6 +1492,19 @@ def prepare_request_impl(
                     runtime_hints = [f"[tok] Session memory: {memory_path}"] + runtime_hints
             except Exception:
                 pass
+            try:
+                if session.bridge_memory.turn >= 5:
+                    hot_files = session.bridge_memory.top_hot_files(n=5)
+                    macro_count = len(getattr(session.bridge_memory.macro_registry, "macros", {}) or {})
+                    if hot_files or macro_count:
+                        warm = ["[tok warm-start - may be stale]"]
+                        if hot_files:
+                            warm.append("Hot files: " + ", ".join(hot_files))
+                        if macro_count:
+                            warm.append(f"Registered macros: {macro_count}")
+                        runtime_hints = warm + runtime_hints
+            except Exception:
+                pass
             session._is_first_request = False
 
         if effective_tool_compatible:

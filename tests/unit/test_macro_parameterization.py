@@ -1,70 +1,42 @@
-"""Phase 5 verification: IRPatternMiner produces $pN placeholders for path arguments."""
+"""Tests for tool_map-driven macro parameterization."""
 
 from __future__ import annotations
 
-import pytest
-
-from tok.macros.integration import distill_bridge_history
-from tok.macros.ir import MacroRegistry
-from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
+from tok.macros.ir import Instruction
+from tok.macros.parameterization import parameterize_instructions
 
 
-@pytest.fixture(autouse=True)
-def isolate_macro_registry(monkeypatch) -> None:
-    monkeypatch.setattr(MacroRegistry, "load_global", lambda self, *a, **_: None)
-    monkeypatch.setattr(MacroRegistry, "save_global", lambda self, *a, **_: None)
-
-
-def test_parameterized_macro_uses_placeholder_for_path_args() -> None:
-    """Miner should replace path-like args (containing '/') with $p0, $p1, etc."""
-    state = BridgeMemoryState()
-
-    # Three repetitions of: view src/foo.py → edit src/foo.py
-    state.rolling_cmds = [
-        MemoryEntry(value="view src/alpha.py", last_seen_turn=1),
-        MemoryEntry(value="edit src/alpha.py", last_seen_turn=2),
-        MemoryEntry(value="view src/beta.py", last_seen_turn=3),
-        MemoryEntry(value="edit src/beta.py", last_seen_turn=4),
-        MemoryEntry(value="view src/gamma.py", last_seen_turn=5),
-        MemoryEntry(value="edit src/gamma.py", last_seen_turn=6),
+def test_parameterize_grep_and_view_uses_tool_map_slots() -> None:
+    ins = [
+        Instruction(op="grep", args=("TODO", "src/"), target=None),
+        Instruction(op="view", args=("src/a.py",), target=None),
     ]
-
-    discovered = distill_bridge_history(state)
-
-    assert len(discovered) >= 1, "Miner should discover at least one macro"
-    macro = discovered[0]
-
-    ops = [ins.op for ins in macro.instructions]
-    assert "view" in ops and "edit" in ops, f"Expected view+edit ops, got {ops}"
-
-    # At least one arg should be a $pN placeholder
-    all_args = [arg for ins in macro.instructions for arg in ins.args]
-    placeholders = [a for a in all_args if isinstance(a, str) and a.startswith("$p")]
-    assert placeholders, f"Expected $pN placeholders in args, got: {all_args}"
-
-    # Inputs tuple should be populated (not empty as with the old hardcoded logic)
-    assert len(macro.inputs) > 0, f"Expected non-empty inputs, got: {macro.inputs}"
+    out, inputs, _context = parameterize_instructions(ins)
+    assert inputs == ("p0", "p1", "p2")
+    assert out[0].args == ("$p0", "$p1")
+    assert out[1].args == ("$p2",)
 
 
-def test_non_path_args_are_not_parameterized() -> None:
-    """Short args and args without '/' should stay literal (not replaced with $pN)."""
-    state = BridgeMemoryState()
-
-    # Three repetitions of: pytest -v → cat file.txt (no paths with /)
-    state.rolling_cmds = [
-        MemoryEntry(value="pytest -v", last_seen_turn=1),
-        MemoryEntry(value="cat foo", last_seen_turn=2),
-        MemoryEntry(value="pytest -v", last_seen_turn=3),
-        MemoryEntry(value="cat bar", last_seen_turn=4),
-        MemoryEntry(value="pytest -v", last_seen_turn=5),
-        MemoryEntry(value="cat baz", last_seen_turn=6),
+def test_parameterize_collapses_different_grep_terms() -> None:
+    ins1 = [
+        Instruction(op="grep", args=("TODO", "src/"), target=None),
+        Instruction(op="view", args=("src/a.py",), target=None),
     ]
+    ins2 = [
+        Instruction(op="grep", args=("FIXME", "src/"), target=None),
+        Instruction(op="view", args=("src/b.py",), target=None),
+    ]
+    out1, inputs1, _ = parameterize_instructions(ins1)
+    out2, inputs2, _ = parameterize_instructions(ins2)
+    assert inputs1 == inputs2
+    assert out1 == out2
 
-    discovered = distill_bridge_history(state)
 
-    if discovered:
-        macro = discovered[0]
-        all_args = [arg for ins in macro.instructions for arg in ins.args]
-        placeholders = [a for a in all_args if isinstance(a, str) and a.startswith("$p")]
-        # No path-like args → no placeholders expected
-        assert not placeholders, f"Unexpected $pN placeholders for non-path args: {all_args}"
+def test_parameterize_unknown_op_falls_back_to_path_heuristic() -> None:
+    ins = [
+        Instruction(op="unknown", args=("src/a.py", "literal"), target=None),
+    ]
+    out, inputs, _ = parameterize_instructions(ins)
+    assert inputs == ("p0",)
+    assert out[0].args[0] == "$p0"
+    assert out[0].args[1] == "literal"

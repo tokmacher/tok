@@ -68,6 +68,10 @@ def stats(
         bool,
         typer.Option("--json", help="Emit machine-readable JSON stats"),
     ] = False,
+    detail: Annotated[
+        bool,
+        typer.Option("--detail", help="Show extra detail (bloat attribution, evidence forms, macro activity)"),
+    ] = False,
 ) -> None:
     """Show token savings and fallback state."""
     from ._release import stats_command
@@ -83,6 +87,7 @@ def stats(
         window=window,
         reset=reset,
         json_output=json_output,
+        detail=detail,
     )
 
 

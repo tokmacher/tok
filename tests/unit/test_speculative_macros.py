@@ -785,6 +785,62 @@ class TestFeatureFlaggedDeltaCompression:
         assert "overlap_lines:" in second_content
         assert breakdown.get("file_overlap_delta", 0) > 0
 
+    def test_file_overlap_delta_full_overlap_emits_no_new_lines_message(self, monkeypatch) -> None:
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_FILE_OVERLAP_DELTA", True)
+        path = "src/tok/foo.py"
+        first = "\n".join(f"line {i} " + ("x" * 80) for i in range(0, 40))
+        second = "\n".join(f"line {i} " + ("x" * 80) for i in range(0, 40))
+        messages = [
+            _make_tool_result_block("t1", first),
+            _make_tool_result_block("t2", second),
+        ]
+        id_to_ctx = {
+            "t1": {"name": "Read", "path": path, "args": {"file_path": path, "offset": 0, "limit": 40}},
+            "t2": {"name": "Read", "path": path, "args": {"file_path": path, "offset": 0, "limit": 40}},
+        }
+
+        out, _breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+        second_content = out[1]["content"][0]["content"]
+        assert second_content.startswith(">>> tool:file_read_overlap_delta|")
+        assert "no new lines" in second_content
+
+    def test_file_overlap_delta_disjoint_ranges_does_not_fire(self, monkeypatch) -> None:
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_FILE_OVERLAP_DELTA", True)
+        path = "src/tok/foo.py"
+        first = "\n".join(f"line {i} " + ("x" * 80) for i in range(0, 20))
+        second = "\n".join(f"line {i} " + ("x" * 80) for i in range(100, 120))
+        messages = [
+            _make_tool_result_block("t1", first),
+            _make_tool_result_block("t2", second),
+        ]
+        id_to_ctx = {
+            "t1": {"name": "Read", "path": path, "args": {"file_path": path, "offset": 0, "limit": 20}},
+            "t2": {"name": "Read", "path": path, "args": {"file_path": path, "offset": 100, "limit": 20}},
+        }
+
+        out, _breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+        second_content = out[1]["content"][0]["content"]
+        assert not second_content.startswith(">>> tool:file_read_overlap_delta|")
+
+    def test_file_overlap_delta_boundary_overlap_counts_one(self, monkeypatch) -> None:
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_FILE_OVERLAP_DELTA", True)
+        path = "src/tok/foo.py"
+        first = "\n".join(f"line {i} " + ("x" * 400) for i in range(0, 20))
+        second = "\n".join(f"line {i} " + ("x" * 400) for i in range(19, 39))
+        messages = [
+            _make_tool_result_block("t1", first),
+            _make_tool_result_block("t2", second),
+        ]
+        id_to_ctx = {
+            "t1": {"name": "Read", "path": path, "args": {"file_path": path, "offset": 0, "limit": 20}},
+            "t2": {"name": "Read", "path": path, "args": {"file_path": path, "offset": 19, "limit": 20}},
+        }
+
+        out, _breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+        second_content = out[1]["content"][0]["content"]
+        assert second_content.startswith(">>> tool:file_read_overlap_delta|")
+        assert "overlap_lines:1" in second_content
+
     def test_file_reread_diff_for_small_changes(self, monkeypatch) -> None:
         monkeypatch.setattr(history_pipeline, "TOK_ENABLE_FILE_REREAD_DIFF", True)
         path = "src/tok/foo.py"
@@ -808,6 +864,35 @@ class TestFeatureFlaggedDeltaCompression:
         assert second_content.startswith(">>> tool:file_reread_diff|")
         assert "changed_lines:" in second_content
         assert breakdown.get("file_reread_diff", 0) > 0
+
+    def test_file_reread_diff_round_trip_reconstructs_current(self, monkeypatch) -> None:
+        from tok.spec import trace as trace_mod
+
+        monkeypatch.setattr(history_pipeline, "TOK_ENABLE_FILE_REREAD_DIFF", True)
+        path = "src/tok/foo.py"
+        previous = "".join(f"value_{i}\n" for i in range(200))
+        current_lines = [f"value_{i}\n" for i in range(200)]
+        current_lines[42] = "value_42_changed\n"
+        current_lines[155] = "value_155_changed\n"
+        current = "".join(current_lines)
+        messages = [
+            _make_tool_result_block("t1", previous),
+            _make_tool_result_block("t2", current),
+        ]
+        id_to_ctx = {
+            "t1": {"name": "Read", "path": path, "args": {"file_path": path}},
+            "t2": {"name": "Read", "path": path, "args": {"file_path": path}},
+        }
+
+        out, _breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+        second_content = out[1]["content"][0]["content"]
+        assert second_content.startswith(">>> tool:file_reread_diff|")
+        diff_text = second_content.split("\n", 1)[1]
+        replayed = trace_mod._apply_unified_diff(
+            previous.splitlines(keepends=True),
+            [line + "\n" for line in diff_text.splitlines()],
+        )
+        assert "".join(replayed) == current
 
     def test_search_overlap_delta_for_repeated_scope(self, monkeypatch) -> None:
         monkeypatch.setattr(history_pipeline, "TOK_ENABLE_SEARCH_OVERLAP_DELTA", True)

@@ -17,6 +17,7 @@ import logging
 import re
 from typing import Any
 
+from tok.compression._feature_flags import TOK_ENABLE_PYTEST_FAIL_COMPRESSION
 from tok.compression._tool_result_codecs import (
     _CODE_PATTERNS,
     _compress_git_log,
@@ -279,6 +280,8 @@ def _sift_stdout(text: str) -> str:
     if content_type == "grep":
         return _compress_grep(text)
     if content_type == "pytest":
+        if " FAILED" in text and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
+            return text
         return _compress_pytest(text)
     if content_type == "stack_trace":
         return _compress_stack_traces(text)

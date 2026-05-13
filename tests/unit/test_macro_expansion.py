@@ -421,7 +421,7 @@ class TestPromptHintInjection:
         )
         hint = macro_hint_for_session(registry)
         assert hint is not None
-        assert "tool" in hint.lower() or "call" in hint.lower()
+        assert "registered macros" in hint.lower()
 
 
 # ---------------------------------------------------------------------------
