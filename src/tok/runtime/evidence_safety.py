@@ -107,6 +107,67 @@ class EvidenceSafetyState:
         self.ledger.clear()
         self.pending_exact_keys.clear()
 
+    def record_exact(self, key: str, *, digest: str = "", turn: int = 0) -> dict[str, int]:
+        if not key:
+            return {}
+        entry = self.ledger.get(key)
+        signals: dict[str, int] = {"evidence_exact_observed": 1}
+        if entry is None:
+            entry = EvidenceLedgerEntry(key=key)
+            self.ledger[key] = entry
+        if entry.first_exact_turn <= 0:
+            entry.first_exact_turn = turn
+            signals["evidence_first_exact_observed"] = 1
+        if entry.exact_reacquisition_required:
+            entry.exact_reacquisition_required = False
+            entry.exact_reacquisition_satisfied_turn = turn
+            signals["evidence_exact_reacquisition_satisfied"] = 1
+        entry.latest_turn = turn
+        entry.latest_digest = digest or entry.latest_digest
+        entry.latest_form = "exact"
+        self.first_exact_seen.add(key)
+        return signals
+
+    def record_non_exact(
+        self,
+        key: str,
+        *,
+        digest: str = "",
+        form: EvidenceForm = "summary",
+        turn: int = 0,
+    ) -> dict[str, int]:
+        if not key:
+            return {}
+        entry = self.ledger.get(key)
+        if entry is None:
+            entry = EvidenceLedgerEntry(key=key)
+            self.ledger[key] = entry
+        entry.latest_turn = turn
+        entry.latest_digest = digest or entry.latest_digest
+        entry.latest_form = form
+        signals = {"evidence_non_exact_reference_emitted": 1}
+        signals[f"evidence_non_exact_{form}_emitted"] = 1
+        return signals
+
+    def require_exact_reacquisition(self, key: str) -> dict[str, int]:
+        if not key:
+            return {}
+        entry = self.ledger.get(key)
+        if entry is None or entry.latest_is_exact:
+            return {}
+        entry.exact_reacquisition_required = True
+        return {
+            "evidence_exact_reacquisition_required": 1,
+            "evidence_compression_blocked_for_safety": 1,
+        }
+
+    def requires_reacquisition(self, key: str) -> bool:
+        entry = self.ledger.get(key)
+        return bool(entry and not entry.latest_is_exact)
+
+    def audit_summary(self) -> dict[str, int]:
+        return evidence_safety_summary(self.ledger)
+
 
 def evidence_safety_summary(ledger: dict[str, EvidenceLedgerEntry]) -> dict[str, int]:
     """Return compact audit counters for live trace metadata."""

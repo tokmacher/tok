@@ -9,6 +9,7 @@ __all__ = [
     "RequestPolicyState",
     "StreamingRecoveryState",
     "TOOL_COMPAT_MEMORY_PROFILE",
+    "_FALLBACK_THRESHOLD",
     "NormalizedToolEvent",
     "PreparedRuntimeRequest",
     "ProcessedRuntimeResponse",
@@ -37,7 +38,14 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger("tok.runtime")
 
 from ._answer_phase_state import AnswerPhaseState
+from ._cache_state import CacheState
+from ._fallback_state import FallbackState
+from ._fidelity_state import FidelityState
 from ._file_delivery_state import FileDeliveryState
+from ._hot_summary_state import HotSummaryState
+from ._loop_detection_state import LoopDetectionState
+from ._macro_state import MacroState
+from ._project_state import ProjectState
 from ._request_policy_state import RequestPolicyState
 from ._runtime_orchestration import (
     build_tool_compatible_resend,
@@ -96,11 +104,12 @@ from ._session_persistence import (
     save_result_cache,
 )
 from ._session_persistence import record_episode as record_episode_impl
+from ._smoothness_state import SmoothnessState
 from ._stream_recovery_state import StreamingRecoveryState
+from ._telemetry_state import TelemetryState
+from ._user_prompt_state import UserPromptState
 from .config import (
     _FALLBACK_THRESHOLD,
-    TOK_LOOP_DETECTION_ENABLED,
-    TOK_LOOP_DETECTION_THRESHOLD,
     TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS,
     TOK_REQUEST_POLICY_STICKY_TURNS,
     TOOL_COMPAT_MEMORY_PROFILE,
@@ -109,7 +118,6 @@ from .evidence_safety import (
     EvidenceForm,
     EvidenceLedgerEntry,
     EvidenceSafetyState,
-    evidence_safety_summary,
 )
 from .memory.answer_memory import (
     _should_persist_to_durable,  # noqa: F401
@@ -169,8 +177,6 @@ from .types import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .repeat_targets import HotSummaryRecord, RepeatTargetEvent
-
 
 @dataclass
 class RuntimeSession:
@@ -193,106 +199,12 @@ class RuntimeSession:
     _keep_turns_explicit: bool = field(default=False, init=False, repr=False)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     model: str = ""
-    result_cache: dict[str, Any] = field(default_factory=dict)
-    # Maps (tool_name, args_hash) -> content_hash for dedup; see compress_tool_results.
-    semantic_hash_cache: dict[str, str] = field(default_factory=dict)
     bridge_memory: BridgeMemoryState = field(default_factory=BridgeMemoryState)
     pending_behavior_signals: dict[str, int] = field(default_factory=dict)
     family_states: dict[str, FamilyAdaptiveState] = field(default_factory=dict)
     fallback_memory: str = ""
     memory_dir: Path | None = None
     episode_ledger: EpisodeLedger = field(default_factory=EpisodeLedger)
-    # Accumulated telemetry for reasoning-depth computation
-    _step_count: int = field(default=0, repr=False)
-    _tool_names_seen: set[str] = field(default_factory=set, repr=False)
-    _token_count: int = field(default=0, repr=False)
-    # Memory Snap signal
-    _tok_memory_snap_triggered: int = field(default=0, repr=False)
-    # Structural metadata for telemetry
-    _current_tool_density: float = field(default=0.0, repr=False)
-    _current_context_char_count: int = field(default=0, repr=False)
-    _current_invisible_pressure: int = field(default=0, repr=False)
-    _active_tools: list[str] = field(default_factory=list, repr=False)
-    _last_tool_compatible_state: str = field(default="", repr=False)
-    _last_tool_compatible_state_fields: dict[str, list[str]] = field(default_factory=dict, repr=False)
-    _suppressed_failure_markers: frozenset[str] = field(default_factory=frozenset, repr=False)
-    # Automatic session-scoped fallback tracking
-    _consecutive_fallback_count: int = field(default=0, init=False, repr=False)
-    _baseline_only: bool = field(default=False, init=False, repr=False)
-    _persistence_failures: int = field(default=0, init=False, repr=False)
-    _is_first_request: bool = field(default=True, init=False, repr=False)
-    _answer_ready_repair_pending: bool = field(default=False, init=False, repr=False)
-    _answer_ready_repair_active: bool = field(default=False, init=False, repr=False)
-    _late_answer_assembly_repair_pending: bool = field(default=False, init=False, repr=False)
-    _late_answer_assembly_repair_active: bool = field(default=False, init=False, repr=False)
-    _late_answer_assembly_repair_mode_pending: str = field(default="", init=False, repr=False)
-    _late_answer_assembly_repair_mode_active: str = field(default="", init=False, repr=False)
-    _late_answer_followthrough_pending: bool = field(default=False, init=False, repr=False)
-    _late_answer_followthrough_active: bool = field(default=False, init=False, repr=False)
-    _last_mode: str = field(default="", init=False, repr=False)
-    _drift_detected_previous_turn: bool = field(default=False, init=False, repr=False)
-    _stream_recovery_reacquisition_budget: int = field(default=0, init=False, repr=False)
-    _stream_recovery_history_floor_budget: int = field(default=0, init=False, repr=False)
-    _stream_recovery_tool_use_only_signature: str = field(default="", init=False, repr=False)
-    _stream_recovery_tool_use_only_repeat_count: int = field(default=0, init=False, repr=False)
-    _stream_recovery_cooldown_remaining: int = field(default=0, init=False, repr=False)
-    _stream_recovery_cooldown_suppressed: bool = field(default=False, init=False, repr=False)
-    _stream_read_error_consecutive_count: int = field(default=0, init=False, repr=False)
-    _stream_read_error_last_stage: str = field(default="", init=False, repr=False)
-    _request_policy_tool_mode_sticky_turns: int = field(default=0, init=False, repr=False)
-    _request_policy_stream_recovery_watch_turns: int = field(default=0, init=False, repr=False)
-    _request_policy_tool_recovery_watch_turns: int = field(default=0, init=False, repr=False)
-    _loop_detection_window: list[tuple[str, str]] = field(default_factory=list, init=False, repr=False)
-    _loop_detected: bool = field(default=False, init=False, repr=False)
-    _recently_edited_files: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    # Smoothness tracking fields
-    _latest_turn_smoothness_score: int = field(default=100, init=False, repr=False)
-    _latest_turn_labour_index: int = field(default=0, init=False, repr=False)
-    _current_task_smoothness_score: int = field(default=100, init=False, repr=False)
-    _current_task_labour_index: int = field(default=0, init=False, repr=False)
-    _current_tok_mode: TokMode = field(default=TokMode.FULL_TOK, init=False, repr=False)
-    _smoothness_event_counts: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    _request_policy_last_effective_tool_compatible: bool = field(default=False, init=False, repr=False)
-    _invalid_tool_history_recovery_count: int = field(default=0, init=False, repr=False)
-    # Project-type markers discovered at session init (e.g. 'package.json', 'go.mod').
-    _project_markers: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
-    _load_global_macros: bool = field(default=True, init=False, repr=False)
-    # Name of a macro that was offered via JIT but whose result should be verified
-    # for potential healing.  Set when a jit_offer fires; cleared after healing check.
-    _pending_macro_heal: str = field(default="", init=False, repr=False)
-    _pending_macro_heal_turn: int = field(default=0, init=False, repr=False)
-    _recent_repeat_target_events: list[RepeatTargetEvent] = field(default_factory=list, init=False, repr=False)
-    _hot_summary_records: dict[str, HotSummaryRecord] = field(default_factory=dict, init=False, repr=False)
-    _hot_hints_loaded_from_disk: int = field(default=0, init=False, repr=False)
-    _observed_tool_result_ids: dict[str, None] = field(default_factory=dict, init=False, repr=False)
-    _prepared_prompt_token_cache: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    _predictive_cache_warm_keys: set[str] = field(default_factory=set, init=False, repr=False)
-    _evidence_neighborhoods: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
-    _evidence_anchor_novelty_keys: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
-    _evidence_alias_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
-    _first_exact_evidence_seen: set[str] = field(default_factory=set, init=False, repr=False)
-    _evidence_safety_ledger: dict[str, EvidenceLedgerEntry] = field(default_factory=dict, init=False, repr=False)
-    _pending_exact_evidence_keys: set[str] = field(default_factory=set, init=False, repr=False)
-    _files_read_this_session: set[str] = field(default_factory=set, init=False, repr=False)
-    _files_fully_delivered: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    _last_user_prompt_text: str = field(default="", init=False, repr=False)
-    _last_user_prompt_labels: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
-    _request_has_tools: bool = field(default=False, init=False, repr=False)
-    _runtime_hint_last_turn: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    # Fidelity overrides: paths that should bypass skeleton/truncation due to repeated reads.
-    # Recomputed each turn by compute_fidelity_overrides() — not a turn-counter dict.
-    _fidelity_overrides: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    # Track file reads by turn number for rapid re-read detection
-    _file_reads_by_turn: dict[str, int] = field(default_factory=dict, init=False, repr=False)
-    # Currently elevated path (bypassing compression due to repeated reads)
-    _last_elevated_path: str = field(default="", init=False, repr=False)
-    _tool_required_latch_streak: int = field(default=0, init=False, repr=False)
-    _answer_phase_expected_this_turn: bool = field(default=False, init=False, repr=False)
-    _natural_response_acceptable_this_turn: bool = field(default=False, init=False, repr=False)
-    # Track files that have been delivered as skeletons to prevent unsafe edits
-    _skeleton_delivered_paths: set[str] = field(default_factory=set, init=False, repr=False)
-    # Rolling sample of visible response word counts (last 5 turns) for verbosity signal
-    _response_word_samples: list[int] = field(default_factory=list, init=False, repr=False)
 
     # --- Grouped state sub-objects (0.1.9 architecture improvement) ---
     evidence_safety: EvidenceSafetyState = field(default_factory=EvidenceSafetyState, init=False, repr=False)
@@ -300,21 +212,23 @@ class RuntimeSession:
     request_policy: RequestPolicyState = field(default_factory=RequestPolicyState, init=False, repr=False)
     answer_phase: AnswerPhaseState = field(default_factory=AnswerPhaseState, init=False, repr=False)
     file_delivery: FileDeliveryState = field(default_factory=FileDeliveryState, init=False, repr=False)
+    # --- New state groups (Plan 1 deepening) ---
+    fallback: FallbackState = field(default_factory=FallbackState, init=False, repr=False)
+    smoothness_state: SmoothnessState = field(default_factory=SmoothnessState, init=False, repr=False)
+    loop_detection: LoopDetectionState = field(default_factory=LoopDetectionState, init=False, repr=False)
+    cache: CacheState = field(default_factory=CacheState, init=False, repr=False)
+    hot_summary: HotSummaryState = field(default_factory=HotSummaryState, init=False, repr=False)
+    telemetry: TelemetryState = field(default_factory=TelemetryState, init=False, repr=False)
+    macro: MacroState = field(default_factory=MacroState, init=False, repr=False)
+    fidelity: FidelityState = field(default_factory=FidelityState, init=False, repr=False)
+    user_prompt: UserPromptState = field(default_factory=UserPromptState, init=False, repr=False)
+    project: ProjectState = field(default_factory=ProjectState, init=False, repr=False)
 
     def record_fallback_event(self) -> None:
-        """Increment the consecutive fail-open counter and degrade to baseline when threshold is reached."""
-        self._consecutive_fallback_count += 1
-        if self._consecutive_fallback_count >= _FALLBACK_THRESHOLD and not self._baseline_only:
-            self._baseline_only = True
-            logger.warning(
-                "tok_fallback_activated: session degraded to baseline after %d consecutive fallback events",
-                self._consecutive_fallback_count,
-            )
+        self.fallback.record_fallback_event()
 
     def reset_fallback_count(self) -> None:
-        """Reset the consecutive fallback counter and restore compression after a successful compressed request."""
-        self._consecutive_fallback_count = 0
-        self._baseline_only = False
+        self.fallback.reset_fallback_count()
 
     def reset_session(self) -> None:
         """Reset all transient session state for a fresh start (preserves persisted data).
@@ -329,87 +243,20 @@ class RuntimeSession:
         Users can call ``POST http://localhost:9090/reset-session`` to restore
         first-read protection at the start of a new conversation.
         """
-        self._consecutive_fallback_count = 0
-        self._baseline_only = False
-        self._persistence_failures = 0
-        self._step_count = 0
-        self._tool_names_seen.clear()
-        self._token_count = 0
-        self._tok_memory_snap_triggered = 0
-        self._current_tool_density = 0.0
-        self._current_context_char_count = 0
-        self._current_invisible_pressure = 0
-        self._active_tools.clear()
-        self._last_tool_compatible_state = ""
-        self._last_tool_compatible_state_fields.clear()
-        self._answer_ready_repair_pending = False
-        self._answer_ready_repair_active = False
-        self._late_answer_assembly_repair_pending = False
-        self._late_answer_assembly_repair_active = False
-        self._late_answer_assembly_repair_mode_pending = ""
-        self._late_answer_assembly_repair_mode_active = ""
-        self._late_answer_followthrough_pending = False
-        self._late_answer_followthrough_active = False
-        self._last_mode = ""
-        self._drift_detected_previous_turn = False
-        self._stream_recovery_reacquisition_budget = 0
-        self._stream_recovery_history_floor_budget = 0
-        self._stream_recovery_tool_use_only_signature = ""
-        self._stream_recovery_tool_use_only_repeat_count = 0
-        self._stream_recovery_cooldown_remaining = 0
-        self._stream_recovery_cooldown_suppressed = False
-        self._stream_read_error_consecutive_count = 0
-        self._stream_read_error_last_stage = ""
-        self._request_policy_tool_mode_sticky_turns = 0
-        self._request_policy_stream_recovery_watch_turns = 0
-        self._request_policy_tool_recovery_watch_turns = 0
-        self._loop_detection_window.clear()
-        self._loop_detected = False
-        self._recently_edited_files.clear()
-        self._latest_turn_smoothness_score = 100
-        self._latest_turn_labour_index = 0
-        self._current_task_smoothness_score = 100
-        self._current_task_labour_index = 0
-        self._current_tok_mode = TokMode.FULL_TOK
-        self._smoothness_event_counts.clear()
-        self._request_policy_last_effective_tool_compatible = False
-        self._invalid_tool_history_recovery_count = 0
-        self._pending_macro_heal = ""
-        self._pending_macro_heal_turn = 0
-        self._recent_repeat_target_events.clear()
-        save_hot_summaries(self)
-        self._hot_summary_records.clear()
-        self._hot_hints_loaded_from_disk = 0
-        self._observed_tool_result_ids.clear()
-        self._prepared_prompt_token_cache.clear()
-        self._predictive_cache_warm_keys.clear()
-        self._evidence_neighborhoods.clear()
-        self._evidence_anchor_novelty_keys.clear()
-        self._evidence_alias_map.clear()
-        self._first_exact_evidence_seen.clear()
-        self._evidence_safety_ledger.clear()
-        self._pending_exact_evidence_keys.clear()
-        self._files_read_this_session.clear()
-        self._files_fully_delivered.clear()
-        self._last_user_prompt_text = ""
-        self._last_user_prompt_labels = ()
-        self._request_has_tools = False
-        self._runtime_hint_last_turn.clear()
-        self._fidelity_overrides.clear()
-        self._file_reads_by_turn.clear()
-        self._last_elevated_path = ""
-        self._tool_required_latch_streak = 0
-        self._answer_phase_expected_this_turn = False
-        self._natural_response_acceptable_this_turn = False
-        self._skeleton_delivered_paths.clear()
-        self._response_word_samples.clear()
+        self.fallback.reset()
+        self.smoothness_state.reset()
+        self.loop_detection.reset()
+        self.cache.reset()
+        self.hot_summary.reset(save_before_clear=True, session=self)
+        self.telemetry.reset()
+        self.macro.reset()
+        self.fidelity.reset()
+        self.user_prompt.reset()
+        self.project.reset()
         self.pending_behavior_signals.clear()
         self.family_states.clear()
-        self.result_cache.clear()
-        self.semantic_hash_cache.clear()
         self.bridge_memory.hot.clear()
         self.bridge_memory.rolling_cmds = []
-        self._is_first_request = True
         self.evidence_safety.reset()
         self.streaming_recovery.reset()
         self.request_policy.reset()
@@ -418,34 +265,27 @@ class RuntimeSession:
         logger.info("RuntimeSession reset: all transient state cleared")
 
     def record_invalid_tool_history_recovery(self, *, blocked: bool) -> dict[str, int]:
-        """Track recovery from broken tool history and clear hot state if it repeats."""
-        self._invalid_tool_history_recovery_count += 1
+        self.fallback.invalid_tool_history_recovery_count += 1
         self.note_request_policy_tool_mode_recovery()
         signals: dict[str, int] = {
             "tok_bridge_invalid_tool_history_recovery": 1,
             "tok_bridge_invalid_tool_history_blocked": 1 if blocked else 0,
         }
 
-        if self._invalid_tool_history_recovery_count >= 2:
-            self._last_tool_compatible_state = ""
-            self._last_tool_compatible_state_fields = {}
-            self._observed_tool_result_ids.clear()
-            self._first_exact_evidence_seen.clear()
-            self._evidence_safety_ledger.clear()
-            self._pending_exact_evidence_keys.clear()
-            self.result_cache.clear()
-            self.semantic_hash_cache.clear()
-            self._files_read_this_session.clear()
-            self._files_fully_delivered.clear()
-            self._suppressed_failure_markers = frozenset()
-            self._stream_recovery_reacquisition_budget = 0
-            self._stream_recovery_history_floor_budget = 0
-            self._stream_recovery_tool_use_only_signature = ""
-            self._stream_recovery_tool_use_only_repeat_count = 0
-            self._request_policy_tool_mode_sticky_turns = 0
-            self._request_policy_stream_recovery_watch_turns = 0
-            self._request_policy_tool_recovery_watch_turns = 0
-            self._request_policy_last_effective_tool_compatible = False
+        if self.fallback.invalid_tool_history_recovery_count >= 2:
+            self.telemetry.last_tool_compatible_state = ""
+            self.telemetry.last_tool_compatible_state_fields = {}
+            self.cache.observed_tool_result_ids.clear()
+            self.evidence_safety.first_exact_seen.clear()
+            self.evidence_safety.ledger.clear()
+            self.evidence_safety.pending_exact_keys.clear()
+            self.cache.result_cache.clear()
+            self.cache.semantic_hash_cache.clear()
+            self.project.files_read.clear()
+            self.project.files_fully_delivered.clear()
+            self.telemetry.suppressed_failure_markers = frozenset()
+            self.streaming_recovery.reset()
+            self.request_policy.reset()
             for key in ("turns", "next", "cmds", "errs", "blockers"):
                 self.bridge_memory.hot.pop(key, None)
             self.bridge_memory.rolling_cmds = []
@@ -453,62 +293,32 @@ class RuntimeSession:
             signals["tok_bridge_invalid_tool_history_session_reset"] = 1
             logger.warning(
                 "tok_bridge_invalid_tool_history_session_reset: cleared hot bridge state after %d repeated tool-history recoveries",
-                self._invalid_tool_history_recovery_count,
+                self.fallback.invalid_tool_history_recovery_count,
             )
         return signals
 
     def reset_invalid_tool_history_recovery(self) -> None:
-        """Clear the repeated invalid-tool-history counter after a clean request."""
-        self._invalid_tool_history_recovery_count = 0
+        self.fallback.invalid_tool_history_recovery_count = 0
 
     def observe_tool_action(self, tool_name: str, tool_input_key: str) -> bool:
-        """Track a tool call and detect loops. Returns True if a loop is detected."""
-        if not TOK_LOOP_DETECTION_ENABLED:
-            return False
-        action_key = f"{tool_name}:{tool_input_key}"
-        self._loop_detection_window.append((tool_name, action_key))
-        window_size = TOK_LOOP_DETECTION_THRESHOLD * 3
-        if len(self._loop_detection_window) > window_size:
-            self._loop_detection_window = self._loop_detection_window[-window_size:]
-        if len(self._loop_detection_window) < TOK_LOOP_DETECTION_THRESHOLD:
-            return False
-        recent = self._loop_detection_window[-TOK_LOOP_DETECTION_THRESHOLD:]
-        if all(action_key == recent[0][1] for _, action_key in recent):
-            self._loop_detected = True
-            logger.warning(
-                "tok_loop_detected: %d consecutive identical actions: %s",
-                TOK_LOOP_DETECTION_THRESHOLD,
-                recent[0][1],
-            )
-            return True
-        return False
+        return self.loop_detection.observe_tool_action(tool_name, tool_input_key)
 
     def consume_loop_detected(self) -> bool:
-        """Consume and return the loop detection flag."""
-        was_detected = self._loop_detected
-        self._loop_detected = False
-        return was_detected
+        return self.loop_detection.consume_loop_detected()
 
     def mark_file_edited(self, norm_path: str) -> None:
-        """Record that a file was edited on this turn. It will bypass compression for 2 turns."""
-        self._recently_edited_files[norm_path] = self._step_count
+        self.project.mark_file_edited(norm_path, self.telemetry.step_count)
 
     def is_recently_edited(self, norm_path: str) -> bool:
-        """Check if a file was edited within the last 2 turns."""
-        edit_step = self._recently_edited_files.get(norm_path)
-        if edit_step is None:
-            return False
-        return (self._step_count - edit_step) < 2
+        return self.project.is_recently_edited(norm_path, self.telemetry.step_count)
 
     def note_request_policy_stream_recovery(self, turns: int = TOK_REQUEST_POLICY_RECOVERY_WATCH_TURNS) -> None:
-        """Keep natural-first in tool-compatible mode briefly after stream recovery."""
-        self._request_policy_stream_recovery_watch_turns = max(self._request_policy_stream_recovery_watch_turns, turns)
-        self._request_policy_tool_mode_sticky_turns = max(self._request_policy_tool_mode_sticky_turns, turns)
+        self.request_policy.stream_recovery_watch_turns = max(self.request_policy.stream_recovery_watch_turns, turns)
+        self.request_policy.tool_mode_sticky_turns = max(self.request_policy.tool_mode_sticky_turns, turns)
 
     def note_request_policy_tool_mode_recovery(self, turns: int = TOK_REQUEST_POLICY_STICKY_TURNS) -> None:
-        """Keep natural-first in tool-compatible mode briefly after tool-history recovery."""
-        self._request_policy_tool_recovery_watch_turns = max(self._request_policy_tool_recovery_watch_turns, turns)
-        self._request_policy_tool_mode_sticky_turns = max(self._request_policy_tool_mode_sticky_turns, turns)
+        self.request_policy.tool_recovery_watch_turns = max(self.request_policy.tool_recovery_watch_turns, turns)
+        self.request_policy.tool_mode_sticky_turns = max(self.request_policy.tool_mode_sticky_turns, turns)
 
     def _is_edit_tool_event(self, event: NormalizedToolEvent) -> bool:
         """Check if this tool event is an edit-like tool."""
@@ -517,8 +327,7 @@ class RuntimeSession:
         return event.name.lower() in EDIT_LIKE_TOOLS
 
     def _is_unsafe_skeleton_edit(self, event: NormalizedToolEvent) -> bool:
-        """Check if this edit is unsafe because the file was delivered as skeleton."""
-        if not hasattr(self, "_skeleton_delivered_paths"):
+        if not hasattr(self, "project"):
             return False
 
         file_path = self._extract_file_path_from_event(event)
@@ -528,7 +337,7 @@ class RuntimeSession:
         from .repeat_targets import normalize_path_target
 
         norm_path = normalize_path_target(file_path)
-        return norm_path in self._skeleton_delivered_paths
+        return norm_path in self.project.skeleton_delivered_paths
 
     def _extract_file_path_from_event(self, event: NormalizedToolEvent) -> str | None:
         """Extract file path from a normalized tool event."""
@@ -556,8 +365,7 @@ class RuntimeSession:
         return not any(key in args for key in precision_params)
 
     def _clear_skeleton_tracking(self, event: NormalizedToolEvent) -> None:
-        """Clear skeleton tracking for a file when it's read verbatim."""
-        if not hasattr(self, "_skeleton_delivered_paths"):
+        if not hasattr(self, "project"):
             return
 
         file_path = self._extract_file_path_from_event(event)
@@ -567,30 +375,12 @@ class RuntimeSession:
         from .repeat_targets import normalize_path_target
 
         norm_path = normalize_path_target(file_path)
-        if norm_path in self._skeleton_delivered_paths:
-            self._skeleton_delivered_paths.remove(norm_path)
+        if norm_path in self.project.skeleton_delivered_paths:
+            self.project.skeleton_delivered_paths.remove(norm_path)
 
     def record_exact_evidence(self, key: str, digest: str = "") -> dict[str, int]:
-        """Record that exact content for an evidence identity was model-visible."""
-        if not key:
-            return {}
         turn = max(1, self.bridge_memory.turn)
-        entry = self._evidence_safety_ledger.get(key)
-        signals: dict[str, int] = {"evidence_exact_observed": 1}
-        if entry is None:
-            entry = EvidenceLedgerEntry(key=key)
-            self._evidence_safety_ledger[key] = entry
-        if entry.first_exact_turn <= 0:
-            entry.first_exact_turn = turn
-            signals["evidence_first_exact_observed"] = 1
-        if entry.exact_reacquisition_required:
-            entry.exact_reacquisition_required = False
-            entry.exact_reacquisition_satisfied_turn = turn
-            signals["evidence_exact_reacquisition_satisfied"] = 1
-        entry.latest_turn = turn
-        entry.latest_digest = digest or entry.latest_digest
-        entry.latest_form = "exact"
-        self._first_exact_evidence_seen.add(key)
+        signals = self.evidence_safety.record_exact(key, digest=digest, turn=turn)
         self._bump_signals(signals)
         return signals
 
@@ -601,43 +391,21 @@ class RuntimeSession:
         digest: str = "",
         form: EvidenceForm = "summary",
     ) -> dict[str, int]:
-        """Record that only a compact, non-exact representation was model-visible."""
-        if not key:
-            return {}
         turn = max(1, self.bridge_memory.turn)
-        entry = self._evidence_safety_ledger.get(key)
-        if entry is None:
-            entry = EvidenceLedgerEntry(key=key)
-            self._evidence_safety_ledger[key] = entry
-        entry.latest_turn = turn
-        entry.latest_digest = digest or entry.latest_digest
-        entry.latest_form = form
-        signals = {"evidence_non_exact_reference_emitted": 1}
-        signals[f"evidence_non_exact_{form}_emitted"] = 1
+        signals = self.evidence_safety.record_non_exact(key, digest=digest, form=form, turn=turn)
         self._bump_signals(signals)
         return signals
 
     def require_exact_reacquisition(self, key: str) -> dict[str, int]:
-        """Mark an evidence identity as needing exact bytes before edit authority."""
-        if not key:
-            return {}
-        entry = self._evidence_safety_ledger.get(key)
-        if entry is None or entry.latest_is_exact:
-            return {}
-        entry.exact_reacquisition_required = True
-        signals = {
-            "evidence_exact_reacquisition_required": 1,
-            "evidence_compression_blocked_for_safety": 1,
-        }
+        signals = self.evidence_safety.require_exact_reacquisition(key)
         self._bump_signals(signals)
         return signals
 
     def evidence_requires_reacquisition(self, key: str) -> bool:
-        entry = self._evidence_safety_ledger.get(key)
-        return bool(entry and not entry.latest_is_exact)
+        return self.evidence_safety.requires_reacquisition(key)
 
     def evidence_safety_audit_summary(self) -> dict[str, int]:
-        return evidence_safety_summary(self._evidence_safety_ledger)
+        return self.evidence_safety.audit_summary()
 
     def adaptive_keep_turns(self) -> int:
         """Dynamically reduce history depth as the session grows."""
@@ -656,7 +424,7 @@ class RuntimeSession:
         import dataclasses
 
         base = self.model_profile
-        labour = self._current_task_labour_index
+        labour = self.smoothness_state.current_task_labour_index
         if labour >= 40:
             scale = 0.70
         elif labour >= 20:
@@ -752,7 +520,7 @@ class RuntimeSession:
 
     def load_memory(self, model: str = "") -> str:
         mode, policy = self.policy_snapshot(model)
-        projected = self.bridge_memory.wire_state(policy.memory_profiles[mode], markers=self._project_markers)
+        projected = self.bridge_memory.wire_state(policy.memory_profiles[mode], markers=self.project.markers)
         if projected:
             logger.debug("Using structured memory: %s", projected[:100])
             self._bump_signals({"cold_start_structured_memory": 1})
@@ -767,7 +535,7 @@ class RuntimeSession:
     def refresh_hot_memory(self, tok_state: str, model: str = "") -> str:
         mode, policy = self.policy_snapshot(model)
         self._bump_signals(self.bridge_memory.replace_hot_from_wire_state(tok_state))
-        return self.bridge_memory.wire_state(policy.memory_profiles[mode], markers=self._project_markers)
+        return self.bridge_memory.wire_state(policy.memory_profiles[mode], markers=self.project.markers)
 
     def write_memory(self, text: str) -> str:
         """Write memory state and return the written content."""
@@ -880,7 +648,7 @@ class RuntimeSession:
             new_digest = " ".join(snippet.split())[:160]
         for src_path, src_digest in existing_digests.items():
             if new_digest and src_digest and new_digest == src_digest:
-                self._evidence_alias_map[normalized] = src_path
+                self.evidence_safety.alias_map[normalized] = src_path
                 return src_path
         return None
 
@@ -889,22 +657,21 @@ class RuntimeSession:
         return prepared_prompt_tokens_impl(self, payload)
 
     def _trim_repeat_target_state(self) -> None:
-        if len(self._recent_repeat_target_events) > 16:
-            self._recent_repeat_target_events = self._recent_repeat_target_events[-16:]
-        if len(self._hot_summary_records) > 64:
+        if len(self.hot_summary.recent_repeat_target_events) > 16:
+            self.hot_summary.recent_repeat_target_events = self.hot_summary.recent_repeat_target_events[-16:]
+        if len(self.hot_summary.records) > 64:
             ranked = sorted(
-                self._hot_summary_records.items(),
+                self.hot_summary.records.items(),
                 key=lambda item: (
                     item[1].stuck_promotion_turn or item[1].hot_promotion_turn,
                     item[1].last_seen_turn,
                 ),
                 reverse=True,
             )[:64]
-            self._hot_summary_records = dict(ranked)
-        if len(self._observed_tool_result_ids) > 64:
-            # Preserve recency by keeping the last 64 keys
-            keys_to_keep = list(self._observed_tool_result_ids.keys())[-64:]
-            self._observed_tool_result_ids = dict.fromkeys(keys_to_keep)
+            self.hot_summary.records = dict(ranked)
+        if len(self.cache.observed_tool_result_ids) > 64:
+            keys_to_keep = list(self.cache.observed_tool_result_ids.keys())[-64:]
+            self.cache.observed_tool_result_ids = dict.fromkeys(keys_to_keep)
 
     def observe_repeat_target_result(
         self,
@@ -949,7 +716,7 @@ class RuntimeSession:
 
     def is_predictive_cache_hit(self, family: str, logical_target: str) -> bool:
         """Check if a target is in the predictive cache warm set."""
-        return f"{family}|{logical_target}" in self._predictive_cache_warm_keys
+        return f"{family}|{logical_target}" in self.cache.predictive_cache_warm_keys
 
     def update_family_mode(self, model: str, signals: dict[str, int]) -> str:
         """Update the compression mode for a model family."""
@@ -970,18 +737,15 @@ class RuntimeSession:
         """Avoid resending unchanged tool-compatible state on every turn."""
         cleaned = state.strip()
         if not cleaned:
-            self._last_tool_compatible_state = ""
-            self._last_tool_compatible_state_fields = {}
+            self.telemetry.last_tool_compatible_state = ""
+            self.telemetry.last_tool_compatible_state_fields = {}
             return state, {}
         parsed, comparable, has_answer_facts = _prepare_tool_compatible_state(
-            cleaned, self._last_tool_compatible_state_fields
+            cleaned, self.telemetry.last_tool_compatible_state_fields
         )
-        previous_comparable = dict(self._last_tool_compatible_state_fields)
-        # Treat turn-only state as unchanged after the first emission. This keeps
-        # warm tool-compatible turns from repeatedly resending a payload that carries
-        # no reusable facts, files, tests, or answer anchors.
+        previous_comparable = dict(self.telemetry.last_tool_compatible_state_fields)
         if (
-            self._last_tool_compatible_state
+            self.telemetry.last_tool_compatible_state
             and not comparable
             and not previous_comparable
             and parsed
@@ -989,8 +753,8 @@ class RuntimeSession:
         ):
             if force_resend_on_answer_ready:
                 rendered = _build_tok_state(parsed)
-                self._last_tool_compatible_state = rendered
-                self._last_tool_compatible_state_fields = comparable
+                self.telemetry.last_tool_compatible_state = rendered
+                self.telemetry.last_tool_compatible_state_fields = comparable
                 return rendered, {
                     "state_resend_full_turn": 1,
                     "state_resend_reason_answer_ready_forced_full": 1,
@@ -1000,20 +764,19 @@ class RuntimeSession:
         if strategy == "suppress":
             if force_resend_on_answer_ready:
                 rendered = _build_tok_state(parsed)
-                self._last_tool_compatible_state = rendered
-                self._last_tool_compatible_state_fields = comparable
+                self.telemetry.last_tool_compatible_state = rendered
+                self.telemetry.last_tool_compatible_state_fields = comparable
                 return rendered, {
                     "state_resend_full_turn": 1,
                     "state_resend_reason_answer_ready_forced_full": 1,
                 }
             return "", {"state_resend_suppressed_turn": 1}
         rendered = _build_tok_state(parsed)
-        self._last_tool_compatible_state = rendered
-        self._last_tool_compatible_state_fields = comparable
+        self.telemetry.last_tool_compatible_state = rendered
+        self.telemetry.last_tool_compatible_state_fields = comparable
         if strategy == "full":
             return rendered, {"state_resend_full_turn": 1}
-        # strategy == "delta"
-        delta = _delta_tok_state_fields(previous_comparable, parsed, self._suppressed_failure_markers)
+        delta = _delta_tok_state_fields(previous_comparable, parsed, self.telemetry.suppressed_failure_markers)
         if delta and len(delta) < len(rendered):
             return delta, {"state_resend_delta_turn": 1}
         return rendered, {
@@ -1023,33 +786,27 @@ class RuntimeSession:
 
     @property
     def latest_turn_smoothness_score(self) -> int:
-        """Latest turn's smoothness score (0-100)."""
-        return self._latest_turn_smoothness_score
+        return self.smoothness_state.latest_turn_score
 
     @property
     def latest_turn_labour_index(self) -> int:
-        """Latest turn's labour index."""
-        return self._latest_turn_labour_index
+        return self.smoothness_state.latest_turn_labour_index
 
     @property
     def current_task_smoothness_score(self) -> int:
-        """Current task's smoothness score (0-100)."""
-        return self._current_task_smoothness_score
+        return self.smoothness_state.current_task_score
 
     @property
     def current_task_labour_index(self) -> int:
-        """Current task's labour index."""
-        return self._current_task_labour_index
+        return self.smoothness_state.current_task_labour_index
 
     @property
     def current_tok_mode(self) -> TokMode:
-        """Current Tok compression mode."""
-        return self._current_tok_mode
+        return self.smoothness_state.current_tok_mode
 
     @property
     def smoothness_event_counts(self) -> dict[str, int]:
-        """Count of smoothness events by type."""
-        return dict(self._smoothness_event_counts)
+        return dict(self.smoothness_state.event_counts)
 
     def update_smoothness_state(
         self,
@@ -1058,32 +815,580 @@ class RuntimeSession:
         tok_mode: TokMode,
         event_counts: dict[str, int],
     ) -> None:
-        """
-        Update smoothness state after a turn completes.
-
-        Args:
-            turn_score: Smoothness score for the completed turn (0-100)
-            labour_index: Labour index for the completed turn
-            tok_mode: Tok mode selected for the next turn
-            event_counts: Event counts for the completed turn
-
-        """
-        self._latest_turn_smoothness_score = turn_score
-        self._latest_turn_labour_index = labour_index
-        self._current_tok_mode = tok_mode
-
+        self.smoothness_state.latest_turn_score = turn_score
+        self.smoothness_state.latest_turn_labour_index = labour_index
+        self.smoothness_state.current_tok_mode = tok_mode
         for event_type, count in event_counts.items():
-            self._smoothness_event_counts[event_type] = self._smoothness_event_counts.get(event_type, 0) + count
-
-        self._current_task_smoothness_score = turn_score
-        self._current_task_labour_index = labour_index
+            self.smoothness_state.event_counts[event_type] = (
+                self.smoothness_state.event_counts.get(event_type, 0) + count
+            )
+        self.smoothness_state.current_task_score = turn_score
+        self.smoothness_state.current_task_labour_index = labour_index
 
     def _bump_signals(self, signals: dict[str, int]) -> None:
         """Accumulate behavior signals for the next request."""
         for key, value in signals.items():
             self.pending_behavior_signals[key] = self.pending_behavior_signals.get(key, 0) + value
         if signals.get("tok_memory_snap_triggered"):
-            self._tok_memory_snap_triggered = 1
+            self.telemetry.tok_memory_snap_triggered = 1
+
+    # --- Backward-compat properties for migrated bare fields ---
+    @property
+    def result_cache(self) -> dict[str, Any]:
+        return self.cache.result_cache
+
+    @result_cache.setter
+    def result_cache(self, value: dict[str, Any]) -> None:
+        self.cache.result_cache = value
+
+    @property
+    def semantic_hash_cache(self) -> dict[str, str]:
+        return self.cache.semantic_hash_cache
+
+    @semantic_hash_cache.setter
+    def semantic_hash_cache(self, value: dict[str, str]) -> None:
+        self.cache.semantic_hash_cache = value
+
+    @property
+    def _consecutive_fallback_count(self) -> int:
+        return self.fallback.consecutive_count
+
+    @_consecutive_fallback_count.setter
+    def _consecutive_fallback_count(self, value: int) -> None:
+        self.fallback.consecutive_count = value
+
+    @property
+    def _baseline_only(self) -> bool:
+        return self.fallback.baseline_only
+
+    @_baseline_only.setter
+    def _baseline_only(self, value: bool) -> None:
+        self.fallback.baseline_only = value
+
+    @property
+    def _persistence_failures(self) -> int:
+        return self.fallback.persistence_failures
+
+    @_persistence_failures.setter
+    def _persistence_failures(self, value: int) -> None:
+        self.fallback.persistence_failures = value
+
+    @property
+    def _step_count(self) -> int:
+        return self.telemetry.step_count
+
+    @_step_count.setter
+    def _step_count(self, value: int) -> None:
+        self.telemetry.step_count = value
+
+    @property
+    def _token_count(self) -> int:
+        return self.telemetry.token_count
+
+    @_token_count.setter
+    def _token_count(self, value: int) -> None:
+        self.telemetry.token_count = value
+
+    @property
+    def _tool_names_seen(self) -> set[str]:
+        return self.telemetry.tool_names_seen
+
+    @property
+    def _current_tool_density(self) -> float:
+        return self.telemetry.tool_density
+
+    @_current_tool_density.setter
+    def _current_tool_density(self, value: float) -> None:
+        self.telemetry.tool_density = value
+
+    @property
+    def _current_context_char_count(self) -> int:
+        return self.telemetry.context_char_count
+
+    @_current_context_char_count.setter
+    def _current_context_char_count(self, value: int) -> None:
+        self.telemetry.context_char_count = value
+
+    @property
+    def _current_invisible_pressure(self) -> int:
+        return self.telemetry.invisible_pressure
+
+    @_current_invisible_pressure.setter
+    def _current_invisible_pressure(self, value: int) -> None:
+        self.telemetry.invisible_pressure = value
+
+    @property
+    def _active_tools(self) -> list[str]:
+        return self.telemetry.active_tools
+
+    @property
+    def _last_tool_compatible_state(self) -> str:
+        return self.telemetry.last_tool_compatible_state
+
+    @_last_tool_compatible_state.setter
+    def _last_tool_compatible_state(self, value: str) -> None:
+        self.telemetry.last_tool_compatible_state = value
+
+    @property
+    def _last_tool_compatible_state_fields(self) -> dict[str, list[str]]:
+        return self.telemetry.last_tool_compatible_state_fields
+
+    @_last_tool_compatible_state_fields.setter
+    def _last_tool_compatible_state_fields(self, value: dict[str, list[str]]) -> None:
+        self.telemetry.last_tool_compatible_state_fields = value
+
+    @property
+    def _suppressed_failure_markers(self) -> frozenset[str]:
+        return self.telemetry.suppressed_failure_markers
+
+    @_suppressed_failure_markers.setter
+    def _suppressed_failure_markers(self, value: frozenset[str]) -> None:
+        self.telemetry.suppressed_failure_markers = value
+
+    @property
+    def _response_word_samples(self) -> list[int]:
+        return self.telemetry.response_word_samples
+
+    @property
+    def _loop_detection_window(self) -> list[tuple[str, str]]:
+        return self.loop_detection.window
+
+    @property
+    def _loop_detected(self) -> bool:
+        return self.loop_detection.detected
+
+    @_loop_detected.setter
+    def _loop_detected(self, value: bool) -> None:
+        self.loop_detection.detected = value
+
+    @property
+    def _recently_edited_files(self) -> dict[str, int]:
+        return self.project.recently_edited_files
+
+    @property
+    def _latest_turn_smoothness_score(self) -> int:
+        return self.smoothness_state.latest_turn_score
+
+    @_latest_turn_smoothness_score.setter
+    def _latest_turn_smoothness_score(self, value: int) -> None:
+        self.smoothness_state.latest_turn_score = value
+
+    @property
+    def _latest_turn_labour_index(self) -> int:
+        return self.smoothness_state.latest_turn_labour_index
+
+    @_latest_turn_labour_index.setter
+    def _latest_turn_labour_index(self, value: int) -> None:
+        self.smoothness_state.latest_turn_labour_index = value
+
+    @property
+    def _current_task_smoothness_score(self) -> int:
+        return self.smoothness_state.current_task_score
+
+    @_current_task_smoothness_score.setter
+    def _current_task_smoothness_score(self, value: int) -> None:
+        self.smoothness_state.current_task_score = value
+
+    @property
+    def _current_task_labour_index(self) -> int:
+        return self.smoothness_state.current_task_labour_index
+
+    @_current_task_labour_index.setter
+    def _current_task_labour_index(self, value: int) -> None:
+        self.smoothness_state.current_task_labour_index = value
+
+    @property
+    def _current_tok_mode(self) -> TokMode:
+        return self.smoothness_state.current_tok_mode
+
+    @_current_tok_mode.setter
+    def _current_tok_mode(self, value: TokMode) -> None:
+        self.smoothness_state.current_tok_mode = value
+
+    @property
+    def _smoothness_event_counts(self) -> dict[str, int]:
+        return self.smoothness_state.event_counts
+
+    @property
+    def _pending_macro_heal(self) -> str:
+        return self.macro.pending_heal
+
+    @_pending_macro_heal.setter
+    def _pending_macro_heal(self, value: str) -> None:
+        self.macro.pending_heal = value
+
+    @property
+    def _pending_macro_heal_turn(self) -> int:
+        return self.macro.pending_heal_turn
+
+    @_pending_macro_heal_turn.setter
+    def _pending_macro_heal_turn(self, value: int) -> None:
+        self.macro.pending_heal_turn = value
+
+    @property
+    def _load_global_macros(self) -> bool:
+        return self.macro.load_global_macros
+
+    @_load_global_macros.setter
+    def _load_global_macros(self, value: bool) -> None:
+        self.macro.load_global_macros = value
+
+    @property
+    def _recent_repeat_target_events(self) -> list[Any]:
+        return self.hot_summary.recent_repeat_target_events
+
+    @property
+    def _hot_summary_records(self) -> dict[str, Any]:
+        return self.hot_summary.records
+
+    @_hot_summary_records.setter
+    def _hot_summary_records(self, value: dict[str, Any]) -> None:
+        self.hot_summary.records = value
+
+    @property
+    def _hot_hints_loaded_from_disk(self) -> int:
+        return self.hot_summary.hints_loaded_from_disk
+
+    @_hot_hints_loaded_from_disk.setter
+    def _hot_hints_loaded_from_disk(self, value: int) -> None:
+        self.hot_summary.hints_loaded_from_disk = value
+
+    @property
+    def _observed_tool_result_ids(self) -> dict[str, None]:
+        return self.cache.observed_tool_result_ids
+
+    @_observed_tool_result_ids.setter
+    def _observed_tool_result_ids(self, value: dict[str, None]) -> None:
+        self.cache.observed_tool_result_ids = value
+
+    @property
+    def _prepared_prompt_token_cache(self) -> dict[str, int]:
+        return self.cache.prepared_prompt_token_cache
+
+    @property
+    def _predictive_cache_warm_keys(self) -> set[str]:
+        return self.cache.predictive_cache_warm_keys
+
+    @property
+    def _project_markers(self) -> frozenset[str]:
+        return self.project.markers
+
+    @_project_markers.setter
+    def _project_markers(self, value: frozenset[str]) -> None:
+        self.project.markers = value
+
+    @property
+    def _files_read_this_session(self) -> set[str]:
+        return self.project.files_read
+
+    @property
+    def _files_fully_delivered(self) -> dict[str, int]:
+        return self.project.files_fully_delivered
+
+    @property
+    def _skeleton_delivered_paths(self) -> set[str]:
+        return self.project.skeleton_delivered_paths
+
+    @property
+    def _last_user_prompt_text(self) -> str:
+        return self.user_prompt.last_text
+
+    @_last_user_prompt_text.setter
+    def _last_user_prompt_text(self, value: str) -> None:
+        self.user_prompt.last_text = value
+
+    @property
+    def _last_user_prompt_labels(self) -> tuple[str, ...]:
+        return self.user_prompt.last_labels
+
+    @_last_user_prompt_labels.setter
+    def _last_user_prompt_labels(self, value: tuple[str, ...]) -> None:
+        self.user_prompt.last_labels = value
+
+    @property
+    def _request_has_tools(self) -> bool:
+        return self.user_prompt.request_has_tools
+
+    @_request_has_tools.setter
+    def _request_has_tools(self, value: bool) -> None:
+        self.user_prompt.request_has_tools = value
+
+    @property
+    def _runtime_hint_last_turn(self) -> dict[str, int]:
+        return self.user_prompt.hint_last_turn
+
+    @_runtime_hint_last_turn.setter
+    def _runtime_hint_last_turn(self, value: dict[str, int]) -> None:
+        self.user_prompt.hint_last_turn = value
+
+    @property
+    def _fidelity_overrides(self) -> dict[str, int]:
+        return self.fidelity.overrides
+
+    @property
+    def _file_reads_by_turn(self) -> dict[str, int]:
+        return self.fidelity.file_reads_by_turn
+
+    @property
+    def _last_elevated_path(self) -> str:
+        return self.fidelity.last_elevated_path
+
+    @_last_elevated_path.setter
+    def _last_elevated_path(self, value: str) -> None:
+        self.fidelity.last_elevated_path = value
+
+    @property
+    def _tool_required_latch_streak(self) -> int:
+        return self.fidelity.tool_required_latch_streak
+
+    @_tool_required_latch_streak.setter
+    def _tool_required_latch_streak(self, value: int) -> None:
+        self.fidelity.tool_required_latch_streak = value
+
+    # --- Backward-compat properties for old group bare fields ---
+    @property
+    def _answer_ready_repair_pending(self) -> bool:
+        return self.answer_phase.answer_ready_repair_pending
+
+    @_answer_ready_repair_pending.setter
+    def _answer_ready_repair_pending(self, value: bool) -> None:
+        self.answer_phase.answer_ready_repair_pending = value
+
+    @property
+    def _answer_ready_repair_active(self) -> bool:
+        return self.answer_phase.answer_ready_repair_active
+
+    @_answer_ready_repair_active.setter
+    def _answer_ready_repair_active(self, value: bool) -> None:
+        self.answer_phase.answer_ready_repair_active = value
+
+    @property
+    def _late_answer_assembly_repair_pending(self) -> bool:
+        return self.answer_phase.late_assembly_repair_pending
+
+    @_late_answer_assembly_repair_pending.setter
+    def _late_answer_assembly_repair_pending(self, value: bool) -> None:
+        self.answer_phase.late_assembly_repair_pending = value
+
+    @property
+    def _late_answer_assembly_repair_active(self) -> bool:
+        return self.answer_phase.late_assembly_repair_active
+
+    @_late_answer_assembly_repair_active.setter
+    def _late_answer_assembly_repair_active(self, value: bool) -> None:
+        self.answer_phase.late_assembly_repair_active = value
+
+    @property
+    def _late_answer_assembly_repair_mode_pending(self) -> str:
+        return self.answer_phase.late_assembly_repair_mode_pending
+
+    @_late_answer_assembly_repair_mode_pending.setter
+    def _late_answer_assembly_repair_mode_pending(self, value: str) -> None:
+        self.answer_phase.late_assembly_repair_mode_pending = value
+
+    @property
+    def _late_answer_assembly_repair_mode_active(self) -> str:
+        return self.answer_phase.late_assembly_repair_mode_active
+
+    @_late_answer_assembly_repair_mode_active.setter
+    def _late_answer_assembly_repair_mode_active(self, value: str) -> None:
+        self.answer_phase.late_assembly_repair_mode_active = value
+
+    @property
+    def _late_answer_followthrough_pending(self) -> bool:
+        return self.answer_phase.late_followthrough_pending
+
+    @_late_answer_followthrough_pending.setter
+    def _late_answer_followthrough_pending(self, value: bool) -> None:
+        self.answer_phase.late_followthrough_pending = value
+
+    @property
+    def _late_answer_followthrough_active(self) -> bool:
+        return self.answer_phase.late_followthrough_active
+
+    @_late_answer_followthrough_active.setter
+    def _late_answer_followthrough_active(self, value: bool) -> None:
+        self.answer_phase.late_followthrough_active = value
+
+    @property
+    def _answer_phase_expected_this_turn(self) -> bool:
+        return self.answer_phase.answer_phase_expected_this_turn
+
+    @_answer_phase_expected_this_turn.setter
+    def _answer_phase_expected_this_turn(self, value: bool) -> None:
+        self.answer_phase.answer_phase_expected_this_turn = value
+
+    @property
+    def _natural_response_acceptable_this_turn(self) -> bool:
+        return self.answer_phase.natural_response_acceptable_this_turn
+
+    @_natural_response_acceptable_this_turn.setter
+    def _natural_response_acceptable_this_turn(self, value: bool) -> None:
+        self.answer_phase.natural_response_acceptable_this_turn = value
+
+    @property
+    def _stream_recovery_reacquisition_budget(self) -> int:
+        return self.streaming_recovery.reacquisition_budget
+
+    @_stream_recovery_reacquisition_budget.setter
+    def _stream_recovery_reacquisition_budget(self, value: int) -> None:
+        self.streaming_recovery.reacquisition_budget = value
+
+    @property
+    def _stream_recovery_history_floor_budget(self) -> int:
+        return self.streaming_recovery.history_floor_budget
+
+    @_stream_recovery_history_floor_budget.setter
+    def _stream_recovery_history_floor_budget(self, value: int) -> None:
+        self.streaming_recovery.history_floor_budget = value
+
+    @property
+    def _stream_recovery_tool_use_only_signature(self) -> str:
+        return self.streaming_recovery.tool_use_only_signature
+
+    @_stream_recovery_tool_use_only_signature.setter
+    def _stream_recovery_tool_use_only_signature(self, value: str) -> None:
+        self.streaming_recovery.tool_use_only_signature = value
+
+    @property
+    def _stream_recovery_tool_use_only_repeat_count(self) -> int:
+        return self.streaming_recovery.tool_use_only_repeat_count
+
+    @_stream_recovery_tool_use_only_repeat_count.setter
+    def _stream_recovery_tool_use_only_repeat_count(self, value: int) -> None:
+        self.streaming_recovery.tool_use_only_repeat_count = value
+
+    @property
+    def _stream_recovery_cooldown_remaining(self) -> int:
+        return self.streaming_recovery.cooldown_remaining
+
+    @_stream_recovery_cooldown_remaining.setter
+    def _stream_recovery_cooldown_remaining(self, value: int) -> None:
+        self.streaming_recovery.cooldown_remaining = value
+
+    @property
+    def _stream_recovery_cooldown_suppressed(self) -> bool:
+        return self.streaming_recovery.cooldown_suppressed
+
+    @_stream_recovery_cooldown_suppressed.setter
+    def _stream_recovery_cooldown_suppressed(self, value: bool) -> None:
+        self.streaming_recovery.cooldown_suppressed = value
+
+    @property
+    def _stream_read_error_consecutive_count(self) -> int:
+        return self.streaming_recovery.read_error_consecutive_count
+
+    @_stream_read_error_consecutive_count.setter
+    def _stream_read_error_consecutive_count(self, value: int) -> None:
+        self.streaming_recovery.read_error_consecutive_count = value
+
+    @property
+    def _stream_read_error_last_stage(self) -> str:
+        return self.streaming_recovery.read_error_last_stage
+
+    @_stream_read_error_last_stage.setter
+    def _stream_read_error_last_stage(self, value: str) -> None:
+        self.streaming_recovery.read_error_last_stage = value
+
+    @property
+    def _request_policy_tool_mode_sticky_turns(self) -> int:
+        return self.request_policy.tool_mode_sticky_turns
+
+    @_request_policy_tool_mode_sticky_turns.setter
+    def _request_policy_tool_mode_sticky_turns(self, value: int) -> None:
+        self.request_policy.tool_mode_sticky_turns = value
+
+    @property
+    def _request_policy_stream_recovery_watch_turns(self) -> int:
+        return self.request_policy.stream_recovery_watch_turns
+
+    @_request_policy_stream_recovery_watch_turns.setter
+    def _request_policy_stream_recovery_watch_turns(self, value: int) -> None:
+        self.request_policy.stream_recovery_watch_turns = value
+
+    @property
+    def _request_policy_tool_recovery_watch_turns(self) -> int:
+        return self.request_policy.tool_recovery_watch_turns
+
+    @_request_policy_tool_recovery_watch_turns.setter
+    def _request_policy_tool_recovery_watch_turns(self, value: int) -> None:
+        self.request_policy.tool_recovery_watch_turns = value
+
+    @property
+    def _request_policy_last_effective_tool_compatible(self) -> bool:
+        return self.request_policy.last_effective_tool_compatible
+
+    @_request_policy_last_effective_tool_compatible.setter
+    def _request_policy_last_effective_tool_compatible(self, value: bool) -> None:
+        self.request_policy.last_effective_tool_compatible = value
+
+    @property
+    def _evidence_neighborhoods(self) -> dict[str, set[str]]:
+        return self.evidence_safety.neighborhoods
+
+    @property
+    def _evidence_anchor_novelty_keys(self) -> dict[str, set[str]]:
+        return self.evidence_safety.anchor_novelty_keys
+
+    @property
+    def _evidence_alias_map(self) -> dict[str, str]:
+        return self.evidence_safety.alias_map
+
+    @_evidence_alias_map.setter
+    def _evidence_alias_map(self, value: dict[str, str]) -> None:
+        self.evidence_safety.alias_map = value
+
+    @property
+    def _first_exact_evidence_seen(self) -> set[str]:
+        return self.evidence_safety.first_exact_seen
+
+    @property
+    def _evidence_safety_ledger(self) -> dict[str, EvidenceLedgerEntry]:
+        return self.evidence_safety.ledger
+
+    @property
+    def _pending_exact_evidence_keys(self) -> set[str]:
+        return self.evidence_safety.pending_exact_keys
+
+    @property
+    def _last_mode(self) -> str:
+        return self.telemetry.last_mode
+
+    @_last_mode.setter
+    def _last_mode(self, value: str) -> None:
+        self.telemetry.last_mode = value
+
+    @property
+    def _drift_detected_previous_turn(self) -> bool:
+        return self.request_policy.drift_detected_previous_turn
+
+    @_drift_detected_previous_turn.setter
+    def _drift_detected_previous_turn(self, value: bool) -> None:
+        self.request_policy.drift_detected_previous_turn = value
+
+    @property
+    def _invalid_tool_history_recovery_count(self) -> int:
+        return self.fallback.invalid_tool_history_recovery_count
+
+    @_invalid_tool_history_recovery_count.setter
+    def _invalid_tool_history_recovery_count(self, value: int) -> None:
+        self.fallback.invalid_tool_history_recovery_count = value
+
+    @property
+    def _tok_memory_snap_triggered(self) -> int:
+        return self.telemetry.tok_memory_snap_triggered
+
+    @_tok_memory_snap_triggered.setter
+    def _tok_memory_snap_triggered(self, value: int) -> None:
+        self.telemetry.tok_memory_snap_triggered = value
+
+    @property
+    def _is_first_request(self) -> bool:
+        return self.telemetry.is_first_request
+
+    @_is_first_request.setter
+    def _is_first_request(self, value: bool) -> None:
+        self.telemetry.is_first_request = value
 
 
 class UniversalTokRuntime:

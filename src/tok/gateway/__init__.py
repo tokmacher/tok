@@ -809,51 +809,16 @@ class BridgeSession:
         except Exception as exc:
             logger.debug("Capture write error: %s", exc)
 
-    def write_memory(self, text: str) -> str:
-        """Delegate to runtime session."""
-        return self.runtime_session.write_memory(text)
-
-    def policy_snapshot(self, model: str) -> tuple[str, object]:
-        """Delegate to runtime session."""
-        return self.runtime_session.policy_snapshot(model)
-
-    def load_memory(self, model: str = "") -> str:
-        """Delegate to runtime session."""
-        return self.runtime_session.load_memory(model)
-
-    def refresh_hot_memory(self, tok_state: str, model: str = "") -> str:
-        """Delegate to runtime session."""
-        return self.runtime_session.refresh_hot_memory(tok_state, model)
-
-    def update_family_mode(self, model: str, signals: dict[str, int]) -> str:
-        """Delegate to runtime session."""
-        return self.runtime_session.update_family_mode(model, signals)
-
-    def consume_behavior_signals(self) -> dict[str, int]:
-        """Delegate to runtime session."""
-        return self.runtime_session.consume_behavior_signals()
-
-    def _bump_signals(self, signals: dict[str, int]) -> None:
-        """Delegate internal runtime signal updates."""
-        self.runtime_session._bump_signals(signals)
-
-    def _save_bridge_memory(self) -> None:
-        """Delegate bridge memory persistence to runtime session."""
-        self.runtime_session._save_bridge_memory()
-
     @property
     def result_cache(self) -> dict[str, tuple[str, str]]:
-        """Delegate to runtime session."""
         return cast("dict[str, tuple[str, str]]", self.runtime_session.result_cache)
 
     @property
     def bridge_memory(self) -> BridgeMemoryState:
-        """Delegate to runtime session."""
         return self.runtime_session.bridge_memory
 
     @bridge_memory.setter
     def bridge_memory(self, value: BridgeMemoryState) -> None:
-        """Delegate to runtime session."""
         self.runtime_session.bridge_memory = value
 
 

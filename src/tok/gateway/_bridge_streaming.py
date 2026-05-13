@@ -843,7 +843,7 @@ async def buffer_strip_restream_impl(
                 output_saved = 0
                 response_signals = stream_behavior_signals or {}
             if response_signals:
-                session._bump_signals(response_signals)
+                session.runtime_session._bump_signals(response_signals)
 
             session.tracker.record_call(
                 model=sse_model,

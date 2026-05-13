@@ -1122,7 +1122,7 @@ def test_health_endpoint_aggregates_behavior_signals_across_sessions(tmp_path) -
         output_saved=5,
         behavior_signals={"repeat_search": 3, "repeat_target_hot": 1},
     )
-    beta_session._bump_signals({"stream_recovery_started": 1})
+    beta_session.runtime_session._bump_signals({"stream_recovery_started": 1})
     app = create_app(session)
     client = TestClient(app)
 
@@ -1254,7 +1254,7 @@ def test_bridge_session_load_memory(tmp_path) -> None:
 
     session = BridgeSession(memory_dir=memory_dir)
 
-    assert session.load_memory() == ">>> t:3|g:fix_gateway"
+    assert session.runtime_session.load_memory() == ">>> t:3|g:fix_gateway"
 
 
 def test_bridge_session_prefers_structured_memory(tmp_path) -> None:
@@ -1267,8 +1267,8 @@ def test_bridge_session_prefers_structured_memory(tmp_path) -> None:
 
     session = BridgeSession(memory_dir=memory_dir)
 
-    assert session.load_memory(model="claude-sonnet-4") == ">>> t:2|g:fresh_hot"
-    assert session.consume_behavior_signals()["cold_start_structured_memory"] == 1
+    assert session.runtime_session.load_memory(model="claude-sonnet-4") == ">>> t:2|g:fresh_hot"
+    assert session.runtime_session.consume_behavior_signals()["cold_start_structured_memory"] == 1
 
 
 def test_cold_start_request_injects_persisted_memory(tmp_path, monkeypatch) -> None:
@@ -2457,7 +2457,7 @@ def test_gateway_blocks_invalid_tool_history_locally_without_upstream_send(tmp_p
     }
     assert "bridge_preflight_rejected_blocked_local" in caplog.text
     assert "reverted_to_original=True" not in caplog.text
-    signals = session.consume_behavior_signals()
+    signals = session.runtime_session.consume_behavior_signals()
     assert signals["tok_bridge_preflight_failed_local"] == 1
     assert signals["tok_bridge_invalid_tool_history_blocked"] == 1
     assert signals["tok_bridge_strict_invalid_tool_use_block"] == 1
@@ -2635,7 +2635,7 @@ def test_gateway_repeated_invalid_tool_history_recovery_resets_session_state(tmp
         json=original_payload,
     )
     assert first.status_code == 400
-    session.consume_behavior_signals()
+    session.runtime_session.consume_behavior_signals()
 
     second = client.post(
         "/v1/messages",
@@ -2643,7 +2643,7 @@ def test_gateway_repeated_invalid_tool_history_recovery_resets_session_state(tmp
         json=original_payload,
     )
     assert second.status_code == 400
-    signals = session.consume_behavior_signals()
+    signals = session.runtime_session.consume_behavior_signals()
     # After repeated invalid tool history (empty_messages due to stripped invalid blocks),
     # the session state should be reset
     assert (
@@ -3403,12 +3403,12 @@ def test_gateway_prompt_cached_runtime_request_preserves_system_shape_and_prefli
 def test_bridge_session_updates_family_mode_from_pressure() -> None:
     session = BridgeSession()
 
-    session.update_family_mode(
+    session.runtime_session.update_family_mode(
         "google/gemini-2.0-flash",
         {"repeat_file_read": 1, "repeat_search": 1},
     )
 
-    mode, policy = session.policy_snapshot("google/gemini-2.0-flash")
+    mode, policy = session.runtime_session.policy_snapshot("google/gemini-2.0-flash")
     assert mode == "tok-universal"
     assert policy.family.key == "universal:universal"  # type: ignore[union-attr]
 
@@ -3562,10 +3562,10 @@ def test_cold_start_wire_fallback_is_upgraded_to_structured_memory_on_startup(
     # No bridge_memory.tok → structured memory will be empty
 
     session = BridgeSession(memory_dir=memory_dir)
-    result = session.load_memory()
+    result = session.runtime_session.load_memory()
 
     assert result == ">>> t:5|g:debug"
-    signals = session.consume_behavior_signals()
+    signals = session.runtime_session.consume_behavior_signals()
     assert signals.get("cold_start_structured_memory", 0) == 1
 
 
@@ -3579,8 +3579,8 @@ def test_bridge_session_restores_persisted_fallback_memory_on_startup(
     session = BridgeSession(memory_dir=memory_dir)
 
     assert session.runtime_session.fallback_memory == ">>> g:resume_gateway|t:8"
-    assert session.load_memory() == ">>> t:8|g:resume_gateway"
-    signals = session.consume_behavior_signals()
+    assert session.runtime_session.load_memory() == ">>> t:8|g:resume_gateway"
+    signals = session.runtime_session.consume_behavior_signals()
     assert signals.get("cold_start_structured_memory", 0) == 1
 
 
@@ -3593,10 +3593,10 @@ def test_cold_start_structured_memory_signal_fires_when_bridge_memory_present(
     (memory_dir / "bridge_memory.tok").write_text("@mem v:b1 t:3\n@h\n@f goal\n  |> fix_tests|score:3|last:3\n")
 
     session = BridgeSession(memory_dir=memory_dir)
-    result = session.load_memory(model="claude-sonnet-4")
+    result = session.runtime_session.load_memory(model="claude-sonnet-4")
 
     assert "g:fix_tests" in result
-    signals = session.consume_behavior_signals()
+    signals = session.runtime_session.consume_behavior_signals()
     assert signals.get("cold_start_structured_memory", 0) == 1
     assert signals.get("cold_start_wire_fallback", 0) == 0
 

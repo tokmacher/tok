@@ -128,7 +128,7 @@ def _build_response_signals(
         resp_json["content"] = new_content
         total_output_saved = processed.output_saved_tokens
 
-        session_signals = active_session.consume_behavior_signals()
+        session_signals = active_session.runtime_session.consume_behavior_signals()
         if session_signals:
             for k, v in session_signals.items():
                 response_signals[k] = response_signals.get(k, 0) + v
@@ -152,7 +152,7 @@ def _build_response_signals(
             resp_json["content"].append(passthrough_blocks[passthrough_idx])
             passthrough_idx += 1
 
-        session_signals = active_session.consume_behavior_signals()
+        session_signals = active_session.runtime_session.consume_behavior_signals()
         if session_signals:
             for k, v in session_signals.items():
                 response_signals[k] = response_signals.get(k, 0) + v
@@ -269,7 +269,7 @@ def _handle_nonstreaming_failopen(
     try:
         model = resp_json.get("model", "")
         usage = resp_json.get("usage", {})
-        session_signals = active_session.consume_behavior_signals()
+        session_signals = active_session.runtime_session.consume_behavior_signals()
         error_signals: dict[str, int] = {"processing_error": 1, "tok_fallback_activated": 1}
         if session_signals:
             for k, v in session_signals.items():

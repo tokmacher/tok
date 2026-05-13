@@ -673,7 +673,7 @@ def _run_bridge_preflight(
             )
             behavior_signals["tok_fallback_activated"] = 1
             _record_fallback_once(session, request_state)
-            session._bump_signals(behavior_signals)
+            session.runtime_session._bump_signals(behavior_signals)
             return (
                 canonical_body,
                 behavior_signals,
