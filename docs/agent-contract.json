@@ -1,11 +1,11 @@
 {
   "schema": "tok-agent-contract/v0.1",
   "project": "tok",
-  "release_line": "0.1.x",
+  "release_line": "0.2.x",
   "supported_primary_path": "Claude Code through local Tok bridge",
   "implemented_protocol_layers": {
     "tok_trace": "draft_l0_l2_audit_validation",
-    "tok_resolver": "deferred",
+    "tok_resolver": "beta-local",
     "tok_capability": "deferred",
     "tok_session": "deferred",
     "agent_to_agent_exchange": "deferred"
@@ -21,6 +21,8 @@
     "stable universal protocol",
     "agent-to-agent exchange implemented",
     "protocol compliance certified by tok audit",
+    "local resolver beta implies stable protocol",
+    "resolver manifest is a public API",
     "savings measured without tok stats",
     "bridge verified without bridge health output"
   ],

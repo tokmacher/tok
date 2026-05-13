@@ -113,7 +113,11 @@ class AuditContext:
 
 
 def audit_fixture_file(path: Path) -> list[AuditResult]:
-    """Audit a JSON fixture file containing draft trace fixture objects."""
+    """Audit a JSON fixture file containing draft trace fixture objects.
+
+    Expected format: a JSON list of objects shaped like:
+    - {"id": "...", "block": {...}}
+    """
     try:
         fixtures = json.loads(path.read_text())
     except UnicodeDecodeError:
@@ -630,7 +634,23 @@ def _verify_artifact_identity(
 
 
 def _resolve_fixture_uri(uri: object, context: AuditContext) -> Path | None:
-    if not isinstance(uri, str) or context.fixture_dir is None:
+    if not isinstance(uri, str):
+        return None
+    if uri.startswith("tok-resolver://"):
+        try:
+            from tok.resolver.paths import resolver_root
+            from tok.resolver.store import ContentStore, parse_resolver_uri
+        except Exception:
+            return None
+        try:
+            digest = parse_resolver_uri(uri)
+        except ValueError:
+            return None
+        store = ContentStore(resolver_root())
+        path = store._object_path(digest)
+        return path if path.exists() and path.is_file() else None
+
+    if context.fixture_dir is None:
         return None
     fixture_dir = context.fixture_dir.resolve()
     if uri.startswith("tok-fixture://"):

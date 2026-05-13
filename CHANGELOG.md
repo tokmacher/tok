@@ -48,6 +48,17 @@
   preventing stale warm-session eligibility after a session reset.
 - **Spec test alignment**: roadmap doc test updated to match actual 0.1.9 wording.
 
+## 0.2.0 (Unreleased)
+
+- **Local resolver beta**: added `tok resolver` commands plus a local content-addressed
+  store for `tok-resolver://` URIs.
+- **Audit improvements**: `tok audit` can resolve `tok-resolver://` URIs from the local
+  resolver store when available.
+- **Standalone reader**: added a stdlib-only fixture reader
+  (`scripts/tok_trace_reader.py`) that matches `tok audit` results on the fixture packs.
+- **Live trace gate**: live trace blocks now assert they never emit `draft-uncomputed`
+  payload digests.
+
 ### Notes
 
 - This release does not expand Tok's compression behavior. It adds an explicit

@@ -15,7 +15,7 @@
     {
       "name": "tok-protocol",
       "SPDXID": "SPDXRef-tok-protocol",
-      "versionInfo": "0.1.9",
+      "versionInfo": "0.2.0",
       "downloadLocation": "https://github.com/tokmacher/tok",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -25,7 +25,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/tok-protocol@0.1.9"
+          "referenceLocator": "pkg:pypi/tok-protocol@0.2.0"
         }
       ]
     },

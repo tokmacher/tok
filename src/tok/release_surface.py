@@ -62,6 +62,7 @@ SUPPORTED_CLI_ROOT_COMMANDS: tuple[str, ...] = (
     "install",
     "doctor",
     "stats",
+    "resolver",
 )
 
 EXPERIMENTAL_CLI_ROOT_COMMANDS: tuple[str, ...] = (

@@ -33,4 +33,4 @@ def __getattr__(name: str) -> object:
 
 __all__: list[str] = ["Bridge"]
 
-__version__ = "0.1.9"
+__version__ = "0.2.0"

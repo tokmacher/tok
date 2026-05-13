@@ -35,8 +35,8 @@ def test_release_version_is_0_1_9() -> None:
     pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     metadata = tomllib.loads(pyproject.read_text())
 
-    assert tok.__version__ == "0.1.9"
-    assert metadata["project"]["version"] == "0.1.9"
+    assert tok.__version__ == "0.2.0"
+    assert metadata["project"]["version"] == "0.2.0"
 
 
 def test_release_surface_gate_passes_for_supported_bridge_story() -> None:

@@ -673,7 +673,7 @@ class TestContractDriftRegression:
     def test_only_tok_trace_is_not_deferred(self) -> None:
         layers = self._contract["implemented_protocol_layers"]
         non_deferred = [k for k, v in layers.items() if v != "deferred"]
-        assert non_deferred == ["tok_trace"]
+        assert sorted(non_deferred) == ["tok_resolver", "tok_trace"]
 
     def test_agents_md_mentions_deferred_layers(self) -> None:
         agents_content = (ROOT / "AGENTS.md").read_text().lower()

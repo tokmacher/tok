@@ -1,5 +1,5 @@
 """
-Missing invariant tests for Tok 0.1.9.
+Missing invariant tests for Tok 0.2.0.
 
 These tests pin hard invariants that must survive extraction-only refactors.
 Each test fails in a controlled way if its invariant is broken.

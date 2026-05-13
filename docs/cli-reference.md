@@ -85,6 +85,19 @@ tok audit ~/.tok/traces/20260430_061100_live_example.jsonl
 tok audit --latest --json
 ```
 
+## Resolver (beta, local-only)
+
+```bash
+tok resolver --help
+tok resolver init
+tok resolver status
+tok resolver store
+tok resolver get tok-resolver://sha256:... --out ./artifact.bin
+```
+
+The resolver is a local content-addressed store. Tok 0.2.0 does not do remote routing,
+referral following, or any network resolution.
+
 `TOK_TRACE=1` enables opt-in sidecar traces under `~/.tok/traces/`.
 `TOK_TRACE_CAPTURE_ARTIFACTS=1` writes sanitized metadata artifacts next to the trace so
 audit can verify local hashes and byte sizes. This does not capture raw prompts,
@@ -96,6 +109,12 @@ durable client id across bridge restarts; the client bucket hint appears in
 
 `tok audit` is a draft trace-audit feature for inspecting what Tok did. It is not a
 universal protocol compliance certificate.
+
+Fixture file format note:
+
+- `tok audit docs/spec/fixtures/trace_fixtures.json` expects a JSON **list** of fixture
+  objects shaped like `{ "id": "...", "block": { ... } }`.
+- For live traces, `tok audit --latest` reads a JSONL file (one block per line).
 
 Audit output uses three statuses:
 
