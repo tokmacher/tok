@@ -125,8 +125,11 @@ def _scrub_leaked_tok_context_text(text: str) -> tuple[str, int]:
     return cleaned, max(0, len(text) - len(cleaned))
 
 
-def scrub_leaked_tok_context(body: dict[str, Any]) -> dict[str, Any]:
-    """Remove leaked Tok control state from client-provided context blocks."""
+def scrub_leaked_tok_context(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    """Remove leaked Tok control state from client-provided context blocks.
+
+    Returns (body, saved_chars).
+    """
     total_saved_chars = 0
 
     def _clean_value(value: Any) -> Any:
@@ -174,20 +177,22 @@ def scrub_leaked_tok_context(body: dict[str, Any]) -> dict[str, Any]:
             total_saved_chars,
             total_saved_chars // 4,
         )
-    return body
+    return body, total_saved_chars
 
 
 def sift_tool_results(
     body: dict[str, Any],
     *,
     behavior_signals: dict[str, int] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], int]:
     """
     Vector 2: Compress tool_result stdout before forwarding to Anthropic.
 
     Walks all user messages, finds tool_result blocks, and applies content-type
     aware compression to raw stdout. This strips visual noise (ANSI codes,
     human-readable formatting, redundant headers) that wastes tokens.
+
+    Returns (body, saved_chars).
     """
     messages = body.get("messages")
     if not isinstance(messages, list):
@@ -252,7 +257,7 @@ def sift_tool_results(
             total_saved_chars // 4,
         )
 
-    return body
+    return body, total_saved_chars
 
 
 _SIFT_MIN_CHARS = 80
@@ -352,13 +357,15 @@ def _translate_bpe(text: str) -> str:
     return _BLANK_BETWEEN_BLOCKS_RE.sub("\n", result)
 
 
-def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:
+def bpe_translate_request(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
     """
     Apply BPE translation to all Tok-formatted text in a request body.
 
     Walks message text blocks and translates canonical Tok syntax to
     Anthropic-optimized wire format. Only touches text that contains
     Tok markers (>>>, @, |>).
+
+    Returns (body, saved_chars).
     """
     messages = body.get("messages")
     if not isinstance(messages, list):
@@ -409,7 +416,7 @@ def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:
             total_saved_chars // 4,
         )
 
-    return body
+    return body, total_saved_chars
 
 
 def apply_anthropic_optimizations(
@@ -417,21 +424,27 @@ def apply_anthropic_optimizations(
     *,
     is_claude_bridge: bool = True,
     behavior_signals: dict[str, int] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], int]:
     """
     Apply all Anthropic-specific optimizations to a request body.
 
     This is the single entry point called from the gateway bridge handler.
     Only applies when is_claude_bridge is True (i.e., traffic is going to
     api.anthropic.com via the Claude bridge adapter).
+
+    Returns (body, total_saved_chars).
     """
     if not is_claude_bridge:
-        return body
+        return body, 0
+    total_saved_chars = 0
     try:
-        body = scrub_leaked_tok_context(body)
+        body, saved = scrub_leaked_tok_context(body)
+        total_saved_chars += saved
         body = split_system_for_caching(body)
-        body = sift_tool_results(body, behavior_signals=behavior_signals)
-        body = bpe_translate_request(body)
+        body, saved = sift_tool_results(body, behavior_signals=behavior_signals)
+        total_saved_chars += saved
+        body, saved = bpe_translate_request(body)
+        total_saved_chars += saved
     except Exception as exc:
         logger.debug("anthropic_opt: skipping due to error: %s", exc)
-    return body
+    return body, total_saved_chars

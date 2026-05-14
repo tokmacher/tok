@@ -310,6 +310,12 @@ def memory_root() -> Path:
 
 
 def savings_style(pct: float) -> str:
+    """Return rich markup style based on savings percentage.
+
+    Green (>= 40%): Strong savings
+    Yellow (15-39%): Solid savings
+    Red (< 15%): Light or no savings
+    """
     if pct >= 40:
         return "bold green"
     if pct >= 15:
@@ -337,6 +343,13 @@ def render_stats_panel(
 
 
 def savings_verdict(pct: float) -> str:
+    """Return human-readable verdict for savings percentage.
+
+    Strong (>= 40%): Substantial compression benefits.
+    Solid (15-39%): Meaningful compression benefits.
+    Light (0-14%): Minimal but present compression.
+    None (<= 0%): No visible token savings.
+    """
     if pct >= 40:
         return "Strong savings"
     if pct >= 15:
@@ -525,9 +538,9 @@ def savings_headline(
         ts = 0 if tokens_saved is None else tokens_saved
         cost_pct = pct
         return (
-            f"Saved {ts:,} tokens",
-            f"{cost_pct:.1f}% saved",
-            f"{savings_verdict(cost_pct)}" + (" • $0.0000 cost saved" if tokens_saved is not None else ""),
+            f"Saved {ts:,} tokens • $0.0000 saved",
+            f"{pct:.1f}% token savings • {cost_pct:.1f}% cost savings",
+            savings_verdict(cost_pct),
         )
 
     savings_pct_val = summary["savings_pct"]
@@ -540,13 +553,13 @@ def savings_headline(
     cost_pct = float(cost_savings_pct_val) if isinstance(cost_savings_pct_val, int | float | str) else 0.0
     saved_usd = float(cost_saved_val) if isinstance(cost_saved_val, int | float | str) else 0.0
     tokens_saved = int(tokens_saved_val) if isinstance(tokens_saved_val, int | float | str) else 0
-    pct_label = f"{pct:.1f}% saved"
+    pct_label = f"{pct:.1f}% token savings • {cost_pct:.1f}% cost savings"
     if peak_pct > pct + 5:
-        pct_label = f"{pct:.1f}% saved (peak {peak_pct:.0f}%)"
+        pct_label = f"{pct:.1f}% token savings (peak {peak_pct:.0f}%) • {cost_pct:.1f}% cost savings"
     return (
-        f"Saved {tokens_saved:,} tokens",
+        f"Saved {tokens_saved:,} tokens • ${saved_usd:.4f} saved",
         pct_label,
-        f"{savings_verdict(peak_pct)} • ~${saved_usd:.4f} est. cost saved ({cost_pct:.1f}% cost)",
+        savings_verdict(peak_pct),
     )
 
 
@@ -658,6 +671,10 @@ def session_status_rows(
                 (
                     "Cost (with Tok / est. no Tok)",
                     f"${float(summary['actual_cost_usd']) if isinstance(summary.get('actual_cost_usd'), int | float | str) else 0.0:.4f} / ${float(summary['baseline_cost_usd']) if isinstance(summary.get('baseline_cost_usd'), int | float | str) else 0.0:.4f}",
+                ),
+                (
+                    "Cost saved",
+                    f"${float(summary['cost_saved_usd']) if isinstance(summary.get('cost_saved_usd'), int | float | str) else 0.0:.4f} ({float(summary['cost_savings_pct']) if isinstance(summary.get('cost_savings_pct'), int | float | str) else 0.0:.1f}%)",
                 ),
             ]
         )

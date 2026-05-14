@@ -707,7 +707,13 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         }
                     )
                     if not behavior_signals.get("plan_finalization_passthrough", 0):
-                        body = apply_anthropic_optimizations(body, behavior_signals=behavior_signals)
+                        body, gateway_saved_chars = apply_anthropic_optimizations(
+                            body, behavior_signals=behavior_signals
+                        )
+                        gateway_saved_toks = gateway_saved_chars // 4
+                        if gateway_saved_toks > 0:
+                            saved_toks += gateway_saved_toks
+                            compressed = True
                     body_bytes = json.dumps(body).encode()
                     emit_live_trace(
                         active_session,

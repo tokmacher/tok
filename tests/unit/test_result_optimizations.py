@@ -2,6 +2,7 @@ from tok.compression import tok_tool_result, truncate_large_result
 from tok.compression._tool_result_codecs import _compress_file_read, _compress_grep, _detect_tool_content_type
 from tok.gateway._anthropic_optimizations import (
     _sift_stdout,
+    apply_anthropic_optimizations,
     bpe_translate_request,
     scrub_leaked_tok_context,
     sift_tool_results,
@@ -630,7 +631,7 @@ def test_bpe_translate_request_ignores_traceback_with_stray_tok_pipe() -> None:
     )
     body = {"messages": [{"role": "user", "content": leaked_context}]}
 
-    result = bpe_translate_request(body)
+    result, _ = bpe_translate_request(body)
 
     assert result["messages"][0]["content"] == leaked_context
 
@@ -639,7 +640,7 @@ def test_bpe_translate_request_still_translates_tok_wire() -> None:
     tok_text = ">>> t:1|state:active\n@msg role:assistant\n  |> ok"
     body = {"messages": [{"role": "assistant", "content": [{"type": "text", "text": tok_text}]}]}
 
-    result = bpe_translate_request(body)
+    result, _ = bpe_translate_request(body)
     translated = result["messages"][0]["content"][0]["text"]
 
     assert "state:active" in translated
@@ -659,7 +660,7 @@ def test_scrub_leaked_tok_context_removes_gitstatus_pointer_dump() -> None:
     )
     body = {"system": [{"type": "text", "text": leaked}]}
 
-    result = scrub_leaked_tok_context(body)
+    result, _ = scrub_leaked_tok_context(body)
     cleaned = result["system"][0]["text"]
 
     assert "commit 65300c0" in cleaned
@@ -674,7 +675,7 @@ def test_scrub_leaked_tok_context_preserves_legitimate_state_without_leak_signat
     state = ">>> goal:fix_gateway|turns:3\n"
     body = {"system": state}
 
-    result = scrub_leaked_tok_context(body)
+    result, _ = scrub_leaked_tok_context(body)
 
     assert result["system"] == state
 
@@ -683,7 +684,7 @@ def test_scrub_leaked_tok_context_removes_isolated_state_leak() -> None:
     leaked = ">>> t:3027|g:_CLAUDE_SONNET|s:drift_healed|k:answer_file:src/tok/gateway.py\n"
     body = {"system": leaked}
 
-    result = scrub_leaked_tok_context(body)
+    result, _ = scrub_leaked_tok_context(body)
 
     assert ">>>" not in result["system"]
     assert "answer_file" not in result["system"]
@@ -697,7 +698,7 @@ def test_scrub_leaked_tok_context_drops_empty_text_blocks() -> None:
         ]
     }
 
-    result = scrub_leaked_tok_context(body)
+    result, _ = scrub_leaked_tok_context(body)
 
     assert result["system"] == [{"type": "text", "text": "normal instructions"}]
 
@@ -852,6 +853,104 @@ def test_legacy_2tuple_cache_entry_requires_verbatim_first_read() -> None:
         "Legacy 2-tuple entries must require verbatim first read (first_read_complete=False)"
     )
     assert version == 2
+
+
+def test_apply_anthropic_optimizations_siftable_body_returns_nonzero_saved_chars() -> None:
+    """Siftable tool_result content should yield non-zero saved_chars while body shape is preserved."""
+    raw = "\n".join(f"noise line {i}: {'x' * 80}" for i in range(140))
+    body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": raw,
+                    }
+                ],
+            }
+        ]
+    }
+
+    result_body, saved_chars = apply_anthropic_optimizations(body)
+
+    assert saved_chars > 0, "expected non-zero saved_chars from siftable tool_result content"
+    compressed_content = result_body["messages"][0]["content"][0]["content"]
+    assert len(compressed_content) < len(raw), "body shape must be preserved with compressed content"
+
+
+def test_apply_anthropic_optimizations_gateway_saved_chars_reach_tracker_input_saved() -> None:
+    """Gateway saved_chars // 4 added to saved_toks should appear in tracker.record_call input_saved."""
+    from unittest.mock import MagicMock
+
+    from tok.gateway import BridgeSession
+    from tok.gateway._app_factory import _rebuild_and_record_response
+    from tok.runtime.smoothness.models import TokMode, TurnSmoothnessReport
+
+    raw = "\n".join(f"noise line {i}: {'x' * 80}" for i in range(140))
+    body = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": raw}],
+            }
+        ]
+    }
+
+    _, gateway_saved_chars = apply_anthropic_optimizations(body)
+    gateway_saved_toks = gateway_saved_chars // 4
+    assert gateway_saved_toks > 0, "precondition: gateway savings must be non-zero for this test to be meaningful"
+
+    # Simulate the accounting pattern in _app_factory.py: gateway savings added to saved_toks
+    saved_toks = gateway_saved_toks
+    compressed = True
+
+    session = BridgeSession(fail_open=True)
+    mock_report = TurnSmoothnessReport(
+        turn_id="t1",
+        task_id="task1",
+        score=100,
+        labour_index=1,
+        mode=TokMode.FULL_TOK,
+        events=[],
+    )
+    session.smoothness_tracker.start_turn(task_id="task1")
+    session.smoothness_tracker.finish_turn()
+    session.smoothness_tracker.start_turn = MagicMock()
+    session.smoothness_tracker.finish_turn = MagicMock(return_value=mock_report)
+    # Use a pure mock so we can inspect the call without actual I/O.
+    session.tracker.record_call = MagicMock()
+
+    resp_json = {
+        "model": "claude-sonnet-4-5",
+        "usage": {"input_tokens": 200, "output_tokens": 10},
+    }
+
+    _rebuild_and_record_response(
+        resp_json,
+        session,
+        saved_toks=saved_toks,
+        compressed=compressed,
+        tool_breakdown={},
+        response_signals={},
+        prompt_metrics={
+            "baseline_prompt_tokens": 0,
+            "prepared_prompt_tokens": 0,
+            "saved_prompt_tokens": 0,
+            "hot_hint_tokens_added": 0,
+            "reacquisition_tokens_avoided_estimate": 0,
+        },
+        total_output_saved=0,
+        request_policy="full_tok",
+        request_tool_compatible=False,
+    )
+
+    session.tracker.record_call.assert_called_once()
+    call_kwargs = session.tracker.record_call.call_args[1]
+    assert call_kwargs["input_saved"] == gateway_saved_toks, (
+        f"expected input_saved={gateway_saved_toks}, got {call_kwargs['input_saved']}"
+    )
 
 
 def test_legacy_3tuple_cache_entry_requires_verbatim_first_read() -> None:

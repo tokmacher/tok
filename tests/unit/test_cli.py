@@ -353,6 +353,7 @@ class TestCLI:
         assert "Bridge Status" in result.output
         assert "Saved 140 tokens" in result.output
         assert "48.3%" in result.output
+        assert "% cost savings" in result.output
         assert "Session degraded to baseline" in result.output
         assert "Session degraded to baseline" in result.output
         assert "Tok active" in result.output
@@ -592,7 +593,11 @@ class TestCLI:
 
         assert result.exit_code == 0
         assert "Saved 250 tokens" in result.output
-        assert "25.0% saved" in result.output
+        assert "$0.2500 saved" in result.output
+        assert "Saved 250 tokens" in result.output
+        assert "25.0% token" in result.output
+        assert "savings • 25.0% cost savings" in result.output
+        assert "25.0% cost savings" in result.output
         assert "Tok active and helping" in result.output
         assert "Session degraded to baseline" not in result.output
 
@@ -874,7 +879,8 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Current Session" in result.output
         assert "Saved 100 tokens" in result.output
-        assert "40.0% saved" in result.output
+        assert "$0.0005 saved" in result.output
+        assert "40.0% token savings" in result.output
         assert "Session degraded to baseline" in result.output
         assert "Strong savings" in result.output
         assert "Fallbacks" in result.output
@@ -898,10 +904,55 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Lifetime" in result.output
         assert "Saved 1,000 tokens" in result.output
-        assert "33.3% saved" in result.output
+        assert "$0.0100 saved" in result.output
+        assert "33.3% token savings" in result.output
         assert "1,000 tokens" in result.output
         assert "Fallbacks" in result.output
         assert "Baseline-only requests" in result.output
+
+    def test_stats_share_prints_pasteable_savings_summary(self, tmp_path, monkeypatch) -> None:
+        ledger = tmp_path / "global_savings.tok"
+        ledger.write_text(
+            "@lifetime_savings\n"
+            "  sessions: 2\n"
+            "  total_turns: 10\n"
+            "  total_tokens: 2000\n"
+            "  total_cost_usd: 0.020000\n"
+            "  estimated_baseline_cost_usd: 0.070000\n"
+            "  tokens_saved: 1000\n"
+            "  cost_saved_usd: 0.050000\n"
+            "  savings_pct: 33.3\n"
+            "  tok_fallback_activated: 0\n"
+            "  baseline_only_session: 0\n\n"
+            "@per_session_log\n"
+        )
+        tracker = SavingsTracker(
+            savings_file=str(tmp_path / "tok_savings.tok"),
+            ledger_path=ledger,
+        )
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=120,
+            actual_output=30,
+            cache_read=0,
+            cache_write=0,
+            input_saved=80,
+            output_saved=20,
+        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: None)
+
+        result = runner.invoke(app, ["stats", "--share"])
+
+        assert result.exit_code == 0
+        assert "Tok has saved an estimated $0.05 across 3 sessions." in result.output
+        assert "1,100 tokens avoided" in result.output
+        assert "Current session: estimated $" in result.output
+        assert "Bridge not running; session quality:" in result.output
+        assert "baseline-only: no." in result.output
+        assert "Current Session" not in result.output
+        assert "Cost (with Tok / est. no Tok)" not in result.output
 
     def test_stats_last_session_reads_latest_completed_session(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"
@@ -916,7 +967,8 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Last Completed Session" in result.output
         assert "Saved 700 tokens" in result.output
-        assert "41.2% saved" in result.output
+        assert "$0.0150 saved" in result.output
+        assert "41.2% token savings" in result.output
         assert "Strong savings" in result.output
         assert "$0.0150" in result.output
         assert "2026-03-18T10:00:00Z" in result.output
@@ -938,7 +990,8 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Last Completed Session" in result.output
         assert "Saved 700 tokens" in result.output
-        assert "41.2% saved" in result.output
+        assert "$0.0150 saved" in result.output
+        assert "41.2% token savings" in result.output
         assert "2026-03-18T10:00:00Z" in result.output
 
     def test_stats_recent_shows_recent_window_summary(self, tmp_path, monkeypatch) -> None:
@@ -954,7 +1007,8 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Recent Sessions (2)" in result.output
         assert "Saved 800 tokens" in result.output
-        assert "33.3% saved" in result.output
+        assert "$0.0120" in result.output
+        assert "33.3% token savings" in result.output
         assert "Solid savings" in result.output
         assert "800 tokens" in result.output
         assert "2026-03-18T10:00:00Z" in result.output
@@ -972,7 +1026,8 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Since 2026-03-18" in result.output
         assert "Saved 800 tokens" in result.output
-        assert "33.3% saved" in result.output
+        assert "$0.0120" in result.output
+        assert "33.3% token savings" in result.output
         assert "Sessions" in result.output
 
     def test_bridge_stop_prints_compact_session_summary(self, tmp_path, monkeypatch, capsys) -> None:

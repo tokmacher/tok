@@ -72,8 +72,16 @@ def stats(
         bool,
         typer.Option("--detail", help="Show extra detail (bloat attribution, evidence forms, macro activity)"),
     ] = False,
+    share: Annotated[
+        bool,
+        typer.Option("--share", help="Show a concise pasteable savings summary"),
+    ] = False,
 ) -> None:
-    """Show token savings and fallback state."""
+    """Show token savings and fallback state.
+
+    Displays compression metrics for the current session and lifetime statistics.
+    Use --json for machine-readable output, --total for lifetime-only view.
+    """
     from ._release import stats_command
 
     stats_command(
@@ -88,6 +96,7 @@ def stats(
         reset=reset,
         json_output=json_output,
         detail=detail,
+        share=share,
     )
 
 
@@ -132,7 +141,11 @@ def doctor(
         typer.Option("--json", help="Emit machine-readable JSON diagnostics"),
     ] = False,
 ) -> None:
-    """Check bridge health and runtime contract conformance."""
+    """Check bridge health and runtime contract conformance.
+
+    Shows bridge status, active sessions, and diagnostic information.
+    Use --report to generate a shareable environment report.
+    """
     from ._release import doctor_command
 
     doctor_command(verbose=verbose, report=report, json_output=json_output)

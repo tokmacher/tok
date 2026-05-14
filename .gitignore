@@ -101,3 +101,6 @@ Benchmark/assets/
 
 # Agent smoke output
 out/
+
+# Agent-local working plans
+.opencode/

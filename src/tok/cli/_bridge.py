@@ -336,6 +336,18 @@ def bridge_status(*, json_output: bool = False) -> None:
                 "baseline_tokens": int(payload.get("baseline_tokens", 0)),
                 "tokens_saved": int(payload.get("session_tokens_saved", 0)),
                 "savings_pct": float(payload.get("session_savings_pct", 0.0)),
+                "cost_savings_pct": float(
+                    payload.get(
+                        "session_cost_savings_pct",
+                        (
+                            float(payload.get("cost_saved_usd", 0.0))
+                            / float(payload.get("baseline_cost_usd", 0.0))
+                            * 100
+                            if float(payload.get("baseline_cost_usd", 0.0)) > 0
+                            else float(payload.get("session_savings_pct", 0.0))
+                        ),
+                    )
+                ),
                 "actual_cost_usd": float(payload.get("actual_cost_usd", 0.0)),
                 "baseline_cost_usd": float(payload.get("baseline_cost_usd", 0.0)),
                 "cost_saved_usd": float(payload.get("cost_saved_usd", 0.0)),

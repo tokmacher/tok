@@ -177,7 +177,7 @@ class LiveBenchmarkRunner:
                     msg = f"tok-universal benchmark bridge preflight rejected payload (status={status_code})"
                     raise RuntimeError(msg)
 
-                prepared_body = apply_anthropic_optimizations(copy.deepcopy(bridge_payload.body))
+                prepared_body, _ = apply_anthropic_optimizations(copy.deepcopy(bridge_payload.body))
                 request_policy = bridge_payload.request_policy
                 turn_tool_compatible = bridge_payload.request_tool_compatible
                 chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get("messages", [])

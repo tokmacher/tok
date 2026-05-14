@@ -772,6 +772,85 @@ class SavingsTracker:
             if sig_key in ledger and sig_key in entry:
                 ledger[sig_key] = max(0, int(ledger[sig_key]) - int(entry.get(sig_key, 0)))
 
+    def _replace_ledger_totals_from_log_lines(self, ledger: dict[str, Any], log_lines: list[str]) -> None:
+        """Make persisted lifetime totals match the deduped per-session log."""
+        entries_by_session: dict[str, dict[str, int | float | str]] = {}
+        for line in log_lines:
+            entry = self._parse_session_log_core(line)
+            if entry:
+                entries_by_session[str(entry["session_id"])] = entry
+
+        entries = list(entries_by_session.values())
+        core_defaults = self._default_ledger()
+        for key in [
+            "sessions",
+            "total_turns",
+            "total_prompt_tokens",
+            "total_completion_tokens",
+            "total_tokens",
+            "tokens_saved",
+            "net_tokens_saved",
+            "baseline_prompt_tokens",
+            "prepared_prompt_tokens",
+            "saved_prompt_tokens",
+            "hot_hint_tokens_added",
+            "reacquisition_tokens_avoided_estimate",
+            "reacquisition_cost_tokens",
+            FALLBACK_SIGNAL,
+            BASELINE_ONLY_SIGNAL,
+        ]:
+            ledger[key] = core_defaults[key]
+        ledger["total_cost_usd"] = 0.0
+        ledger["estimated_baseline_cost_usd"] = 0.0
+        ledger["cost_saved_usd"] = 0.0
+
+        for entry in entries:
+            ledger["sessions"] = int(ledger["sessions"]) + 1
+            ledger["total_turns"] = int(ledger["total_turns"]) + int(entry["turns"])
+            ledger["total_tokens"] = int(ledger["total_tokens"]) + int(entry["tokens"])
+            ledger["total_prompt_tokens"] = int(ledger["total_prompt_tokens"]) + int(entry["prompt_tokens"])
+            ledger["total_completion_tokens"] = int(ledger["total_completion_tokens"]) + int(entry["completion_tokens"])
+            ledger["tokens_saved"] = int(ledger["tokens_saved"]) + int(entry["tokens_saved"])
+            ledger["reacquisition_cost_tokens"] = int(ledger["reacquisition_cost_tokens"]) + int(
+                entry.get("reacquisition_cost_tokens", 0)
+            )
+            ledger["net_tokens_saved"] = int(ledger["net_tokens_saved"]) + max(
+                0,
+                int(entry["tokens_saved"]) - int(entry.get("reacquisition_cost_tokens", 0)),
+            )
+            ledger["baseline_prompt_tokens"] = int(ledger["baseline_prompt_tokens"]) + int(
+                entry.get("baseline_prompt_tokens", 0)
+            )
+            ledger["prepared_prompt_tokens"] = int(ledger["prepared_prompt_tokens"]) + int(
+                entry.get("prepared_prompt_tokens", 0)
+            )
+            ledger["saved_prompt_tokens"] = int(ledger["saved_prompt_tokens"]) + int(
+                entry.get("saved_prompt_tokens", 0)
+            )
+            ledger["hot_hint_tokens_added"] = int(ledger["hot_hint_tokens_added"]) + int(
+                entry.get("hot_hint_tokens_added", 0)
+            )
+            ledger["reacquisition_tokens_avoided_estimate"] = int(
+                ledger["reacquisition_tokens_avoided_estimate"]
+            ) + int(entry.get("reacquisition_tokens_avoided_estimate", 0))
+            ledger[FALLBACK_SIGNAL] = int(ledger[FALLBACK_SIGNAL]) + int(entry.get(FALLBACK_SIGNAL, 0))
+            ledger[BASELINE_ONLY_SIGNAL] = int(ledger[BASELINE_ONLY_SIGNAL]) + int(entry.get(BASELINE_ONLY_SIGNAL, 0))
+            ledger["total_cost_usd"] = float(ledger["total_cost_usd"]) + float(entry["actual_cost_usd"])
+            ledger["estimated_baseline_cost_usd"] = float(ledger["estimated_baseline_cost_usd"]) + float(
+                entry["baseline_cost_usd"]
+            )
+            ledger["cost_saved_usd"] = float(ledger["cost_saved_usd"]) + float(entry["saved_usd"])
+
+    @staticmethod
+    def _accumulate_header_only_signals(ledger: dict[str, Any], signals: dict[str, int]) -> None:
+        row_backed_keys = {
+            FALLBACK_SIGNAL,
+            BASELINE_ONLY_SIGNAL,
+        }
+        for key, value in signals.items():
+            if key in ledger and key not in row_backed_keys:
+                ledger[key] = int(ledger[key]) + value
+
     def merge_session_to_ledger(self) -> None:
         """On shutdown, merge session stats into the persistent savings ledger."""
         try:
@@ -837,20 +916,20 @@ class SavingsTracker:
             for line in log_lines:
                 prior = self._parse_session_log_core(line)
                 if prior and prior["session_id"] == sess_id:
-                    self._subtract_session_from_ledger(ledger, prior)
                     replaced += 1
                     continue
                 replacement_log_lines.append(line)
             log_lines = replacement_log_lines
 
-            ledger["sessions"] = int(ledger["sessions"]) + 1
-            self._accumulate_ledger(ledger, sess, sess_signals)
+            log_lines.append(new_entry)
+            self._replace_ledger_totals_from_log_lines(ledger, log_lines)
+            if not replaced:
+                self._accumulate_header_only_signals(ledger, sess_signals)
             pct = (
                 ledger["cost_saved_usd"] / ledger["estimated_baseline_cost_usd"] * 100
                 if ledger["estimated_baseline_cost_usd"] > 0
                 else 0.0
             )
-            log_lines.append(new_entry)
             if replaced:
                 logger.info("Replaced %d prior ledger row(s) for session %s", replaced, sess_id)
 

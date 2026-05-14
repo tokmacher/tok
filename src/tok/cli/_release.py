@@ -57,6 +57,11 @@ from ._gate import (
 
 
 def _health_session_summary(health_payload: dict[str, Any]) -> dict[str, Any]:
+    """Build a session summary dict from live bridge health payload.
+
+    Extracts and normalizes session metrics from the running bridge's health
+    endpoint response to display in the CLI stats output.
+    """
     return {
         "actual_tokens": int(health_payload.get("actual_tokens", 0)),
         "baseline_tokens": int(health_payload.get("baseline_tokens", 0)),
@@ -149,6 +154,7 @@ def stats_command(
     reset: bool = False,
     json_output: bool = False,
     detail: bool = False,
+    share: bool = False,
 ) -> None:
     """Show token savings and fallback state."""
     tracker = SavingsTracker()
@@ -229,6 +235,14 @@ def stats_command(
             warnings=warnings,
         )
         print(json.dumps(envelope, indent=2))
+        return
+
+    if share:
+        _render_stats_share(
+            session_summary=session_summary,
+            lifetime_summary=lifetime_summary,
+            bridge_running=pid is not None,
+        )
         return
 
     if not total:
@@ -320,6 +334,10 @@ def stats_command(
                                 "Cost (with Tok / est. no Tok)",
                                 f"${float(last_completed['actual_cost_usd']):.4f} / ${float(last_completed['baseline_cost_usd']):.4f}",
                             ),
+                            (
+                                "Cost saved",
+                                f"${float(last_completed.get('cost_saved_usd', 0.0)):.4f} ({float(last_completed.get('cost_savings_pct', 0.0)):.1f}%)",
+                            ),
                         ],
                         border_style="cyan",
                     )
@@ -379,6 +397,10 @@ def stats_command(
                                 "Cost (with Tok / est. no Tok)",
                                 f"${float(recent_completed['actual_cost_usd']):.4f} / ${float(recent_completed['baseline_cost_usd']):.4f}",
                             ),
+                            (
+                                "Cost saved",
+                                f"${float(recent_completed.get('cost_saved_usd', 0.0)):.4f} ({float(recent_completed.get('cost_savings_pct', 0.0)):.1f}%)",
+                            ),
                         ],
                         border_style="green" if pct >= 15 else "yellow",
                     )
@@ -411,6 +433,10 @@ def stats_command(
                                 "Cost (with Tok / est. no Tok)",
                                 f"${float(since_completed['actual_cost_usd']):.4f} / ${float(since_completed['baseline_cost_usd']):.4f}",
                             ),
+                            (
+                                "Cost saved",
+                                f"${float(since_completed.get('cost_saved_usd', 0.0)):.4f} ({float(since_completed.get('cost_savings_pct', 0.0)):.1f}%)",
+                            ),
                         ],
                         border_style="green" if pct >= 15 else "yellow",
                     )
@@ -437,6 +463,10 @@ def stats_command(
                         (
                             "Cost (with Tok / est. no Tok)",
                             f"${float(lifetime_summary['actual_cost_usd']):.4f} / ${float(lifetime_summary['baseline_cost_usd']):.4f}",
+                        ),
+                        (
+                            "Cost saved",
+                            f"${float(lifetime_summary.get('cost_saved_usd', 0.0)):.4f} ({float(lifetime_summary.get('cost_savings_pct', 0.0)):.1f}%)",
                         ),
                         (
                             "Fallbacks",
@@ -469,6 +499,64 @@ def stats_command(
                     )
         elif not total:
             console.print("[dim]No lifetime data yet[/dim]")
+
+
+def _summary_cost_saved(summary: dict[str, Any] | None) -> float:
+    if not summary:
+        return 0.0
+    return float(summary.get("cost_saved_usd", 0.0))
+
+
+def _summary_cost_pct(summary: dict[str, Any] | None) -> float:
+    if not summary:
+        return 0.0
+    return float(summary.get("cost_savings_pct", summary.get("savings_pct", 0.0)))
+
+
+def _summary_tokens_saved(summary: dict[str, Any] | None) -> int:
+    if not summary:
+        return 0
+    return int(summary.get("tokens_saved", 0))
+
+
+def _render_stats_share(
+    *,
+    session_summary: dict[str, Any] | None,
+    lifetime_summary: dict[str, Any] | None,
+    bridge_running: bool,
+) -> None:
+    """Render a pasteable summary for screenshots, READMEs, and chat."""
+    if not session_summary and not lifetime_summary:
+        console.print("Tok has no savings data yet.")
+        return
+
+    if lifetime_summary:
+        sessions = int(lifetime_summary.get("sessions", 0))
+        console.print(
+            f"Tok has saved an estimated ${_summary_cost_saved(lifetime_summary):.2f} "
+            f"across {sessions:,} session{'s' if sessions != 1 else ''}."
+        )
+        console.print(
+            f"{_summary_tokens_saved(lifetime_summary):,} tokens avoided "
+            f"({float(lifetime_summary.get('savings_pct', 0.0)):.1f}% token reduction, "
+            f"{_summary_cost_pct(lifetime_summary):.1f}% cost reduction)."
+        )
+
+    if session_summary:
+        console.print(
+            f"Current session: estimated ${_summary_cost_saved(session_summary):.4f} saved, "
+            f"{_summary_tokens_saved(session_summary):,} tokens avoided, "
+            f"{_summary_cost_pct(session_summary):.1f}% cost reduction."
+        )
+        fallback_count = int(session_summary.get("fallback_count", 0))
+        baseline_only = bool(session_summary.get("baseline_only", False))
+        quality = str(session_summary.get("session_quality", "clean"))
+        console.print(
+            f"Bridge {'running' if bridge_running else 'not running'}; "
+            f"session quality: {quality}; "
+            f"fallbacks: {fallback_count}; "
+            f"baseline-only: {'yes' if baseline_only else 'no'}."
+        )
 
 
 def _render_stats_detail(*, session_summary: dict[str, Any], health_payload: dict[str, Any]) -> None:

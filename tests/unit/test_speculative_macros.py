@@ -894,6 +894,51 @@ class TestFeatureFlaggedDeltaCompression:
         )
         assert "".join(replayed) == current
 
+    def test_file_reread_diff_enabled_by_default(self) -> None:
+        """TOK_ENABLE_FILE_REREAD_DIFF defaults to True; no monkeypatch needed."""
+        path = "src/tok/bar.py"
+        previous = "\n".join(f"line_{i} = {i}" for i in range(150))
+        current_lines = [f"line_{i} = {i}" for i in range(150)]
+        current_lines[75] = "line_75 = 999"  # one changed line
+        current = "\n".join(current_lines)
+        messages = [
+            _make_tool_result_block("d1", previous),
+            _make_tool_result_block("d2", current),
+        ]
+        id_to_ctx = {
+            "d1": {"name": "Read", "path": path, "args": {"file_path": path}},
+            "d2": {"name": "Read", "path": path, "args": {"file_path": path}},
+        }
+
+        out, breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+
+        second_content = out[1]["content"][0]["content"]
+        assert second_content.startswith(">>> tool:file_reread_diff|"), (
+            "file_reread_diff should fire by default when content changes between reads"
+        )
+        assert breakdown.get("file_reread_diff", 0) > 0
+
+    def test_file_reread_diff_identical_content_no_expansion(self) -> None:
+        """Identical re-reads must never expand — diff guard returns None, content unchanged."""
+        path = "src/tok/baz.py"
+        content = "\n".join(f"x_{i} = {i}" for i in range(120))
+        messages = [
+            _make_tool_result_block("e1", content),
+            _make_tool_result_block("e2", content),
+        ]
+        id_to_ctx = {
+            "e1": {"name": "Read", "path": path, "args": {"file_path": path}},
+            "e2": {"name": "Read", "path": path, "args": {"file_path": path}},
+        }
+
+        out, breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+
+        second_content = out[1]["content"][0]["content"]
+        # Identical content: reread diff returns None (no expansion possible), falls through.
+        # The second read may be compressed by skeleton/summary, but must never be LONGER.
+        assert len(second_content) <= len(content), "Identical re-read must not expand beyond original length"
+        assert breakdown.get("file_reread_diff", 0) == 0, "No file_reread_diff savings expected for identical content"
+
     def test_search_overlap_delta_for_repeated_scope(self, monkeypatch) -> None:
         monkeypatch.setattr(history_pipeline, "TOK_ENABLE_SEARCH_OVERLAP_DELTA", True)
         first = "\n".join(
@@ -926,6 +971,87 @@ class TestFeatureFlaggedDeltaCompression:
         assert "new_matches:1" in second_content
         assert "src/c.py:40:def delta():" in second_content
         assert breakdown.get("search_overlap_delta", 0) > 0
+
+    def test_file_reread_diff_multi_turn_integration(self) -> None:
+        """Integration: proper turn structure, no monkeypatch, all four conditions in one test.
+
+        Proves:
+        1. First read in turn 1 is returned verbatim (baseline established).
+        2. Second read of changed content in turn 2 emits file_reread_diff.
+        3. breakdown["file_reread_diff"] > 0.
+        4. Third read identical to second does not expand content.
+        """
+        path = "src/tok/config.py"
+        first_lines = [f"SETTING_{i} = {i}" for i in range(180)]
+        first_content = "\n".join(first_lines)
+
+        # Changed version: two lines differ (>5% savings guaranteed)
+        second_lines = first_lines[:]
+        second_lines[30] = "SETTING_30 = 9999"
+        second_lines[120] = "SETTING_120 = 8888"
+        second_content = "\n".join(second_lines)
+
+        id_to_ctx = {
+            "r1": {"name": "Read", "path": path, "args": {"file_path": path}},
+            "r2": {"name": "Read", "path": path, "args": {"file_path": path}},
+            "r3": {"name": "Read", "path": path, "args": {"file_path": path}},
+        }
+
+        messages = [
+            # Turn 1 — first read
+            {"role": "user", "content": [{"type": "text", "text": "Show me the config."}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "r1", "name": "Read", "input": {"file_path": path}}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "r1", "content": first_content}],
+            },
+            {"role": "assistant", "content": [{"type": "text", "text": "I can see SETTING_0 through SETTING_179."}]},
+            # Turn 2 — re-read after changes
+            {"role": "user", "content": [{"type": "text", "text": "Config changed, re-read it."}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "r2", "name": "Read", "input": {"file_path": path}}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "r2", "content": second_content}],
+            },
+            {"role": "assistant", "content": [{"type": "text", "text": "SETTING_30 and SETTING_120 changed."}]},
+            # Turn 3 — re-read again, identical to turn 2
+            {"role": "user", "content": [{"type": "text", "text": "Confirm no further changes."}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "r3", "name": "Read", "input": {"file_path": path}}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "r3", "content": second_content}],
+            },
+        ]
+
+        out, breakdown = compress_tool_results(messages, tool_use_id_to_context=id_to_ctx, result_cache=None)
+
+        # 1. First read is preserved verbatim — not a diff, establishes the baseline.
+        first_out = out[2]["content"][0]["content"]
+        assert not first_out.startswith(">>> tool:file_reread_diff|"), (
+            "First read must NOT be a diff — it establishes the baseline"
+        )
+        assert len(first_out) > 0, "First read must have content"
+
+        # 2 & 3. Second read (changed) emits the diff and contributes to breakdown.
+        second_out = out[6]["content"][0]["content"]
+        assert second_out.startswith(">>> tool:file_reread_diff|"), (
+            "Second read of changed file must emit file_reread_diff"
+        )
+        assert "changed_lines:" in second_out
+        assert breakdown.get("file_reread_diff", 0) > 0, "breakdown must record file_reread_diff savings"
+
+        # 4. Third read (identical to second) must not expand.
+        third_out = out[10]["content"][0]["content"]
+        assert len(third_out) <= len(second_content), "Identical re-read must not expand beyond original content length"
 
     def test_stack_repeat_delta_for_top_frame_changes(self, monkeypatch) -> None:
         monkeypatch.setattr(history_pipeline, "TOK_ENABLE_STACK_REPEAT_DELTA", True)
