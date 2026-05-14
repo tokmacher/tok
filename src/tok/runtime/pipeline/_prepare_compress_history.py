@@ -105,7 +105,7 @@ def run_step_7(
             history_skip_reason_out = skip_reason_out
             behavior_signals_out["stream_recovery_history_floor_applied"] = 1
         elif session.bridge_memory.turn < _SHORT_SESSION_THRESHOLD and not (
-            request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(body["messages"])
+            request.supports_tool_pairs and _messages_contain_tool_material(body["messages"])
         ):
             should_skip_history_out = True
             skip_reason_out = "short_session"
@@ -149,7 +149,7 @@ def run_step_7(
         recent_compressed, tok_state_out, suppressed_markers = compress_history(
             body["messages"],
             keep_turns=bridge_keep_turns,
-            profile=bridge_profile if request.adapter_kind == "claude-bridge" else h_profile_out,
+            profile=bridge_profile if request.uses_cut_search else h_profile_out,
             prune_tool_results=True,
         )
         session._suppressed_failure_markers = frozenset(suppressed_markers)

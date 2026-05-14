@@ -96,7 +96,7 @@ def run_step_1(
                 last_user_msg = text_of(cast("Any", m.get("content", "")))
                 break
 
-    is_bridge_adapter = request.adapter_kind in ("claude-bridge", "orchestrator")
+    is_bridge_adapter = request.uses_bridge_profile
 
     return Step1Result(
         body=body,

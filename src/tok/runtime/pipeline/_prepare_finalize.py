@@ -110,7 +110,7 @@ def run_step_9(
             session._pending_exact_evidence_keys.clear()
         session._save_bridge_memory()
 
-    if request and request.adapter_kind in ("claude-bridge", "orchestrator"):
+    if request and request.requires_provider_canonicalization:
         canonical_body, canonicalized, canonical_signals = canonicalize_anthropic_bridge_body(
             body, seen_mutation_pairs=seen_mutation_pairs
         )

@@ -9,8 +9,12 @@ _SYMBOLS = {
     "UniversalTokRuntime": (".core", "UniversalTokRuntime"),
     "PreparedRuntimeRequest": (".types", "PreparedRuntimeRequest"),
     "ProcessedRuntimeResponse": (".types", "ProcessedRuntimeResponse"),
+    "RecoveryAnchor": (".types", "RecoveryAnchor"),
     "RuntimeRequest": (".types", "RuntimeRequest"),
     "RuntimeSession": (".core", "RuntimeSession"),
+    "SafetyDecision": (".types", "SafetyDecision"),
+    "SignalPacket": (".types", "SignalPacket"),
+    "SurfaceMetadata": (".types", "SurfaceMetadata"),
     # Backward-compat exports (0.1.6/0.1.7) kept for non-breaking 0.1.x upgrades.
     "DEFAULT_KEEP_TURNS": (".config", "DEFAULT_KEEP_TURNS"),
     "DEFAULT_MODE": (".config", "DEFAULT_MODE"),

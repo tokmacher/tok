@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 from fastapi import Response
 
 from tok.runtime._request_lifecycle import RequestLifecycle
-from tok.universal_runtime import RuntimeRequest
+from tok.universal_runtime import RuntimeRequest, SurfaceMetadata
 
 from . import _RUNTIME, BridgeSession, logger
 from ._bridge_preflight import _run_bridge_preflight
@@ -151,6 +151,7 @@ def prepare_bridge_payload(
     request_tool_compatible = False
     request_policy = "forced_baseline"
     retry_forbidden = False
+    bridge_surface = SurfaceMetadata.claude_bridge()
 
     original_body = copy.deepcopy(body)
     (
@@ -193,6 +194,8 @@ def prepare_bridge_payload(
         request_model=request_model,
         request_messages=copy.deepcopy(request_messages),
         lifecycle=lifecycle,
+        surface_runtime=bridge_surface.runtime,
+        surface_adapter=bridge_surface.adapter,
     )
     if preflight_response is not None:
         return payload, preflight_response
@@ -231,22 +234,22 @@ def prepare_bridge_payload(
     requested_tool_compatible = request_tool_compatible
     lifecycle = replace(lifecycle, request_preparation=True)
 
-    prepared = _RUNTIME.prepare_request(
-        RuntimeRequest(
-            model=request_model,
-            messages=request_messages,
-            system=provider_safe_original_body.get("system", ""),
-            adapter_kind="claude-bridge",
-            tool_compatible=request_tool_compatible,
-            request_policy=cast(
-                Literal["legacy_tool_compatible", "natural_first", "forced_baseline"],
-                request_policy,
-            ),
-            request_has_tools=bool(provider_safe_original_body.get("tools")),
-            allowed_tools=allowed_tools
-            if allowed_tools
-            else _extract_allowed_tools_from_body(provider_safe_original_body),
+    runtime_request = RuntimeRequest(
+        model=request_model,
+        messages=request_messages,
+        system=provider_safe_original_body.get("system", ""),
+        adapter_kind="claude-bridge",
+        surface=bridge_surface,
+        tool_compatible=request_tool_compatible,
+        request_policy=cast(
+            Literal["legacy_tool_compatible", "natural_first", "forced_baseline"],
+            request_policy,
         ),
+        request_has_tools=bool(provider_safe_original_body.get("tools")),
+        allowed_tools=allowed_tools if allowed_tools else _extract_allowed_tools_from_body(provider_safe_original_body),
+    )
+    prepared = _RUNTIME.prepare_request(
+        runtime_request,
         session.runtime_session,
         result_cache=session.result_cache,
     )
@@ -366,6 +369,8 @@ def prepare_bridge_payload(
         request_model=request_model,
         request_messages=copy.deepcopy(request_messages),
         lifecycle=lifecycle,
+        surface_runtime=prepared.surface.runtime,
+        surface_adapter=prepared.surface.adapter,
     )
     logger.debug(
         "request_lifecycle: %s",

@@ -144,9 +144,9 @@ def _prepare_request_impl(
 
     history_baseline_prompt_tokens = session.prepared_prompt_tokens(ctx.body)
     h_profile: dict[str, Any] = dict(policy.history_profiles[mode])
-    bridge_keep_turns = max(keep_turns, 4) if request.adapter_kind == "claude-bridge" else keep_turns
+    bridge_keep_turns = max(keep_turns, 4) if request.uses_cut_search else keep_turns
     bridge_profile = dict(h_profile)
-    if request.adapter_kind == "claude-bridge":
+    if request.uses_cut_search:
         bridge_profile["_bridge_cut_search"] = 1
 
     if preserve_exact_search_evidence:

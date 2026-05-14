@@ -8,6 +8,57 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+class SurfaceMetadata(BaseModel, frozen=True):
+    """Runtime-neutral identity and wire-shape metadata for an application surface."""
+
+    runtime: str
+    adapter: str
+    input_shape: str = "anthropic_messages"
+    output_shape: str = "anthropic_messages"
+    supports_tool_pairs: bool = False
+    uses_bridge_profile: bool = False
+    requires_provider_canonicalization: bool = False
+    uses_cut_search: bool = False
+    uses_plan_finalization_guard: bool = False
+    uses_first_turn_broad_audit_guard: bool = False
+    model_config = {"extra": "forbid"}
+
+    @classmethod
+    def claude_bridge(cls) -> SurfaceMetadata:
+        return cls(
+            runtime="claude-code",
+            adapter="claude-bridge",
+            supports_tool_pairs=True,
+            uses_bridge_profile=True,
+            requires_provider_canonicalization=True,
+            uses_cut_search=True,
+            uses_plan_finalization_guard=True,
+            uses_first_turn_broad_audit_guard=True,
+        )
+
+    @classmethod
+    def from_adapter_kind(cls, adapter_kind: str) -> SurfaceMetadata:
+        if adapter_kind == "claude-bridge":
+            return cls.claude_bridge()
+        if adapter_kind == "orchestrator":
+            return cls(
+                runtime="tok-orchestrator",
+                adapter=adapter_kind,
+                supports_tool_pairs=True,
+                uses_bridge_profile=True,
+                requires_provider_canonicalization=True,
+            )
+        return cls(runtime=adapter_kind or "unknown", adapter=adapter_kind or "unknown")
+
+    def observability_fields(self) -> dict[str, str]:
+        return {
+            "surface_runtime": self.runtime,
+            "surface_adapter": self.adapter,
+            "surface_input_shape": self.input_shape,
+            "surface_output_shape": self.output_shape,
+        }
+
+
 class EpisodeEntry(BaseModel, frozen=True):
     """
     A single completed reasoning episode.
@@ -125,6 +176,7 @@ class RuntimeRequest(BaseModel, frozen=True):
     messages: list[dict[str, Any]]
     system: str | list[dict[str, Any]] | None = None
     adapter_kind: str = "unknown"
+    surface: SurfaceMetadata | None = None
     tool_compatible: bool = False
     request_policy: Literal["legacy_tool_compatible", "natural_first", "forced_baseline"] = "legacy_tool_compatible"
     request_has_tools: bool = False
@@ -134,11 +186,86 @@ class RuntimeRequest(BaseModel, frozen=True):
     deltas: str | None = None
     model_config = {"extra": "forbid"}
 
+    @property
+    def surface_metadata(self) -> SurfaceMetadata:
+        return self.surface or SurfaceMetadata.from_adapter_kind(self.adapter_kind)
+
+    @property
+    def surface_runtime(self) -> str:
+        return self.surface_metadata.runtime
+
+    @property
+    def surface_adapter(self) -> str:
+        return self.surface_metadata.adapter
+
+    @property
+    def uses_bridge_profile(self) -> bool:
+        return self.surface_metadata.uses_bridge_profile
+
+    @property
+    def supports_tool_pairs(self) -> bool:
+        return self.surface_metadata.supports_tool_pairs
+
+    @property
+    def requires_provider_canonicalization(self) -> bool:
+        return self.surface_metadata.requires_provider_canonicalization
+
+    @property
+    def uses_cut_search(self) -> bool:
+        return self.surface_metadata.uses_cut_search
+
+    @property
+    def uses_plan_finalization_guard(self) -> bool:
+        return self.surface_metadata.uses_plan_finalization_guard
+
+    @property
+    def uses_first_turn_broad_audit_guard(self) -> bool:
+        return self.surface_metadata.uses_first_turn_broad_audit_guard
+
+
+class RecoveryAnchor(BaseModel, frozen=True):
+    """Exact recovery pointer created by the core path before compact output is trusted."""
+
+    kind: str
+    key: str
+    digest: str = ""
+    source: str = ""
+    model_config = {"extra": "forbid"}
+
+
+class SafetyDecision(BaseModel, frozen=True):
+    """Core-owned safety outcome adapters may observe but must not override."""
+
+    allowed: bool = True
+    reason: str = "allowed"
+    fallback_required: bool = False
+    exact_recovery_required: bool = False
+    model_config = {"extra": "forbid"}
+
+
+class SignalPacket(BaseModel, frozen=True):
+    """Normalized packet handed from a surface adapter into Tok's core path."""
+
+    request: RuntimeRequest
+    recovery_anchors: list[RecoveryAnchor] = Field(default_factory=list)
+    safety_decision: SafetyDecision = Field(default_factory=SafetyDecision)
+    observability: dict[str, str | int | bool] = Field(default_factory=dict)
+    model_config = {"extra": "forbid"}
+
+    @classmethod
+    def from_request(cls, request: RuntimeRequest) -> SignalPacket:
+        surface = request.surface_metadata
+        observability: dict[str, str | int | bool] = dict(surface.observability_fields())
+        observability["core_path"] = "runtime.prepare_request"
+        observability["uses_bridge_profile"] = surface.uses_bridge_profile
+        return cls(request=request, observability=observability)
+
 
 class PreparedRuntimeRequest(BaseModel, frozen=True):
     """A prepared runtime request with metadata about the preparation process."""
 
     body: dict[str, Any]
+    surface: SurfaceMetadata = Field(default_factory=lambda: SurfaceMetadata.from_adapter_kind("unknown"))
     compressed: bool
     input_saved_tokens: int
     behavior_signals: dict[str, int]
@@ -186,6 +313,10 @@ __all__ = [
     "NormalizedToolEvent",
     "PreparedRuntimeRequest",
     "ProcessedRuntimeResponse",
+    "RecoveryAnchor",
     "ReplayGateResult",
     "RuntimeRequest",
+    "SafetyDecision",
+    "SignalPacket",
+    "SurfaceMetadata",
 ]

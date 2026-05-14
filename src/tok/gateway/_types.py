@@ -60,6 +60,8 @@ class BridgePreparedPayload:
     request_model: str = ""
     request_messages: list[dict[str, Any]] = field(default_factory=list)
     lifecycle: RequestLifecycle | None = None
+    surface_runtime: str = ""
+    surface_adapter: str = ""
 
 
 __all__ = ["BridgeCapabilityManifest", "BridgePreparedPayload", "build_capability_manifest"]

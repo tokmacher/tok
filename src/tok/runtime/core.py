@@ -172,6 +172,7 @@ from .types import (
     PreparedRuntimeRequest,
     ProcessedRuntimeResponse,
     RuntimeRequest,
+    SignalPacket,
 )
 
 if TYPE_CHECKING:
@@ -1488,12 +1489,26 @@ class UniversalTokRuntime:
         *,
         result_cache: dict[str, Any] | None = None,
     ) -> PreparedRuntimeRequest:
+        return self.prepare_signal_packet(
+            SignalPacket.from_request(request),
+            session,
+            result_cache=result_cache,
+        )
+
+    def prepare_signal_packet(
+        self,
+        packet: SignalPacket,
+        session: RuntimeSession,
+        *,
+        result_cache: dict[str, Any] | None = None,
+    ) -> PreparedRuntimeRequest:
         from ._request_preparation import prepare_request_impl
 
         return prepare_request_impl(
             self,
-            request,
+            packet.request,
             session,
+            signal_packet=packet,
             result_cache=result_cache,
         )
 

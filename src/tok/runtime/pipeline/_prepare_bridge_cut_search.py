@@ -148,10 +148,10 @@ def run_step_7a_bridge_cut_search(
     _first_exact_evidence_seen_for_compression: frozenset[str],
     effective_tool_compatible: bool,
 ) -> Step7aResult:
-    if not (request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(recent)):
+    if not (request.uses_cut_search and _messages_contain_tool_material(recent)):
         return Step7aResult(recent=recent, bridge_search_success=False)
 
-    behavior_signals: dict[str, int] = {}
+    behavior_signals: dict[str, int] = {"bridge_cut_search_guard_passed": 1}
     recent_breakdown: dict[str, int] = {}
     tok_state = ""
 

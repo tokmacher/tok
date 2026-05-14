@@ -97,7 +97,7 @@ from .repeat_targets import (
     search_result_evidence_level,
     stable_digest,
 )
-from .types import PreparedRuntimeRequest, RuntimeRequest
+from .types import PreparedRuntimeRequest, RuntimeRequest, SignalPacket
 
 _RECENT_COMMAND_WINDOW = 10
 _DEFAULT_JIT_HIT_THRESHOLD = 3
@@ -472,9 +472,7 @@ def _resolve_effective_tool_compatible(
 
     # Short session detection: avoid tok overhead for sessions < threshold turns
     current_turn = session.bridge_memory.turn
-    has_bridge_tool_material = request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(
-        request.messages
-    )
+    has_bridge_tool_material = request.supports_tool_pairs and _messages_contain_tool_material(request.messages)
     if current_turn < _SHORT_SESSION_THRESHOLD and not has_bridge_tool_material:
         behavior_signals["short_session_baseline_mode"] = 1
         return False, ["short_session"]
@@ -640,7 +638,7 @@ def _is_first_turn_broad_audit_batch(
     session: RuntimeSession,
     normalized_tool_events: list[Any],
 ) -> bool:
-    if request.adapter_kind != "claude-bridge" or session.bridge_memory.turn > 1:
+    if not request.uses_first_turn_broad_audit_guard or session.bridge_memory.turn > 1:
         return False
     if session._stream_recovery_reacquisition_budget > 0 or session._stream_recovery_history_floor_budget > 0:
         return False
@@ -655,8 +653,11 @@ def prepare_request_impl(
     request: RuntimeRequest,
     session: RuntimeSession,
     *,
+    signal_packet: SignalPacket | None = None,
     result_cache: dict[str, Any] | None = None,
 ) -> PreparedRuntimeRequest:
+    packet = signal_packet or SignalPacket.from_request(request)
+    surface = packet.request.surface_metadata
     session._request_has_tools = bool(request.request_has_tools)
     session._answer_phase_expected_this_turn = False
     session._natural_response_acceptable_this_turn = False
@@ -690,7 +691,7 @@ def prepare_request_impl(
                 last_user_msg = text_of(cast("Any", m.get("content", "")))
                 break
 
-    is_bridge_adapter = request.adapter_kind in ("claude-bridge", "orchestrator")
+    is_bridge_adapter = request.uses_bridge_profile
     if detect_prompt_bloat(body.get("system"), last_user_msg):
         session.pending_behavior_signals["tok_prompt_bloat_detected"] = 1
         if is_bridge_adapter:
@@ -712,8 +713,9 @@ def prepare_request_impl(
                         + suppressed_chars // 4
                     )
             logger.info(
-                "tok_prompt_optimization_skipped_bridge: adapter_kind=%s, skipping clean_system_context",
-                request.adapter_kind,
+                "tok_prompt_optimization_skipped_bridge: surface=%s adapter=%s, skipping clean_system_context",
+                surface.runtime,
+                surface.adapter,
             )
         else:
             current_sys = cast("Any", body.get("system", ""))
@@ -747,7 +749,7 @@ def prepare_request_impl(
 
     translated_messages = translate_request_results(body.get("messages", []))
     body["messages"] = translated_messages
-    plan_finalization_turn = request.adapter_kind == "claude-bridge" and is_plan_or_answer_finalization_turn(
+    plan_finalization_turn = request.uses_plan_finalization_guard and is_plan_or_answer_finalization_turn(
         translated_messages
     )
 
@@ -1233,7 +1235,7 @@ def prepare_request_impl(
             history_skip_reason = skip_reason
             behavior_signals["stream_recovery_history_floor_applied"] = 1
         elif session.bridge_memory.turn < _SHORT_SESSION_THRESHOLD and not (
-            request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(body["messages"])
+            request.supports_tool_pairs and _messages_contain_tool_material(body["messages"])
         ):
             should_skip_history = True
             skip_reason = "short_session"
@@ -1273,14 +1275,14 @@ def prepare_request_impl(
             history_baseline_prompt_tokens = session.prepared_prompt_tokens(body)
             h_profile: dict[str, Any] = dict(policy.history_profiles[mode])
             h_profile["_no_pointers"] = True
-            bridge_keep_turns = max(keep_turns, 4) if request.adapter_kind == "claude-bridge" else keep_turns
+            bridge_keep_turns = max(keep_turns, 4) if request.uses_cut_search else keep_turns
             bridge_profile = dict(h_profile)
-            if request.adapter_kind == "claude-bridge":
+            if request.uses_cut_search:
                 bridge_profile["_bridge_cut_search"] = 1
             recent, tok_state, suppressed_markers = compress_history(
                 body["messages"],
                 keep_turns=bridge_keep_turns,
-                profile=bridge_profile if request.adapter_kind == "claude-bridge" else h_profile,
+                profile=bridge_profile if request.uses_cut_search else h_profile,
                 prune_tool_results=True,
             )
             session._suppressed_failure_markers = frozenset(suppressed_markers)
@@ -1293,7 +1295,7 @@ def prepare_request_impl(
                 session_files_read=session._files_read_this_session,
                 model_profile=session.effective_model_profile,
             )
-            if request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(recent):
+            if request.uses_cut_search and _messages_contain_tool_material(recent):
                 bridge_candidate_had_invalid = False
                 bridge_min_saved_prompt_tokens = max(
                     _BRIDGE_CUT_SEARCH_MIN_SAVED_TOKENS,
@@ -1583,6 +1585,7 @@ def prepare_request_impl(
             _record_structured_answer_expectation(session, body)
             return PreparedRuntimeRequest(
                 body=body,
+                surface=surface,
                 compressed=False,
                 input_saved_tokens=0,
                 type_breakdown={},
@@ -1649,7 +1652,7 @@ def prepare_request_impl(
 
     canonical_body, canonicalized, canonical_signals = (
         canonicalize_anthropic_bridge_body(body, seen_mutation_pairs=seen_mutation_pairs)
-        if request.adapter_kind in ("claude-bridge", "orchestrator")
+        if request.requires_provider_canonicalization
         else (body, False, {})
     )
     if canonicalized:
@@ -1663,6 +1666,7 @@ def prepare_request_impl(
     _record_structured_answer_expectation(session, body)
     return PreparedRuntimeRequest(
         body=body,
+        surface=surface,
         compressed=compressed,
         input_saved_tokens=saved_tokens,
         type_breakdown=type_breakdown,

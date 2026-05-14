@@ -38,6 +38,41 @@ That does not mean every adapter is equally productized today. The Claude bridge
 current product surface; broader cross-surface runtime expansion remains later-stage
 work until parity and trust are stronger.
 
+## Surface Seam
+
+Application surfaces enter the runtime through a small internal seam:
+
+```text
+Surface adapter
+  -> SurfaceMetadata + RuntimeRequest
+  -> SignalPacket
+  -> UniversalTokRuntime.prepare_request / prepare_signal_packet
+  -> PreparedRuntimeRequest
+```
+
+Definitions:
+
+- **Surface**: a concrete external entry point such as Claude Code, an HTTP bridge, a
+  CLI command, Opencode, Pi Code, Codex CLI, or a future agent runtime.
+- **Adapter**: thin code that maps a surface's native request/response shape into or out
+  of Tok's internal request shape.
+- **Signal packet**: the normalized runtime input. It carries the request plus recovery,
+  safety, and observability metadata owned by the core path.
+
+Adapters may identify the runtime, adapter name, input/output shape, and explicit
+capabilities such as tool-pair support, bridge-profile use, provider canonicalization,
+cut-search, first-turn broad-audit guards, and plan-finalization guards. Adapters must
+not own compression, exactness, recovery anchoring, safety gates, fallback/degradation
+policy, or savings accounting. Those remain in `runtime`, `compression`, `resolver`, and
+`stats` so future surfaces cannot bypass the core path by accident.
+
+Claude Code uses `SurfaceMetadata.claude_bridge()`. Future surfaces should create their
+own metadata and then call the same runtime seam; they should not copy bridge-local
+compression or safety logic. A post-0.2 Codex CLI adapter, for example, should start as
+a surface with `runtime="codex-cli"` and Codex-specific input/output shape names, then
+opt into individual capabilities only after fixtures prove the runtime has the same
+wire-shape and safety needs.
+
 ## Primary Bridge Flow
 
 The Claude bridge remains the primary acceptance surface.

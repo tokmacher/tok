@@ -48,9 +48,7 @@ def _resolve_effective_tool_compatible(
         return True, ["legacy_default"]
 
     current_turn = session.bridge_memory.turn
-    has_bridge_tool_material = request.adapter_kind == "claude-bridge" and _messages_contain_tool_material(
-        request.messages
-    )
+    has_bridge_tool_material = request.supports_tool_pairs and _messages_contain_tool_material(request.messages)
     if current_turn < _SHORT_SESSION_THRESHOLD and not has_bridge_tool_material:
         behavior_signals["short_session_baseline_mode"] = 1
         return False, ["short_session"]

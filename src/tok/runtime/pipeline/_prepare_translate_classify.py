@@ -74,7 +74,7 @@ def _is_first_turn_broad_audit_batch(
     session: RuntimeSession,
     normalized_tool_events: list[Any],
 ) -> bool:
-    if request.adapter_kind != "claude-bridge" or session.bridge_memory.turn > 1:
+    if not request.uses_first_turn_broad_audit_guard or session.bridge_memory.turn > 1:
         return False
     if session._stream_recovery_reacquisition_budget > 0 or session._stream_recovery_history_floor_budget > 0:
         return False
@@ -138,7 +138,7 @@ def run_step_3(
 
     translated_messages = translate_request_results(body.get("messages", []))
     body["messages"] = translated_messages
-    plan_finalization_turn = request.adapter_kind == "claude-bridge" and is_plan_or_answer_finalization_turn(
+    plan_finalization_turn = request.uses_plan_finalization_guard and is_plan_or_answer_finalization_turn(
         translated_messages
     )
 
