@@ -877,19 +877,14 @@ class TestCLI:
 
         result = runner.invoke(app, ["stats"])
         assert result.exit_code == 0
-        assert "Current Session" in result.output
-        assert "Saved 100 tokens" in result.output
-        assert "$0.0005 saved" in result.output
-        assert "40.0% token savings" in result.output
-        assert "Session degraded to baseline" in result.output
-        assert "Strong savings" in result.output
-        assert "Fallbacks" in result.output
-        assert "Degraded to baseline" in result.output
-        assert "Cost (with Tok / est. no Tok)" in result.output
-        assert "est. no caching" not in result.output
-        assert "yes" in result.output
-        assert "Session quality" in result.output
-        assert "Degradation reason" in result.output
+        assert "Bridge Status:" in result.output
+        assert "Cost Reduction" in result.output
+        assert "Token Reduction" in result.output
+        assert "% less" in result.output
+        assert "Reliability:" in result.output
+        assert "Status:" in result.output
+        assert "2 fallbacks" in result.output
+        assert "Tokens Saved" in result.output
 
     def test_stats_total_shows_lifetime_fallback_counts(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"
@@ -983,16 +978,16 @@ class TestCLI:
         )
         monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
         monkeypatch.setenv("TOK_SAVINGS_FILE", str(tmp_path / "tok_savings.tok"))
-        # Simulate bridge not running so the health-endpoint fallback does not fire
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: None)
 
         result = runner.invoke(app, ["stats"])
         assert result.exit_code == 0
-        assert "Last Completed Session" in result.output
-        assert "Saved 700 tokens" in result.output
-        assert "$0.0150 saved" in result.output
-        assert "41.2% token savings" in result.output
-        assert "2026-03-18T10:00:00Z" in result.output
+        assert "Bridge Status:" in result.output
+        assert "Cost Reduction" in result.output
+        assert "Token Reduction" in result.output
+        assert "% less" in result.output
+        assert "with Tok vs" in result.output
+        assert "Tokens Saved" in result.output
 
     def test_stats_recent_shows_recent_window_summary(self, tmp_path, monkeypatch) -> None:
         ledger = tmp_path / "global_savings.tok"

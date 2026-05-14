@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import typer
 from rich.table import Table
@@ -56,6 +58,25 @@ from ._gate import (
 )
 
 
+def _friendly_api_label(api_base: str) -> str:
+    try:
+        host = urlsplit(api_base).hostname or ""
+    except ValueError:
+        return api_base
+    normalized = host.lower()
+    if normalized == "api.anthropic.com":
+        return "Anthropic"
+    if normalized.endswith(".anthropic.com"):
+        return "Anthropic"
+    return api_base
+
+
+def _reduction_cell(pct: float, *, calls: int) -> str:
+    if calls <= 0:
+        return "[dim]no calls yet[/dim]"
+    return f"[green]{pct:.1f}% less[/green]"
+
+
 def _health_session_summary(health_payload: dict[str, Any]) -> dict[str, Any]:
     """Build a session summary dict from live bridge health payload.
 
@@ -66,6 +87,10 @@ def _health_session_summary(health_payload: dict[str, Any]) -> dict[str, Any]:
         "actual_tokens": int(health_payload.get("actual_tokens", 0)),
         "baseline_tokens": int(health_payload.get("baseline_tokens", 0)),
         "tokens_saved": int(health_payload.get("session_tokens_saved", 0)),
+        "net_tokens_saved": int(
+            health_payload.get("session_net_tokens_saved", health_payload.get("session_tokens_saved", 0))
+        ),
+        "reacquisition_cost_tokens": int(health_payload.get("reacquisition_cost_tokens", 0)),
         "savings_pct": float(health_payload.get("session_savings_pct", 0.0)),
         "cost_savings_pct": float(
             health_payload.get("session_cost_savings_pct", health_payload.get("session_savings_pct", 0.0))
@@ -112,6 +137,7 @@ def _overlay_health_session_on_lifetime(
         return lifetime_summary
     session_actual = int(health_payload.get("actual_tokens", 0))
     session_saved = int(health_payload.get("session_tokens_saved", 0))
+    session_reacquisition_cost = int(health_payload.get("reacquisition_cost_tokens", 0))
     session_actual_cost = float(health_payload.get("actual_cost_usd", 0.0))
     session_baseline_cost = float(health_payload.get("baseline_cost_usd", 0.0))
     session_cost_saved = float(health_payload.get("cost_saved_usd", session_baseline_cost - session_actual_cost))
@@ -121,6 +147,8 @@ def _overlay_health_session_on_lifetime(
     result["total_turns"] = int(result.get("total_turns", 0)) + int(health_payload.get("calls", 0))
     result["actual_tokens"] = int(result.get("actual_tokens", 0)) + session_actual
     result["tokens_saved"] = int(result.get("tokens_saved", 0)) + session_saved
+    result["reacquisition_cost_tokens"] = int(result.get("reacquisition_cost_tokens", 0)) + session_reacquisition_cost
+    result["net_tokens_saved"] = int(result["tokens_saved"]) - int(result["reacquisition_cost_tokens"])
     result["baseline_tokens"] = int(result["actual_tokens"]) + int(result["tokens_saved"])
     result["actual_cost_usd"] = float(result.get("actual_cost_usd", 0.0)) + session_actual_cost
     result["baseline_cost_usd"] = float(result.get("baseline_cost_usd", 0.0)) + session_baseline_cost
@@ -155,6 +183,8 @@ def stats_command(
     json_output: bool = False,
     detail: bool = False,
     share: bool = False,
+    verbose: bool = False,
+    debug: bool = False,
 ) -> None:
     """Show token savings and fallback state."""
     tracker = SavingsTracker()
@@ -202,6 +232,8 @@ def stats_command(
                 "actual_tokens": int(session_summary.get("actual_tokens", 0)),
                 "baseline_tokens": int(session_summary.get("baseline_tokens", 0)),
                 "tokens_saved": int(session_summary.get("tokens_saved", 0)),
+                "net_tokens_saved": int(session_summary.get("net_tokens_saved", 0)),
+                "reacquisition_cost_tokens": int(session_summary.get("reacquisition_cost_tokens", 0)),
                 "savings_pct": float(session_summary.get("savings_pct", 0.0)),
                 "actual_cost_usd": float(session_summary.get("actual_cost_usd", 0.0)),
                 "baseline_cost_usd": float(session_summary.get("baseline_cost_usd", 0.0)),
@@ -220,6 +252,8 @@ def stats_command(
                 "actual_tokens": int(lifetime_summary.get("actual_tokens", 0)),
                 "baseline_tokens": int(lifetime_summary.get("baseline_tokens", 0)),
                 "tokens_saved": int(lifetime_summary.get("tokens_saved", 0)),
+                "net_tokens_saved": int(lifetime_summary.get("net_tokens_saved", 0)),
+                "reacquisition_cost_tokens": int(lifetime_summary.get("reacquisition_cost_tokens", 0)),
                 "savings_pct": float(lifetime_summary.get("savings_pct", 0.0)),
                 "actual_cost_usd": float(lifetime_summary.get("actual_cost_usd", 0.0)),
                 "baseline_cost_usd": float(lifetime_summary.get("baseline_cost_usd", 0.0)),
@@ -242,6 +276,39 @@ def stats_command(
             session_summary=session_summary,
             lifetime_summary=lifetime_summary,
             bridge_running=pid is not None,
+        )
+        return
+
+    special_mode = (
+        session or total or breakdown or trends or last_session or recent is not None or since is not None or detail
+    )
+    if not special_mode:
+        fallback_count = 0
+        if session_summary:
+            fallback_count = int(session_summary.get("fallback_count", 0))
+        elif health_payload:
+            fallback_count = int(health_payload.get("fallback_count", 0))
+
+        current_mode_str = None
+        if health_payload:
+            current_mode_str = str(health_payload.get("current_mode", ""))
+
+        session_quality_str = None
+        if session_summary:
+            session_quality_str = str(session_summary.get("session_quality", ""))
+        elif health_payload:
+            session_quality_str = str(health_payload.get("session_quality", ""))
+
+        _render_stats_default(
+            session_summary=session_summary,
+            lifetime_summary=lifetime_summary,
+            health_payload=health_payload,
+            bridge_running=pid is not None,
+            mode=current_mode_str,
+            session_quality=session_quality_str,
+            fallback_count=fallback_count,
+            verbose=verbose,
+            debug=debug,
         )
         return
 
@@ -618,6 +685,234 @@ def _render_stats_detail(*, session_summary: dict[str, Any], health_payload: dic
             border_style="blue",
         )
     )
+
+
+def _render_stats_default(
+    *,
+    session_summary: dict[str, Any] | None,
+    lifetime_summary: dict[str, Any] | None,
+    health_payload: dict[str, Any] | None,
+    bridge_running: bool,
+    mode: str | None,
+    session_quality: str | None,
+    fallback_count: int,
+    verbose: bool = False,
+    debug: bool = False,
+) -> None:
+    from ._cli_support import (
+        _redact_api_base,
+        console,
+        interaction_quality_rows,
+        reliability_line,
+        status_sentence,
+    )
+
+    tok_active = (
+        bridge_running and not bool(session_summary.get("baseline_only", False)) if session_summary else bridge_running
+    )
+    baseline_only = bool(session_summary.get("baseline_only", False)) if session_summary else False
+
+    bridge_status = "Inactive"
+    status_color = "red"
+    if bridge_running:
+        if mode == "baseline" or baseline_only:
+            bridge_status = "Active (BASELINE)"
+            status_color = "yellow"
+        else:
+            bridge_status = f"Active ({mode or 'FULL_TOK'})"
+            status_color = "green"
+
+    session_label = session_quality or "unknown"
+    api_label = ""
+    if health_payload:
+        raw_api = health_payload.get("api_base", "")
+        if raw_api:
+            api_label = _friendly_api_label(str(raw_api))
+    if api_label:
+        session_line = f"{session_label} (API: {api_label})"
+    else:
+        session_line = session_label
+
+    console.print(f"Bridge Status: [{status_color}]{bridge_status}[/{status_color}]")
+    console.print(f"Session:       {session_line}")
+
+    divider_len = 64
+    console.print(f"[dim]{'─' * divider_len}[/dim]")
+
+    def _summary_val(summary: dict[str, Any] | None, key: str, default: float | int = 0.0) -> float:
+        if summary is None:
+            return float(default)
+        v = summary.get(key, default)
+        return float(v) if isinstance(v, int | float | str) else float(default)
+
+    def _int_val(summary: dict[str, Any] | None, key: str, default: int = 0) -> int:
+        if summary is None:
+            return int(default)
+        v = summary.get(key, default)
+        return int(v) if isinstance(v, int | float | str) else int(default)
+
+    def _fmt_cost(n: float) -> str:
+        return f"${n:.2f}"
+
+    def _fmt_tokens(n: int) -> str:
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1_000:
+            return f"{n / 1_000:.0f}K"
+        return f"{n:,}"
+
+    def _visible_len(text: str) -> int:
+        return len(re.sub(r"\[/?[^\]]+\]", "", text))
+
+    def _pad_markup(text: str, width: int) -> str:
+        return text + (" " * max(0, width - _visible_len(text)))
+
+    def _row(metric: str, current: str = "", lifetime: str = "") -> str:
+        line = f"  {metric:<21}{_pad_markup(current, 31)}{lifetime}"
+        return line.rstrip()
+
+    def _styled_row(metric: str, current: str = "", lifetime: str = "") -> str:
+        line = f"  [bold cyan]{metric:<21}[/bold cyan]{_pad_markup(current, 31)}{lifetime}"
+        return line.rstrip()
+
+    def _print_baseline_sublines(current: str | None, lifetime: str) -> None:
+        if console.width < 90:
+            if current:
+                console.print(_row("", current))
+            console.print(_row("", f"[dim]lifetime: {lifetime}[/dim]"))
+        else:
+            console.print(_row("", current or "", f"[dim]{lifetime}[/dim]"))
+
+    s_cost_pct = _summary_val(session_summary, "cost_savings_pct", _summary_val(session_summary, "savings_pct", 0.0))
+    s_cost_actual = _summary_val(session_summary, "actual_cost_usd", 0.0)
+    s_cost_baseline = _summary_val(session_summary, "baseline_cost_usd", 0.0)
+    s_token_pct = _summary_val(session_summary, "savings_pct", 0.0)
+    s_token_actual = _int_val(session_summary, "actual_tokens", 0)
+    s_token_baseline = _int_val(session_summary, "baseline_tokens", 0)
+    s_cost_saved = _summary_val(session_summary, "cost_saved_usd", 0.0)
+    s_tokens_saved = _int_val(session_summary, "tokens_saved", 0)
+    s_net_tokens_saved = _int_val(session_summary, "net_tokens_saved", s_tokens_saved)
+    s_reacq_cost_tokens = _int_val(session_summary, "reacquisition_cost_tokens", 0)
+    s_calls = _int_val(session_summary, "calls", 0)
+    if health_payload:
+        health_calls_for_table = int(health_payload.get("calls", 0))
+        if health_calls_for_table > s_calls:
+            s_calls = health_calls_for_table
+
+    l_cost_pct = _summary_val(lifetime_summary, "cost_savings_pct", _summary_val(lifetime_summary, "savings_pct", 0.0))
+    l_cost_actual = _summary_val(lifetime_summary, "actual_cost_usd", 0.0)
+    l_cost_baseline = _summary_val(lifetime_summary, "baseline_cost_usd", 0.0)
+    l_token_pct = _summary_val(lifetime_summary, "savings_pct", 0.0)
+    l_token_actual = _int_val(lifetime_summary, "actual_tokens", 0)
+    l_token_baseline = _int_val(lifetime_summary, "baseline_tokens", 0)
+    l_cost_saved = _summary_val(lifetime_summary, "cost_saved_usd", 0.0)
+    l_tokens_saved = _int_val(lifetime_summary, "tokens_saved", 0)
+    l_net_tokens_saved = _int_val(lifetime_summary, "net_tokens_saved", l_tokens_saved)
+    l_reacq_cost_tokens = _int_val(lifetime_summary, "reacquisition_cost_tokens", 0)
+
+    console.print("[bold cyan]  METRIC               CURRENT SESSION               LIFETIME[/bold cyan]")
+    console.print(f"[dim]{'─' * divider_len}[/dim]")
+
+    console.print(
+        _styled_row(
+            "Cost Reduction", _reduction_cell(s_cost_pct, calls=s_calls), f"[green]{l_cost_pct:.1f}% less[/green]"
+        )
+    )
+    lifetime_cost_subline = f"{_fmt_cost(l_cost_actual)} with Tok vs {_fmt_cost(l_cost_baseline)} base"
+    if s_calls > 0:
+        current_cost_subline = f"[dim]{_fmt_cost(s_cost_actual)} with Tok vs {_fmt_cost(s_cost_baseline)} base[/dim]"
+        _print_baseline_sublines(current_cost_subline, lifetime_cost_subline)
+    else:
+        _print_baseline_sublines(None, lifetime_cost_subline)
+
+    console.print("")
+
+    console.print(
+        _styled_row(
+            "Token Reduction", _reduction_cell(s_token_pct, calls=s_calls), f"[green]{l_token_pct:.1f}% less[/green]"
+        )
+    )
+    lifetime_token_subline = f"{_fmt_tokens(l_token_actual)} with Tok vs {_fmt_tokens(l_token_baseline)} base"
+    if s_calls > 0:
+        current_token_subline = (
+            f"[dim]{_fmt_tokens(s_token_actual)} with Tok vs {_fmt_tokens(s_token_baseline)} base[/dim]"
+        )
+        _print_baseline_sublines(current_token_subline, lifetime_token_subline)
+    else:
+        _print_baseline_sublines(None, lifetime_token_subline)
+
+    console.print("")
+
+    console.print(
+        _styled_row(
+            "Cost Saved", f"[green]{_fmt_cost(s_cost_saved)}[/green]", f"[green]{_fmt_cost(l_cost_saved)}[/green]"
+        )
+    )
+    console.print(
+        _styled_row("Tokens Saved", f"[green]{s_tokens_saved:,}[/green]", f"[green]{l_tokens_saved:,}[/green]")
+    )
+    if s_reacq_cost_tokens > 0 or l_reacq_cost_tokens > 0:
+        console.print(
+            _styled_row(
+                "Net Tokens Saved",
+                f"[green]{s_net_tokens_saved:,}[/green] [dim]after reacq {s_reacq_cost_tokens:,}[/dim]",
+                f"[green]{l_net_tokens_saved:,}[/green] [dim]after reacq {l_reacq_cost_tokens:,}[/dim]",
+            )
+        )
+
+    console.print(f"[dim]{'─' * divider_len}[/dim]")
+
+    smoothness = _int_val(health_payload, "smoothness_score", 0) if health_payload else None
+    calls = _int_val(session_summary, "calls", 0) if session_summary else 0
+    if health_payload:
+        health_calls = int(health_payload.get("calls", 0))
+        if health_calls > calls:
+            calls = health_calls
+
+    rel_line = reliability_line(
+        smoothness_score=smoothness,
+        fallback_count=fallback_count,
+        calls=calls,
+    )
+    console.print(f"Reliability:   {rel_line}")
+
+    status = status_sentence(
+        tok_active=tok_active,
+        baseline_only=baseline_only,
+        fallback_count=fallback_count,
+        calls=calls,
+    )
+    console.print(f"Status:        {status}")
+
+    if verbose and session_summary:
+        deg_reason = str(session_summary.get("last_degradation_reason", "") or "")
+        if deg_reason:
+            console.print(f"\n[yellow]Degradation reason:[/yellow] {deg_reason}")
+        if fallback_count > 0:
+            console.print(f"[yellow]Fallback count:[/yellow] {fallback_count}")
+    if (verbose or debug) and health_payload and health_payload.get("api_base"):
+        console.print(f"[dim]API base:[/dim] {_redact_api_base(str(health_payload.get('api_base', '')))}")
+
+    if debug and health_payload:
+        iq_rows = interaction_quality_rows(
+            smoothness_score=smoothness,
+            labour_index=_int_val(health_payload, "labour_index", 0) if health_payload else None,
+            current_mode=mode,
+            stream_instability_events=_int_val(health_payload, "stream_instability_events", 0)
+            if health_payload
+            else None,
+            thinking_mutation_events=_int_val(health_payload, "thinking_mutation_events", 0)
+            if health_payload
+            else None,
+            repeated_active_file_reads=_int_val(health_payload, "repeated_active_file_reads", 0)
+            if health_payload
+            else None,
+            task_score=_int_val(health_payload, "task_score", 0) if health_payload else None,
+        )
+        if iq_rows:
+            console.print("\n[bold cyan]Interaction Quality (debug)[/bold cyan]")
+            for label, value in iq_rows:
+                console.print(f"  [bold]{label}[/bold]: {value}")
 
 
 def _evidence_form_legend_rows() -> list[tuple[str, str]]:

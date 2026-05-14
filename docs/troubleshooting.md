@@ -91,6 +91,19 @@ tok bridge stop
 tok stats
 ```
 
+When repeated file reads or searches are high, `tok stats` may show `Net Tokens Saved`.
+That line subtracts recorded reacquisition token overhead from gross saved tokens. Cost
+savings remain an estimate against the baseline model pricing and should be read
+alongside the net-token line when `reacq` is high.
+
+### Streaming feels delayed
+
+Tok's normal 0.2.x bridge path buffers the upstream streaming response before it
+re-emits server-sent events to Claude Code. That keeps response rewriting deterministic,
+but long responses can have a higher first-token delay than direct Claude Code. Some
+correctness-first paths, including smoothness/lossless handling and extended-thinking
+requests, may send the upstream request as non-streaming.
+
 If you are doing deeper diagnosis, use:
 
 ```bash

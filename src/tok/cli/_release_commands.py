@@ -76,6 +76,14 @@ def stats(
         bool,
         typer.Option("--share", help="Show a concise pasteable savings summary"),
     ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", help="Show diagnostic details (degradation reason, evidence safety)"),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Show full diagnostic output (interaction quality, all internal metrics)"),
+    ] = False,
 ) -> None:
     """Show token savings and fallback state.
 
@@ -97,6 +105,8 @@ def stats(
         json_output=json_output,
         detail=detail,
         share=share,
+        verbose=verbose,
+        debug=debug,
     )
 
 

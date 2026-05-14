@@ -694,6 +694,40 @@ def session_status_rows(
     return rows
 
 
+def format_savings_line(
+    *,
+    pct: float,
+    actual: float,
+    baseline: float,
+    is_cost: bool,
+) -> tuple[str, str]:
+    pct_str = f"{pct:.1f}% less"
+    if pct >= 40:
+        pct_str = f"[green]{pct_str}[/green]"
+    elif pct >= 15:
+        pct_str = f"[yellow]{pct_str}[/yellow]"
+    else:
+        pct_str = f"[red]{pct_str}[/red]"
+
+    if is_cost:
+        actual_str = f"${actual:.2f}"
+        baseline_str = f"${baseline:.2f}"
+    else:
+        actual_str = _format_token_count(int(actual))
+        baseline_str = _format_token_count(int(baseline))
+
+    subline = f"[dim]{actual_str} with Tok vs {baseline_str} base[/dim]"
+    return pct_str, subline
+
+
+def _format_token_count(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}K"
+    return f"{n:,}"
+
+
 def interaction_quality_rows(
     *,
     smoothness_score: int | None = None,
@@ -727,6 +761,43 @@ def interaction_quality_rows(
     return rows
 
 
+def reliability_line(
+    *,
+    smoothness_score: int | None,
+    fallback_count: int,
+    calls: int,
+) -> str:
+    smoothness_str = "N/A"
+    if smoothness_score is not None:
+        smoothness_str = f"{smoothness_score}/100"
+
+    parts = [f"[bold]{smoothness_str}[/bold] smoothness"]
+    if fallback_count > 0:
+        parts.append(f"[yellow]{fallback_count} fallbacks[/yellow]")
+    else:
+        parts.append("[green]0 fallbacks[/green]")
+    parts.append(f"{calls} calls handled")
+    return " · ".join(parts)
+
+
+def status_sentence(
+    *,
+    tok_active: bool,
+    baseline_only: bool,
+    fallback_count: int,
+    calls: int = 1,
+) -> str:
+    if baseline_only:
+        return "Tok has degraded to baseline for this session."
+    if not tok_active:
+        return "Tok is not active for this session."
+    if calls <= 0:
+        return "Tok is active. No completed calls recorded for this session yet."
+    if fallback_count > 0:
+        return "Tok is active, with fallback events recorded this session."
+    return "Tok is active and handling this session normally."
+
+
 def json_envelope(
     command: str,
     *,
@@ -752,12 +823,14 @@ __all__ = [
     "bridge_url",
     "console",
     "find_pids_on_port",
+    "format_savings_line",
     "get_running_bridge_pid",
     "interaction_quality_rows",
     "json_envelope",
     "memory_root",
     "msg_text",
     "read_pid",
+    "reliability_line",
     "render_stats_panel",
     "runtime_verdict",
     "savings_headline",
@@ -768,6 +841,7 @@ __all__ = [
     "session_signals_text",
     "session_status_rows",
     "status_border",
+    "status_sentence",
     "log_file",
     "pid_file",
     "tok_dir",

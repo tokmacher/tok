@@ -80,7 +80,9 @@ What to check:
 stress test that repeats reads/searches will increase it quickly.
 
 High `reacq` is usually a sign that Tok has useful dedup/delta opportunities, not a
-problem by itself.
+problem by itself. It is still overhead: `tok stats` shows `Net Tokens Saved` when
+recorded reacquisition token cost exists, so compare that line with gross `Tokens Saved`
+for high-reacquisition sessions.
 
 ### Low Or Zero Savings
 

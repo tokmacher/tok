@@ -46,13 +46,22 @@ source ~/.zshrc           # or source ~/.bashrc
 claude
 ```
 
+### Streaming Behavior
+
+Tok preserves streaming response shape for Claude Code, but the normal 0.2.x bridge path
+buffers the upstream stream before re-emitting it. Long responses can therefore show
+more first-token latency than a direct Claude Code session, followed by a quick replay
+of the response. Modes that prioritize correctness, including smoothness/lossless
+handling and extended-thinking requests, may also use the non-streaming upstream path.
+
 ## What Success Looks Like
 
 A healthy bridge session usually has:
 
 - `tok bridge status` showing the bridge running and Tok active
 - `tok doctor` ending with `Recommendation: keep Tok on`
-- `tok stats` showing `With Tok vs without Tok`, saved tokens, and estimated savings
+- `tok stats` showing `With Tok vs without Tok`, saved tokens, estimated savings, and
+  net saved tokens when reacquisition overhead is present
 - `Degraded to baseline` set to `no`
 
 Representative output:
@@ -271,6 +280,10 @@ tok --help
 
 Start here:
 
+- [`docs/agent_quickstart.md`](docs/agent_quickstart.md): cold-clone workflow for
+  autonomous agents
+- [`docs/repository_map.md`](docs/repository_map.md): directory map and public/internal
+  boundaries
 - [`docs/bridge.md`](docs/bridge.md): full bridge tutorial
 - [`docs/cli-reference.md`](docs/cli-reference.md): supported CLI surface
 - [`docs/troubleshooting.md`](docs/troubleshooting.md): fallback, logs, degraded
@@ -295,8 +308,12 @@ For release and architecture context:
 - `docs/`: public product docs plus release/reference docs
 - `docs/spec/`: draft Tok Trace and protocol-layer specification work
 - `docs/maintainers/`: maintainer roadmap and planning notes
+- `docs/plans/`: planning artifacts outside the default onboarding path
+- `ops/`: internal tracking ledgers, not public product docs
 - `examples/`: experimental wrapper/API examples outside the default bridge-first path
 - `tests/`: unit, integration, replay, smoke, and stability coverage
+
+For the fuller directory map, see [`docs/repository_map.md`](docs/repository_map.md).
 
 ## Development
 
@@ -304,6 +321,7 @@ For maintainer validation:
 
 ```bash
 uv sync --frozen --extra dev
+uv run python scripts/run_agent_smoke.py
 uv run pre-commit run --all-files
 uv run ruff check src/tok tests
 uv run mypy src/tok
@@ -317,9 +335,10 @@ For release-specific checks, see
 
 ## Agent Operation
 
-Coding agents should start with [`AGENTS.md`](AGENTS.md). It defines the supported 0.2.0
-surface, verification commands, live-bridge reporting rules, and claims agents must not
-make without evidence.
+Coding agents should start with [`AGENTS.md`](AGENTS.md) and
+[`docs/agent_quickstart.md`](docs/agent_quickstart.md). They define the supported 0.2.0
+surface, verification commands, live-bridge reporting rules, extension boundaries, and
+claims agents must not make without evidence.
 
 ## Privacy
 

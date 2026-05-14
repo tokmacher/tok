@@ -71,7 +71,9 @@ build.targets.sdist.exclude = [
   ".mypy_cache/",
   ".ruff_cache/",
   "dist/",
-  "tmp/"
+  "tmp/",
+  "docs/maintainers/",
+  "docs/audits/"
 ]
 build.targets.wheel.packages = [ "src/tok" ]
 build.targets.wheel.exclude = [

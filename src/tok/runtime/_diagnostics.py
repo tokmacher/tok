@@ -24,6 +24,8 @@ class DiagnosticsSnapshot:
     actual_tokens: int = 0
     baseline_tokens: int = 0
     session_tokens_saved: int = 0
+    session_net_tokens_saved: int = 0
+    reacquisition_cost_tokens: int = 0
     baseline_prompt_tokens: int = 0
     prepared_prompt_tokens: int = 0
     saved_prompt_tokens: int = 0
@@ -97,6 +99,8 @@ class DiagnosticsSnapshot:
             "actual_tokens": self.actual_tokens,
             "baseline_tokens": self.baseline_tokens,
             "session_tokens_saved": self.session_tokens_saved,
+            "session_net_tokens_saved": self.session_net_tokens_saved,
+            "reacquisition_cost_tokens": self.reacquisition_cost_tokens,
             "baseline_prompt_tokens": self.baseline_prompt_tokens,
             "prepared_prompt_tokens": self.prepared_prompt_tokens,
             "saved_prompt_tokens": self.saved_prompt_tokens,
@@ -185,6 +189,8 @@ class DiagnosticsSnapshot:
             actual_tokens=int(session_summary.get("actual_tokens", 0)),
             baseline_tokens=int(session_summary.get("baseline_tokens", 0)),
             session_tokens_saved=int(session_summary.get("tokens_saved", 0)),
+            session_net_tokens_saved=int(session_summary.get("net_tokens_saved", 0)),
+            reacquisition_cost_tokens=int(session_summary.get("reacquisition_cost_tokens", 0)),
             baseline_prompt_tokens=int(session_summary.get("baseline_prompt_tokens", 0)),
             prepared_prompt_tokens=int(session_summary.get("prepared_prompt_tokens", 0)),
             saved_prompt_tokens=int(session_summary.get("saved_prompt_tokens", 0)),
