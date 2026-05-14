@@ -515,7 +515,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             ),
         )
         health_response = snap.to_health_response()
-        health_response["session_count"] = 1 if explicit_session_key else session.aggregate_session_count()
+        if explicit_session_key:
+            health_response["session_count"] = 1
+        else:
+            session_count = session.aggregate_session_count()
+            if session_count > 1:
+                health_response["session_count"] = session_count
         health_response["capability"] = asdict(
             build_capability_manifest(bridge_mode=str(health_response.get("mode", "unknown")))
         )

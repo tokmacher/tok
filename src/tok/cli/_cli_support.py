@@ -24,9 +24,26 @@ logger = logging.getLogger(__name__)
 
 console = Console()
 
-TOK_DIR = Path.home() / ".tok"
+# Defaults are evaluated at import time but can be monkeypatched in tests.
+# The bridge PID/log location should be stable across terminals; use TOK_DIR as
+# the explicit override rather than implicitly depending on TOK_PROJECT_DIR.
+TOK_DIR = Path(os.getenv("TOK_DIR", str(Path.home() / ".tok")))
 PID_FILE = TOK_DIR / "bridge.pid"
 LOG_FILE = TOK_DIR / "bridge.log"
+
+
+def tok_dir() -> Path:
+    return PID_FILE.parent
+
+
+def pid_file() -> Path:
+    return PID_FILE
+
+
+def log_file() -> Path:
+    return LOG_FILE
+
+
 _LOOPBACK_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 RUNTIME_WARNING_SIGNALS = (
@@ -149,16 +166,17 @@ def msg_text(msg: dict[str, Any]) -> str:
 
 def read_pid() -> int | None:
     """Read PID from file and validate it's alive."""
-    if not PID_FILE.exists():
+    path = pid_file()
+    if not path.exists():
         return None
     try:
-        pid = int(PID_FILE.read_text().strip())
+        pid = int(path.read_text().strip())
         os.kill(pid, 0)
         return pid
     except (ValueError, ProcessLookupError, PermissionError):
         pass
     with contextlib.suppress(PermissionError):
-        PID_FILE.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
     return None
 
 
@@ -245,21 +263,43 @@ def find_pids_on_port(port: int) -> list[int]:
 
 def get_running_bridge_pid(port: int) -> int | None:
     """Get the running bridge PID, with fallback to port check and self-healing."""
+    # When TOK_PROJECT_DIR is set but TOK_DIR is not, treat the bridge as
+    # project-scoped for diagnostics and avoid binding to a global pidfile.
+    if os.getenv("TOK_PROJECT_DIR", "").strip() and not os.getenv("TOK_DIR", "").strip():
+        return None
+
     pid = read_pid()
     if pid is not None:
         return pid
 
-    on_port = find_pids_on_port(port)
-    if on_port:
-        pid = on_port[0]
-        try:
-            TOK_DIR.mkdir(parents=True, exist_ok=True)
-            PID_FILE.write_text(str(pid))
-        except Exception:
-            pass
-        return pid
+    # If the pidfile is missing, only trust a port scan if we can confirm the
+    # listener is actually the Tok bridge (via /health). This avoids false
+    # positives from unrelated processes that happen to bind the same port.
+    try:
+        resp = get_bridge_health_response(port, timeout=0.35, attempts=1, backoff_seconds=0)
+    except Exception:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        payload = resp.json()
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("bridge") != "tok":
+        return None
 
-    return None
+    on_port = find_pids_on_port(port)
+    if len(on_port) != 1:
+        return None
+    pid = on_port[0]
+    try:
+        tok_dir().mkdir(parents=True, exist_ok=True)
+        pid_file().write_text(str(pid))
+    except Exception:
+        pass
+    return pid
 
 
 def memory_root() -> Path:
@@ -691,10 +731,7 @@ def json_envelope(
 
 
 __all__ = [
-    "LOG_FILE",
-    "PID_FILE",
     "RUNTIME_WARNING_SIGNALS",
-    "TOK_DIR",
     "bridge_url",
     "console",
     "find_pids_on_port",
@@ -714,4 +751,7 @@ __all__ = [
     "session_signals_text",
     "session_status_rows",
     "status_border",
+    "log_file",
+    "pid_file",
+    "tok_dir",
 ]

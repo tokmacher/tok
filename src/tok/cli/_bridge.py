@@ -34,11 +34,11 @@ from ._cli_support import (
 
 _LOCAL_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
-# Compatibility aliases for tests and monkeypatching. Use `_cli_support_mod.*` for
-# actual reads/writes so tests can patch paths in one place.
-LOG_FILE = _cli_support_mod.LOG_FILE
-PID_FILE = _cli_support_mod.PID_FILE
-TOK_DIR = _cli_support_mod.TOK_DIR
+# Compatibility aliases for tests and monkeypatching. These are intentionally
+# module globals so tests can patch them.
+TOK_DIR = _cli_support_mod.tok_dir()
+PID_FILE = _cli_support_mod.pid_file()
+LOG_FILE = _cli_support_mod.log_file()
 
 
 def _normalized_host(host: str | None) -> str | None:
@@ -128,7 +128,7 @@ def bridge_start(
         console.print(f"[yellow]Bridge already running on :{port} (PID {existing})[/yellow]")
         raise typer.Exit(0)
 
-    _cli_support_mod.TOK_DIR.mkdir(parents=True, exist_ok=True)
+    TOK_DIR.mkdir(parents=True, exist_ok=True)
 
     if foreground:
         from tok.gateway import run_bridge
@@ -167,7 +167,7 @@ def bridge_start(
             env["TOK_API_BASE"] = api_base
         env["TOK_RESET_SESSION"] = "1"
 
-        log_file = open(_cli_support_mod.LOG_FILE, "a")
+        log_file = open(LOG_FILE, "a")
         try:
             proc = subprocess.Popen(
                 [sys.executable, "-m", "tok.gateway"],
@@ -180,13 +180,11 @@ def bridge_start(
             console.print("[red]Failed to start bridge: Python interpreter not found.[/red]")
             raise typer.Exit(1) from None
         except PermissionError:
-            console.print(
-                f"[red]Failed to start bridge: permission denied writing to {_cli_support_mod.LOG_FILE}.[/red]"
-            )
+            console.print(f"[red]Failed to start bridge: permission denied writing to {LOG_FILE}.[/red]")
             raise typer.Exit(1) from None
         finally:
             log_file.close()
-        _cli_support_mod.PID_FILE.write_text(str(proc.pid))
+        PID_FILE.write_text(str(proc.pid))
 
         for _ in range(15):
             time.sleep(0.2)
@@ -194,7 +192,7 @@ def bridge_start(
                 r = get_bridge_health_response(port, timeout=1.0, attempts=1, backoff_seconds=0.0)
                 if r.status_code == 200:
                     console.print(f"[green]Bridge started on :{port} (PID {proc.pid})[/green]")
-                    console.print(f"Logs: {_cli_support_mod.LOG_FILE}")
+                    console.print(f"Logs: {LOG_FILE}")
                     console.print(
                         f"[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:{port} claude`, then "
                         "`tok bridge status` or `tok doctor`.[/dim]"
@@ -207,12 +205,12 @@ def bridge_start(
 
         if proc.poll() is not None:
             console.print(f"[red]Bridge process exited unexpectedly (exit code {proc.returncode}).[/red]")
-            console.print(f"Check logs: {_cli_support_mod.LOG_FILE}")
+            console.print(f"Check logs: {LOG_FILE}")
             console.print("[dim]Try `tok bridge start --foreground` to see the error directly.[/dim]")
             raise typer.Exit(1)
 
         console.print(f"[yellow]Bridge started (PID {proc.pid}) but health check pending.[/yellow]")
-        console.print(f"Logs: {_cli_support_mod.LOG_FILE}")
+        console.print(f"Logs: {LOG_FILE}")
         console.print(
             "[dim]Next step: wait a moment, then run `tok bridge status`; if it still fails, restart with `tok bridge start --foreground`.[/dim]"
         )

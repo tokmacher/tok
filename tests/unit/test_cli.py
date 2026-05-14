@@ -22,6 +22,48 @@ def _normalized_help(text: str) -> str:
 
 
 class TestCLI:
+    def test_bridge_pid_recovers_from_tok_health_when_pidfile_missing(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _cli_support
+
+        pid_file = tmp_path / "bridge.pid"
+        monkeypatch.delenv("TOK_PROJECT_DIR", raising=False)
+        monkeypatch.delenv("TOK_DIR", raising=False)
+        monkeypatch.setattr(_cli_support, "PID_FILE", pid_file)
+        monkeypatch.setattr(_cli_support, "find_pids_on_port", lambda port: [4321])
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return {"status": "ok", "bridge": "tok", "port": 9090}
+
+        monkeypatch.setattr(_cli_support, "get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
+
+        assert _cli_support.get_running_bridge_pid(9090) == 4321
+        assert pid_file.read_text() == "4321"
+
+    def test_bridge_pid_does_not_recover_non_tok_listener(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _cli_support
+
+        pid_file = tmp_path / "bridge.pid"
+        monkeypatch.delenv("TOK_PROJECT_DIR", raising=False)
+        monkeypatch.delenv("TOK_DIR", raising=False)
+        monkeypatch.setattr(_cli_support, "PID_FILE", pid_file)
+        monkeypatch.setattr(_cli_support, "find_pids_on_port", lambda port: [4321])
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return {"status": "ok", "bridge": "other", "port": 9090}
+
+        monkeypatch.setattr(_cli_support, "get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
+
+        assert _cli_support.get_running_bridge_pid(9090) is None
+        assert not pid_file.exists()
+
     def test_help(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
