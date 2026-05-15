@@ -183,7 +183,7 @@ non-responsive session.
 
 ## Runtime Defaults
 
-- default compressed path: `tool-compatible` (`natural_first` request policy)
+- default request policy: `natural_first` (`natural-first` in status output)
 - legacy rollback path: `legacy_tool_compatible`
 - default posture: compress aggressively, shape behavior conservatively
 - conservative fallback: `baseline`

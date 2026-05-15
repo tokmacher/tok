@@ -1,8 +1,8 @@
 # CLI Reference
 
-This page summarizes the supported Tok CLI surface for the first public release. The
-default `tok --help` output intentionally highlights only the bridge-first onboarding
-path plus the `tok stats` command.
+This page summarizes the supported Tok 0.2.x CLI surface. The default `tok --help`
+output intentionally highlights only the bridge-first onboarding path plus the
+`tok stats` command.
 
 If you are new to Tok, start with [`README.md`](../README.md) or the full workflow in
 [`docs/bridge.md`](./bridge.md).

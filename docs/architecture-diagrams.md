@@ -153,14 +153,14 @@ flowchart LR
 ```
 
 The release-surface manifest in `src/tok/release_surface.py` defines which exports and
-commands are supported versus experimental for the first public release.
+commands are supported versus experimental for the 0.2.x release.
 
 ## 8. Adoption Story
 
 ```mermaid
 flowchart TB
     INV["Invisible-first adoption<br/>no Tok authoring required"] --> BR["Bridge wins as primary surface"]
-    BR --> PUB["Narrow bridge-first public release"]
+    BR --> PUB["Narrow bridge-first 0.2.x release"]
     PUB --> RT["Same runtime semantics expand across surfaces"]
     RT --> STD["Explicit Tok language surface<br/>standardizes later"]
     STD --> AA["Human-agent and agent-agent standardization"]

@@ -216,8 +216,10 @@ tok resolver put <file>
 tok resolver get tok-resolver://sha256:...
 ```
 
-The supported mode is the default `tool-compatible` bridge mode. For comparison or
-debugging, you can run without compression:
+The default request policy is `natural-first`, which preserves raw provider-compatible
+traffic when a turn has not yet earned compression and applies Tok only when the bridge
+has enough exact evidence to do so safely. For comparison or debugging, you can run
+without compression:
 
 ```bash
 TOK_MODE=baseline tok bridge start

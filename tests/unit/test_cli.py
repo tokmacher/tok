@@ -1814,6 +1814,64 @@ class TestCLI:
         assert "Recommendation:" in result.output
         assert "investigate degradation before trusting this session" in result.output
 
+    def test_doctor_json_uses_live_health_session_totals(self, monkeypatch, tmp_path) -> None:
+        stale_stats = tmp_path / "stale-doctor-savings.tok"
+        stale_stats.write_text(
+            "@tok_savings\n"
+            "  calls: 1\n"
+            "  actual_tokens: 100\n"
+            "  baseline_tokens: 150\n"
+            "  tokens_saved: 50\n"
+            "  cost_saved_usd: 0.001000\n"
+            "  savings_pct: 33.3\n"
+        )
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(stale_stats))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: 321)
+        memory_dir = tmp_path / ".tok"
+        memory_dir.mkdir()
+        (memory_dir / "bridge_memory.tok").write_text("@bridge_memory\n")
+        monkeypatch.setattr("tok.cli._release.memory_root", lambda: memory_dir)
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, Any]:
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "natural-first",
+                    "request_policy": "natural_first",
+                    "actual_tokens": 4912444,
+                    "baseline_tokens": 8782597,
+                    "session_tokens_saved": 3870153,
+                    "session_net_tokens_saved": 3870153,
+                    "reacquisition_cost_tokens": 0,
+                    "session_savings_pct": 44.1,
+                    "session_cost_savings_pct": 80.4,
+                    "actual_cost_usd": 2.771345,
+                    "baseline_cost_usd": 14.149243,
+                    "cost_saved_usd": 11.377898,
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "calls": 68,
+                    "session_quality": "watch",
+                    "last_degradation_reason": "context reacquisition",
+                }
+
+        monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["doctor", "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["data"]["tokens_saved"] == 3870153
+        assert data["data"]["actual_tokens"] == 4912444
+        assert data["data"]["baseline_tokens"] == 8782597
+        assert data["data"]["savings_pct"] == 44.1
+        assert data["data"]["cost_savings_pct"] == 80.4
+        assert data["data"]["cost_saved_usd"] == 11.377898
+
     def test_doctor_invalid_port_config_falls_back_without_traceback(self, monkeypatch) -> None:
         monkeypatch.setenv("TOK_BRIDGE_PORT", "bad")
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: None)

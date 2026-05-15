@@ -1148,11 +1148,8 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                 baseline_only = bool(payload.get("baseline_only"))
                 mode = str(payload.get("mode", "unknown"))
                 fallback_count = int(payload.get("fallback_count", 0))
-                tokens_saved = (
-                    int(session_summary["tokens_saved"])
-                    if session_summary
-                    else int(payload.get("session_tokens_saved", 0))
-                )
+                session_view_summary = _health_session_summary(payload)
+                tokens_saved = int(session_view_summary["tokens_saved"])
                 verdict, verdict_style = runtime_verdict(
                     tok_active=True,
                     baseline_only=baseline_only,
@@ -1161,32 +1158,12 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     session_quality=str(payload.get("session_quality", "clean")),
                 )
                 headline, headline_pct, subhead = savings_headline(
-                    session_summary,
+                    session_view_summary,
                     savings_pct=float(payload.get("session_savings_pct", 0.0)),
                     tokens_saved=int(payload.get("session_tokens_saved", 0)),
                 )
-                session_view_summary: dict[str, int | float | str] = dict(session_summary or {})
                 session_view_summary.update(
                     {
-                        "actual_tokens": int(payload.get("actual_tokens", 0)),
-                        "baseline_tokens": int(payload.get("baseline_tokens", 0)),
-                        "tokens_saved": int(payload.get("session_tokens_saved", 0)),
-                        "savings_pct": float(payload.get("session_savings_pct", 0.0)),
-                        "actual_cost_usd": float(payload.get("actual_cost_usd", 0.0)),
-                        "baseline_cost_usd": float(payload.get("baseline_cost_usd", 0.0)),
-                        "cost_saved_usd": float(payload.get("cost_saved_usd", 0.0)),
-                        "session_quality": str(payload.get("session_quality", "clean")),
-                        "last_degradation_reason": str(payload.get("last_degradation_reason", "")),
-                        "preflight_block_original_payload_count": int(
-                            payload.get("preflight_block_original_payload_count", 0)
-                        ),
-                        "preflight_block_rewritten_payload_count": int(
-                            payload.get("preflight_block_rewritten_payload_count", 0)
-                        ),
-                        "stream_recovery_empty_success_count": int(
-                            payload.get("stream_recovery_empty_success_count", 0)
-                        ),
-                        "stream_recovery_read_error_count": int(payload.get("stream_recovery_read_error_count", 0)),
                         "request_policy_held_by_recovery_count": int(
                             payload.get("request_policy_held_by_recovery_count", 0)
                         ),
@@ -1264,7 +1241,18 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     json_data["fallback_count"] = fallback_count
                     json_data["session_quality"] = str(payload.get("session_quality", "clean"))
                     json_data["tokens_saved"] = tokens_saved
+                    json_data["net_tokens_saved"] = int(session_view_summary.get("net_tokens_saved", tokens_saved))
+                    json_data["reacquisition_cost_tokens"] = int(
+                        session_view_summary.get("reacquisition_cost_tokens", 0)
+                    )
+                    json_data["actual_tokens"] = int(session_view_summary.get("actual_tokens", 0))
+                    json_data["baseline_tokens"] = int(session_view_summary.get("baseline_tokens", 0))
                     json_data["savings_pct"] = float(payload.get("session_savings_pct", 0.0))
+                    json_data["cost_savings_pct"] = float(
+                        session_view_summary.get("cost_savings_pct", payload.get("session_savings_pct", 0.0))
+                    )
+                    json_data["actual_cost_usd"] = float(session_view_summary.get("actual_cost_usd", 0.0))
+                    json_data["baseline_cost_usd"] = float(session_view_summary.get("baseline_cost_usd", 0.0))
                     json_data["cost_saved_usd"] = float(payload.get("cost_saved_usd", 0.0))
                     if baseline_only:
                         json_warnings.append("Session degraded to baseline")
@@ -1274,11 +1262,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                         render_stats_panel(
                             "Current Session",
                             headline=f"{headline} • {headline_pct}",
-                            headline_style=(
-                                savings_style(float(session_summary["savings_pct"]))
-                                if session_summary
-                                else "bold yellow"
-                            ),
+                            headline_style=savings_style(float(session_view_summary["savings_pct"])),
                             subhead=f"{verdict} • {subhead}",
                             rows=session_status_rows(
                                 summary=session_view_summary,

@@ -1,6 +1,7 @@
 # Release Claims Matrix
 
-Last updated: **2026-05-12** (0.1.9 docs alignment; 0.1.5–0.1.8 evidence retained).
+Last updated: **2026-05-15** (0.2.0 release-candidate alignment; earlier evidence
+retained where still applicable).
 
 This matrix is the release input for pricing/benchmark/savings claims.
 

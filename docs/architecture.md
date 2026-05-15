@@ -112,7 +112,7 @@ without a Tok-specific interruption; worst case is higher token cost for that re
 
 ### Canonical IDL Ownership
 
-For `0.1.x`, Tok should be described as having one canonical protocol IDL and two
+For `0.2.x`, Tok should be described as having one canonical protocol IDL and two
 derived translation layers:
 
 - Canonical protocol IDL: `src/tok/protocol/schema.py` and `src/tok/protocol/models.py`

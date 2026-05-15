@@ -9,15 +9,15 @@ Runtime defaults and release posture for Tok.
 
 ## Runtime Defaults
 
-| Setting               | Default                                            | Notes                                                                     |
-| --------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
-| Compression path      | `tool-compatible` (`natural_first` request policy) | Claude-first default; validated on coding and research loops              |
-| Legacy request policy | `legacy_tool_compatible`                           | Explicit rollback path; opt in only when you need the older behavior      |
-| Frontier validation   | OpenRouter probes                                  | Advisory only; do not select the public default                           |
-| Fallback mode         | `baseline`                                         | Requests pass through without compression                                 |
-| Fail-open             | enabled                                            | Bridge errors are designed to pass through as upstream requests           |
-| Port                  | 9090                                               | Configurable via `--port`                                                 |
-| Bind address          | `127.0.0.1`                                        | Configurable via `TOK_BRIDGE_BIND_HOST`; client URL host remains separate |
+| Setting               | Default                        | Notes                                                                     |
+| --------------------- | ------------------------------ | ------------------------------------------------------------------------- |
+| Compression path      | `natural-first` request policy | Claude-first default; validated on coding and research loops              |
+| Legacy request policy | `legacy_tool_compatible`       | Explicit rollback path; opt in only when you need the older behavior      |
+| Frontier validation   | OpenRouter probes              | Advisory only; do not select the public default                           |
+| Fallback mode         | `baseline`                     | Requests pass through without compression                                 |
+| Fail-open             | enabled                        | Bridge errors are designed to pass through as upstream requests           |
+| Port                  | 9090                           | Configurable via `--port`                                                 |
+| Bind address          | `127.0.0.1`                    | Configurable via `TOK_BRIDGE_BIND_HOST`; client URL host remains separate |
 
 ## Security Note: Bind Address
 
@@ -35,7 +35,7 @@ export TOK_BRIDGE_BIND_HOST=192.168.1.100  # listen on specific interface
 tok bridge start
 ```
 
-For typical single-user workstation use (the intended 0.1.x scenario), the default
+For typical single-user workstation use (the intended 0.2.x scenario), the default
 `127.0.0.1` bind is correct and no configuration is needed.
 
 `TOK_BRIDGE_HOST` still controls the client-facing bridge URL used by helper scripts and
@@ -43,8 +43,9 @@ status probes when you intentionally connect through a non-default hostname.
 
 ## Release Posture
 
-- Development status: Alpha (0.1.9)
-- The bridge is the only supported product surface
+- Development status: Alpha (0.2.0)
+- The bridge is the supported product surface; local trace audit and local resolver beta
+  commands are supported only within the documented 0.2.x scope
 - SDK/wrapper path exists but is experimental
 - No breaking changes are guaranteed before 1.0
 - The automated local gate for a release candidate is `uv sync --frozen --extra dev`,
@@ -55,14 +56,16 @@ status probes when you intentionally connect through a non-default hostname.
 - The release candidate should be tagged only from a quiet, clean tree after that
   validation passes
 
-## Intentional Deferrals For 0.1.x
+## Intentional Deferrals For 0.2.x
 
 - CLI decomposition: completed in 0.1.6. `src/tok/cli/__init__.py` is 76 lines;
   `_legacy_commands.py` (9 hidden root-level aliases duplicating `tok dev *` and
   `tok metrics *`) was removed after confirming no internal callers.
-- Published dependencies do not currently carry blanket upper bounds. For `0.1.x`, Tok
+- Published dependencies do not currently carry blanket upper bounds. For `0.2.x`, Tok
   treats the lockfile, CI matrix, and clean-room install/build verification as the
   source of truth for tested compatibility.
+- Remote resolver routing, referral following, Tok Session exchange, stable protocol
+  compatibility, and agent-to-agent handoff remain deferred.
 
 ## Safety Guarantees
 

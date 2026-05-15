@@ -1,4 +1,4 @@
-# Tok Diagnostics (0.1.x)
+# Tok Diagnostics (0.2.x)
 
 This document explains the key health and recovery signals you may see in:
 
@@ -9,10 +9,11 @@ This document explains the key health and recovery signals you may see in:
 The goal is to help you distinguish normal, self-contained recovery (expected under
 stress) from a real degradation that should be reported as a bug.
 
-## What Is "Supported" For 0.1.x
+## What Is "Supported" For 0.2.x
 
-The supported product path for `0.1.x` is Claude Code routed through the local Tok
-bridge:
+The supported product path for `0.2.x` is Claude Code routed through the local Tok
+bridge, with local trace audit and local resolver beta commands available for inspection
+and recovery:
 
 ```bash
 tok claude

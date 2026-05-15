@@ -1,13 +1,13 @@
-# Public Release Decision
+# 0.2.0 Release Decision
 
-Supported workflows, limitations, and the release bar for Tok's first public release.
+Supported workflows, limitations, and the release bar for Tok 0.2.0.
 
 Tok is released as a Claude-first bridge. OpenRouter and frontier probes are useful for
 validation, but they do not define the public default behavior.
 
 ## Supported Workflows
 
-The first public release centers this default workflow:
+Tok 0.2.0 centers this default workflow:
 
 1. `pip install tok-protocol`
 1. Run Claude Code through Tok with `tok claude`
@@ -25,10 +25,17 @@ The default CLI help surface should reinforce that path by centering:
 - `tok bridge start|status|logs|stop`
 - `tok doctor`
 - `tok stats`
+- `tok audit --latest`
+- `tok resolver` local beta commands
 
-The only supported product path in this release is the bridge-first workflow above.
+The supported product path in this release is the bridge-first workflow above, plus the
+local-only resolver beta and trace audit commands documented in the CLI reference.
 
-The root `tok` namespace is intentionally narrow for `0.1.x`. Experimental Python APIs
+The default bridge request policy is `natural-first` unless a user explicitly sets
+`TOK_REQUEST_POLICY` or `TOK_MODE=baseline`. Do not document `tool-compatible` as the
+default unless the code changes to make that true again.
+
+The root `tok` namespace is intentionally narrow for `0.2.x`. Experimental Python APIs
 may still be reachable through explicit submodules, but they are not part of the
 supported public contract and should not be documented as canonical.
 
@@ -42,13 +49,16 @@ Pricing and benchmark claims should be reconciled through:
 
 ## Unsupported Paths
 
-The following are explicitly out of scope for the first release:
+The following are explicitly out of scope for 0.2.0:
 
 - broader SDK/decorator APIs beyond the bridge-first public workflow
 - `tok-native` and `tok-minimal` compression paths
 - Windows support
 - Python 3.9 or earlier
+- remote resolver routing or referral following
+- Tok Session exchange
 - Broad agent-to-agent handoff
+- stable Python SDK compatibility
 - Visual dashboards
 - protocol playground/demo scripts that are not in `examples/`
 
@@ -61,7 +71,7 @@ The following are explicitly out of scope for the first release:
 - Frontier and OpenRouter probes are experimental validation, not release drivers
 - CLI decomposition: completed in 0.1.6. `_legacy_commands.py` removed; `__init__.py` is
   now 76 lines with no residual deferred work.
-- Dependency policy for `0.1.x` is lockfile-backed validation plus CI coverage, not
+- Dependency policy for `0.2.x` is lockfile-backed validation plus CI coverage, not
   blanket upper bounds on every published requirement
 
 ## Release Bar
@@ -118,11 +128,11 @@ repair churn, or ambiguous `fail-open compatibility` noise.
 
 ## Deferred Follow-Ups
 
-These items are intentionally deferred after the first public release:
+These items are intentionally deferred after 0.2.0:
 
 - CLI decomposition: completed in 0.1.6 (`_legacy_commands.py` removed, `__init__.py` at
   76 lines).
-- Dependency upper bounds across the published requirements. For `0.1.x`, Tok relies on
+- Dependency upper bounds across the published requirements. For `0.2.x`, Tok relies on
   `uv.lock`, CI, and clean-room install checks to validate the tested dependency set. If
   live-release experience shows resolver churn or upstream breakage, we can add
   selective upper bounds in a follow-up release.
