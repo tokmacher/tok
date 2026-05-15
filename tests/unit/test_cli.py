@@ -686,6 +686,37 @@ class TestCLI:
         assert result.exit_code == 0
         assert captured["env"]["TOK_RESET_SESSION"] == "1"
 
+    def test_bridge_start_trims_oversized_log_before_append(self, monkeypatch, tmp_path) -> None:
+        from tok.cli import _bridge, _cli_support
+
+        def no_bridge(port) -> None:
+            return None
+
+        log_path = tmp_path / "bridge.log"
+        log_path.write_bytes(b"a" * 120)
+        monkeypatch.setenv("TOK_BRIDGE_LOG_MAX_BYTES", "100")
+        monkeypatch.setenv("TOK_BRIDGE_LOG_KEEP_BYTES", "30")
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", no_bridge)
+        for mod in (_bridge, _cli_support):
+            monkeypatch.setattr(mod, "LOG_FILE", log_path)
+            monkeypatch.setattr(mod, "PID_FILE", tmp_path / "bridge.pid")
+
+        class FakeProcess:
+            pid = 4321
+
+        class FakeResponse:
+            status_code = 200
+
+        monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProcess())
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["bridge", "start"])
+
+        assert result.exit_code == 0
+        trimmed = log_path.read_bytes()
+        assert b"log_trimmed" in trimmed
+        assert len(trimmed) < 120
+
     def test_bridge_reset_session_honors_configured_bridge_port(self, monkeypatch) -> None:
         captured = {}
 
@@ -2971,6 +3002,7 @@ class TestStatsTotalNoDoubleCounting:
         displayed_baseline = int(tokens_match.group(2).replace(",", ""))
         assert displayed_actual == 3000
         assert displayed_baseline == 4500
+
         savings_file = tmp_path / "tok_savings.tok"
         tracker = SavingsTracker(
             savings_file=str(savings_file),
@@ -3029,3 +3061,55 @@ class TestStatsTotalNoDoubleCounting:
             assert val < inflight_tokens * 2, (
                 f"Displayed token value {val} suggests double-counting (inflight was {inflight_tokens})"
             )
+
+    def test_stats_default_uses_live_health_even_when_stale_local_has_more_calls(self, tmp_path, monkeypatch) -> None:
+        savings_file = tmp_path / "tok_savings.tok"
+        stale = SavingsTracker(savings_file=str(savings_file), ledger_path=tmp_path / "global_savings.tok")
+        for _ in range(10):
+            stale.record_call(
+                model="claude-sonnet-4",
+                actual_input=100,
+                actual_output=0,
+                cache_read=0,
+                cache_write=0,
+                input_saved=58,
+                output_saved=0,
+                behavior_signals={"tok_fallback_activated": 1},
+            )
+
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(savings_file))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: 9999)
+
+        from unittest.mock import MagicMock
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "actual_tokens": 210141,
+            "baseline_tokens": 330552,
+            "session_tokens_saved": 120411,
+            "session_net_tokens_saved": 120411,
+            "reacquisition_cost_tokens": 0,
+            "session_savings_pct": 36.4,
+            "session_cost_savings_pct": 57.9,
+            "actual_cost_usd": 0.2354,
+            "baseline_cost_usd": 0.5590,
+            "cost_saved_usd": 0.3236,
+            "baseline_only": False,
+            "fallback_count": 0,
+            "calls": 8,
+            "session_count": 1,
+            "session_quality": "watch",
+            "last_degradation_reason": "context reacquisition",
+            "request_policy": "natural_first",
+        }
+        monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *a, **kw: mock_resp)
+
+        result = runner.invoke(app, ["stats"])
+
+        assert result.exit_code == 0, result.output
+        assert "120,411" in result.output
+        assert "0 fallbacks" in result.output
+        assert "1 fallbacks" not in result.output
+        assert "8 calls handled" in result.output

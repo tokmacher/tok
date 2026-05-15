@@ -208,17 +208,9 @@ def stats_command(
         except Exception:
             pass
 
-    local_calls = int(session_summary["calls"]) if session_summary else 0
-    health_calls = int(health_payload.get("calls", 0)) if health_payload else 0
     lifetime_summary = tracker.lifetime_summary(include_inflight=health_payload is None)
     lifetime_summary = _overlay_health_session_on_lifetime(lifetime_summary, health_payload)
-    if (
-        not last_session
-        and not total
-        and health_payload
-        and int(health_payload.get("actual_tokens", 0)) > 0
-        and health_calls >= local_calls
-    ):
+    if not last_session and not total and health_payload and int(health_payload.get("actual_tokens", 0)) > 0:
         session_summary = _health_session_summary(health_payload)
 
     if json_output:

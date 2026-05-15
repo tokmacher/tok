@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
@@ -33,6 +34,8 @@ from ._cli_support import (
 )
 
 _LOCAL_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+_DEFAULT_LOG_MAX_BYTES = 50 * 1024 * 1024
+_DEFAULT_LOG_KEEP_BYTES = 10 * 1024 * 1024
 
 # Compatibility aliases for tests and monkeypatching. These are intentionally
 # module globals so tests can patch them.
@@ -95,6 +98,28 @@ def _flush_bridge_ledger(port: int) -> None:
             continue
         if response.status_code == 200:
             return
+
+
+def _trim_bridge_log_if_needed(path: Any) -> None:
+    """Keep bridge.log bounded while preserving its most recent diagnostics."""
+    log_path = Path(path)
+    max_bytes = env_int("TOK_BRIDGE_LOG_MAX_BYTES", _DEFAULT_LOG_MAX_BYTES)
+    keep_bytes = env_int("TOK_BRIDGE_LOG_KEEP_BYTES", _DEFAULT_LOG_KEEP_BYTES)
+    if max_bytes <= 0 or keep_bytes <= 0:
+        return
+    keep_bytes = min(keep_bytes, max_bytes)
+    try:
+        if not log_path.exists() or log_path.stat().st_size <= max_bytes:
+            return
+        with log_path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - keep_bytes))
+            tail = f.read()
+        marker = (f"[tok-bridge] log_trimmed: kept_last_bytes={len(tail)} previous_size_bytes={size}\n").encode()
+        log_path.write_bytes(marker + tail)
+    except OSError as exc:
+        console.print(f"[yellow]Could not trim bridge log {log_path}: {exc}[/yellow]")
 
 
 def bridge_start(
@@ -167,6 +192,7 @@ def bridge_start(
             env["TOK_API_BASE"] = api_base
         env["TOK_RESET_SESSION"] = "1"
 
+        _trim_bridge_log_if_needed(LOG_FILE)
         log_file = open(LOG_FILE, "a")
         try:
             proc = subprocess.Popen(
