@@ -10,8 +10,8 @@ from typing import Any, Literal, cast
 from openai import OpenAI
 
 from tok.gateway import BridgeSession
-from tok.gateway._anthropic_optimizations import apply_anthropic_optimizations
 from tok.gateway._request_policy import default_request_policy
+from tok.provider_optimizations import apply_provider_optimizations
 from tok.runtime.core import (
     RuntimeRequest,
     RuntimeSession,
@@ -177,7 +177,10 @@ class LiveBenchmarkRunner:
                     msg = f"tok-universal benchmark bridge preflight rejected payload (status={status_code})"
                     raise RuntimeError(msg)
 
-                prepared_body, _ = apply_anthropic_optimizations(copy.deepcopy(bridge_payload.body))
+                prepared_body, _ = apply_provider_optimizations(
+                    adapter_kind="claude-bridge",
+                    body=copy.deepcopy(bridge_payload.body),
+                )
                 request_policy = bridge_payload.request_policy
                 turn_tool_compatible = bridge_payload.request_tool_compatible
                 chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get("messages", [])

@@ -9,13 +9,13 @@ from typing import Any
 
 from fastapi import Response
 
+from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body, validate_outgoing_bridge_body
 from tok.runtime._request_preparation import (
     _restore_latest_assistant_thinking,
     _snapshot_latest_assistant_thinking,
 )
 from tok.runtime.pipeline.request_validation import (
     bridge_strict_failure_signals,
-    canonicalize_anthropic_bridge_body,
     has_blocking_outgoing_failures,
     has_invalid_tool_history_failures,
     has_provider_sensitive_failures,
@@ -23,8 +23,6 @@ from tok.runtime.pipeline.request_validation import (
     quarantine_invalid_tool_history_messages,
     summarize_bridge_pairing,
     summarize_message_structure,
-    validate_anthropic_bridge_body,
-    validate_anthropic_outgoing_bridge_body,
 )
 from tok.runtime.smoothness.models import SmoothnessEventType
 
@@ -295,17 +293,17 @@ def _attempt_quarantine_invalid_tool_history(
 ) -> tuple[dict[str, Any], bool, dict[str, int], list[str]]:
     messages = body.get("messages")
     if not isinstance(messages, list):
-        return body, False, {}, validate_anthropic_bridge_body(body)
+        return body, False, {}, validate_bridge_body(body)
     (
         quarantined_messages,
         changed,
         signals,
     ) = quarantine_invalid_tool_history_messages(messages)
     if not changed:
-        return body, False, signals, validate_anthropic_bridge_body(body)
+        return body, False, signals, validate_bridge_body(body)
     quarantined_body = copy.deepcopy(body)
     quarantined_body["messages"] = quarantined_messages
-    failures = validate_anthropic_bridge_body(quarantined_body)
+    failures = validate_bridge_body(quarantined_body)
     return quarantined_body, not failures, signals, failures
 
 
@@ -429,7 +427,7 @@ def _run_bridge_preflight(
         canonical_body,
         bridge_canonicalized,
         bridge_signals,
-    ) = canonicalize_anthropic_bridge_body(body)
+    ) = canonicalize_bridge_body(body)
     if bridge_signals.get("thinking_block_mutated"):
         with contextlib.suppress(Exception):
             session.smoothness_tracker.record(
@@ -469,7 +467,7 @@ def _run_bridge_preflight(
                 "thinking_mutation_after_hash": bridge_signals.get("thinking_block_mutated_after_hash"),
             }
         )
-        provider_safe_failures = validate_anthropic_bridge_body(original_body)
+        provider_safe_failures = validate_bridge_body(original_body)
         if provider_safe_failures:
             _merge_signal_counts(
                 behavior_signals,
@@ -498,7 +496,7 @@ def _run_bridge_preflight(
         return copy.deepcopy(original_body), behavior_signals, True, None
     tool_history_recovery_applied = False
     invalid_tool_history_unrecoverable = False
-    strict_failures = validate_anthropic_bridge_body(canonical_body)
+    strict_failures = validate_bridge_body(canonical_body)
     request_fingerprint = _request_fingerprint_diff(headers, canonical_body, original_body)
     original_tool_result_cache_blocks = int(
         request_fingerprint.get("original", {}).get("cache_control", {}).get("message_tool_result_blocks", 0) or 0
@@ -556,7 +554,7 @@ def _run_bridge_preflight(
             json.dumps(original_body).encode(),
         )
     ):
-        degraded_failures = validate_anthropic_bridge_body(original_body)
+        degraded_failures = validate_bridge_body(original_body)
         if not degraded_failures:
             logger.warning(
                 "bridge_preflight_pairing_degraded_to_provider_safe: prepared request violated immediate tool-result pairing; sending provider-safe uncompressed body"
@@ -714,7 +712,7 @@ def _run_bridge_preflight(
                 None,
             )
 
-    outgoing_failures = validate_anthropic_outgoing_bridge_body(canonical_body)
+    outgoing_failures = validate_outgoing_bridge_body(canonical_body)
     if outgoing_failures:
         _merge_signal_counts(
             behavior_signals,
@@ -732,7 +730,7 @@ def _run_bridge_preflight(
                 rewrite_signals,
             ) = _rewrite_provider_sensitive_large_tool_use_text_interleaving(canonical_body)
             if rewritten_changed:
-                rewritten_failures = validate_anthropic_outgoing_bridge_body(rewritten_body)
+                rewritten_failures = validate_outgoing_bridge_body(rewritten_body)
                 if not rewritten_failures:
                     behavior_signals.update(rewrite_signals)
                     behavior_signals["tok_bridge_provider_sensitive_degraded_to_provider_safe"] = 1
@@ -784,7 +782,7 @@ def _run_bridge_preflight(
             json.dumps(canonical_body).encode(),
             json.dumps(original_body).encode(),
         ):
-            degraded_failures = validate_anthropic_outgoing_bridge_body(original_body)
+            degraded_failures = validate_outgoing_bridge_body(original_body)
             if not has_blocking_outgoing_failures(degraded_failures):
                 interleaving_failure = _is_assistant_tool_use_text_interleaving_failure(outgoing_failures)
                 event_name = _preflight_event_name(

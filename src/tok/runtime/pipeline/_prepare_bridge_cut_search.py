@@ -13,11 +13,8 @@ from tok.runtime._history_slicing import (
     _bridge_preflight_safe_recent_suffix,
     _messages_contain_tool_material,
 )
+from tok.runtime._request_preparation import _bridge_history_cut_candidate
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline.request_validation import (
-    canonicalize_anthropic_bridge_body,
-    validate_anthropic_bridge_body,
-)
 from tok.runtime.types import RuntimeRequest
 
 _BRIDGE_CUT_SEARCH_MAX_EXTRA_TURNS = 4
@@ -68,46 +65,6 @@ def _exact_search_evidence_keys_in_messages(
             if key and key.startswith("search|"):
                 evidence_keys.add(key)
     return evidence_keys
-
-
-def _bridge_candidate_body(
-    *,
-    request: RuntimeRequest,
-    messages: list[dict[str, Any]],
-    system: Any,
-    seen_mutation_pairs: set[tuple[str, str]] | None = None,
-) -> tuple[dict[str, Any], dict[str, int]]:
-    candidate_body = {"model": request.model, "messages": messages, "system": system}
-    canonical_body, changed, canonical_signals = canonicalize_anthropic_bridge_body(
-        candidate_body, seen_mutation_pairs=seen_mutation_pairs
-    )
-    if changed:
-        candidate_body = canonical_body
-    return candidate_body, dict(canonical_signals)
-
-
-def _bridge_history_cut_candidate(
-    *,
-    session: RuntimeSession,
-    request: RuntimeRequest,
-    messages: list[dict[str, Any]],
-    system: Any,
-    history_baseline_prompt_tokens: int,
-    seen_mutation_pairs: set[tuple[str, str]] | None = None,
-) -> tuple[dict[str, Any], dict[str, int], int] | None:
-    candidate_body, canonical_signals = _bridge_candidate_body(
-        request=request,
-        messages=messages,
-        system=system,
-        seen_mutation_pairs=seen_mutation_pairs,
-    )
-    if validate_anthropic_bridge_body(candidate_body):
-        return None
-    candidate_saved_prompt_tokens = max(
-        0,
-        history_baseline_prompt_tokens - session.prepared_prompt_tokens(candidate_body),
-    )
-    return candidate_body, canonical_signals, candidate_saved_prompt_tokens
 
 
 def _retains_required_exact_search_evidence(

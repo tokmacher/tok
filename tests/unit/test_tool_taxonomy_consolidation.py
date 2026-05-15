@@ -14,5 +14,9 @@ def test_command_like_tools_is_canonical() -> None:
     assert repeat_targets.COMMAND_LIKE_TOOLS is _tool_taxonomy.COMMAND_LIKE_TOOLS
 
 
+def test_command_like_tools_includes_bridge_aliases() -> None:
+    assert "run_bash" in _tool_taxonomy.COMMAND_LIKE_TOOLS
+
+
 def test_listing_like_tools_is_canonical() -> None:
     assert repeat_targets.LISTING_LIKE_TOOLS is _tool_taxonomy.LISTING_LIKE_TOOLS

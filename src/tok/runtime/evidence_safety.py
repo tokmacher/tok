@@ -37,6 +37,20 @@ EVIDENCE_DECISION_REASON_CODES = frozenset(
     }
 )
 
+_EVIDENCE_KEY_PREFIXES = ("file:", "search:", "listing:", "tool:")
+
+
+def normalize_evidence_key(key: str) -> str:
+    normalized = (key or "").strip()
+    for prefix in _EVIDENCE_KEY_PREFIXES:
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :].strip()
+            break
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.replace("\\", "/")
+    return normalized
+
 
 def record_evidence_decision(
     *,
@@ -108,6 +122,7 @@ class EvidenceSafetyState:
         self.pending_exact_keys.clear()
 
     def record_exact(self, key: str, *, digest: str = "", turn: int = 0) -> dict[str, int]:
+        key = normalize_evidence_key(key)
         if not key:
             return {}
         entry = self.ledger.get(key)
@@ -136,6 +151,7 @@ class EvidenceSafetyState:
         form: EvidenceForm = "summary",
         turn: int = 0,
     ) -> dict[str, int]:
+        key = normalize_evidence_key(key)
         if not key:
             return {}
         entry = self.ledger.get(key)
@@ -150,6 +166,7 @@ class EvidenceSafetyState:
         return signals
 
     def require_exact_reacquisition(self, key: str) -> dict[str, int]:
+        key = normalize_evidence_key(key)
         if not key:
             return {}
         entry = self.ledger.get(key)
@@ -162,8 +179,13 @@ class EvidenceSafetyState:
         }
 
     def requires_reacquisition(self, key: str) -> bool:
+        key = normalize_evidence_key(key)
+        if not key:
+            return False
         entry = self.ledger.get(key)
-        return bool(entry and not entry.latest_is_exact)
+        if entry is None:
+            return True
+        return bool(not entry.latest_is_exact)
 
     def audit_summary(self) -> dict[str, int]:
         return evidence_safety_summary(self.ledger)

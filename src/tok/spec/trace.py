@@ -43,7 +43,7 @@ ALLOWED_EXPECTATIONS = {
     "reject_malformed",
     "accept_non_exact_reference",
 }
-ALLOWED_DELTA_ALGORITHMS = {"line", "unified_diff", "json_patch", "binary"}
+ALLOWED_DELTA_ALGORITHMS = {"line", "unified_diff", "json_patch"}
 CORE_SECTION_NAMES = {"envelope", "observation", "content", "audit"}
 TRACE_INVARIANT_MATRIX_VERSION = "tok-trace-invariant-matrix/v0.1-l0-l2"
 NON_EXACT_REFERENCE_ACTIONS = {"skeleton_reference", "summary_reference"}
@@ -229,8 +229,6 @@ def audit_block(
 def canonical_payload_digest(block: dict[str, Any]) -> str:
     """Return the draft canonical digest for stable semantic payload fields."""
     payload = {key: block[key] for key in ("observation", "content", "audit")}
-    if "extensions" in block:
-        payload["extensions"] = block["extensions"]
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + sha256(canonical.encode("utf-8")).hexdigest()
 

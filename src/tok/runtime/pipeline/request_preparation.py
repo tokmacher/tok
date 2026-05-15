@@ -8,15 +8,16 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict
+
+from tok.compression import FILE_LIKE_TOOLS, inject_system_additions, text_of
+from tok.provider_request_shapes import validate_request_body
+from tok.runtime.config import _TOOL_REQUIRED_PROMPT_PATTERNS
+
 _logger = logging.getLogger("tok.runtime.pipeline.request_preparation")
 
 # Matches grep output lines: path:lineno: content
 _GREP_PATH_RE = re.compile(r"^([^:\s][^:]+\.[a-zA-Z]{1,8}):\d+:")
-
-from pydantic import BaseModel, ConfigDict
-
-from tok.compression import FILE_LIKE_TOOLS, inject_system_additions, text_of
-from tok.runtime.config import _TOOL_REQUIRED_PROMPT_PATTERNS
 
 if TYPE_CHECKING:
     from tok.runtime.core import RuntimeSession
@@ -32,7 +33,6 @@ from tok.runtime.repeat_targets import (
     resolve_evidence_intent,
 )
 
-from .request_validation import validate_anthropic_request_body
 from .tool_processing import (
     _HARD_BLOCKER_PHRASES_SET,
     _TRANSIENT_ERROR_PHRASES_SET,
@@ -89,8 +89,8 @@ def apply_schema_adaptations(
 def mutation_signals(original_body: dict[str, Any], mutated_body: dict[str, Any]) -> dict[str, int]:
     """Identify structural mutations between original and prepared request bodies."""
     signals: dict[str, int] = {}
-    original_failures = validate_anthropic_request_body(original_body)
-    mutated_failures = validate_anthropic_request_body(mutated_body)
+    original_failures = validate_request_body(original_body)
+    mutated_failures = validate_request_body(mutated_body)
     if mutated_failures and not original_failures:
         signals["tok_preflight_rejected"] = 1
     original_messages = original_body.get("messages", [])

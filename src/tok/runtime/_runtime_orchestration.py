@@ -8,7 +8,13 @@ import re as _re
 import shlex
 from typing import TYPE_CHECKING, Any, cast
 
-from tok.compression._tool_taxonomy import EDIT_LIKE_TOOLS, LISTING_LIKE_TOOLS, SEARCH_LIKE_TOOLS
+from tok.compression._tool_taxonomy import (
+    COMMAND_LIKE_TOOLS,
+    EDIT_LIKE_TOOLS,
+    FILE_LIKE_TOOLS,
+    LISTING_LIKE_TOOLS,
+    SEARCH_LIKE_TOOLS,
+)
 
 from .config import (
     ANSWER_READY_REPAIR_HINT,
@@ -73,19 +79,16 @@ _HINT_COOLDOWN_EXEMPT = frozenset(
 
 _JIT_RE = _re.compile(r"EXECUTE_JIT\(@(\w+)\(([^)]*)\)\)")
 
-_BASH_TOOL_NAMES = frozenset({"bash", "run_bash", "shell", "computer", "run_terminal"})
-_READ_TOOL_NAMES = frozenset({"read", "view", "cat", "get_file", "read_file"})
-
 
 def _tool_call_to_cmd_str(tool_name: str, tool_input: Any) -> str:
     """Normalize a tool_use block to a cmd string for rolling_cmds / PatternReactor."""
     if not isinstance(tool_input, dict):
         return ""
     tool_lower = tool_name.lower()
-    if tool_lower in _BASH_TOOL_NAMES:
+    if tool_lower in COMMAND_LIKE_TOOLS:
         cmd = str(tool_input.get("command") or tool_input.get("input") or "").strip()
         return cmd[:256] if cmd else ""
-    if tool_lower in _READ_TOOL_NAMES:
+    if tool_lower in FILE_LIKE_TOOLS:
         path = str(tool_input.get("file_path") or tool_input.get("path") or "").strip()
         return f"view {path}"[:256] if path else ""
     if tool_lower in EDIT_LIKE_TOOLS:

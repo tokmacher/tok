@@ -1,256 +1,256 @@
 [
   {
-    "id": "first_exact_file_observation",
-    "valid": true,
     "block": {
-      "envelope": {
-        "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0001",
-        "session_id": "session-alpha",
-        "turn": 0,
-        "step": 0,
-        "direction": "request",
-        "payload_digest": "sha256:1645f60c323e8aea451c0101553e4fb48ff82aa14bea7c934db86a09a059d970"
-      },
-      "observation": {
-        "class": "file",
-        "key": "file:src/utils.py",
-        "action": "store",
-        "result": "ok"
+      "audit": {
+        "expectation": "accept_exact",
+        "resolver_state": "available_local"
       },
       "content": {
         "exact": true,
         "hash": "sha256:cff3d818f11e8c1cd2f60bdb988c9bc49e7f8b14b30f11e68f1ab0483b54e4b0",
-        "size_bytes": 132,
-        "resolver_uri": "tok-fixture://artifacts/utils_v1.py"
+        "resolver_uri": "tok-fixture://artifacts/utils_v1.py",
+        "size_bytes": 132
       },
-      "audit": {
-        "resolver_state": "available_local",
-        "expectation": "accept_exact"
-      }
-    }
-  },
-  {
-    "id": "unchanged_cached_tool_result",
-    "valid": true,
-    "block": {
       "envelope": {
-        "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0002",
-        "session_id": "session-alpha",
-        "turn": 1,
-        "step": 0,
+        "block_id": "trace-0001",
         "direction": "request",
-        "payload_digest": "sha256:2e3e73b8d462502bf301f64ca095dbcdc3fdfcd106b151049995f2039379d0c9"
+        "payload_digest": "sha256:1645f60c323e8aea451c0101553e4fb48ff82aa14bea7c934db86a09a059d970",
+        "session_id": "session-alpha",
+        "step": 0,
+        "trace_version": "tok-trace/v0.1-draft",
+        "turn": 0
       },
       "observation": {
+        "action": "store",
+        "class": "file",
+        "key": "file:src/utils.py",
+        "result": "ok"
+      }
+    },
+    "id": "first_exact_file_observation",
+    "valid": true
+  },
+  {
+    "block": {
+      "audit": {
+        "expectation": "accept_reference",
+        "resolver_state": "available_local"
+      },
+      "content": {
+        "exact": true,
+        "hash": "sha256:cff3d818f11e8c1cd2f60bdb988c9bc49e7f8b14b30f11e68f1ab0483b54e4b0",
+        "resolver_uri": "tok-fixture://artifacts/utils_v1.py",
+        "size_bytes": 132
+      },
+      "envelope": {
+        "block_id": "trace-0002",
+        "direction": "request",
+        "payload_digest": "sha256:2e3e73b8d462502bf301f64ca095dbcdc3fdfcd106b151049995f2039379d0c9",
+        "session_id": "session-alpha",
+        "step": 0,
+        "trace_version": "tok-trace/v0.1-draft",
+        "turn": 1
+      },
+      "observation": {
+        "action": "reference",
         "class": "tool",
         "key": "tool:view_file:path=src/utils.py",
-        "action": "reference",
         "result": "ok"
-      },
-      "content": {
-        "exact": true,
-        "hash": "sha256:cff3d818f11e8c1cd2f60bdb988c9bc49e7f8b14b30f11e68f1ab0483b54e4b0",
-        "size_bytes": 132,
-        "resolver_uri": "tok-fixture://artifacts/utils_v1.py"
-      },
-      "audit": {
-        "resolver_state": "available_local",
-        "expectation": "accept_reference"
       }
-    }
+    },
+    "id": "unchanged_cached_tool_result",
+    "valid": true
   },
   {
-    "id": "delta_result",
-    "valid": true,
     "block": {
-      "envelope": {
-        "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0003",
-        "session_id": "session-alpha",
-        "turn": 2,
-        "step": 0,
-        "direction": "request",
-        "payload_digest": "sha256:f4fd2eae46e2fae04225737caba98b5562c9843829a3419da494589529297dcd"
-      },
-      "observation": {
-        "class": "file",
-        "key": "file:src/utils.py",
-        "action": "delta",
-        "result": "ok"
+      "audit": {
+        "expectation": "accept_delta",
+        "resolver_state": "available_local"
       },
       "content": {
-        "exact": true,
-        "hash": "sha256:8d89f0c8e9dd31e2981bdc2a0422219f038e56bc9849b125d9d46f79874700c2",
-        "size_bytes": 135,
-        "resolver_uri": "tok-fixture://artifacts/utils_v2.py",
         "base_hash": "sha256:cff3d818f11e8c1cd2f60bdb988c9bc49e7f8b14b30f11e68f1ab0483b54e4b0",
+        "base_uri": "tok-fixture://artifacts/utils_v1.py",
+        "delta_algorithm": "unified_diff",
         "delta_hash": "sha256:58ab2a6976a3204625ba4f78d7b114f7d311321a01911abe375a5d87e9168687",
         "delta_uri": "tok-fixture://artifacts/utils_v1_to_v2.diff",
-        "delta_algorithm": "unified_diff",
-        "base_uri": "tok-fixture://artifacts/utils_v1.py"
+        "exact": true,
+        "hash": "sha256:8d89f0c8e9dd31e2981bdc2a0422219f038e56bc9849b125d9d46f79874700c2",
+        "resolver_uri": "tok-fixture://artifacts/utils_v2.py",
+        "size_bytes": 135
       },
-      "audit": {
-        "resolver_state": "available_local",
-        "expectation": "accept_delta"
-      }
-    }
-  },
-  {
-    "id": "fallback_raw_output",
-    "valid": true,
-    "block": {
       "envelope": {
-        "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0004",
+        "block_id": "trace-0003",
+        "direction": "request",
+        "payload_digest": "sha256:f4fd2eae46e2fae04225737caba98b5562c9843829a3419da494589529297dcd",
         "session_id": "session-alpha",
-        "turn": 3,
         "step": 0,
-        "direction": "response",
-        "payload_digest": "sha256:eb92be9a0b250835679407d2df37dec407f3f0c9da633a8d0456d295f419d4e6"
+        "trace_version": "tok-trace/v0.1-draft",
+        "turn": 2
       },
       "observation": {
-        "class": "tool",
-        "key": "tool:bash",
-        "action": "fallback",
-        "result": "degraded"
+        "action": "delta",
+        "class": "file",
+        "key": "file:src/utils.py",
+        "result": "ok"
+      }
+    },
+    "id": "delta_result",
+    "valid": true
+  },
+  {
+    "block": {
+      "audit": {
+        "expectation": "accept_fallback",
+        "reason": "compression would risk response fidelity",
+        "resolver_state": "available_local"
       },
       "content": {
         "exact": true,
         "hash": "sha256:aadb12610e431e9b6cecae641f6d7b1549d6e30794cc0a62691bb6d1d0738755",
-        "size_bytes": 53,
-        "resolver_uri": "tok-fixture://artifacts/bash_output.txt"
+        "resolver_uri": "tok-fixture://artifacts/bash_output.txt",
+        "size_bytes": 53
       },
-      "audit": {
-        "resolver_state": "available_local",
-        "expectation": "accept_fallback",
-        "reason": "compression would risk response fidelity"
-      }
-    }
-  },
-  {
-    "id": "repeated_search_reference",
-    "valid": true,
-    "block": {
       "envelope": {
-        "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0007",
+        "block_id": "trace-0004",
+        "direction": "response",
+        "payload_digest": "sha256:eb92be9a0b250835679407d2df37dec407f3f0c9da633a8d0456d295f419d4e6",
         "session_id": "session-alpha",
-        "turn": 6,
         "step": 0,
-        "direction": "request",
-        "payload_digest": "sha256:35ddcc94947570d55aafe8f432bfb9fc2eaa27af7253d185f77cc5e50291b5ee"
+        "trace_version": "tok-trace/v0.1-draft",
+        "turn": 3
       },
       "observation": {
-        "class": "search",
-        "key": "search:TODO in src",
-        "action": "reference",
-        "result": "ok"
+        "action": "fallback",
+        "class": "tool",
+        "key": "tool:bash",
+        "result": "degraded"
+      }
+    },
+    "id": "fallback_raw_output",
+    "valid": true
+  },
+  {
+    "block": {
+      "audit": {
+        "expectation": "accept_reference",
+        "resolver_state": "available_local"
       },
       "content": {
         "exact": true,
         "hash": "sha256:38d7eaaf52f506788444dce138407b193942b251df8d34073c6ada48f1879580",
-        "size_bytes": 99,
-        "resolver_uri": "tok-fixture://artifacts/search_todo.txt"
+        "resolver_uri": "tok-fixture://artifacts/search_todo.txt",
+        "size_bytes": 99
       },
-      "audit": {
-        "resolver_state": "available_local",
-        "expectation": "accept_reference"
-      }
-    }
-  },
-  {
-    "id": "skeleton_reference_non_exact",
-    "valid": true,
-    "block": {
       "envelope": {
-        "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0008",
-        "session_id": "session-alpha",
-        "turn": 7,
-        "step": 0,
+        "block_id": "trace-0007",
         "direction": "request",
-        "payload_digest": "sha256:b286cdb1c8d1ede9bec4f00d3dee077e9bfd35b2a154b90d105b30f073c2a6af"
+        "payload_digest": "sha256:35ddcc94947570d55aafe8f432bfb9fc2eaa27af7253d185f77cc5e50291b5ee",
+        "session_id": "session-alpha",
+        "step": 0,
+        "trace_version": "tok-trace/v0.1-draft",
+        "turn": 6
       },
       "observation": {
-        "class": "file",
-        "key": "file:src/runtime.py#skeleton",
-        "action": "skeleton_reference",
+        "action": "reference",
+        "class": "search",
+        "key": "search:TODO in src",
         "result": "ok"
+      }
+    },
+    "id": "repeated_search_reference",
+    "valid": true
+  },
+  {
+    "block": {
+      "audit": {
+        "expectation": "accept_non_exact_reference",
+        "resolver_state": "available_local"
       },
       "content": {
         "exact": false,
         "hash": "sha256:73f47092220c964bd5112b2f275c1d8a10451c7c31df46cfe8d2d4dbcd688d30",
-        "size_bytes": 113,
-        "resolver_uri": "tok-fixture://artifacts/runtime_skeleton.txt"
+        "resolver_uri": "tok-fixture://artifacts/runtime_skeleton.txt",
+        "size_bytes": 113
       },
-      "audit": {
-        "resolver_state": "available_local",
-        "expectation": "accept_non_exact_reference"
-      }
-    }
-  },
-  {
-    "id": "summary_reference_non_exact",
-    "valid": true,
-    "block": {
       "envelope": {
-        "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0009",
+        "block_id": "trace-0008",
+        "direction": "request",
+        "payload_digest": "sha256:b286cdb1c8d1ede9bec4f00d3dee077e9bfd35b2a154b90d105b30f073c2a6af",
         "session_id": "session-alpha",
-        "turn": 8,
         "step": 0,
-        "direction": "response",
-        "payload_digest": "sha256:55f5b99d9a515f058066019c38e99bcd2ce66110f4a9b91774cf3633a7d01657"
+        "trace_version": "tok-trace/v0.1-draft",
+        "turn": 7
       },
       "observation": {
+        "action": "skeleton_reference",
+        "class": "file",
+        "key": "file:src/runtime.py#skeleton",
+        "result": "ok"
+      }
+    },
+    "id": "skeleton_reference_non_exact",
+    "valid": true
+  },
+  {
+    "block": {
+      "audit": {
+        "expectation": "accept_non_exact_reference",
+        "resolver_state": "available_local"
+      },
+      "content": {
+        "exact": false,
+        "hash": "sha256:9f0a11311632ef82c08010137b3ee74c4e37653b2a100722d9ae9fe86686e525",
+        "resolver_uri": "tok-fixture://artifacts/response_summary.txt",
+        "size_bytes": 92
+      },
+      "envelope": {
+        "block_id": "trace-0009",
+        "direction": "response",
+        "payload_digest": "sha256:55f5b99d9a515f058066019c38e99bcd2ce66110f4a9b91774cf3633a7d01657",
+        "session_id": "session-alpha",
+        "step": 0,
+        "trace_version": "tok-trace/v0.1-draft",
+        "turn": 8
+      },
+      "observation": {
+        "action": "summary_reference",
         "class": "response",
         "key": "response:turn-8-summary",
-        "action": "summary_reference",
         "result": "ok"
-      },
-      "content": {
-        "exact": false,
-        "hash": "sha256:9f0a11311632ef82c08010137b3ee74c4e37653b2a100722d9ae9fe86686e525",
-        "size_bytes": 92,
-        "resolver_uri": "tok-fixture://artifacts/response_summary.txt"
-      },
-      "audit": {
-        "resolver_state": "available_local",
-        "expectation": "accept_non_exact_reference"
       }
-    }
+    },
+    "id": "summary_reference_non_exact",
+    "valid": true
   },
   {
-    "id": "healthy_pass_through_metadata",
-    "valid": true,
     "block": {
-      "envelope": {
-        "trace_version": "tok-trace/v0.1-draft",
-        "block_id": "trace-0010",
-        "session_id": "session-alpha",
-        "turn": 9,
-        "step": 0,
-        "direction": "request",
-        "payload_digest": "sha256:a251e005f7a4c2b4c675a167b66a73f3df7866d59c7b61eca624ca297e9a0e7e"
-      },
-      "observation": {
-        "class": "message",
-        "key": "message:user:turn-9",
-        "action": "pass_through",
-        "result": "ok"
+      "audit": {
+        "expectation": "accept_pass_through",
+        "resolver_state": "available_local"
       },
       "content": {
         "exact": false,
         "hash": "sha256:9f0a11311632ef82c08010137b3ee74c4e37653b2a100722d9ae9fe86686e525",
-        "size_bytes": 92,
-        "resolver_uri": "tok-fixture://artifacts/response_summary.txt"
+        "resolver_uri": "tok-fixture://artifacts/response_summary.txt",
+        "size_bytes": 92
       },
-      "audit": {
-        "resolver_state": "available_local",
-        "expectation": "accept_pass_through"
+      "envelope": {
+        "block_id": "trace-0010",
+        "direction": "request",
+        "payload_digest": "sha256:a251e005f7a4c2b4c675a167b66a73f3df7866d59c7b61eca624ca297e9a0e7e",
+        "session_id": "session-alpha",
+        "step": 0,
+        "trace_version": "tok-trace/v0.1-draft",
+        "turn": 9
+      },
+      "observation": {
+        "action": "pass_through",
+        "class": "message",
+        "key": "message:user:turn-9",
+        "result": "ok"
       }
-    }
+    },
+    "id": "healthy_pass_through_metadata",
+    "valid": true
   }
 ]

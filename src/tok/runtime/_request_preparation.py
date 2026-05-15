@@ -19,6 +19,7 @@ from tok.compression import (
     text_of,
 )
 from tok.macros.ir import Instruction
+from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body
 from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
 
 from ._context_fidelity import (
@@ -71,11 +72,7 @@ from .pipeline.request_preparation import (
     is_plan_or_answer_finalization_turn,
     mutation_signals,
 )
-from .pipeline.request_validation import (
-    canonicalize_anthropic_bridge_body,
-    detect_prompt_bloat,
-    validate_anthropic_bridge_body,
-)
+from .pipeline.request_validation import detect_prompt_bloat
 from .pipeline.response_processing import translate_request_results
 from .pipeline.tool_processing import (
     _should_skip_history_rewrite,
@@ -227,7 +224,7 @@ def _bridge_candidate_body(
     seen_mutation_pairs: set[tuple[str, str]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     candidate_body = {"model": request.model, "messages": messages, "system": system}
-    canonical_body, changed, canonical_signals = canonicalize_anthropic_bridge_body(
+    canonical_body, changed, canonical_signals = canonicalize_bridge_body(
         candidate_body, seen_mutation_pairs=seen_mutation_pairs
     )
     if changed:
@@ -250,7 +247,7 @@ def _bridge_history_cut_candidate(
         system=system,
         seen_mutation_pairs=seen_mutation_pairs,
     )
-    if validate_anthropic_bridge_body(candidate_body):
+    if validate_bridge_body(candidate_body):
         return None
     candidate_saved_prompt_tokens = max(
         0,
@@ -1651,7 +1648,7 @@ def prepare_request_impl(
         session._pending_exact_evidence_keys.clear()
 
     canonical_body, canonicalized, canonical_signals = (
-        canonicalize_anthropic_bridge_body(body, seen_mutation_pairs=seen_mutation_pairs)
+        canonicalize_bridge_body(body, seen_mutation_pairs=seen_mutation_pairs)
         if request.requires_provider_canonicalization
         else (body, False, {})
     )

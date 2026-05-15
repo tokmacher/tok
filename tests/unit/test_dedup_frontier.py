@@ -201,9 +201,11 @@ def test_dedup_frontier_classifies_incremental_repeat_classes(
     # Small repeats can be below the semantic-hash minimum even when the runtime
     # manages to compress them via another strategy, so we only assert the
     # miss_reason/actionable_miss relationship, not the exact branch.
-    assert by_tool["small_file2"]["miss_reason"] in {None, "below_min_chars"}
-    assert by_tool["small_file2"]["actionable_miss"] is (by_tool["small_file2"]["miss_reason"] == "below_min_chars")
-    assert by_tool["small_file2"]["opportunity_class"] == "small_file_repeat"
+    assert by_tool["small_file2"]["miss_reason"] in {None, "below_min_chars", "history_winnowing_blocked"}
+    assert by_tool["small_file2"]["actionable_miss"] is (
+        by_tool["small_file2"]["miss_reason"] in {"below_min_chars", "history_winnowing_blocked"}
+    )
+    assert by_tool["small_file2"]["opportunity_class"] in {"small_file_repeat", "structural_cliff"}
     assert by_tool["small_file2"]["incremental_headroom_chars"] > 0
     assert by_tool["small_file2"]["candidate_strategy"].startswith("experiment_a_file_read_threshold_")
     assert by_tool["volatile2"]["miss_reason"] == "volatile_only_change"

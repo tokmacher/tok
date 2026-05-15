@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from tok.provider_request_shapes import canonicalize_bridge_body
 from tok.runtime.core import RuntimeSession, UniversalTokRuntime
 from tok.runtime.pipeline._answer_expectation import (
     record_structured_answer_expectation,
     restore_latest_assistant_thinking,
 )
 from tok.runtime.pipeline.request_preparation import mutation_signals
-from tok.runtime.pipeline.request_validation import canonicalize_anthropic_bridge_body
 from tok.runtime.types import PreparedRuntimeRequest, RuntimeRequest
 
 
@@ -111,7 +111,7 @@ def run_step_9(
         session._save_bridge_memory()
 
     if request and request.requires_provider_canonicalization:
-        canonical_body, canonicalized, canonical_signals = canonicalize_anthropic_bridge_body(
+        canonical_body, canonicalized, canonical_signals = canonicalize_bridge_body(
             body, seen_mutation_pairs=seen_mutation_pairs
         )
         if canonicalized:

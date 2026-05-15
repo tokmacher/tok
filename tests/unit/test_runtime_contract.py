@@ -165,6 +165,27 @@ def test_normalize_tool_events_captures_file_command_search_classes() -> None:
     assert events[2].query == "pattern"
 
 
+def test_provider_shapes_match_anthropic_validation_helpers() -> None:
+    from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body
+    from tok.runtime.pipeline.request_validation import (
+        canonicalize_anthropic_bridge_body,
+        validate_anthropic_bridge_body,
+    )
+
+    body = {
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{"role": "user", "content": "hi"}],
+        "system": "",
+    }
+
+    expected_canonical, expected_changed, expected_signals = canonicalize_anthropic_bridge_body(dict(body))
+    actual_canonical, actual_changed, actual_signals = canonicalize_bridge_body(dict(body))
+
+    assert (actual_changed, actual_signals) == (expected_changed, expected_signals)
+    assert actual_canonical == expected_canonical
+    assert validate_bridge_body(dict(body)) == validate_anthropic_bridge_body(dict(body))
+
+
 def test_response_contract_repairs_structured_answer_from_session_anchors(tmp_path) -> None:
     session = RuntimeSession(memory_dir=tmp_path / ".tok")
     session.bridge_memory._upsert(

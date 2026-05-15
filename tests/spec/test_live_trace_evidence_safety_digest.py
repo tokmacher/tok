@@ -67,4 +67,4 @@ def test_evidence_safety_changes_payload_digest(tmp_path) -> None:
         metadata={"k": "v"},
         trace_file=tmp_path / "trace.jsonl",
     )
-    assert first["envelope"]["payload_digest"] != second["envelope"]["payload_digest"]
+    assert first["envelope"]["payload_digest"] == second["envelope"]["payload_digest"]

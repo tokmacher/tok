@@ -18,6 +18,22 @@ from tok.runtime.evidence_safety import (
 
 
 class TestEvidenceSafetyStateMethods:
+    def test_requires_reacquisition_unknown_key_is_safe_default(self):
+        state = EvidenceSafetyState()
+        assert state.requires_reacquisition("file:never_seen.py") is True
+
+        state.record_exact("file:never_seen.py", digest="abc", turn=1)
+        assert state.requires_reacquisition("file:never_seen.py") is False
+
+        state.record_non_exact("file:other.py", form="skeleton", turn=1)
+        assert state.requires_reacquisition("file:other.py") is True
+
+    def test_evidence_key_normalization_strips_prefixes(self):
+        state = EvidenceSafetyState()
+        state.record_non_exact("file:src/foo.py", form="skeleton", turn=1)
+        assert state.requires_reacquisition("src/foo.py") is True
+        assert state.requires_reacquisition("file:src/foo.py") is True
+
     def test_record_exact_evidence_new_key(self):
         state = EvidenceSafetyState()
         signals = state.record_exact("file.py", digest="abc", turn=1)
