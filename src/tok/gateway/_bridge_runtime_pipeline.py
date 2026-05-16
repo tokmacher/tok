@@ -7,39 +7,31 @@ import os
 from dataclasses import replace
 from typing import Any, Literal, cast
 
-from fastapi import Response
-
 from tok.runtime._request_lifecycle import RequestLifecycle
 from tok.universal_runtime import RuntimeRequest, SurfaceMetadata
+from tok.utils.env_utils import env_int
 
 from . import _RUNTIME, BridgeSession, logger
 from ._bridge_preflight import _run_bridge_preflight
-from ._types import BridgePreparedPayload
+from ._types import BridgePreparedPayload, PipelineEarlyExit, PromptMetrics
 
 
 def _plan_finalization_min_saved_tokens() -> int:
-    raw = os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", "500")
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        logger.warning(
-            "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS=%r; using fallback 500",
-            raw,
-        )
-        return 500
+    raw = os.getenv("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS")
+    value = env_int("TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS", 500)
+    if raw is not None and value == 500:
+        try:
+            int(raw)
+        except ValueError:
+            logger.warning(
+                "Invalid integer config TOK_PLAN_FINALIZATION_MIN_SAVED_TOKENS=%r; using fallback 500",
+                raw,
+            )
+    return max(0, value)
 
 
-_PLAN_FINALIZATION_MIN_SAVED_TOKENS = _plan_finalization_min_saved_tokens()
-
-
-def _empty_prompt_metrics() -> dict[str, int]:
-    return {
-        "baseline_prompt_tokens": 0,
-        "prepared_prompt_tokens": 0,
-        "saved_prompt_tokens": 0,
-        "hot_hint_tokens_added": 0,
-        "reacquisition_tokens_avoided_estimate": 0,
-    }
+def _empty_prompt_metrics() -> PromptMetrics:
+    return PromptMetrics()
 
 
 def _extract_allowed_tools_from_body(body: dict[str, Any]) -> tuple[str, ...]:
@@ -70,14 +62,14 @@ def _apply_plan_finalization_spend_guard(
     behavior_signals: dict[str, int],
     compressed: bool,
     saved_toks: int,
-    prompt_metrics: dict[str, int],
+    prompt_metrics: PromptMetrics,
 ) -> tuple[dict[str, Any], bool, int, dict[str, int], dict[str, int], bool]:
     """Force final-answer/plan turns to provider-safe passthrough unless Tok clearly saves input tokens."""
     if not behavior_signals.get("plan_finalization_turn", 0):
         return prepared_body, compressed, saved_toks, prompt_metrics, behavior_signals, False
 
-    original_prompt_tokens = int(prompt_metrics.get("baseline_prompt_tokens", 0))
-    prepared_prompt_tokens = int(prompt_metrics.get("prepared_prompt_tokens", 0))
+    original_prompt_tokens = int(prompt_metrics.baseline_prompt_tokens)
+    prepared_prompt_tokens = int(prompt_metrics.prepared_prompt_tokens)
     if original_prompt_tokens <= 0 and prepared_prompt_tokens <= 0:
         original_prompt_tokens = session.runtime_session.prepared_prompt_tokens(provider_safe_original_body)
         prepared_prompt_tokens = original_prompt_tokens
@@ -86,7 +78,7 @@ def _apply_plan_finalization_spend_guard(
     elif prepared_prompt_tokens <= 0:
         prepared_prompt_tokens = session.runtime_session.prepared_prompt_tokens(prepared_body)
     observed_saved_tokens = max(0, original_prompt_tokens - prepared_prompt_tokens)
-    minimum_saved_tokens = max(0, _PLAN_FINALIZATION_MIN_SAVED_TOKENS)
+    minimum_saved_tokens = _plan_finalization_min_saved_tokens()
 
     behavior_signals["plan_finalization_original_prompt_tokens"] = original_prompt_tokens
     behavior_signals["plan_finalization_prepared_prompt_tokens"] = prepared_prompt_tokens
@@ -103,15 +95,9 @@ def _apply_plan_finalization_spend_guard(
     if not tok_added_tokens and not insufficient_savings:
         return prepared_body, compressed, saved_toks, prompt_metrics, behavior_signals, False
 
-    passthrough_metrics = dict(prompt_metrics)
-    passthrough_metrics.update(
-        {
-            "baseline_prompt_tokens": original_prompt_tokens,
-            "prepared_prompt_tokens": original_prompt_tokens,
-            "saved_prompt_tokens": 0,
-            "hot_hint_tokens_added": 0,
-            "reacquisition_tokens_avoided_estimate": 0,
-        }
+    passthrough_metrics = PromptMetrics(
+        baseline_prompt_tokens=original_prompt_tokens,
+        prepared_prompt_tokens=original_prompt_tokens,
     )
     logger.info(
         "plan_finalization_passthrough: original_prompt_tokens=%d prepared_prompt_tokens=%d saved=%d min_saved=%d",
@@ -139,7 +125,7 @@ def prepare_bridge_payload(
     tok_tool_header: str = "",
     allowed_tools: tuple[str, ...] | None = None,
     request_state: dict[str, bool] | None = None,
-) -> tuple[BridgePreparedPayload, Response | None]:
+) -> tuple[BridgePreparedPayload, PipelineEarlyExit | None]:
     active_request_state = request_state if request_state is not None else {"fallback_recorded": False}
 
     lifecycle = RequestLifecycle()
@@ -214,8 +200,11 @@ def prepare_bridge_payload(
         request_tool_compatible = False
         request_policy = "forced_baseline"
         behavior_signals["baseline_only_session"] = 1
-        behavior_signals["tok_fallback_activated"] = 1
-        logger.warning("tok_fallback_activated: session is in baseline-only mode, serving without compression")
+        # Do NOT set tok_fallback_activated here. baseline_only is a pre-existing session
+        # state, not a new per-request failure. Setting it on every degraded request causes
+        # fallback_count to accumulate unboundedly (e.g. 125 for 125 calls), making the
+        # health counter meaningless and the session appear to be failing on every turn.
+        logger.warning("baseline_only_session: serving without compression (session degraded to baseline)")
     else:
         request_tool_compatible = True
         request_policy = session.request_policy_default
@@ -281,13 +270,13 @@ def prepare_bridge_payload(
         behavior_signals["request_policy_effective_natural_first"] = (
             behavior_signals.get("request_policy_effective_natural_first", 0) + 1
         )
-    prompt_metrics = {
-        "baseline_prompt_tokens": prepared.baseline_prompt_tokens,
-        "prepared_prompt_tokens": prepared.prepared_prompt_tokens,
-        "saved_prompt_tokens": prepared.saved_prompt_tokens,
-        "hot_hint_tokens_added": prepared.hot_hint_tokens_added,
-        "reacquisition_tokens_avoided_estimate": prepared.reacquisition_tokens_avoided_estimate,
-    }
+    prompt_metrics = PromptMetrics(
+        baseline_prompt_tokens=int(prepared.baseline_prompt_tokens),
+        prepared_prompt_tokens=int(prepared.prepared_prompt_tokens),
+        saved_prompt_tokens=int(prepared.saved_prompt_tokens),
+        hot_hint_tokens_added=int(prepared.hot_hint_tokens_added),
+        reacquisition_tokens_avoided_estimate=int(prepared.reacquisition_tokens_avoided_estimate),
+    )
     policy_reasons = sorted(
         key.removeprefix("request_policy_reason_")
         for key, value in behavior_signals.items()

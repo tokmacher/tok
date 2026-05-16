@@ -60,6 +60,12 @@ def register(app: typer.Typer) -> None:
         if json_output:
             print(json.dumps(payload, indent=2))
         else:
+            live_receipt = _load_live_trace_blocks(trace_file)
+            non_exact_live_ids = {
+                str(block.get("envelope", {}).get("block_id", ""))
+                for block in live_receipt.blocks
+                if block.get("content", {}).get("exact") is False
+            }
             for result in results:
                 if result.status == "pass":
                     style = "green"
@@ -68,8 +74,10 @@ def register(app: typer.Typer) -> None:
                 else:
                     style = "red"
                 suffix = f" {', '.join(result.errors)}" if result.errors else ""
+                if result.id in non_exact_live_ids:
+                    suffix += " (metadata-only non-exact)"
                 console.print(f"[{style}]{result.status.upper()}[/{style}] {result.id}{suffix}")
-            _print_live_trace_receipt(trace_file, payload)
+            _print_live_trace_receipt(trace_file, payload, receipt=live_receipt)
             if any(result.status == "warn" and "missing_identifiable" in result.errors for result in results):
                 console.print(
                     "[yellow]Hint:[/yellow] metadata-only live traces warn when artifacts are not captured. "
@@ -93,8 +101,13 @@ def _resolve_audit_path(fixture_file: Path | None, *, latest: bool) -> Path | No
     return fixture_file
 
 
-def _print_live_trace_receipt(trace_file: Path, payload: list[dict[str, Any]]) -> None:
-    receipt = _load_live_trace_blocks(trace_file)
+def _print_live_trace_receipt(
+    trace_file: Path,
+    payload: list[dict[str, Any]],
+    *,
+    receipt: _LiveTraceReceipt | None = None,
+) -> None:
+    receipt = receipt if receipt is not None else _load_live_trace_blocks(trace_file)
     blocks = receipt.blocks
     if not blocks:
         return
@@ -115,11 +128,12 @@ def _print_live_trace_receipt(trace_file: Path, payload: list[dict[str, Any]]) -
         f"Warn: {status_counts['warn']} | "
         f"Fail: {status_counts['fail']}"
     )
+    artifact_label = "Metadata artifacts" if exact_count == 0 and non_exact_count else "Artifacts"
     console.print(
         f"Live blocks: {len(blocks)} | "
         f"Exact: {exact_count} | "
         f"Non-exact: {non_exact_count} | "
-        f"Artifacts: {artifact_count}/{len(blocks)}"
+        f"{artifact_label}: {artifact_count}/{len(blocks)}"
     )
     if receipt.skipped_records:
         console.print(f"Skipped receipt records: {receipt.skipped_records}")

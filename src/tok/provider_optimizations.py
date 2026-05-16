@@ -21,7 +21,7 @@ def apply_provider_optimizations(
     """
     Apply best-effort provider-specific rewrites.
 
-    Returns (body, saved_chars_estimate). For unknown providers this is a no-op.
+    Returns (body, saved_tokens_estimate). For unknown providers this is a no-op.
     """
     if adapter_kind == "claude-bridge":
         from tok.gateway._anthropic_optimizations import apply_anthropic_optimizations

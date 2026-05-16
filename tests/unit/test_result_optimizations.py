@@ -9,6 +9,7 @@ from tok.gateway._anthropic_optimizations import (
 )
 from tok.runtime.repeat_targets import build_file_summary, build_search_summary
 from tok.universal_runtime import RuntimeSession
+from tok.utils.token_utils import count_tokens
 
 
 def test_semantic_truncation() -> None:
@@ -48,8 +49,8 @@ def test_sift_tool_results_records_cache_marked_block_metrics() -> None:
     compressed = body["messages"][0]["content"][0]["content"]
     assert len(compressed) < len(raw)
     assert signals["tok_sift_cache_marked_blocks"] == 1
-    assert signals["tok_sift_cache_marked_block_tokens"] == len(raw) // 4
-    assert signals["tok_sift_cache_marked_saved_tokens"] == (len(raw) - len(compressed)) // 4
+    assert signals["tok_sift_cache_marked_block_tokens"] == count_tokens(raw)
+    assert signals["tok_sift_cache_marked_saved_tokens"] == count_tokens(raw) - count_tokens(compressed)
 
 
 def test_semantic_truncation_prefers_structure_boundary() -> None:

@@ -58,6 +58,20 @@ If you hit any of these, capture:
 - `tok doctor --report`
 - `tok bridge logs 600` (filtered to the relevant signal bundle)
 
+### Bridge Log Size
+
+`tok bridge start` bounds `~/.tok/bridge.log` before appending to it. By default Tok
+trims the log when it exceeds 50 MiB and keeps the newest 10 MiB, with a `log_trimmed`
+marker at the top of the retained file.
+
+For local diagnosis you can override the thresholds:
+
+```bash
+TOK_BRIDGE_LOG_MAX_BYTES=104857600 TOK_BRIDGE_LOG_KEEP_BYTES=20971520 tok bridge start
+```
+
+Set either value to `0` to disable automatic trimming for that start.
+
 ## Interpreting Session Signals
 
 ### `compat-fallback`
@@ -162,10 +176,10 @@ Meaning (plain English):
 - `answer_ready_repair_failed=1` means that specific repair attempt could not establish
   a clean answer-ready anchor for that turn.
 
-How to interpret it for `0.1.x`:
+How to interpret it for `0.2.x`:
 
 - If `Fallbacks` stays `0` and `Degraded to baseline` stays `no`, this is a
-  self-contained recovery path. It's acceptable for `0.1.x` under stress, but is useful
+  self-contained recovery path. It's acceptable for `0.2.x` under stress, but is useful
   evidence for hardening future versions.
 - If you see repeated `answer_ready_repair_failed` on normal usage (not a synthetic
   parallel-tool stress test), file an issue with the filtered log bundle.

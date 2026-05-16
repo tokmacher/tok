@@ -149,10 +149,7 @@ class NormalizedToolEvent(BaseModel, frozen=True):
 
     id: str
     name: str
-    args: dict[
-        str,
-        str | int | float | bool | list[str | int | float | bool] | dict[str, str | int | float | bool] | None,
-    ] = Field(default_factory=dict)
+    args: dict[str, Any] = Field(default_factory=dict)
     path: str | None = None
     command: str | None = None
     query: str | None = None

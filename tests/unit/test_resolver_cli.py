@@ -62,9 +62,10 @@ def test_resolver_get_invalid_uri_is_clean_error(tmp_path, monkeypatch) -> None:
 
 def test_resolver_get_missing_object(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
-    result = runner.invoke(app, ["resolver", "get", "tok-resolver://sha256:" + "0" * 64])
+    uri = "tok-resolver://sha256:" + "0" * 64
+    result = runner.invoke(app, ["resolver", "get", uri])
     assert result.exit_code == 1
-    assert "Missing object" in result.output
+    assert f"Missing object for {uri}" in result.output
 
 
 def test_resolver_get_out_writes_file(tmp_path, monkeypatch) -> None:

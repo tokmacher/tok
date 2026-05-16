@@ -3,6 +3,8 @@
 import logging
 import os
 
+from tok.utils.env_utils import env_int
+
 from .policy.smart_policy import UNIVERSAL_MODE, MemoryProjectionProfile
 
 logger = logging.getLogger("tok.runtime.config")
@@ -10,13 +12,13 @@ logger = logging.getLogger("tok.runtime.config")
 
 def _env_int(name: str, fallback: int) -> int:
     raw = os.getenv(name)
-    if raw is None:
-        return fallback
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
-        return fallback
+    value = env_int(name, fallback)
+    if raw is not None and value == fallback:
+        try:
+            int(raw)
+        except ValueError:
+            logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+    return value
 
 
 TTL_SECONDS = {"1h": 3600, "30m": 1800, "15m": 900, "5m": 300, "1m": 60}

@@ -25,8 +25,8 @@ class Step7Result:
     history_skip_reason: str = ""
     saved_tokens: int = 0
     injected_state_payload: str = ""
-    keep_turns: int = 2
-    bridge_keep_turns: int = 2
+    keep_turns: int = 3
+    bridge_keep_turns: int = 3
 
 
 def run_step_7(

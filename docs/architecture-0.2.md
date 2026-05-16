@@ -1,14 +1,16 @@
 # Tok 0.2 Architecture Roadmap
 
-This document is a roadmap, not the current runtime contract. Tok 0.1.x remains a
+This document is a roadmap, not the current runtime contract. Tok 0.2.x remains a
 bridge-first release; the live contract is still described in
 [architecture.md](./architecture.md). The purpose of this page is to make the intended
 0.2 direction visible to future agents before they edit gateway, runtime, compression,
 or release-surface code.
 
-## Current 0.1.x Posture
+## Current 0.2.x Posture
 
 - The Claude bridge is the supported product surface.
+- The local resolver beta is available for local content-addressed recovery and audit
+  checks only.
 - `src/tok/gateway/` owns HTTP transport, auth/header shaping, upstream forwarding,
   streaming cleanup, fail-open retry, and bridge session telemetry.
 - `src/tok/runtime/` owns request preparation, response processing, memory projection,
@@ -64,8 +66,8 @@ Rules to preserve:
 
 ## Not Implemented Yet
 
-These are 0.2 contracts to design before coding. They are intentionally not live
-abstractions in 0.1.x.
+These are follow-on contracts to design before coding. They are intentionally not live
+abstractions in 0.2.0.
 
 ### Request Lifecycle Contract
 
@@ -122,8 +124,8 @@ workflow spans as part of the 0.2 bridge architecture.
 
 ### Config Strictness Table
 
-0.1.x may warn and keep safe defaults for some invalid environment values. 0.2 should
-centralize config parsing and classify each setting:
+0.2.0 may warn and keep safe defaults for some invalid environment values. Later 0.2.x
+work should centralize config parsing and classify each setting:
 
 - **startup-fatal**: port, bind host, API base, auth/transport mode, release gates;
 - **warn-and-default**: tuning thresholds, prompt budgets, benchmark/dev toggles;
@@ -165,10 +167,10 @@ edits or conclusions.
   model-facing references so compression can be defended without claiming summaries are
   original bytes.
 
-0.1.x should document this contract and preserve existing tests. 0.2 should enforce it
-mechanically with a narrow evidence-safety test suite.
+0.2.0 documents this contract and preserves existing tests. Later 0.2.x work should
+enforce it mechanically with a narrow evidence-safety test suite.
 
 ## 0.2 Prep Rule
 
 Before adding a live abstraction, add a doc or test that states the boundary. The goal
-is to prevent half-built architecture from entering the 0.1.x bridge path.
+is to prevent half-built architecture from entering the 0.2.x bridge path.

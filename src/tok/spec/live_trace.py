@@ -98,7 +98,6 @@ def build_live_trace_block(
             "turn": max(0, turn),
             "step": _next_trace_step(session_id),
             "direction": direction,
-            "payload_digest": "draft-uncomputed",
         },
         "observation": {
             "class": trace_class,
@@ -131,10 +130,12 @@ def build_live_trace_block(
         )
     if artifact_uri is not None:
         cast(dict[str, Any], block["content"])["resolver_uri"] = artifact_uri
-    cast(dict[str, Any], block["envelope"])["payload_digest"] = canonical_payload_digest(block)
-    assert cast(dict[str, Any], block["envelope"])["payload_digest"] != "draft-uncomputed", (
-        f"Live trace block {cast(dict[str, Any], block['envelope'])['block_id']} emitted with draft-uncomputed digest"
-    )
+    digest = canonical_payload_digest(block)
+    if digest == "draft-uncomputed":
+        raise RuntimeError(
+            f"Live trace block {cast(dict[str, Any], block['envelope'])['block_id']} emitted with draft-uncomputed digest"
+        )
+    cast(dict[str, Any], block["envelope"])["payload_digest"] = digest
     return block
 
 

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 from tok.compression import text_of
 from tok.runtime.core import RuntimeSession
 from tok.runtime.types import RuntimeRequest
+
+logger = logging.getLogger("tok.runtime")
 
 
 def _snapshot_latest_assistant_thinking(
@@ -88,6 +91,18 @@ def run_step_1(
     original_body = copy.deepcopy(body)
 
     _thinking_snapshot = _snapshot_latest_assistant_thinking(request.messages)
+
+    _current_message_count = len(body.get("messages", []))
+    _prev_message_count = session._last_request_message_count
+    if _prev_message_count > 10 and _current_message_count > 0 and _current_message_count < _prev_message_count * 0.7:
+        session.pending_behavior_signals["tok_context_compression_detected"] = 1
+        logger.info(
+            "tok_context_compression_detected: messages %d -> %d (%.0f%% shrinkage)",
+            _prev_message_count,
+            _current_message_count,
+            (1 - _current_message_count / _prev_message_count) * 100,
+        )
+    session._last_request_message_count = _current_message_count
 
     last_user_msg = ""
     if request.messages:

@@ -446,6 +446,9 @@ def session_signals_text(payload: dict[str, Any]) -> str:
     for label, value in signal_map:
         if value > 0:
             parts.append(f"{label}={value}")
+    compression_detected = int(payload.get("context_compression_detected", 0))
+    if compression_detected > 0:
+        parts.append(f"compress-recovery={compression_detected}")
     if reacq_required_count > 0 or reacq_satisfied_count > 0:
         parts.append(f"reacq-safe={reacq_satisfied_count}/{reacq_required_count}")
     if compression_blocked_count > 0:
@@ -614,7 +617,18 @@ def session_status_rows(
         )
     if session_signals is not None:
         rows.append(("Session signals", session_signals))
+    goal = str(summary.get("goal", "")) if summary is not None else ""
+    if goal:
+        rows.append(("Goal", goal[:60]))
     if summary is not None:
+        gross_tokens_saved = int(summary.get("gross_tokens_saved", summary.get("tokens_saved", 0)))
+        net_tokens_saved = int(summary.get("net_tokens_saved", summary.get("tokens_saved", 0)))
+        if gross_tokens_saved != net_tokens_saved:
+            rows.append(("Tokens saved (gross)", str(gross_tokens_saved)))
+            rows.append(("Tokens saved (net)", str(net_tokens_saved)))
+        reacq_cost_tokens = int(summary.get("reacquisition_cost_tokens", 0))
+        if reacq_cost_tokens:
+            rows.append(("Reacquisition cost", str(reacq_cost_tokens)))
         exact_count = int(summary.get("evidence_exact_observed_count", 0))
         nonexact_count = int(summary.get("evidence_non_exact_reference_count", 0))
         summary_count = int(summary.get("evidence_non_exact_summary_count", 0))

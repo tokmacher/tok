@@ -7,8 +7,6 @@ import copy
 import json
 from typing import Any
 
-from fastapi import Response
-
 from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body, validate_outgoing_bridge_body
 from tok.runtime._request_preparation import (
     _restore_latest_assistant_thinking,
@@ -37,6 +35,7 @@ from ._bridge_comparison import (
     _request_fingerprint_diff,
 )
 from ._signal_constants import _merge_signal_counts
+from ._types import PipelineEarlyExit
 
 __all__ = [
     "_count_user_messages_with_mixed_tool_result_content",
@@ -203,8 +202,9 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
     return rewritten_body, changed, signals
 
 
-def _local_bridge_invalid_history_response(message: str) -> Response:
-    return Response(
+def _local_bridge_invalid_history_response(message: str) -> PipelineEarlyExit:
+    return PipelineEarlyExit(
+        status_code=400,
         content=json.dumps(
             {
                 "type": "error",
@@ -213,14 +213,14 @@ def _local_bridge_invalid_history_response(message: str) -> Response:
                     "message": message,
                 },
             }
-        ),
-        status_code=400,
+        ).encode(),
         media_type="application/json",
     )
 
 
-def _large_file_read_burst_response(message: str) -> Response:
-    return Response(
+def _large_file_read_burst_response(message: str) -> PipelineEarlyExit:
+    return PipelineEarlyExit(
+        status_code=400,
         content=json.dumps(
             {
                 "type": "error",
@@ -239,8 +239,7 @@ def _large_file_read_burst_response(message: str) -> Response:
                     },
                 },
             }
-        ),
-        status_code=400,
+        ).encode(),
         media_type="application/json",
     )
 
@@ -420,7 +419,8 @@ def _run_bridge_preflight(
     emit_ready_log: bool = True,
     emit_repair_logs: bool = True,
     reset_recovery_state: bool = True,
-) -> tuple[dict[str, Any], dict[str, int], bool, Response | None]:
+) -> tuple[dict[str, Any], dict[str, int], bool, PipelineEarlyExit | None]:
+    # Transport responses are constructed at the gateway boundary.
     """Canonicalize, validate, and recover bridge tool history before send."""
     _thinking_snapshot = _snapshot_latest_assistant_thinking(original_body.get("messages", []))
     (

@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -111,10 +110,9 @@ def _tool_result_only_suffix_has_safe_pairing(messages: list[dict[str, Any]]) ->
 
 
 def _env_int_or_default(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except ValueError:
-        return default
+    from tok.utils.env_utils import env_int_or_default
+
+    return env_int_or_default(name, default)
 
 
 def _has_exact_search_evidence(evidence_keys: set[str]) -> bool:
@@ -678,6 +676,18 @@ def prepare_request_impl(
     _thinking_snapshot = _snapshot_latest_assistant_thinking(request.messages)
     compressed = False
 
+    _current_message_count = len(body.get("messages", []))
+    _prev_message_count = session._last_request_message_count
+    if _prev_message_count > 10 and _current_message_count > 0 and _current_message_count < _prev_message_count * 0.7:
+        session.pending_behavior_signals["tok_context_compression_detected"] = 1
+        logger.info(
+            "tok_context_compression_detected: messages %d -> %d (%.0f%% shrinkage)",
+            _prev_message_count,
+            _current_message_count,
+            (1 - _current_message_count / _prev_message_count) * 100,
+        )
+    session._last_request_message_count = _current_message_count
+
     _pre_existing_session_signals = dict(session.pending_behavior_signals)
     seen_mutation_pairs: set[tuple[str, str]] = set()
 
@@ -802,6 +812,12 @@ def prepare_request_impl(
         session.bridge_memory._upsert(session.bridge_memory.hot, "blockers", blocker, score_delta=2)
     for hypothesis in hypotheses:
         session.bridge_memory._upsert(session.bridge_memory.hot, "questions", hypothesis, score_delta=2)
+
+    from tok.runtime.memory.session_state import extract_goal_from_messages
+
+    request_goal, _ = extract_goal_from_messages(translated_messages)
+    if request_goal:
+        session.bridge_memory._upsert(session.bridge_memory.hot, "goal", request_goal, score_delta=1)
 
     normalized_tool_events = normalize_tool_events(translated_messages)
     broad_audit_batch = (

@@ -84,6 +84,8 @@ class DiagnosticsSnapshot:
     thinking_mutation_events: int = 0
     task_score: int = 0
     repeated_active_file_reads: int = 0
+    goal: str = ""
+    context_compression_detected: int = 0
 
     def to_health_response(self) -> dict[str, Any]:
         return {
@@ -159,6 +161,8 @@ class DiagnosticsSnapshot:
             "thinking_mutation_events": self.thinking_mutation_events,
             "task_score": self.task_score,
             "repeated_active_file_reads": self.repeated_active_file_reads,
+            "goal": self.goal,
+            "context_compression_detected": self.context_compression_detected,
         }
 
     @classmethod
@@ -327,6 +331,8 @@ class DiagnosticsSnapshot:
             thinking_mutation_events=int(signals.get("thinking_mutation_events", 0)),
             task_score=int(session_summary.get("task_score", 0)),
             repeated_active_file_reads=int(signals.get("repeat_file_read", 0)),
+            goal=str(session_summary.get("goal", "")),
+            context_compression_detected=int(signals.get("tok_context_compression_detected", 0)),
         )
 
     @classmethod

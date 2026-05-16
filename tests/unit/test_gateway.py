@@ -539,6 +539,8 @@ def test_health_endpoint(monkeypatch) -> None:
         "thinking_mutation_events": 0,
         "task_score": 100,
         "repeated_active_file_reads": 0,
+        "goal": "",
+        "context_compression_detected": 0,
     }
 
 

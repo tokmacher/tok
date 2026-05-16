@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -23,10 +22,9 @@ _DEFAULT_JIT_HIT_THRESHOLD = 3
 
 
 def _env_int_or_default(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except ValueError:
-        return default
+    from tok.utils.env_utils import env_int_or_default
+
+    return env_int_or_default(name, default)
 
 
 def _exact_search_evidence_keys_in_messages(

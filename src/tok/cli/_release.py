@@ -100,6 +100,7 @@ def _health_session_summary(health_payload: dict[str, Any]) -> dict[str, Any]:
         "cost_saved_usd": float(health_payload.get("cost_saved_usd", 0.0)),
         "baseline_only": bool(health_payload.get("baseline_only", False)),
         "fallback_count": int(health_payload.get("fallback_count", 0)),
+        "fail_open_count": int(health_payload.get("fail_open_count", 0)),
         "calls": int(health_payload.get("calls", 0)),
         "session_quality": str(health_payload.get("session_quality", "clean")),
         "last_degradation_reason": str(health_payload.get("last_degradation_reason", "")),
@@ -127,6 +128,14 @@ def _health_session_summary(health_payload: dict[str, Any]) -> dict[str, Any]:
             health_payload.get("evidence_compression_blocked_for_safety_count", 0)
         ),
     }
+
+
+def _degradation_warning(*, fail_open_count: int, session_quality: str, degradation_reason: str) -> str:
+    if degradation_reason:
+        return f"Session quality is {session_quality}; degradation reason: {degradation_reason}"
+    if fail_open_count > 0:
+        return f"Session quality is {session_quality}; fail-open compatibility events: {fail_open_count}"
+    return f"Session quality is {session_quality}"
 
 
 def _overlay_health_session_on_lifetime(
@@ -219,6 +228,9 @@ def stats_command(
         if pid:
             data["pid"] = pid
         if session_summary:
+            fail_open_count = int(session_summary.get("fail_open_count", 0))
+            session_quality = str(session_summary.get("session_quality", "clean"))
+            degradation_reason = str(session_summary.get("last_degradation_reason", ""))
             data["session"] = {
                 "calls": int(session_summary.get("calls", 0)),
                 "actual_tokens": int(session_summary.get("actual_tokens", 0)),
@@ -231,10 +243,19 @@ def stats_command(
                 "baseline_cost_usd": float(session_summary.get("baseline_cost_usd", 0.0)),
                 "cost_saved_usd": float(session_summary.get("cost_saved_usd", 0.0)),
                 "fallback_count": int(session_summary.get("fallback_count", 0)),
+                "fail_open_count": fail_open_count,
                 "baseline_only": bool(session_summary.get("baseline_only", False)),
-                "session_quality": str(session_summary.get("session_quality", "clean")),
-                "degradation_reason": str(session_summary.get("last_degradation_reason", "") or "none"),
+                "session_quality": session_quality,
+                "degradation_reason": degradation_reason,
             }
+            if session_quality != "clean" or fail_open_count > 0 or degradation_reason:
+                warnings.append(
+                    _degradation_warning(
+                        fail_open_count=fail_open_count,
+                        session_quality=session_quality,
+                        degradation_reason=degradation_reason,
+                    )
+                )
         else:
             warnings.append("No current session data")
         if lifetime_summary:
@@ -1127,6 +1148,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
     doctor_report_summary: dict[str, Any] = dict(session_summary or {})
     json_data: dict[str, Any] = {"bridge_running": pid is not None, "port": port}
     json_warnings: list[str] = []
+    watch_warning: str | None = None
     if pid:
         json_data["pid"] = pid
         if not json_output:
@@ -1140,6 +1162,9 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                 baseline_only = bool(payload.get("baseline_only"))
                 mode = str(payload.get("mode", "unknown"))
                 fallback_count = int(payload.get("fallback_count", 0))
+                fail_open_count = int(payload.get("fail_open_count", 0))
+                session_quality = str(payload.get("session_quality", "clean"))
+                degradation_reason = str(payload.get("last_degradation_reason", ""))
                 session_view_summary = _health_session_summary(payload)
                 tokens_saved = int(session_view_summary["tokens_saved"])
                 verdict, verdict_style = runtime_verdict(
@@ -1231,7 +1256,9 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     json_data["baseline_only"] = baseline_only
                     json_data["degraded_to_baseline"] = baseline_only
                     json_data["fallback_count"] = fallback_count
-                    json_data["session_quality"] = str(payload.get("session_quality", "clean"))
+                    json_data["fail_open_count"] = fail_open_count
+                    json_data["degradation_reason"] = degradation_reason
+                    json_data["session_quality"] = session_quality
                     json_data["tokens_saved"] = tokens_saved
                     json_data["net_tokens_saved"] = int(session_view_summary.get("net_tokens_saved", tokens_saved))
                     json_data["reacquisition_cost_tokens"] = int(
@@ -1249,7 +1276,20 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     if baseline_only:
                         json_warnings.append("Session degraded to baseline")
                         issues = True
+                    elif session_quality != "clean" or fail_open_count > 0 or degradation_reason:
+                        watch_warning = _degradation_warning(
+                            fail_open_count=fail_open_count,
+                            session_quality=session_quality,
+                            degradation_reason=degradation_reason,
+                        )
+                        json_warnings.append(watch_warning)
                 else:
+                    if not baseline_only and (session_quality != "clean" or fail_open_count > 0 or degradation_reason):
+                        watch_warning = _degradation_warning(
+                            fail_open_count=fail_open_count,
+                            session_quality=session_quality,
+                            degradation_reason=degradation_reason,
+                        )
                     console.print(
                         render_stats_panel(
                             "Current Session",
@@ -1263,8 +1303,8 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                                 mode=mode,
                                 api_base=str(payload.get("api_base", "")) or None,
                                 fallback_count=fallback_count,
-                                session_quality=str(payload.get("session_quality", "clean")),
-                                degradation_reason=str(payload.get("last_degradation_reason", "")),
+                                session_quality=session_quality,
+                                degradation_reason=degradation_reason,
                                 session_signals=session_signals_text(signal_payload),
                             ),
                             border_style=status_border(verdict_style),
@@ -1309,7 +1349,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                             "[yellow]⚠️ Tok verdict:[/yellow] bridge is healthy, but no current-session savings are visible yet."
                         )
                     console.print(
-                        f"[bold]Recommendation:[/bold] {session_recommendation(baseline_only=baseline_only, session_quality=str(payload.get('session_quality', 'clean'))).split(': ', 1)[1]}"
+                        f"[bold]Recommendation:[/bold] {session_recommendation(baseline_only=baseline_only, session_quality=session_quality).split(': ', 1)[1]}"
                     )
             else:
                 if json_output:
@@ -1421,7 +1461,10 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
         console.print("\n[red]Doctor found issues — see above for remediation.[/red]")
         raise typer.Exit(1)
 
-    console.print("\n[green]✅ All checks passed — runtime contract healthy.[/green]")
+    if watch_warning:
+        console.print(f"\n[yellow]⚠️ Checks completed — {watch_warning}.[/yellow]")
+    else:
+        console.print("\n[green]✅ All checks passed — runtime contract healthy.[/green]")
 
 
 def gate_check_command(

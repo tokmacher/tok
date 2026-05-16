@@ -196,7 +196,7 @@ class RuntimeSession:
         The lock is NOT acquired internally by any methods.
     """
 
-    keep_turns: int = 2
+    keep_turns: int = 3
     _keep_turns_explicit: bool = field(default=False, init=False, repr=False)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     model: str = ""
@@ -889,6 +889,14 @@ class RuntimeSession:
     @_token_count.setter
     def _token_count(self, value: int) -> None:
         self.telemetry.token_count = value
+
+    @property
+    def _last_request_message_count(self) -> int:
+        return self.telemetry.last_request_message_count
+
+    @_last_request_message_count.setter
+    def _last_request_message_count(self, value: int) -> None:
+        self.telemetry.last_request_message_count = value
 
     @property
     def _tool_names_seen(self) -> set[str]:

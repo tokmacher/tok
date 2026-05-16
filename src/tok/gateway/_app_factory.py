@@ -36,7 +36,7 @@ from ._bridge_comparison import _safe_headers
 from ._bridge_request_handler import send_with_tok_fail_open_retry
 from ._bridge_runtime_pipeline import prepare_bridge_payload
 from ._bridge_streaming import _emit_sse_block, _run_macro_mining, buffer_strip_restream_impl, passthrough_stream_impl
-from ._types import build_capability_manifest
+from ._types import PromptMetrics, build_capability_manifest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -68,18 +68,12 @@ def _handle_retried_without_tok(
     compressed = False
     saved_toks = 0
     tool_breakdown: dict[str, int] = {}
-    prompt_metrics = {
-        "baseline_prompt_tokens": 0,
-        "prepared_prompt_tokens": 0,
-        "saved_prompt_tokens": 0,
-        "hot_hint_tokens_added": 0,
-        "reacquisition_tokens_avoided_estimate": 0,
-    }
+    prompt_metrics = PromptMetrics()
     behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
     behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
     logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
     _record_fallback_once(active_session, request_state)
-    return compressed, saved_toks, tool_breakdown, prompt_metrics
+    return compressed, saved_toks, tool_breakdown, prompt_metrics.as_dict()
 
 
 def _expand_macros_in_blocks(blocks: list[dict[str, Any]], active_session: BridgeSession) -> list[dict[str, Any]]:
@@ -455,6 +449,14 @@ async def _json_to_sse(resp_json: dict[str, Any]) -> AsyncIterator[bytes]:
     yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
 
 
+def _session_goal(rs: Any) -> str:
+    for bucket in (rs.bridge_memory.hot, rs.bridge_memory.durable):
+        entries = bucket.get("goal", [])
+        if entries:
+            return entries[0].value[:40]
+    return ""
+
+
 def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
     """Create the bridge FastAPI application."""
     if session is None:
@@ -509,6 +511,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             task_score=rs.current_task_smoothness_score,
             stream_instability_events=sum(v for k, v in rs.smoothness_event_counts.items() if "stream" in k.lower()),
             thinking_mutation_events=int(rs.smoothness_event_counts.get("thinking_block_mutation", 0)),
+            goal=_session_goal(rs),
             stream_recovery_attempt_count=max(
                 snap.stream_recovery_attempt_count,
                 sum(v for k, v in rs.smoothness_event_counts.items() if "stream_recovery" in k.lower()),
@@ -620,13 +623,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         saved_toks = 0
         tool_breakdown: dict[str, int] = {}
         behavior_signals: dict[str, int] = {}
-        prompt_metrics = {
-            "baseline_prompt_tokens": 0,
-            "prepared_prompt_tokens": 0,
-            "saved_prompt_tokens": 0,
-            "hot_hint_tokens_added": 0,
-            "reacquisition_tokens_avoided_estimate": 0,
-        }
+        prompt_metrics = PromptMetrics().as_dict()
         request_tool_compatible = False
         request_policy = "forced_baseline"
         provider_safe_original_body_bytes = original_body_bytes
@@ -649,7 +646,11 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     request_state=request_state,
                 )
                 if preflight_response is not None:
-                    return preflight_response
+                    return Response(
+                        content=preflight_response.content,
+                        status_code=preflight_response.status_code,
+                        media_type=preflight_response.media_type,
+                    )
 
                 body = dict(bridge_payload.body)
                 behavior_signals = dict(bridge_payload.behavior_signals)
@@ -658,7 +659,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 compressed = bridge_payload.compressed
                 saved_toks = bridge_payload.saved_toks
                 tool_breakdown = dict(bridge_payload.tool_breakdown)
-                prompt_metrics = dict(bridge_payload.prompt_metrics)
+                prompt_metrics = bridge_payload.prompt_metrics.as_dict()
                 raw_retry_forbidden = bridge_payload.retry_forbidden
                 provider_safe_original_body = dict(bridge_payload.provider_safe_original_body)
                 provider_safe_original_body_bytes = json.dumps(provider_safe_original_body).encode()
@@ -707,10 +708,9 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         }
                     )
                     if not behavior_signals.get("plan_finalization_passthrough", 0):
-                        body, gateway_saved_chars = apply_anthropic_optimizations(
+                        body, gateway_saved_toks = apply_anthropic_optimizations(
                             body, behavior_signals=behavior_signals
                         )
-                        gateway_saved_toks = gateway_saved_chars // 4
                         if gateway_saved_toks > 0:
                             saved_toks += gateway_saved_toks
                             compressed = True
@@ -889,13 +889,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     compressed = False
                     saved_toks = 0
                     tool_breakdown = {}
-                    prompt_metrics = {
-                        "baseline_prompt_tokens": 0,
-                        "prepared_prompt_tokens": 0,
-                        "saved_prompt_tokens": 0,
-                        "hot_hint_tokens_added": 0,
-                        "reacquisition_tokens_avoided_estimate": 0,
-                    }
+                    prompt_metrics = PromptMetrics().as_dict()
                     behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
                     behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
                     logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")

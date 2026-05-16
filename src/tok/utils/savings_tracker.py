@@ -9,6 +9,7 @@ import os
 import statistics
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,7 @@ from tok.runtime.policy.semantic_validation import (
     calculate_semantic_regression_score,
 )
 from tok.runtime.signals import EVIDENCE_SAFETY_SIGNAL_NAMES
+from tok.utils.env_utils import env_int
 
 from ._savings_persistence import (
     GLOBAL_LEDGER_FILENAME,
@@ -48,12 +50,13 @@ _legacy_ledger_path = legacy_ledger_path
 
 def _env_int(name: str, fallback: int) -> int:
     raw = os.getenv(name)
-    if raw is None:
-        return fallback
-    try:
-        return int(raw)
-    except ValueError:
-        return fallback
+    value = env_int(name, fallback)
+    if raw is not None and value == fallback:
+        try:
+            int(raw)
+        except ValueError:
+            logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+    return value
 
 
 __all__ = [
@@ -185,7 +188,7 @@ class SavingsTracker:
         output_saved: int,
         type_breakdown: dict[str, int] | None = None,
         behavior_signals: dict[str, int] | None = None,
-        prompt_metrics: dict[str, int] | None = None,
+        prompt_metrics: Mapping[str, int] | None = None,
     ) -> None:
         """Update per-model session stats."""
         inp_rate, out_rate, cr_rate, cw_rate = get_pricing(model)
@@ -244,8 +247,9 @@ class SavingsTracker:
             m["baseline_cost_usd"] += baseline_cost
             m["actual_cost_usd"] += actual_cost
             if prompt_metrics:
+                metric_source: Mapping[str, int] = prompt_metrics
                 for key in _PROMPT_METRIC_KEYS:
-                    m[key] = int(m.get(key, 0)) + int(prompt_metrics.get(key, 0))
+                    m[key] = int(m.get(key, 0)) + int(metric_source.get(key, 0))
             if type_breakdown:
                 bd = m.setdefault("type_breakdown", {})
                 for k, v in type_breakdown.items():

@@ -5,18 +5,20 @@ from __future__ import annotations
 import logging
 import os
 
+from tok.utils.env_utils import env_int
+
 logger = logging.getLogger("tok.compression.flags")
 
 
 def _env_int(name: str, fallback: int) -> int:
     raw = os.getenv(name)
-    if raw is None:
-        return fallback
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
-        return fallback
+    value = env_int(name, fallback)
+    if raw is not None and value == fallback:
+        try:
+            int(raw)
+        except ValueError:
+            logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+    return value
 
 
 TOK_FORCE_FILE_CODEC: bool = os.getenv("TOK_FORCE_FILE_CODEC", "0") == "1"

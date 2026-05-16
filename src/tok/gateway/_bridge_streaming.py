@@ -15,6 +15,7 @@ import httpx
 from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
 from tok.runtime.policy.translator import IS_TOK
 from tok.runtime.smoothness.models import SmoothnessEventType
+from tok.utils.env_utils import env_int
 
 from . import (
     _RUNTIME,
@@ -32,18 +33,27 @@ if TYPE_CHECKING:
 __all__ = ["_run_macro_mining", "buffer_strip_restream_impl", "passthrough_stream_impl"]
 
 
-def _env_int(name: str, fallback: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return fallback
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
-        return fallback
+def _parse_stream_recovery_tool_only_repeat_limit() -> int:
+    raw = os.getenv("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT")
+    value = env_int("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", 2)
+    if raw is not None and value == 2:
+        try:
+            int(raw)
+        except ValueError:
+            logger.warning(
+                "Invalid integer config %s=%r; using fallback %d",
+                "TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT",
+                raw,
+                2,
+            )
+    return max(0, value)
 
 
-_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = _env_int("TOK_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT", 2)
+_STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = _parse_stream_recovery_tool_only_repeat_limit()
+
+
+def _stream_recovery_tool_only_repeat_limit() -> int:
+    return _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT
 
 
 def _parse_sse_stream(
@@ -708,7 +718,7 @@ async def buffer_strip_restream_impl(
 
                                     if (
                                         session.runtime_session._stream_recovery_tool_use_only_repeat_count
-                                        >= _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT
+                                        >= _stream_recovery_tool_only_repeat_limit()
                                     ):
                                         stream_behavior_signals["stream_recovery_loop_broken"] = 1
                                         stream_behavior_signals["stream_recovery_fallback"] = 1

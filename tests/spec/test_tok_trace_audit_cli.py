@@ -124,7 +124,9 @@ def test_audit_human_output_includes_live_trace_receipt(monkeypatch, tmp_path: P
     assert "Live blocks: 2" in result.output
     assert "Exact: 0" in result.output
     assert "Non-exact: 2" in result.output
-    assert "Artifacts: 1/2" in result.output
+    assert "Metadata artifacts: 1/2" in result.output
+    assert "PASS " in result.output
+    assert "(metadata-only non-exact)" in result.output
     assert "metadata-only request trace" in result.output
 
 
@@ -166,7 +168,7 @@ def test_audit_live_receipt_survives_malformed_jsonl_line(monkeypatch, tmp_path:
     assert "Warn: 0" in result.output
     assert "Fail: 1" in result.output
     assert "Live blocks: 2" in result.output
-    assert "Artifacts: 2/2" in result.output
+    assert "Metadata artifacts: 2/2" in result.output
     assert "Skipped receipt records: 1" in result.output
 
 
@@ -204,7 +206,7 @@ def test_audit_live_receipt_skips_invalid_jsonl_records_without_hiding_valid_blo
     assert "Trace receipt" in result.output
     assert "Audit results: 3" in result.output
     assert "Live blocks: 1" in result.output
-    assert "Artifacts: 1/1" in result.output
+    assert "Metadata artifacts: 1/1" in result.output
     assert "Skipped receipt records: 2" in result.output
 
 

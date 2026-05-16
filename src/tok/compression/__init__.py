@@ -14,6 +14,7 @@ import time as time_module
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+from tok.utils.env_utils import env_int
 from tok.utils.event_logging import log_delta_compress
 
 if TYPE_CHECKING:
@@ -33,13 +34,13 @@ logger = logging.getLogger("tok.compression")
 
 def _env_int(name: str, fallback: int) -> int:
     raw = os.getenv(name)
-    if raw is None:
-        return fallback
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
-        return fallback
+    value = env_int(name, fallback)
+    if raw is not None and value == fallback:
+        try:
+            int(raw)
+        except ValueError:
+            logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+    return value
 
 
 _HARNESS_INJECTION_RE = re.compile(r"\n?<system-reminder>.*?</system-reminder>\n?", re.DOTALL)

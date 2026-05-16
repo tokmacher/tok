@@ -102,7 +102,7 @@ def get(
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
     if data is None:
-        console.print(f"[red]Missing object for {digest}[/red]")
+        console.print(f"[red]Missing object for {format_resolver_uri(digest)}[/red]", soft_wrap=True)
         raise typer.Exit(code=1)
     if out is None:
         console.print(data.decode("utf-8", errors="replace"))

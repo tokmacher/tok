@@ -34,8 +34,8 @@ class TestStep7ResultDefaults:
         assert r.history_skip_reason == ""
         assert r.saved_tokens == 0
         assert r.injected_state_payload == ""
-        assert r.keep_turns == 2
-        assert r.bridge_keep_turns == 2
+        assert r.keep_turns == 3
+        assert r.bridge_keep_turns == 3
 
     def test_step7_result_all_fields_present(self) -> None:
         expected = {

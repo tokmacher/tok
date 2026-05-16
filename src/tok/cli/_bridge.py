@@ -37,11 +37,48 @@ _LOCAL_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 _DEFAULT_LOG_MAX_BYTES = 50 * 1024 * 1024
 _DEFAULT_LOG_KEEP_BYTES = 10 * 1024 * 1024
 
-# Compatibility aliases for tests and monkeypatching. These are intentionally
-# module globals so tests can patch them.
-TOK_DIR = _cli_support_mod.tok_dir()
-PID_FILE = _cli_support_mod.pid_file()
-LOG_FILE = _cli_support_mod.log_file()
+# Defaults are mirrored from `_cli_support` but kept as module globals so tests
+# can monkeypatch `tok.cli._bridge.LOG_FILE` / `PID_FILE` directly.
+TOK_DIR = _cli_support_mod.TOK_DIR
+PID_FILE = _cli_support_mod.PID_FILE
+LOG_FILE = _cli_support_mod.LOG_FILE
+_DEFAULT_TOK_DIR = TOK_DIR
+_DEFAULT_PID_FILE = PID_FILE
+_DEFAULT_LOG_FILE = LOG_FILE
+
+
+def _tok_dir() -> Path:
+    if TOK_DIR != _DEFAULT_TOK_DIR:
+        return TOK_DIR
+    return _cli_support_mod.TOK_DIR
+
+
+def _pid_file() -> Path:
+    if PID_FILE != _DEFAULT_PID_FILE:
+        return PID_FILE
+    return _cli_support_mod.PID_FILE
+
+
+def _log_file() -> Path:
+    if LOG_FILE != _DEFAULT_LOG_FILE:
+        return LOG_FILE
+    return _cli_support_mod.LOG_FILE
+
+
+def _sanitize_api_base(url: str) -> str:
+    """Strip embedded credentials (userinfo) from a URL before display."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            host = parsed.hostname or ""
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
+            return parsed._replace(netloc=host).geturl()
+    except Exception:
+        pass
+    return url
 
 
 def _normalized_host(host: str | None) -> str | None:
@@ -124,7 +161,7 @@ def _trim_bridge_log_if_needed(path: Any) -> None:
 
 def bridge_start(
     port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on")] = 9090,
-    keep_turns: Annotated[int, typer.Option("--keep-turns", help="Human turns to keep verbatim")] = 2,
+    keep_turns: Annotated[int, typer.Option("--keep-turns", help="Human turns to keep verbatim")] = 3,
     debug: Annotated[bool, typer.Option("--debug", help="Enable debug logging")] = False,
     foreground: Annotated[bool, typer.Option("--foreground", "-f", help="Run in foreground")] = False,
     fail_open: Annotated[
@@ -152,8 +189,6 @@ def bridge_start(
     if existing:
         console.print(f"[yellow]Bridge already running on :{port} (PID {existing})[/yellow]")
         raise typer.Exit(0)
-
-    TOK_DIR.mkdir(parents=True, exist_ok=True)
 
     if foreground:
         from tok.gateway import run_bridge
@@ -192,8 +227,9 @@ def bridge_start(
             env["TOK_API_BASE"] = api_base
         env["TOK_RESET_SESSION"] = "1"
 
-        _trim_bridge_log_if_needed(LOG_FILE)
-        log_file = open(LOG_FILE, "a")
+        log_path = _log_file()
+        _trim_bridge_log_if_needed(log_path)
+        log_file = open(log_path, "a")
         try:
             proc = subprocess.Popen(
                 [sys.executable, "-m", "tok.gateway"],
@@ -206,11 +242,11 @@ def bridge_start(
             console.print("[red]Failed to start bridge: Python interpreter not found.[/red]")
             raise typer.Exit(1) from None
         except PermissionError:
-            console.print(f"[red]Failed to start bridge: permission denied writing to {LOG_FILE}.[/red]")
+            console.print(f"[red]Failed to start bridge: permission denied writing to {log_path}.[/red]")
             raise typer.Exit(1) from None
         finally:
             log_file.close()
-        PID_FILE.write_text(str(proc.pid))
+        _pid_file().write_text(str(proc.pid))
 
         for _ in range(15):
             time.sleep(0.2)
@@ -218,7 +254,7 @@ def bridge_start(
                 r = get_bridge_health_response(port, timeout=1.0, attempts=1, backoff_seconds=0.0)
                 if r.status_code == 200:
                     console.print(f"[green]Bridge started on :{port} (PID {proc.pid})[/green]")
-                    console.print(f"Logs: {LOG_FILE}")
+                    console.print(f"Logs: {log_path}")
                     console.print(
                         f"[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:{port} claude`, then "
                         "`tok bridge status` or `tok doctor`.[/dim]"
@@ -231,12 +267,12 @@ def bridge_start(
 
         if proc.poll() is not None:
             console.print(f"[red]Bridge process exited unexpectedly (exit code {proc.returncode}).[/red]")
-            console.print(f"Check logs: {LOG_FILE}")
+            console.print(f"Check logs: {log_path}")
             console.print("[dim]Try `tok bridge start --foreground` to see the error directly.[/dim]")
             raise typer.Exit(1)
 
         console.print(f"[yellow]Bridge started (PID {proc.pid}) but health check pending.[/yellow]")
-        console.print(f"Logs: {LOG_FILE}")
+        console.print(f"Logs: {log_path}")
         console.print(
             "[dim]Next step: wait a moment, then run `tok bridge status`; if it still fails, restart with `tok bridge start --foreground`.[/dim]"
         )
@@ -284,9 +320,9 @@ def bridge_stop(force: bool = False) -> None:
             console.print(f"[yellow]Failed to stop PID {p} (gone or permission denied)[/yellow]")
 
     try:
-        PID_FILE.unlink(missing_ok=True)
+        _pid_file().unlink(missing_ok=True)
     except PermissionError as exc:
-        console.print(f"[yellow]Could not remove bridge PID file {PID_FILE}: {exc}[/yellow]")
+        console.print(f"[yellow]Could not remove bridge PID file {_pid_file()}: {exc}[/yellow]")
 
     session_summary = tracker.session_summary()
     if session_summary:
@@ -357,10 +393,15 @@ def bridge_status(*, json_output: bool = False) -> None:
     if r.status_code == 200:
         try:
             payload = r.json()
+            gross_tokens_saved = int(payload.get("session_tokens_saved", 0))
+            net_tokens_saved = int(payload.get("session_net_tokens_saved", gross_tokens_saved))
             session_summary: dict[str, Any] = {
                 "actual_tokens": int(payload.get("actual_tokens", 0)),
                 "baseline_tokens": int(payload.get("baseline_tokens", 0)),
-                "tokens_saved": int(payload.get("session_tokens_saved", 0)),
+                "tokens_saved": net_tokens_saved,
+                "gross_tokens_saved": gross_tokens_saved,
+                "net_tokens_saved": net_tokens_saved,
+                "reacquisition_cost_tokens": int(payload.get("reacquisition_cost_tokens", 0)),
                 "savings_pct": float(payload.get("session_savings_pct", 0.0)),
                 "cost_savings_pct": float(
                     payload.get(
@@ -400,6 +441,7 @@ def bridge_status(*, json_output: bool = False) -> None:
                 "evidence_compression_blocked_for_safety_count": int(
                     payload.get("evidence_compression_blocked_for_safety_count", 0)
                 ),
+                "goal": str(payload.get("goal", "")),
             }
             baseline_only = bool(payload.get("baseline_only"))
             fallback_count = int(payload.get("fallback_count", 0))
@@ -415,13 +457,30 @@ def bridge_status(*, json_output: bool = False) -> None:
             headline, headline_pct, subhead = savings_headline(
                 session_summary,
                 savings_pct=float(payload.get("session_savings_pct", 0.0)),
-                tokens_saved=int(payload.get("session_tokens_saved", 0)),
+                tokens_saved=net_tokens_saved,
             )
             capability = payload.get("capability")
             conformance = "unknown"
             if isinstance(capability, dict):
                 conformance = str(capability.get("max_conformance_level", "unknown"))
             if json_output:
+                fail_open_count = int(payload.get("fail_open_count", 0))
+                degradation_reason = str(payload.get("last_degradation_reason", ""))
+                session_quality = str(payload.get("session_quality", "clean"))
+                warnings: list[str] = []
+                if baseline_only:
+                    warnings.append("Session degraded to baseline")
+                elif session_quality != "clean" or fail_open_count > 0 or degradation_reason:
+                    if degradation_reason:
+                        warnings.append(
+                            f"Session quality is {session_quality}; degradation reason: {degradation_reason}"
+                        )
+                    elif fail_open_count > 0:
+                        warnings.append(
+                            f"Session quality is {session_quality}; fail-open compatibility events: {fail_open_count}"
+                        )
+                    else:
+                        warnings.append(f"Session quality is {session_quality}")
                 envelope = json_envelope(
                     "tok bridge status",
                     ok=True,
@@ -433,15 +492,22 @@ def bridge_status(*, json_output: bool = False) -> None:
                         "health_reachable": True,
                         "tok_active": not baseline_only,
                         "mode": mode,
+                        "request_policy": str(payload.get("request_policy", "")),
+                        "api_base": _sanitize_api_base(str(payload.get("api_base", ""))),
                         "conformance": conformance,
                         "baseline_only": baseline_only,
                         "degraded_to_baseline": baseline_only,
                         "fallback_count": fallback_count,
-                        "session_quality": str(payload.get("session_quality", "clean")),
+                        "fail_open_count": fail_open_count,
+                        "degradation_reason": degradation_reason,
+                        "session_quality": session_quality,
                         "tokens_saved": int(session_summary["tokens_saved"]),
                         "savings_pct": float(session_summary["savings_pct"]),
                         "cost_saved_usd": float(session_summary["cost_saved_usd"]),
+                        "goal": str(payload.get("goal", "")),
+                        "context_compression_detected": int(payload.get("context_compression_detected", 0)),
                     },
+                    warnings=warnings,
                 )
                 print(json.dumps(envelope, indent=2))
                 return

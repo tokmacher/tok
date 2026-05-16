@@ -19,6 +19,7 @@ class TelemetryState:
     is_first_request: bool = True
     tok_memory_snap_triggered: int = 0
     last_mode: str = ""
+    last_request_message_count: int = 0
 
     def reset(self) -> None:
         self.step_count = 0
@@ -35,3 +36,4 @@ class TelemetryState:
         self.is_first_request = True
         self.tok_memory_snap_triggered = 0
         self.last_mode = ""
+        self.last_request_message_count = 0

@@ -128,6 +128,40 @@ def test_response_contract_marks_malformed_hybrid_tool_blocks() -> None:
     assert contract.behavior_signals.get("fail_open_compat_response", 0) == 1
 
 
+def test_normalize_tool_events_accepts_list_of_dict_args() -> None:
+    """Regression: AskUserQuestion passes questions as list[dict], which must not raise ValidationError."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "AskUserQuestion",
+                    "input": {
+                        "questions": [
+                            {
+                                "question": "Which approach?",
+                                "header": "Approach",
+                                "options": [
+                                    {"label": "A", "description": "Option A"},
+                                    {"label": "B", "description": "Option B"},
+                                ],
+                                "multiSelect": False,
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    ]
+    events = normalize_tool_events(messages)
+    assert len(events) == 1
+    assert events[0].name == "AskUserQuestion"
+    assert isinstance(events[0].args["questions"], list)
+    assert events[0].args["questions"][0]["question"] == "Which approach?"
+
+
 def test_normalize_tool_events_captures_file_command_search_classes() -> None:
     messages = [
         {
