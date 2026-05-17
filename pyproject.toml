@@ -73,7 +73,9 @@ build.targets.sdist.exclude = [
   "dist/",
   "tmp/",
   "docs/maintainers/",
-  "docs/audits/"
+  "docs/audits/",
+  "docs/plans/",
+  "src/tok/testing/",
 ]
 build.targets.wheel.packages = [ "src/tok" ]
 build.targets.wheel.exclude = [
@@ -85,6 +87,7 @@ build.targets.wheel.exclude = [
   "examples/",
   "docs/maintainers/",
   "CLAUDE.md",
+  "src/tok/testing/",
 ]
 
 [tool.ruff]

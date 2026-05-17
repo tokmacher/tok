@@ -104,16 +104,18 @@ but long responses can have a higher first-token delay than direct Claude Code. 
 correctness-first paths, including smoothness/lossless handling and extended-thinking
 requests, may send the upstream request as non-streaming.
 
-If you are doing deeper diagnosis, use:
+If you are doing deeper diagnosis with the standard supported commands, use:
 
 ```bash
-tok capture-summary ~/.tok/sessions/<capture>.jsonl
-tok capture-review ~/.tok/sessions --candidates
-tok evidence-gap ~/.tok/sessions --stress-dir tmp/stress_language/<timestamp>
+tok doctor
+tok stats
+tok bridge status
+tok audit <trace-file>
 ```
 
-These capture files are for maintainer diagnosis. They redact obvious credential
-material, but they can still contain session content, so review them before sharing.
+> **Note:** `tok capture-summary`, `tok capture-review`, and `tok evidence-gap` are
+> hidden maintainer-only experimental commands. They are not part of the supported
+> diagnostic surface and should not be used in normal agent or user workflows.
 
 For reproducible release claims, refer to:
 

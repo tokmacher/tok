@@ -1014,23 +1014,31 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 )
 
         async with httpx.AsyncClient(timeout=300.0) as client:
-            (
-                response,
-                retried_without_tok,
-                retry_signals,
-            ) = await send_with_tok_fail_open_retry(
-                active_session,
-                client,
-                method=request.method,
-                url=target_url,
-                headers=headers,
-                content=body_bytes,
-                original_content=original_body_bytes,
-                retry_content=provider_safe_original_body_bytes,
-                allow_original_retry=not raw_retry_forbidden,
-                compressed_request=compressed,
-                sleep_fn=asyncio.sleep,
-            )
+            try:
+                (
+                    response,
+                    retried_without_tok,
+                    retry_signals,
+                ) = await send_with_tok_fail_open_retry(
+                    active_session,
+                    client,
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body_bytes,
+                    original_content=original_body_bytes,
+                    retry_content=provider_safe_original_body_bytes,
+                    allow_original_retry=not raw_retry_forbidden,
+                    compressed_request=compressed,
+                    sleep_fn=asyncio.sleep,
+                )
+            except httpx.NetworkError as e:
+                logger.error("Non-streaming upstream connection error: %s", str(e), exc_info=True)
+                return Response(
+                    content=f"Upstream connection error: {e!s}",
+                    status_code=502,
+                    media_type="text/plain",
+                )
             if retry_signals:
                 for key, value in retry_signals.items():
                     behavior_signals[key] = behavior_signals.get(key, 0) + value

@@ -70,7 +70,7 @@ The following are explicitly out of scope for 0.2.0:
 - Model families beyond Anthropic, OpenAI, DeepSeek, and Qwen are not yet validated
 - Frontier and OpenRouter probes are experimental validation, not release drivers
 - CLI decomposition: completed in 0.1.6. `_legacy_commands.py` removed; `__init__.py` is
-  now 76 lines with no residual deferred work.
+  now 82 lines with no residual deferred work.
 - Dependency policy for `0.2.x` is lockfile-backed validation plus CI coverage, not
   blanket upper bounds on every published requirement
 
@@ -131,7 +131,7 @@ repair churn, or ambiguous `fail-open compatibility` noise.
 These items are intentionally deferred after 0.2.0:
 
 - CLI decomposition: completed in 0.1.6 (`_legacy_commands.py` removed, `__init__.py` at
-  76 lines).
+  82 lines).
 - Dependency upper bounds across the published requirements. For `0.2.x`, Tok relies on
   `uv.lock`, CI, and clean-room install checks to validate the tested dependency set. If
   live-release experience shows resolver churn or upstream breakage, we can add

@@ -2,7 +2,7 @@
 
 For visual flow diagrams, see [architecture-diagrams.md](./architecture-diagrams.md).
 For the non-binding 0.2 architecture roadmap, see
-[architecture-0.2.md](./architecture-0.2.md). This document remains the live 0.1.x
+[architecture-0.2.md](./architecture-0.2.md). This document remains the live 0.2.x
 architecture contract.
 
 Current architecture posture:
@@ -215,7 +215,7 @@ src/tok/
 - Experimental / legacy: deeper orchestrator internals, monitoring/dashboard code, and
   analysis tooling
 
-The release surface for `0.1.x` is intentionally narrower than the repository layout:
+The release surface for `0.2.x` is intentionally narrower than the repository layout:
 see `src/tok/release_surface.py` for the supported-versus-experimental split that
 governs the public story.
 

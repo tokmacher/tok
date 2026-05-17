@@ -165,6 +165,10 @@ more first-token latency than a direct Claude Code session, followed by a quick 
 of the response. Modes that prioritize correctness, including smoothness/lossless
 handling and extended-thinking requests, may also use the non-streaming upstream path.
 
+Very large responses use memory proportional to response size while buffering. The
+default buffer limit is 100 MB and can be overridden with the
+`TOK_MAX_STREAM_BUFFER_BYTES` environment variable.
+
 ## Trace Audit
 
 Enable trace sidecars only when you want to inspect what Tok did:

@@ -58,7 +58,7 @@ status probes when you intentionally connect through a non-default hostname.
 
 ## Intentional Deferrals For 0.2.x
 
-- CLI decomposition: completed in 0.1.6. `src/tok/cli/__init__.py` is 76 lines;
+- CLI decomposition: completed in 0.1.6. `src/tok/cli/__init__.py` is 82 lines;
   `_legacy_commands.py` (9 hidden root-level aliases duplicating `tok dev *` and
   `tok metrics *`) was removed after confirming no internal callers.
 - Published dependencies do not currently carry blanket upper bounds. For `0.2.x`, Tok

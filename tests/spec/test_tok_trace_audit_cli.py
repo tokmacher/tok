@@ -381,3 +381,17 @@ def test_audit_exit_code_priority_clean_warn_and_fail(monkeypatch, tmp_path: Pat
     fail_result = runner.invoke(app, ["audit", str(clean_trace)])
 
     assert fail_result.exit_code == 1
+
+
+def test_audit_json_missing_file_returns_parseable_json_envelope(tmp_path: Path) -> None:
+    missing = tmp_path / "no_such_trace.json"
+
+    result = runner.invoke(app, ["audit", str(missing), "--json"])
+
+    assert result.exit_code == 5
+    envelope = json.loads(result.output)
+    assert envelope["schema"] == "tok-cli-result/v0.1"
+    assert envelope["ok"] is False
+    assert envelope["status"] == "error"
+    assert "message" in envelope["data"]
+    assert "not found" in envelope["data"]["message"].lower()

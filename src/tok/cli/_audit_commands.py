@@ -12,7 +12,7 @@ import typer
 
 from tok.spec.trace import audit_trace_file
 
-from ._cli_support import console, memory_root
+from ._cli_support import console, json_envelope, memory_root
 
 FIXTURE_FILE_ARG = typer.Argument(None, help="Path to a Tok Trace v0.1 fixture or live JSONL trace file.")
 JSON_OUTPUT_OPT = typer.Option(False, "--json", help="Emit machine-readable audit results.")
@@ -37,13 +37,22 @@ def register(app: typer.Typer) -> None:
         """Audit Tok Trace v0.1 draft fixtures or live bridge traces."""
         trace_file = _resolve_audit_path(fixture_file, latest=latest)
         if trace_file is None:
-            if latest:
-                console.print("[red]No trace files found in the active .tok/traces directory.[/red]")
+            msg = (
+                "No trace files found in the active .tok/traces directory."
+                if latest
+                else "Provide a trace file path or use --latest."
+            )
+            if json_output:
+                print(json.dumps(json_envelope("audit", ok=False, status="error", data={"message": msg})))
             else:
-                console.print("[red]Provide a trace file path or use --latest.[/red]")
+                console.print(f"[red]{msg}[/red]")
             raise typer.Exit(5)
         if not trace_file.exists():
-            console.print(f"[red]Trace file not found: {trace_file}[/red]")
+            msg = f"Trace file not found: {trace_file}"
+            if json_output:
+                print(json.dumps(json_envelope("audit", ok=False, status="error", data={"message": msg})))
+            else:
+                console.print(f"[red]{msg}[/red]")
             raise typer.Exit(5)
 
         results = audit_trace_file(trace_file)

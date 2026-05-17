@@ -432,6 +432,10 @@ SMOKE_STEPS: tuple[SmokeStep, ...] = (
             "subprocess.run(['uv', 'run', '--with', 'twine', 'python', '-m', 'twine', 'check', *files], check=True)",
         ),
     ),
+    SmokeStep(
+        "SBOM generation",
+        (*UV_RUN_PREFIX, "python", "scripts/generate_spdx_sbom.py"),
+    ),
 )
 
 

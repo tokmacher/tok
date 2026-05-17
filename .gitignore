@@ -104,3 +104,12 @@ out/
 
 # Agent-local working plans
 .opencode/
+
+# Tok
+.tok/
+telemetry.db
+
+# Local release readiness reports
+RELEASE_READINESS_REPORT*.txt
+release-readiness-report*.txt
+tok-*-release-readiness*.txt

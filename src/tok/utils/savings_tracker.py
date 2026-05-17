@@ -1084,6 +1084,9 @@ class SavingsTracker:
                 return None
             actual_tokens = sum(int(sess["total_tokens"]) for sess in inflight_sessions)
             saved_tokens = sum(int(sess["saved_tokens"]) for sess in inflight_sessions)
+            reacquisition_cost = sum(
+                int(sess["signals"].get("reacquisition_cost_tokens", 0)) for sess in inflight_sessions
+            )
             baseline_tokens = actual_tokens + saved_tokens
             actual_cost = sum(float(sess["actual_cost_usd"]) for sess in inflight_sessions)
             baseline_cost = sum(float(sess["baseline_cost_usd"]) for sess in inflight_sessions)
@@ -1096,6 +1099,7 @@ class SavingsTracker:
                 "actual_tokens": actual_tokens,
                 "baseline_tokens": baseline_tokens,
                 "tokens_saved": saved_tokens,
+                "net_tokens_saved": saved_tokens - reacquisition_cost,
                 "savings_pct": round(savings_pct, 1),
                 "cost_savings_pct": round(cost_savings_pct, 1),
                 "actual_cost_usd": actual_cost,
@@ -1134,6 +1138,7 @@ class SavingsTracker:
             entries = list(by_session.values())
             actual_tokens = sum(int(entry["tokens"]) for entry in entries)
             saved_tokens = sum(int(entry["tokens_saved"]) for entry in entries)
+            reacquisition_cost = sum(int(entry.get("reacquisition_cost_tokens", 0)) for entry in entries)
             actual_cost = sum(float(entry["actual_cost_usd"]) for entry in entries)
             baseline_cost = sum(float(entry["baseline_cost_usd"]) for entry in entries)
             cost_saved = sum(float(entry["saved_usd"]) for entry in entries)
@@ -1152,6 +1157,7 @@ class SavingsTracker:
                 "actual_tokens": actual_tokens,
                 "baseline_tokens": baseline_tokens,
                 "tokens_saved": saved_tokens,
+                "net_tokens_saved": saved_tokens - reacquisition_cost,
                 "savings_pct": round(savings_pct, 1),
                 "cost_savings_pct": round(cost_savings_pct, 1),
                 "actual_cost_usd": actual_cost,
@@ -1167,6 +1173,7 @@ class SavingsTracker:
 
         actual_tokens = int(ledger.get("total_tokens", 0))
         saved_tokens = int(ledger.get("tokens_saved", 0))
+        reacquisition_cost = int(ledger.get("reacquisition_cost_tokens", 0))
         actual_cost = float(ledger.get("total_cost_usd", 0.0))
         baseline_cost = float(ledger.get("estimated_baseline_cost_usd", 0.0))
         cost_saved_ledger = float(ledger.get("cost_saved_usd", 0.0))
@@ -1179,6 +1186,7 @@ class SavingsTracker:
             signals = sess["signals"]
             actual_tokens += int(sess["total_tokens"])
             saved_tokens += int(sess["saved_tokens"])
+            reacquisition_cost += int(signals.get("reacquisition_cost_tokens", 0))
             actual_cost += float(sess["actual_cost_usd"])
             baseline_cost += float(sess["baseline_cost_usd"])
             cost_saved_ledger += float(sess["saved_usd"])
@@ -1197,6 +1205,7 @@ class SavingsTracker:
             "actual_tokens": actual_tokens,
             "baseline_tokens": baseline_tokens,
             "tokens_saved": saved_tokens,
+            "net_tokens_saved": saved_tokens - reacquisition_cost,
             "savings_pct": round(savings_pct, 1),
             "cost_savings_pct": round(cost_savings_pct, 1),
             "actual_cost_usd": actual_cost,

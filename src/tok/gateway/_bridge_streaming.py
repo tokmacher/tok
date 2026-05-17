@@ -51,6 +51,8 @@ def _parse_stream_recovery_tool_only_repeat_limit() -> int:
 
 _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT: int = _parse_stream_recovery_tool_only_repeat_limit()
 
+_MAX_STREAM_BUFFER_BYTES: int = env_int("TOK_MAX_STREAM_BUFFER_BYTES", 100 * 1024 * 1024)
+
 
 def _stream_recovery_tool_only_repeat_limit() -> int:
     return _STREAM_RECOVERY_TOOL_ONLY_REPEAT_LIMIT
@@ -507,6 +509,10 @@ async def buffer_strip_restream_impl(
         try:
             async for chunk in response.aiter_bytes():
                 raw += chunk
+                if _MAX_STREAM_BUFFER_BYTES > 0 and len(raw) > _MAX_STREAM_BUFFER_BYTES:
+                    read_error = f"stream buffer exceeded {_MAX_STREAM_BUFFER_BYTES} bytes"
+                    _record_stream_read_error(session, "buffering", read_error)
+                    break
         except (httpx.ReadError, httpcore.ReadError) as e:
             read_error = str(e)
             _record_stream_read_error(session, "buffering", read_error)

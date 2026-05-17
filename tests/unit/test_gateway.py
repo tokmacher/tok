@@ -7109,3 +7109,34 @@ class TestRateLimitThunderingHerd:
         asyncio.run(_run())
 
         assert not upstream_called
+
+
+def test_non_streaming_connection_error_returns_502_not_500(monkeypatch, tmp_path) -> None:
+    from tok.gateway import _app_factory
+
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.reset_session_stats()
+    app = create_app(BridgeSession(port=9191, tracker=tracker, fail_open=True))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    async def raise_connect_error(*args, **kwargs):
+        raise httpx.ConnectError("simulated connection refused")
+
+    monkeypatch.setattr(_app_factory, "send_with_tok_fail_open_retry", raise_connect_error)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 502
+    assert "connection" in response.text.lower()

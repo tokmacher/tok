@@ -1217,3 +1217,26 @@ class TestLifetimeSummaryNoDoubleCountHealthOverlay:
         assert summary["sessions"] == 2
         assert summary["actual_tokens"] == 4200
         assert summary["tokens_saved"] == 1900
+
+
+def test_lifetime_summary_always_includes_net_tokens_saved(tmp_path) -> None:
+    """net_tokens_saved must be present in all non-None lifetime_summary return paths."""
+    from tok.utils.savings_tracker import SavingsTracker
+
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "stats.tok"),
+        ledger_path=tmp_path / "lifetime.tok",
+    )
+    tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=800,
+        actual_output=200,
+        cache_read=0,
+        cache_write=0,
+        input_saved=300,
+        output_saved=0,
+    )
+    summary = tracker.lifetime_summary()
+    assert summary is not None
+    assert "net_tokens_saved" in summary
+    assert summary["net_tokens_saved"] >= 0
