@@ -2416,3 +2416,38 @@ def test_bridge_preflight_safe_recent_suffix_rejects_assistant_tool_use_in_prefi
     ]
     result = _bridge_preflight_safe_recent_suffix(messages)
     assert result is None
+
+
+def test_bridge_preflight_safe_recent_suffix_preserves_skill_result_tail() -> None:
+    """Do not cut between a skill/tool result and the following skill instructions."""
+    from tok.runtime._request_preparation import _bridge_preflight_safe_recent_suffix
+
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "we were running /simplify"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "skill_1", "name": "Skill", "input": {"skill": "simplify"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "skill_1",
+                    "content": "Successfully loaded skill",
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Simplify the current branch by reviewing the diff."}],
+        },
+    ]
+
+    result = _bridge_preflight_safe_recent_suffix(messages)
+
+    assert result is not None
+    assert result[0] is messages[0]
+    assert len(result) == len(messages)
