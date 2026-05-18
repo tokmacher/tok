@@ -3,7 +3,9 @@
 This document explains the key health and recovery signals you may see in:
 
 - `tok bridge status`
+- `tok bridge status --json`
 - `tok doctor --report`
+- `tok doctor --json`
 - `tok bridge logs`
 
 The goal is to help you distinguish normal, self-contained recovery (expected under
@@ -116,6 +118,20 @@ Common explanations:
 
 Low savings is not automatically a Tok failure. Treat it as a prompt to inspect
 `Session signals`, fallback counts, exactness labels, and `tok audit --latest`.
+
+### JSON Diagnostics Shape
+
+`tok bridge status --json` and `tok doctor --json` use the shared `tok-cli-result/v0.1`
+envelope. Important session fields include `session_quality`, `degradation_reason`,
+`fallback_count`, `baseline_only`, `tokens_saved`, `savings_pct`, and `goal`.
+
+The `goal` field is a compact orientation hint, not an exact transcript. It is capped at
+40 characters by the live bridge health endpoint, so it may end mid-sentence. Tok strips
+internal system-reminder tags before exposing it.
+
+`tok audit --json` is different: it returns a bare list of audit results because a trace
+file can contain many independently passing, warning, or failing records. See
+[`docs/cli-reference.md`](./cli-reference.md) for the item schema.
 
 ### Evidence-safety labels
 

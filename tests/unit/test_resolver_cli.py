@@ -13,6 +13,13 @@ def test_resolver_help() -> None:
     assert "Local resolver beta commands" in result.output
 
 
+def test_resolver_get_help_warns_stdout_is_raw_bytes() -> None:
+    result = runner.invoke(app, ["resolver", "get", "--help"])
+    assert result.exit_code == 0
+    assert "raw bytes" in result.output
+    assert "stdout" in result.output
+
+
 def test_resolver_status_missing_manifest(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
     result = runner.invoke(app, ["resolver", "status"])
@@ -160,3 +167,14 @@ def test_resolver_put_missing_file_exits_cleanly(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["resolver", "put", str(tmp_path / "nope.txt")])
     assert result.exit_code == 1
     assert "Traceback" not in result.output
+
+
+def test_resolver_get_invalid_hex_error_stays_single_line(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
+    uri = "tok-resolver://sha256:" + "g" * 64
+
+    result = runner.invoke(app, ["resolver", "get", uri])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert f"Invalid resolver URI digest: 'sha256:{'g' * 64}'" in result.output

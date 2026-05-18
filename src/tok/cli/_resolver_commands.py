@@ -90,7 +90,7 @@ def get(
     out: Path | None = typer.Option(  # noqa: B008
         None,
         "--out",
-        help="Write bytes to a file instead of printing",
+        help="Write bytes to a file instead of writing raw bytes to stdout",
     ),
 ) -> None:
     """Fetch resolver content by tok-resolver URI."""
@@ -99,7 +99,7 @@ def get(
         store = ContentStore(resolver_root())
         data = store.get(digest)
     except ValueError as exc:
-        console.print(f"[red]{exc}[/red]")
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
         raise typer.Exit(code=1) from exc
     except OSError as exc:
         console.print(f"[red]{exc}[/red]")

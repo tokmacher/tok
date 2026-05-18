@@ -1259,6 +1259,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     json_data["fail_open_count"] = fail_open_count
                     json_data["degradation_reason"] = degradation_reason
                     json_data["session_quality"] = session_quality
+                    json_data["goal"] = str(payload.get("goal", ""))
                     json_data["tokens_saved"] = tokens_saved
                     json_data["net_tokens_saved"] = int(session_view_summary.get("net_tokens_saved", tokens_saved))
                     json_data["reacquisition_cost_tokens"] = int(

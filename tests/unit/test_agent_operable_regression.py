@@ -396,7 +396,7 @@ class TestDoctorJsonRegression:
 
     def test_doctor_healthy_bridge(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 12345)
-        fake_cls = _make_fake_health_response()
+        fake_cls = _make_fake_health_response(goal="fix resolver output")
         fake_instance = fake_cls()
         monkeypatch.setattr("tok.cli._release.get_bridge_health_response", lambda *a, **kw: fake_instance)
         tok_dir = tmp_path / ".tok"
@@ -410,6 +410,7 @@ class TestDoctorJsonRegression:
         assert data["data"]["health_reachable"] is True
         assert data["data"]["tok_active"] is True
         assert data["data"]["fallback_count"] == 0
+        assert data["data"]["goal"] == "fix resolver output"
 
     def test_doctor_degraded_baseline(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 12345)

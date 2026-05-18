@@ -56,7 +56,9 @@ Use:
 - `status` to confirm the bridge is live and Tok is helping
 - `logs` to inspect the bridge log file
 - `stop` to end the session and print a compact summary
-- `stop --force` to intentionally stop from an active bridged Claude turn
+- `stop --force` to intentionally stop a bridge from a separate shell. Tok refuses to
+  honor `--force` from the active bridged Claude Code session when that would strand the
+  current turn.
 
 ## Health And Savings
 
@@ -107,6 +109,10 @@ Use:
 - `tok resolver put <path>` to store file bytes and print the digest and resolver URI
 - `tok resolver get <uri>` to retrieve content by resolver URI
 
+`tok resolver get <uri>` writes raw bytes to stdout when `--out` is omitted. This is
+useful for pipes and byte-for-byte checks, but it can emit NULs, invalid UTF-8, or
+terminal escape sequences. Use `--out <path>` for binary or untrusted content.
+
 Configuration:
 
 - `TOK_RESOLVER_ROOT`: overrides the resolver root directory. Default is
@@ -141,6 +147,17 @@ Metadata-only live traces commonly produce `WARN` because Tok can identify what 
 without storing original prompt, response, or tool-result bytes. Artifact-backed
 metadata mode can produce `PASS`, but it still verifies sanitized trace metadata rather
 than raw session content.
+
+`tok audit --json` returns a bare JSON list, not the `tok-cli-result/v0.1` envelope used
+by `tok bridge status --json`, `tok doctor --json`, and `tok stats --json`. Each list
+item has:
+
+- `id`: fixture id, live block id, or trace-file error id
+- `status`: one of `pass`, `warn`, or `fail`
+- `errors`: list of audit error or warning codes
+- `summary`: short human-readable qualifier when available
+- `evidence_mode`: `trace-validated` for normal fixture/trace checks, or
+  `metadata-only non-exact` for live non-exact metadata blocks
 
 Exactness terms:
 
