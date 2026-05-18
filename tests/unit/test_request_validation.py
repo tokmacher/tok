@@ -2451,3 +2451,44 @@ def test_bridge_preflight_safe_recent_suffix_preserves_skill_result_tail() -> No
     assert result is not None
     assert result[0] is messages[0]
     assert len(result) == len(messages)
+
+
+def test_bridge_preflight_safe_recent_suffix_preserves_multi_skill_result_tail() -> None:
+    """Do not start after only the last of multiple freshly loaded skills."""
+    from tok.runtime._request_preparation import _bridge_preflight_safe_recent_suffix
+
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Use simplification and security review skills."},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "skill_simplify", "name": "Skill", "input": {"skill": "simplify"}},
+                {"type": "tool_use", "id": "skill_security", "name": "Skill", "input": {"skill": "security"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "skill_simplify",
+                    "content": "Successfully loaded skill: simplify",
+                },
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "skill_security",
+                    "content": "Successfully loaded skill: security",
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Apply both loaded skills to the current diff."}],
+        },
+    ]
+
+    result = _bridge_preflight_safe_recent_suffix(messages)
+
+    assert result is not None
+    assert result[0] is messages[0]
+    assert len(result) == len(messages)

@@ -138,7 +138,17 @@ def test_response_contract_rejects_markdown_after_tok_header() -> None:
     text = ">>> t:1|usr:test|agt:reply|state:active\n## Result\nPlain markdown"
     contract = response_contract_for_mode(text, tool_compatible=False)
 
-    assert contract.mode == "tok-empty"
+    assert contract.mode == "tok-malformed"
+    assert contract.behavior_signals["malformed_tok_response"] == 1
+    assert contract.behavior_signals["malformed_tok_markdown_fallback"] == 1
+    assert contract.behavior_signals["fail_open_compat_response"] == 1
+
+
+def test_response_contract_partial_structured_labels_markdown_fallback_is_malformed() -> None:
+    text = ">>> File: src/tok/runtime/_history_slicing.py\n## Verification\nPlain markdown"
+    contract = response_contract_for_mode(text, tool_compatible=False)
+
+    assert contract.mode == "tok-malformed"
     assert contract.behavior_signals["malformed_tok_response"] == 1
     assert contract.behavior_signals["malformed_tok_markdown_fallback"] == 1
     assert contract.behavior_signals["fail_open_compat_response"] == 1
@@ -200,7 +210,7 @@ def test_has_tok_protocol_at_thought_without_chevron() -> None:
 def test_has_tok_protocol_triple_chevron_with_markdown_body() -> None:
     text = ">>> t:1|usr:test|agt:reply|state:active\n## Result\nPlain markdown"
     contract = response_contract_for_mode(text, tool_compatible=False)
-    assert contract.mode == "tok-empty"
+    assert contract.mode == "tok-malformed"
     assert contract.behavior_signals["malformed_tok_markdown_fallback"] == 1
     assert contract.behavior_signals["malformed_tok_response"] == 1
     assert contract.behavior_signals["fail_open_compat_response"] == 1

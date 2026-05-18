@@ -452,8 +452,14 @@ async def _json_to_sse(resp_json: dict[str, Any]) -> AsyncIterator[bytes]:
 def _session_goal(rs: Any) -> str:
     for bucket in (rs.bridge_memory.hot, rs.bridge_memory.durable):
         entries = bucket.get("goal", [])
-        if entries:
-            return entries[0].value[:40]
+        for entry in entries:
+            goal = str(entry.value).strip()
+            if not goal:
+                continue
+            lowered = goal.lower()
+            if lowered.startswith("<system-reminder") or lowered.startswith("system-reminder"):
+                continue
+            return goal[:40]
     return ""
 
 

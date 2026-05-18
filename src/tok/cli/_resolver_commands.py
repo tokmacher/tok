@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
@@ -70,9 +71,11 @@ def put(path: Path) -> None:
         store = ContentStore(resolver_root())
         digest = store.put(data)
         uri = format_resolver_uri(digest)
-        console.print(f"Digest: {digest}")
-        console.print(f"URI:    {uri}")
+        print(f"Digest: {digest}")
+        print(f"URI:    {uri}")
         console.print(f"Bytes:  {len(data)}")
+        if not data:
+            console.print("[yellow]Warning: stored empty file; `tok resolver get` will produce empty output.[/yellow]")
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -105,7 +108,7 @@ def get(
         console.print(f"[red]Missing object for {format_resolver_uri(digest)}[/red]", soft_wrap=True)
         raise typer.Exit(code=1)
     if out is None:
-        console.print(data.decode("utf-8", errors="replace"))
+        sys.stdout.buffer.write(data)
         return
     try:
         out.parent.mkdir(parents=True, exist_ok=True)

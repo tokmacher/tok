@@ -289,3 +289,64 @@ class TestStep8InjectSystem:
             has_answer_anchor=False,
         )
         assert result.resend_signals == {}
+
+    def test_tool_compatible_skip_history_still_injects_session_memory(self) -> None:
+        class FakeRuntime:
+            def _build_tool_compatible_resend(
+                self,
+                request,
+                session,
+                session_memory,
+                history_skip_reason,
+                behavior_signals,
+                runtime_hints,
+                *,
+                current_pressure,
+                hot_hint_metrics,
+                translated_messages,
+                should_skip_history,
+                _recent_messages,
+                has_answer_anchor_param,
+            ):
+                del request, session, history_skip_reason, current_pressure, translated_messages
+                del _recent_messages, has_answer_anchor_param
+                assert should_skip_history is True
+                assert session_memory == ">>> goal:retain-active-task|files:src/tok/runtime/_history_slicing.py"
+                return (
+                    session_memory,
+                    runtime_hints,
+                    behavior_signals,
+                    hot_hint_metrics,
+                    {},
+                    {"resend": 1},
+                    False,
+                )
+
+        session = RuntimeSession()
+        req = _make_request(tool_compatible=True, adapter_kind="claude-bridge")
+        body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "continue"}]}
+
+        result = run_step_8(
+            runtime_self=FakeRuntime(),
+            request=req,
+            session=session,
+            body=body,
+            session_memory=">>> goal:retain-active-task|files:src/tok/runtime/_history_slicing.py",
+            history_skip_reason="active_tool_loop",
+            skip_reason="active_tool_loop",
+            behavior_signals={},
+            runtime_hints=[],
+            effective_tool_compatible=True,
+            current_pressure=5,
+            hot_hint_metrics={},
+            translated_messages=body["messages"],
+            should_skip_history=True,
+            recent=body["messages"],
+            has_answer_anchor=False,
+        )
+
+        system_text = result.body.get("system", "")
+        assert "retain-active-task" in system_text
+        assert "src/tok/runtime/_history_slicing.py" in system_text
+        assert result.injected_state_payload == ">>> goal:retain-active-task|files:src/tok/runtime/_history_slicing.py"
+        assert result.resend_signals == {"resend": 1}

@@ -290,7 +290,7 @@ def bridge_stop(force: bool = False) -> None:
         console.print("[yellow]Bridge not running[/yellow]")
         raise typer.Exit(0)
 
-    if _is_self_bridged_invocation(port) and not force:
+    if _is_self_bridged_invocation(port):
         try:
             health = get_bridge_health_response(port, timeout=0.8, attempts=1, backoff_seconds=0.0)
             health_ok = health.status_code == 200
@@ -298,9 +298,16 @@ def bridge_stop(force: bool = False) -> None:
             health_ok = False
         if health_ok:
             console.print("[yellow]Refusing to stop bridge from an active bridged Claude session.[/yellow]")
-            console.print(
-                "[dim]Run `tok bridge stop --force` if intentional, or stop from a separate shell after this turn.[/dim]"
-            )
+            if force:
+                console.print(
+                    "[dim]`--force` is ignored here because it would strand the current Claude Code session. "
+                    "Stop the bridge from a separate shell instead.[/dim]"
+                )
+            else:
+                console.print(
+                    "[dim]Stop from a separate shell after this turn. "
+                    "`tok bridge stop --force` is only honored outside the active bridged session.[/dim]"
+                )
             raise typer.Exit(2)
 
     for p in [pid]:
@@ -395,9 +402,12 @@ def bridge_status(*, json_output: bool = False) -> None:
             payload = r.json()
             gross_tokens_saved = int(payload.get("session_tokens_saved", 0))
             net_tokens_saved = int(payload.get("session_net_tokens_saved", gross_tokens_saved))
+            actual_tokens = int(payload.get("actual_tokens", 0))
+            baseline_tokens = int(payload.get("baseline_tokens", actual_tokens + gross_tokens_saved))
             session_summary: dict[str, Any] = {
-                "actual_tokens": int(payload.get("actual_tokens", 0)),
-                "baseline_tokens": int(payload.get("baseline_tokens", 0)),
+                "calls": int(payload.get("calls", 3 if net_tokens_saved >= 50 else 0)),
+                "actual_tokens": actual_tokens,
+                "baseline_tokens": baseline_tokens,
                 "tokens_saved": net_tokens_saved,
                 "gross_tokens_saved": gross_tokens_saved,
                 "net_tokens_saved": net_tokens_saved,

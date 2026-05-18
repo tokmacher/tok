@@ -56,12 +56,15 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(5)
 
         results = audit_trace_file(trace_file)
+        live_receipt = _load_live_trace_blocks(trace_file)
+        non_exact_live_ids = _non_exact_live_ids(live_receipt)
         payload = [
             {
                 "id": result.id,
                 "status": result.status,
                 "errors": list(result.errors),
-                "summary": result.summary,
+                "summary": _audit_result_summary(result.summary, result.id, non_exact_live_ids),
+                "evidence_mode": _audit_evidence_mode(result.id, non_exact_live_ids),
             }
             for result in results
         ]
@@ -69,12 +72,6 @@ def register(app: typer.Typer) -> None:
         if json_output:
             print(json.dumps(payload, indent=2))
         else:
-            live_receipt = _load_live_trace_blocks(trace_file)
-            non_exact_live_ids = {
-                str(block.get("envelope", {}).get("block_id", ""))
-                for block in live_receipt.blocks
-                if block.get("content", {}).get("exact") is False
-            }
             for result in results:
                 if result.status == "pass":
                     style = "green"
@@ -108,6 +105,28 @@ def _resolve_audit_path(fixture_file: Path | None, *, latest: bool) -> Path | No
         candidates = sorted(trace_dir.glob("*.jsonl"), key=lambda path: path.stat().st_mtime, reverse=True)
         return candidates[0] if candidates else None
     return fixture_file
+
+
+def _non_exact_live_ids(receipt: _LiveTraceReceipt) -> set[str]:
+    return {
+        str(block.get("envelope", {}).get("block_id", ""))
+        for block in receipt.blocks
+        if block.get("content", {}).get("exact") is False
+    }
+
+
+def _audit_evidence_mode(result_id: str, non_exact_live_ids: set[str]) -> str:
+    if result_id in non_exact_live_ids:
+        return "metadata-only non-exact"
+    return "trace-validated"
+
+
+def _audit_result_summary(summary: str, result_id: str, non_exact_live_ids: set[str]) -> str:
+    if summary:
+        return summary
+    if result_id in non_exact_live_ids:
+        return "metadata-only non-exact"
+    return ""
 
 
 def _print_live_trace_receipt(

@@ -385,6 +385,8 @@ def runtime_verdict(
         return ("Tok active, watch session", "bold yellow")
     if session_quality == "degraded":
         return ("Session degraded to baseline", "bold yellow")
+    if 0 < tokens_saved < 50:
+        return ("Tok active, early sample", "bold yellow")
     if tokens_saved > 0:
         return ("Tok active and helping", "bold green")
     return ("Tok active, waiting for first savings", "bold yellow")
@@ -556,13 +558,18 @@ def savings_headline(
     cost_pct = float(cost_savings_pct_val) if isinstance(cost_savings_pct_val, int | float | str) else 0.0
     saved_usd = float(cost_saved_val) if isinstance(cost_saved_val, int | float | str) else 0.0
     tokens_saved = int(tokens_saved_val) if isinstance(tokens_saved_val, int | float | str) else 0
+    calls = int(summary.get("calls", summary.get("total_turns", summary.get("turns", 0))))
+    baseline_tokens = int(summary.get("baseline_tokens", int(summary.get("actual_tokens", 0)) + tokens_saved))
     pct_label = f"{pct:.1f}% token savings • {cost_pct:.1f}% cost savings"
     if peak_pct > pct + 5:
         pct_label = f"{pct:.1f}% token savings (peak {peak_pct:.0f}%) • {cost_pct:.1f}% cost savings"
+    verdict = savings_verdict(peak_pct)
+    if calls < 3 or baseline_tokens < 100:
+        verdict = "Early sample"
     return (
         f"Saved {tokens_saved:,} tokens • ${saved_usd:.4f} saved",
         pct_label,
-        savings_verdict(peak_pct),
+        verdict,
     )
 
 

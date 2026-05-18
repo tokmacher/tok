@@ -1290,9 +1290,9 @@ def _standard_fallback_path(
     mode = fallback_mode
     if has_tok_protocol and malformed_signals:
         if fallback_mode in ("tok-empty", "markdown"):
-            mode = fallback_mode
+            mode = "tok-malformed" if malformed_signals.get("malformed_tok_markdown_fallback") else fallback_mode
         elif malformed_signals.get("malformed_tok_markdown_fallback"):
-            mode = "tok-empty"
+            mode = "tok-malformed"
         else:
             mode = "tok-malformed"
 

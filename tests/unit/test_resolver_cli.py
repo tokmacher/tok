@@ -94,6 +94,32 @@ def test_resolver_put_stores_file(tmp_path, monkeypatch) -> None:
     assert "Bytes:  11" in result.output
 
 
+def test_resolver_put_prints_copy_paste_safe_uri_line(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
+    file = tmp_path / "hello.txt"
+    file.write_text("hello world")
+
+    result = runner.invoke(app, ["resolver", "put", str(file)])
+
+    assert result.exit_code == 0
+    uri_lines = [line for line in result.output.splitlines() if line.startswith("URI:")]
+    assert len(uri_lines) == 1
+    assert uri_lines[0].startswith("URI:    tok-resolver://sha256:")
+    assert len(uri_lines[0].rsplit("sha256:", 1)[1]) == 64
+
+
+def test_resolver_put_warns_for_empty_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
+    file = tmp_path / "empty.txt"
+    file.write_bytes(b"")
+
+    result = runner.invoke(app, ["resolver", "put", str(file)])
+
+    assert result.exit_code == 0
+    assert "Bytes:  0" in result.output
+    assert "Warning: stored empty file" in result.output
+
+
 def test_resolver_put_stored_object_retrievable(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
     file = tmp_path / "data.bin"
@@ -110,6 +136,23 @@ def test_resolver_put_stored_object_retrievable(tmp_path, monkeypatch) -> None:
     get_result = runner.invoke(app, ["resolver", "get", uri])
     assert get_result.exit_code == 0
     assert "resolver put test" in get_result.output
+
+
+def test_resolver_get_stdout_preserves_rich_markup_bytes(tmp_path, monkeypatch) -> None:
+    from pathlib import Path
+
+    from tok.resolver.store import ContentStore, format_resolver_uri
+
+    monkeypatch.setenv("TOK_RESOLVER_ROOT", str(tmp_path))
+    store = ContentStore(Path(str(tmp_path)))
+    data = b"content with [red]markup[/red] and [bold]bold[/bold] tags"
+    digest = store.put(data)
+    uri = format_resolver_uri(digest)
+
+    result = runner.invoke(app, ["resolver", "get", uri])
+
+    assert result.exit_code == 0
+    assert result.stdout_bytes == data
 
 
 def test_resolver_put_missing_file_exits_cleanly(tmp_path, monkeypatch) -> None:

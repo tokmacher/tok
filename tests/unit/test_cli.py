@@ -639,6 +639,45 @@ class TestCLI:
         assert "Tok active and helping" in result.output
         assert "Session degraded to baseline" not in result.output
 
+    def test_bridge_status_labels_tiny_positive_savings_as_early_sample(self, monkeypatch) -> None:
+        monkeypatch.setattr("tok.cli._bridge.get_running_bridge_pid", lambda port: 321)
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "ok",
+                    "bridge": "tok",
+                    "port": 9090,
+                    "mode": "tool-compatible",
+                    "baseline_only": False,
+                    "fallback_count": 0,
+                    "calls": 1,
+                    "actual_tokens": 15,
+                    "baseline_tokens": 18,
+                    "session_tokens_saved": 3,
+                    "session_savings_pct": 16.7,
+                    "session_cost_savings_pct": 30.0,
+                    "actual_cost_usd": 0.0001,
+                    "baseline_cost_usd": 0.0001,
+                    "cost_saved_usd": 0.0,
+                    "session_quality": "clean",
+                    "last_degradation_reason": "",
+                }
+
+        monkeypatch.setattr("httpx.get", lambda *args, **kwargs: FakeResponse())
+
+        result = runner.invoke(app, ["bridge", "status"])
+
+        assert result.exit_code == 0
+        assert "Saved 3 tokens" in result.output
+        assert "Early sample" in result.output
+        assert "Tok active, early sample" in result.output
+        assert "Tok active and helping" not in result.output
+        assert "Solid savings" not in result.output
+
     def test_bridge_status_ignores_unremovable_stale_pid(self, monkeypatch, tmp_path) -> None:
         from tok.cli import _bridge, _cli_support
 
@@ -1191,32 +1230,30 @@ class TestCLI:
         assert "Refusing to stop bridge from an active bridged Claude session." in result.output
         assert "tok bridge stop --force" in result.output
 
-    def test_bridge_stop_force_allows_stop_in_self_bridged_context(self, monkeypatch, tmp_path, capsys) -> None:
+    def test_bridge_stop_force_refuses_in_self_bridged_context(self, monkeypatch, tmp_path) -> None:
         from tok.cli import _bridge
 
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://localhost:9090")
         monkeypatch.setenv("TOK_SELF_BRIDGED_SESSION", "1")
         monkeypatch.setattr(_bridge, "get_running_bridge_pid", lambda port: 123)
         monkeypatch.setattr(_bridge, "PID_FILE", tmp_path / "bridge.pid")
-
-        calls = {"checked": False}
-
-        def fake_kill(pid, sig) -> None:
-            assert pid == 123
-            if sig == signal.SIGTERM:
-                return
-            if sig == 0 and not calls["checked"]:
-                calls["checked"] = True
-                raise ProcessLookupError
-            return
-
-        monkeypatch.setattr(_bridge.os, "kill", fake_kill)
+        monkeypatch.setattr(
+            _bridge,
+            "get_bridge_health_response",
+            lambda *args, **kwargs: SimpleNamespace(status_code=200),
+        )
+        monkeypatch.setattr(
+            _bridge.os,
+            "kill",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("os.kill should not be called")),
+        )
         monkeypatch.setattr(_bridge, "_flush_bridge_ledger", lambda port: None)
 
-        _bridge.bridge_stop(force=True)
-        output = capsys.readouterr().out
+        result = runner.invoke(app, ["bridge", "stop", "--force"])
 
-        assert "Bridge stopped" in output
+        assert result.exit_code == 2
+        assert "--force` is ignored here" in result.output
+        assert "Stop the bridge from a separate shell" in result.output
 
     def test_bridge_stop_does_not_refuse_without_self_bridged_marker(self, monkeypatch, tmp_path, capsys) -> None:
         from tok.cli import _bridge

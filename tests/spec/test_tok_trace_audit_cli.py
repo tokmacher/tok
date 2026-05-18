@@ -130,6 +130,31 @@ def test_audit_human_output_includes_live_trace_receipt(monkeypatch, tmp_path: P
     assert "metadata-only request trace" in result.output
 
 
+def test_audit_json_includes_live_trace_evidence_mode(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = _Session(tmp_path)
+    emit_live_trace(
+        session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact request trace",
+        metadata={"input_saved_tokens": 17},
+    )
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+
+    result = runner.invoke(app, ["audit", str(trace_file), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload[0]["status"] == "pass"
+    assert payload[0]["evidence_mode"] == "metadata-only non-exact"
+    assert payload[0]["summary"] == "metadata-only non-exact"
+
+
 def test_audit_live_receipt_survives_malformed_jsonl_line(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TOK_TRACE", "1")
     monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")

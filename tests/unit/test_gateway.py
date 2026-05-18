@@ -544,6 +544,25 @@ def test_health_endpoint(monkeypatch) -> None:
     }
 
 
+def test_health_endpoint_does_not_report_system_reminder_as_goal(tmp_path) -> None:
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    session = BridgeSession(port=9191, memory_dir=tmp_path / ".tok", tracker=tracker)
+    session.runtime_session.bridge_memory.hot["goal"] = [
+        MemoryEntry("<system-reminder> hidden framing"),
+        MemoryEntry("fix resolver output"),
+    ]
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["goal"] == "fix resolver output"
+
+
 def test_flush_ledger_endpoint_persists_live_session(tmp_path: Path) -> None:
     tracker = SavingsTracker(
         savings_file=str(tmp_path / "tok_savings.tok"),
