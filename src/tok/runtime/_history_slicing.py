@@ -186,6 +186,48 @@ def _bridge_recent_suffix_has_safe_pairing(messages: list[dict[str, Any]]) -> bo
     return True
 
 
+def _message_tool_result_text(message: dict[str, Any]) -> str:
+    if message.get("role") == "tool_result":
+        return str(message.get("content", ""))
+    content = message.get("content")
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        str(block.get("content", ""))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    )
+
+
+def _assistant_used_skill_tool(message: dict[str, Any]) -> bool:
+    if message.get("role") != "assistant":
+        return False
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name", "").lower() == "skill"
+        for block in content
+    )
+
+
+def _starts_after_unanswered_skill_result(messages: list[dict[str, Any]], start_index: int) -> bool:
+    saw_skill_result = False
+    for index in range(start_index - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, dict):
+            continue
+        result_text = _message_tool_result_text(message).lower()
+        if result_text and "successfully loaded skill" in result_text:
+            saw_skill_result = True
+            continue
+        if _assistant_used_skill_tool(message):
+            return saw_skill_result
+        if message.get("role") == "assistant":
+            return False
+    return False
+
+
 def _tool_result_only_suffix_has_safe_pairing(messages: list[dict[str, Any]]) -> bool:
     """
     Validate pairing for suffixes that start with tool_result-only user messages.
@@ -230,6 +272,8 @@ def _bridge_preflight_safe_recent_suffix(messages: list[dict[str, Any]]) -> list
                 candidate = messages[start_index:]
                 if _bridge_recent_suffix_has_safe_pairing(candidate):
                     tool_result_only_fallback = candidate
+            continue
+        if _starts_after_unanswered_skill_result(messages, start_index):
             continue
         candidate = messages[start_index:]
         if _bridge_recent_suffix_has_safe_pairing(candidate):

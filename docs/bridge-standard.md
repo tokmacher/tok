@@ -34,7 +34,7 @@ Tok is standardized around the bridge-first runtime in `src/tok/gateway/__init__
   standardization
 
 The release-surface manifest in `src/tok/release_surface.py` defines which exports and
-commands are supported versus experimental for the 0.1 release story.
+commands are supported versus experimental for the 0.2.x release story.
 
 ## Wire Memory Contract
 

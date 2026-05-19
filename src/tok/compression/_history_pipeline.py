@@ -132,6 +132,116 @@ def _is_tool_result_only_user_message(message: dict[str, Any]) -> bool:
     return all(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
+_TASK_CONTINUATION_EXACT = frozenset(
+    {
+        "continue",
+        "go on",
+        "keep going",
+        "proceed",
+        "carry on",
+        "resume",
+        "yes",
+        "ok",
+        "okay",
+    }
+)
+
+_TASK_CONTINUATION_PREFIXES = (
+    "continue ",
+    "continue.",
+    "continue,",
+    "keep going",
+    "go on",
+    "proceed",
+    "resume",
+    "you don't need ",
+    "you do not need ",
+    "no, ",
+    "wait, ",
+    "use offset=",
+    "you can use offset=",
+)
+
+_TASK_CONTINUATION_TASK_WORDS = frozenset(
+    {
+        "audit",
+        "review",
+        "implement",
+        "fix",
+        "create",
+        "build",
+        "write",
+        "change",
+        "patch",
+        "refactor",
+        "debug",
+        "investigate",
+        "prove",
+        "test",
+    }
+)
+
+
+def _is_task_continuation_control_turn(message: dict[str, Any]) -> bool:
+    """
+    Return true for short control/correction turns that depend on an earlier
+    task prompt for meaning.
+
+    These turns must remain in the recent suffix, but counting them as full
+    retained human turns lets "continue" / small corrections evict the actual
+    task contract under low keep_turns settings.
+    """
+    if str(message.get("role", "")).strip() != "user":
+        return False
+    content = text_of(message.get("content", "")).strip()
+    if not content:
+        return False
+    normalized = re.sub(r"\s+", " ", content).strip().lower()
+    if len(normalized) > 180:
+        return False
+    if normalized in _TASK_CONTINUATION_EXACT:
+        return True
+    if any(normalized.startswith(prefix) for prefix in _TASK_CONTINUATION_PREFIXES):
+        task_word_count = sum(1 for word in _TASK_CONTINUATION_TASK_WORDS if re.search(rf"\b{word}\b", normalized))
+        return task_word_count <= 1
+    return False
+
+
+def _recent_suffix_has_substantive_user_turn(messages: list[dict[str, Any]], cut_index: int) -> bool:
+    for message in messages[cut_index:]:
+        if not isinstance(message, dict) or str(message.get("role", "")).strip() != "user":
+            continue
+        if _is_tool_result_only_user_message(message):
+            continue
+        if _is_task_continuation_control_turn(message):
+            continue
+        return True
+    return False
+
+
+def _previous_substantive_user_cut_index(
+    messages: list[dict[str, Any]],
+    *,
+    before_index: int,
+    bridge_cut_search: bool,
+) -> int | None:
+    for index in range(before_index - 1, -1, -1):
+        if not isinstance(messages[index], dict):
+            continue
+        cls = classify_cut_eligibility(messages[index])
+        if not cls.eligible:
+            continue
+        if _is_task_continuation_control_turn(messages[index]):
+            continue
+        adjusted = index if bridge_cut_search else _advance_cut_index_past_tool_result_only_users(messages, index)
+        if adjusted is None or adjusted >= before_index:
+            continue
+        if _cut_splits_tool_pair(messages, adjusted):
+            continue
+        return adjusted
+    return None
+
+
 def _cut_splits_tool_pair(messages: list[dict[str, Any]], cut_index: int) -> bool:
     prefix_use_ids: set[str] = set()
     for idx in range(cut_index):
@@ -227,6 +337,7 @@ def compress_history_impl(
                     eligible_indices.append(i)
                 else:
                     rejection_counts[cls.reason] = rejection_counts.get(cls.reason, 0) + 1
+
         for i in reversed(eligible_indices):
             adjusted_cut_index = i if bridge_cut_search else _advance_cut_index_past_tool_result_only_users(messages, i)
             if adjusted_cut_index is None:
@@ -263,6 +374,26 @@ def compress_history_impl(
                 rejection_counts,
             )
 
+            return messages, "", set()
+
+        if (
+            keep_turns >= 2
+            and _is_task_continuation_control_turn(messages[cut_index])
+            and not _recent_suffix_has_substantive_user_turn(messages, cut_index)
+        ):
+            anchored_cut_index = _previous_substantive_user_cut_index(
+                messages,
+                before_index=cut_index,
+                bridge_cut_search=bridge_cut_search,
+            )
+            if anchored_cut_index is not None:
+                logger.info(
+                    "compress_history: extending recent suffix to preserve substantive task prompt "
+                    "before continuation-only tail"
+                )
+                cut_index = anchored_cut_index
+
+        if cut_index == 0:
             return messages, "", set()
 
         old = messages[:cut_index]
@@ -811,8 +942,8 @@ def compress_tool_results_impl(
             return None
         diff_lines = list(
             difflib.unified_diff(
-                previous.splitlines(keepends=True),
-                current.splitlines(keepends=True),
+                previous.splitlines(),
+                current.splitlines(),
                 fromfile=f"a/{path}",
                 tofile=f"b/{path}",
                 n=3,
@@ -822,7 +953,7 @@ def compress_tool_results_impl(
         if not diff_lines:
             return None
         changed_lines = max(1, _count_changed_diff_lines(diff_lines))
-        diff_text = "".join(diff_lines)
+        diff_text = "\n".join(diff_lines)
         return f">>> tool:file_reread_diff|path:{path}|changed_lines:{changed_lines}\n{diff_text}"
 
     def _extract_stack_frames(trace_text: str) -> tuple[list[str], str]:
@@ -1397,10 +1528,22 @@ def compress_tool_results_impl(
             ):
                 previous_full = last_full_file_by_path.get(norm_path)
                 if previous_full:
+                    if len(raw) > 500_000:
+                        last_full_file_by_path[norm_path] = raw
+                        _record_feature_telemetry("file_reread_diff", "skipped")
+                        continue
                     _record_feature_telemetry("file_reread_diff", "attempted")
                     reread_candidate = _build_file_reread_diff(norm_path, previous_full, raw)
                     if reread_candidate is not None:
                         reread_saved = len(raw) - len(reread_candidate)
+                        if len(reread_candidate) > len(raw) * 0.5:
+                            _record_feature_telemetry("file_reread_diff", "fallback")
+                            last_full_file_by_path[norm_path] = raw
+                            continue
+                        if reread_saved <= len(raw) * 0.05:
+                            _record_feature_telemetry("file_reread_diff", "fallback")
+                            last_full_file_by_path[norm_path] = raw
+                            continue
                         if reread_saved > 0:
                             breakdown["file_reread_diff"] = breakdown.get("file_reread_diff", 0) + reread_saved
                             block["content"] = reread_candidate

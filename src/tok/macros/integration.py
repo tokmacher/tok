@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from tok.macros.ir import Instruction, Macro, MacroRegistry, TokIR
 from tok.macros.miner import IRPatternMiner
+from tok.macros.parameterization import parameterize_instructions
 
 if TYPE_CHECKING:
     from tok.runtime.memory.bridge_memory import BridgeMemoryState, MemoryEntry
@@ -124,26 +125,7 @@ def distill_bridge_history(
         for op_pair, count in pair_counts.items():
             if count >= 1 and not _ops_already_registered(memory_state.macro_registry, op_pair):
                 cross_ins = turn_primary_ops[: len(op_pair)]
-                param_inputs: list[str] = []
-                arg_to_param: dict[str, str] = {}
-                final_ins: list[Instruction] = []
-                for ins in cross_ins:
-                    new_args: list[str] = []
-                    for arg in ins.args:
-                        if isinstance(arg, str) and len(arg) > 3 and "/" in arg:
-                            if arg not in arg_to_param:
-                                p_name = f"p{len(param_inputs)}"
-                                arg_to_param[arg] = f"${p_name}"
-                                param_inputs.append(p_name)
-                            new_args.append(arg_to_param[arg])
-                        else:
-                            new_args.append(arg)
-                    final_ins.append(Instruction(op=ins.op, args=tuple(new_args), target=None))
-                context_file: str | None = None
-                for arg in arg_to_param:
-                    if "/" in arg:
-                        context_file = arg
-                        break
+                final_ins, param_inputs, context_file = parameterize_instructions(cross_ins)
                 cross_turn_discovered.append(
                     Macro(
                         name=f"cross_turn_{len(op_pair)}",

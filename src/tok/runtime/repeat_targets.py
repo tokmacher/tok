@@ -12,11 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from tok.compression._tool_taxonomy import FILE_LIKE_TOOLS
-
-SEARCH_LIKE_TOOLS = frozenset({"grep", "grep_search", "search", "rg", "find_by_name", "glob", "find", "code_search"})
-COMMAND_LIKE_TOOLS = frozenset({"bash", "sh", "run_terminal", "computer"})
-LISTING_LIKE_TOOLS = frozenset({"list_dir", "ls"})
+from tok.compression._tool_taxonomy import (
+    COMMAND_LIKE_TOOLS,
+    FILE_LIKE_TOOLS,
+    LISTING_LIKE_TOOLS,
+    SEARCH_LIKE_TOOLS,
+)
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _SCOPE_RE = re.compile(r"^\s*(class |def |async def )")

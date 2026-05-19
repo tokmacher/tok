@@ -117,6 +117,8 @@ def _jit_context_matches(macro: Any, session: "RuntimeSession") -> bool:
 
 def execute_jit_macro(session: "RuntimeSession", macro_name: str, args_raw: str) -> str:
     """Symbolically execute a macro in the current session context."""
+    from tok.runtime.repeat_targets import evidence_identity_key
+
     macro = session.bridge_memory.macro_registry.get(macro_name)
     if not macro:
         return f"Error: Macro @{macro_name} not found in registry."
@@ -140,6 +142,13 @@ def execute_jit_macro(session: "RuntimeSession", macro_name: str, args_raw: str)
 
     try:
         from tok.macros.ir import TokIR, execute_ir
+
+        edit_ops = {"edit"}
+        if any(ins.op in edit_ops for ins in macro.instructions):
+            target = next(iter(inputs.values()), "")
+            key = evidence_identity_key("Read", path=str(target))
+            if not key or key not in session._evidence_safety_ledger or session.evidence_requires_reacquisition(key):
+                return f"Cannot execute @{macro_name}: requires exact evidence for {target}"
 
         result = execute_ir(
             TokIR(macro.instructions),

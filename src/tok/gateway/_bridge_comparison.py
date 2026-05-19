@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from tok.runtime.pipeline.request_validation import (
-    canonicalize_anthropic_bridge_body,
-)
+from tok.provider_request_shapes import canonicalize_bridge_body
 
 if TYPE_CHECKING:
     import httpx
@@ -41,8 +39,8 @@ def _payloads_materially_differ(content: bytes, original_content: bytes | None) 
             current.pop("system", None)
         if original.get("system") == "" and "system" not in current:
             original.pop("system", None)
-        current, _, _ = canonicalize_anthropic_bridge_body(current)
-        original, _, _ = canonicalize_anthropic_bridge_body(original)
+        current, _, _ = canonicalize_bridge_body(current)
+        original, _, _ = canonicalize_bridge_body(original)
     return bool(current != original)
 
 
@@ -57,8 +55,8 @@ def _bridge_bodies_materially_differ(current: dict[str, Any], original: dict[str
         current_cmp.pop("system", None)
     if original_cmp.get("system") == "" and "system" not in current_cmp:
         original_cmp.pop("system", None)
-    current_cmp, _, _ = canonicalize_anthropic_bridge_body(current_cmp)
-    original_cmp, _, _ = canonicalize_anthropic_bridge_body(original_cmp)
+    current_cmp, _, _ = canonicalize_bridge_body(current_cmp)
+    original_cmp, _, _ = canonicalize_bridge_body(original_cmp)
     return bool(current_cmp != original_cmp)
 
 

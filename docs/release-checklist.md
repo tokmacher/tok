@@ -20,6 +20,8 @@ Steps for cutting a Tok release.
 - [ ] Reconcile benchmark/savings claims via `docs/claims_matrix.md`
 - [ ] Confirm automated and manual live-smoke coverage via `docs/live_smoke_matrix.md`
 - [ ] Build package: `uv build`
+- [ ] Remove stale release artifacts before validating built metadata:
+  `rm -rf dist && uv build`
 - [ ] Validate built artifact metadata and README rendering locally:
   `uv run --with twine python -m twine check dist/*.whl dist/*.tar.gz`
 - [ ] Verify wheel installs cleanly in a fresh venv
@@ -28,9 +30,11 @@ Steps for cutting a Tok release.
 - [ ] Verify `tok --version` reports the tagged release version from the installed
   artifact
 - [ ] Run the clean-room install verification from the README
-- [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.1.x`
-- [ ] For `0.1.x`, confirm Tok Trace remains draft-scoped: `tok audit` is visible, live
+- [ ] Confirm `tok --help` only emphasizes the bridge-first public workflow for `0.2.x`
+- [ ] For `0.2.x`, confirm Tok Trace remains draft-scoped: `tok audit` is visible, live
   trace emission is opt-in via `TOK_TRACE=1`, and `uv run pytest tests/spec -q` passes
+- [ ] Confirm the documented default request policy matches the live bridge status
+  (`natural-first` unless explicitly overridden)
 - [ ] Run live Claude bridge validation on the supported path: `tok claude`,
   `tok bridge status`, `tok doctor`, `tok stats`, then exit Claude and run
   `tok bridge stop`
@@ -43,8 +47,9 @@ Steps for cutting a Tok release.
 - [ ] Confirm `pyproject.toml`, `src/tok/__init__.py`, `sbom.spdx`, and security utility
   User-Agents all report the same release version
 - [ ] Confirm README badges and repository URLs resolve publicly
-- [ ] Confirm the deferred `0.1.x` follow-ups are documented: CLI decomposition and
-  dependency upper-bound policy
+- [ ] Confirm deferred protocol follow-ups remain documented as out of scope for
+  `0.2.x`: remote resolver routing, referral following, Tok Session, stable protocol,
+  stable Python SDK, and agent-to-agent exchange
 
 Recommended local gate sequence for the exact release candidate:
 

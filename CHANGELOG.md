@@ -48,11 +48,27 @@
   preventing stale warm-session eligibility after a session reset.
 - **Spec test alignment**: roadmap doc test updated to match actual 0.1.9 wording.
 
+## 0.2.0 (2026-05-15)
+
+- **Local resolver beta**: added `tok resolver` commands plus a local content-addressed
+  store for `tok-resolver://` URIs.
+- **Audit improvements**: `tok audit` can resolve `tok-resolver://` URIs from the local
+  resolver store when available.
+- **Standalone reader**: added a stdlib-only fixture reader
+  (`scripts/tok_trace_reader.py`) that matches `tok audit` results on the fixture packs.
+- **Live trace gate**: live trace blocks now assert they never emit `draft-uncomputed`
+  payload digests.
+- **Diagnostics consistency**: `tok doctor --json` now reports live bridge session
+  savings from the same normalized health payload used by `tok stats`, avoiding mixed
+  stale/local token counts with live percentages and cost totals.
+- **Release docs alignment**: 0.2.0 release docs now describe the `natural-first`
+  default request policy and keep `tool-compatible` as an explicit compatibility policy,
+  not the default.
+
 ### Notes
 
-- This release does not expand Tok's compression behavior. It adds an explicit
-  agent-operability layer, macro expansion groundwork, and hot-summary hint
-  improvements.
+- This release focuses on the local resolver beta and audit/reader proof. It does not
+  add any network routing or referral following.
 
 ## 0.1.8 (2026-05-06)
 

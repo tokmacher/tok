@@ -3,6 +3,8 @@ from tok.adapters import (
     OrchestratorAdapter,
     TextLoopAdapter,
 )
+from tok.runtime.core import RuntimeSession, UniversalTokRuntime
+from tok.runtime.types import RuntimeRequest, SignalPacket, SurfaceMetadata
 
 
 def test_openai_chat_adapter_builds_system_and_user_messages() -> None:
@@ -79,3 +81,31 @@ def test_orchestrator_and_text_loop_finalize_with_same_runtime_contract() -> Non
     assert orchestrated.content_blocks == looped.content_blocks
     assert orchestrated.updated_memory == looped.updated_memory
     assert orchestrated.behavior_signals == looped.behavior_signals
+
+
+def test_fake_surface_enters_same_signal_packet_core_path(tmp_path) -> None:
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / "fake-surface")
+    request = RuntimeRequest(
+        model="fake-frontier-runtime",
+        messages=[{"role": "user", "content": "Summarize the signal path."}],
+        system="fake runtime shell",
+        adapter_kind="fake-agent-shell",
+        surface=SurfaceMetadata(
+            runtime="fake-agent-runtime",
+            adapter="fake-agent-shell",
+            input_shape="fake_messages",
+            output_shape="fake_messages",
+        ),
+    )
+    packet = SignalPacket.from_request(request)
+
+    prepared = runtime.prepare_signal_packet(packet, session)
+
+    assert prepared.surface.runtime == "fake-agent-runtime"
+    assert prepared.surface.adapter == "fake-agent-shell"
+    assert prepared.surface.input_shape == "fake_messages"
+    assert prepared.body["messages"][-1]["content"] == "Summarize the signal path."
+    assert "claude" not in prepared.surface.runtime
+    assert packet.observability["core_path"] == "runtime.prepare_request"
+    assert packet.observability["surface_runtime"] == "fake-agent-runtime"

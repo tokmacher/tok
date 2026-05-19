@@ -42,6 +42,18 @@ def update_session_family_mode(session: "RuntimeSession", model: str, signals: d
     return next_state.mode
 
 
+def _persist_natural_goal(session: "RuntimeSession", text: str) -> None:
+    goal, _ = extract_goal_from_messages([{"role": "assistant", "content": text}])
+    if not goal:
+        return
+    existing = session.bridge_memory.hot.get("goal", [])
+    if existing:
+        return
+    session.bridge_memory._upsert(session.bridge_memory.hot, "goal", goal, score_delta=1)
+    session._save_bridge_memory()
+    logger.debug("Natural goal persisted: %s", goal[:60])
+
+
 def session_write_memory(session: "RuntimeSession", text: str) -> str:
     """Ingest Tok state from response text and update memory."""
     from tok.runtime.policy.macro_handling import _heal_macro_from_repair
@@ -49,6 +61,7 @@ def session_write_memory(session: "RuntimeSession", text: str) -> str:
     tok_lines: list[str] = re.findall(r"^>>>.*$", text, re.MULTILINE)
     if not tok_lines:
         logger.debug("No Tok state lines found in response text")
+        _persist_natural_goal(session, text)
         return ""
     latest_state: str = tok_lines[-1]
     logger.debug("Writing memory from Tok state: %s", latest_state[:100])
@@ -110,6 +123,180 @@ def _discover_project_markers(cwd: Path | None = None) -> frozenset[str]:
         return frozenset()
 
 
+_GOAL_MAX_LEN = 40
+_GOAL_PHRASES = (
+    "let me ",
+    "i need to ",
+    "i'll ",
+    "i will ",
+    "next, i ",
+    "the root issue is",
+    "the real problem is",
+    "the problem is",
+    "the issue is",
+    "root cause is",
+    "my goal is",
+    "the goal is",
+    "the plan is",
+    "i'm going to ",
+    "i am going to ",
+    "the next step is",
+    "we need to ",
+    "i want to ",
+    "i should ",
+    "let's ",
+    "now i ",
+    "first, ",
+    "then i ",
+)
+_GOAL_SKIP_PREFIXES = (
+    "```",
+    "<tool",
+    "<TOOL",
+    "@",
+    ">>>",
+)
+
+
+def _extract_goal_line(stripped: str, lowered: str) -> str:
+    for phrase in _GOAL_PHRASES:
+        idx = lowered.find(phrase)
+        if idx == -1:
+            continue
+        candidate = stripped[idx:].strip()
+        if not candidate:
+            continue
+        if len(candidate) > _GOAL_MAX_LEN:
+            sentence_end = -1
+            for sep in (".", "!", "?", ";"):
+                pos = candidate.find(sep)
+                if pos != -1 and (sentence_end == -1 or pos < sentence_end):
+                    sentence_end = pos
+            if sentence_end > 0:
+                candidate = candidate[:sentence_end].strip()
+        if len(candidate) > _GOAL_MAX_LEN:
+            candidate = candidate[:_GOAL_MAX_LEN].strip()
+        if candidate and not any(candidate.startswith(p) for p in _GOAL_SKIP_PREFIXES):
+            return candidate
+    return ""
+
+
+_USER_GOAL_PHRASES = (
+    "i want you to ",
+    "i want to ",
+    "i need you to ",
+    "please ",
+    "i need ",
+    "help me ",
+    "can you ",
+    "could you ",
+    "your task is",
+    "the task is",
+    "the goal is",
+    "the objective is",
+    "i'm trying to ",
+    "i am trying to ",
+    "make sure ",
+    "ensure that ",
+    "we need to ",
+    "fix ",
+    "implement ",
+    "investigate ",
+    "refactor ",
+    "debug ",
+    "resolve ",
+)
+
+
+_USER_GOAL_SKIP_PATTERNS = (
+    "- ",
+    "▎",
+    "▗",
+    "▘",
+    "system-reminder",
+    "<system-reminder",
+)
+
+
+def _is_system_injected_line(stripped: str, lowered: str) -> bool:
+    if lowered.startswith("simplify:") or lowered.startswith("review "):
+        return True
+    for pattern in _USER_GOAL_SKIP_PATTERNS:
+        if lowered.startswith(pattern) or stripped.startswith(pattern):
+            return True
+    return False
+
+
+def _extract_user_goal_line(stripped: str, lowered: str) -> str:
+    for phrase in _USER_GOAL_PHRASES:
+        idx = lowered.find(phrase)
+        if idx == -1:
+            continue
+        candidate = stripped[idx:].strip()
+        if not candidate:
+            continue
+        if len(candidate) > _GOAL_MAX_LEN:
+            sentence_end = -1
+            for sep in (".", "!", "?", ";", "\n"):
+                pos = candidate.find(sep)
+                if pos != -1 and (sentence_end == -1 or pos < sentence_end):
+                    sentence_end = pos
+            if sentence_end > 0:
+                candidate = candidate[:sentence_end].strip()
+        if len(candidate) > _GOAL_MAX_LEN:
+            candidate = candidate[:_GOAL_MAX_LEN].strip()
+        if candidate and not any(candidate.startswith(p) for p in _GOAL_SKIP_PREFIXES):
+            return candidate
+    return ""
+
+
+def _first_user_goal(messages: list[dict[str, Any]]) -> str:
+    best_goal = ""
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("role") != "user":
+            continue
+        msg_text = text_of(msg.get("content", ""))
+        for line in msg_text.splitlines():
+            stripped = line.strip()
+            lowered = stripped.lower()
+            if not stripped:
+                continue
+            if _is_system_injected_line(stripped, lowered):
+                continue
+            goal = _extract_user_goal_line(stripped, lowered)
+            if goal:
+                best_goal = goal
+    return best_goal
+
+
+def extract_goal_from_messages(messages: list[dict[str, Any]], max_assistant: int = 3) -> tuple[str, bool]:
+    user_goal = _first_user_goal(messages)
+    if user_goal:
+        return user_goal, True
+    best_goal = ""
+    best_idx = -1
+    assistant_seen = 0
+    for idx in range(len(messages) - 1, -1, -1):
+        msg = messages[idx]
+        if msg.get("role") != "assistant":
+            continue
+        assistant_seen += 1
+        if assistant_seen > max_assistant:
+            break
+        msg_text = text_of(msg.get("content", ""))
+        for line in msg_text.splitlines():
+            stripped = line.strip()
+            lowered = stripped.lower()
+            if not stripped:
+                continue
+            goal = _extract_goal_line(stripped, lowered)
+            if goal and idx > best_idx:
+                best_goal = goal
+                best_idx = idx
+    return best_goal, False
+
+
 _HYPOTHESIS_QUESTION_WORDS = (
     "what if",
     "should we",
@@ -168,6 +355,7 @@ def extract_memory_items(
 __all__ = [
     "_discover_project_markers",
     "calculate_reasoning_depth",
+    "extract_goal_from_messages",
     "extract_memory_items",
     "get_adaptive_keep_turns",
     "session_write_memory",

@@ -178,9 +178,11 @@ def detect_task_type(
     return "mixed", 0.5
 
 
-def select_optimal_mode(model: str, task_type: str) -> str:
-    """Select the single universal compression mode."""
-    del model, task_type
+def select_optimal_mode(model: str, task_type: str, confidence: float = 1.0) -> str:
+    """Select compression mode based on detected task type."""
+    del model
+    if task_type == "research" and confidence >= 0.7:
+        return "research-safe"
     return UNIVERSAL_MODE
 
 
@@ -205,8 +207,9 @@ def advance_state(
             task_type = detected_type
             task_confidence = detected_conf
 
+    mode = select_optimal_mode(policy.family.key, task_type, task_confidence)
     return FamilyAdaptiveState(
-        mode=policy.default_mode,
+        mode=mode,
         recent_pressure=pressure,
         clean_streak=clean_streak,
         task_type=task_type,
@@ -234,6 +237,18 @@ def _make_policy(
         fact_limit=4,
         field_order=CANONICAL_WIRE_FIELD_ORDER,
     )
+    research_memory_profile = MemoryProjectionProfile(
+        field_limits={
+            "files": 4,
+            "cmds": 5,
+            "tests": 2,
+            "errs": 2,
+            "constraints": 2,
+        },
+        question_limit=3,
+        fact_limit=6,
+        field_order=CANONICAL_WIRE_FIELD_ORDER,
+    )
     universal_history_profile: dict[str, int | list[str]] = {
         "files": 3,
         "cmds": 4,
@@ -256,18 +271,21 @@ def _make_policy(
     }
     memory_profiles = {
         UNIVERSAL_MODE: universal_memory_profile,
+        "research-safe": research_memory_profile,
         "aggressive": universal_memory_profile,
         "balanced": universal_memory_profile,
         "recovery": universal_memory_profile,
     }
     history_profiles: dict[str, dict[str, int | list[str]]] = {
         UNIVERSAL_MODE: universal_history_profile,
+        "research-safe": universal_history_profile,
         "aggressive": universal_history_profile,
         "balanced": universal_history_profile,
         "recovery": universal_history_profile,
     }
     tool_levels = {
         UNIVERSAL_MODE: "balanced",
+        "research-safe": "conservative",
         "aggressive": "balanced",
         "balanced": "balanced",
         "recovery": "balanced",

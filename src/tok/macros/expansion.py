@@ -89,4 +89,4 @@ def macro_hint_for_session(registry: MacroRegistry) -> str | None:
         ops = " -> ".join(ins.op + "(...)" for ins in m.instructions)
         lines.append(f"  {sig} = {ops} (used {m.hit_count}x)")
 
-    return "Available macros (use as tool calls to compress repeated sequences):\n" + "\n".join(lines)
+    return "Registered macros:\n" + "\n".join(lines)

@@ -31,6 +31,7 @@ from tok.compression import (
 )
 from tok.compression import _history_pipeline as history_pipeline
 from tok.compression import _tool_result_codecs as tool_result_codecs
+from tok.compression import _tool_result_pipeline as tool_result_pipeline
 from tok.compression._tool_result_codecs import (
     _compress_config_json,
     _compress_pytest,
@@ -676,6 +677,16 @@ class TestTokToolResult:
         log = _make_pytest_log(80)
         assert len(tok_tool_result(log)) < len(log)
 
+    def test_tok_tool_result_impl_respects_pytest_flag_off(self, monkeypatch) -> None:
+        monkeypatch.setattr(tool_result_pipeline, "TOK_ENABLE_PYTEST_FAIL_COMPRESSION", False)
+        log = _make_pytest_log(n_passed=10, n_failed=1)
+        out = tool_result_pipeline.tok_tool_result_impl(
+            log,
+            tool_compress_threshold=10,
+            tool_context={"name": "bash", "args": {"command": "pytest tests/test_example.py"}},
+        )
+        assert out == log
+
     # --- grep ---
 
     def test_grep_few_matches_verbatim(self) -> None:
@@ -1228,6 +1239,15 @@ class TestNewCompressors:
     def test_config_json_nonexpansion_guard(self, monkeypatch) -> None:
         flat = "{" + ",".join(f'"k{i}":"v{i}"' for i in range(600)) + "}"
         monkeypatch.setattr(tool_result_codecs, "TOK_ENABLE_JSON_NONEXPANSION_GUARD", True)
+        result = _compress_config_json(flat)
+        assert result == flat
+
+    def test_config_json_nonexpansion_guard_blocks_when_tokens_expand(self, monkeypatch) -> None:
+        flat = "{" + ",".join(f'"k{i}":"v{i}"' for i in range(600)) + "}"
+        monkeypatch.setattr(tool_result_codecs, "TOK_ENABLE_JSON_NONEXPANSION_GUARD", True)
+        monkeypatch.setattr(
+            tool_result_codecs, "count_tokens", lambda s: 1000 if s.startswith(">>> tool:json_skeleton") else 10
+        )
         result = _compress_config_json(flat)
         assert result == flat
 

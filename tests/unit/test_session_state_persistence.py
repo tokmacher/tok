@@ -199,6 +199,76 @@ class TestBridgeSessionBuckets:
 
         assert session.runtime_session is not None
 
+    def test_parallel_instances_same_first_message_get_separate_buckets(self, tmp_path) -> None:
+        """Two parallel Claude Code instances starting separate BridgeSession processes
+        with the same first user message must receive different minted session keys."""
+        from tok.gateway import BridgeSession
+
+        headers = {"authorization": "Bearer secret", "user-agent": "Claude-Code/1.0"}
+        body = {"messages": [{"role": "user", "content": "fix the tests"}]}
+
+        session_a = BridgeSession(memory_dir=tmp_path / ".tok_a")
+        session_b = BridgeSession(memory_dir=tmp_path / ".tok_b")
+
+        key_a = session_a.activate_session_for_request(headers, body)
+        key_b = session_b.activate_session_for_request(headers, body)
+
+        assert key_a.startswith("auto:")
+        assert key_b.startswith("auto:")
+        assert key_a != key_b, "Separate bridge processes must not share a session bucket"
+
+    def test_long_first_message_beyond_2048_produces_distinct_keys(self, tmp_path) -> None:
+        """A first message whose unique part falls after byte 2048 must produce
+        distinct session keys (hash, not truncate)."""
+        from tok.gateway import BridgeSession
+
+        session = BridgeSession(memory_dir=tmp_path / ".tok")
+        headers = {"authorization": "Bearer secret", "user-agent": "Claude-Code/1.0"}
+        shared_prefix = "x" * 2048
+        body_a = {"messages": [{"role": "user", "content": shared_prefix + " session_a"}]}
+        body_b = {"messages": [{"role": "user", "content": shared_prefix + " session_b"}]}
+
+        key_a = session.resolve_session_key(headers, body_a)
+        key_b = session.resolve_session_key(headers, body_b)
+
+        assert key_a != key_b, "Messages differing only after 2048 chars must not collide"
+
+    def test_auto_fingerprint_map_is_first_writer_wins(self, tmp_path) -> None:
+        """The _auto_fingerprint_to_key map must not be overwritten by a later
+        request so bodyless health-check routing stays pinned to the first session."""
+        from tok.gateway import BridgeSession
+
+        session = BridgeSession(memory_dir=tmp_path / ".tok", max_sessions=8)
+        headers = {"authorization": "Bearer secret", "user-agent": "Claude-Code/1.0"}
+
+        key_first = session.activate_session_for_request(
+            headers, {"messages": [{"role": "user", "content": "turn one"}]}
+        )
+        fp = session._auto_fingerprint({k.lower(): v for k, v in headers.items()})
+        assert session._auto_fingerprint_to_key.get(fp) == key_first
+
+        session.activate_session_for_request(headers, {"messages": [{"role": "user", "content": "different seed"}]})
+        assert session._auto_fingerprint_to_key.get(fp) == key_first, (
+            "_auto_fingerprint_to_key must be first-writer-wins, not last-writer-wins"
+        )
+
+    def test_deterministic_to_minted_key_pruned_on_bucket_eviction(self, tmp_path) -> None:
+        """When a session bucket is evicted, its entry in _deterministic_to_minted_key
+        must be removed to prevent stale lookups."""
+        from tok.gateway import BridgeSession
+
+        session = BridgeSession(memory_dir=tmp_path / ".tok", max_sessions=1)
+        h1 = {"authorization": "Bearer one", "user-agent": "ua"}
+        h2 = {"authorization": "Bearer two", "user-agent": "ua"}
+
+        key1 = session.activate_session_for_request(h1, {"messages": [{"role": "user", "content": "one"}]})
+        assert key1.startswith("auto:")
+        assert key1 in session._deterministic_to_minted_key.values()
+
+        session.activate_session_for_request(h2, {"messages": [{"role": "user", "content": "two"}]})
+        assert key1 not in session._session_buckets
+        assert key1 not in session._deterministic_to_minted_key.values()
+
 
 class TestResetSessionEndpoint:
     """POST /reset-session must be reachable and reset transient state."""

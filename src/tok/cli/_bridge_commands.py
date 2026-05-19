@@ -6,7 +6,7 @@ from typing import Annotated
 
 import typer
 
-from ._cli_support import LOG_FILE, bridge_url, console
+from ._cli_support import bridge_url, console, log_file
 
 
 def bridge_start(
@@ -78,11 +78,12 @@ def bridge_logs(
     lines: int = typer.Argument(40, help="Number of lines to show"),
 ) -> None:
     """Tail the bridge log file."""
-    if not LOG_FILE.exists():
+    path = log_file()
+    if not path.exists():
         console.print("[yellow]No log file found[/yellow]")
         raise typer.Exit(1)
 
-    content = LOG_FILE.read_text().splitlines()
+    content = path.read_text().splitlines()
     for line in content[-lines:]:
         # Strip legacy prefix if present to avoid confusing Rich markup
         line = line.removeprefix("[tok-bridge] ")

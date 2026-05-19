@@ -479,9 +479,11 @@ def test_health_endpoint(monkeypatch) -> None:
         "actual_tokens": 0,
         "baseline_tokens": 0,
         "session_tokens_saved": 0,
+        "session_net_tokens_saved": 0,
         "baseline_prompt_tokens": 0,
         "prepared_prompt_tokens": 0,
         "saved_prompt_tokens": 0,
+        "reacquisition_cost_tokens": 0,
         "session_savings_pct": 0.0,
         "session_cost_savings_pct": 0.0,
         "actual_cost_usd": 0.0,
@@ -537,7 +539,85 @@ def test_health_endpoint(monkeypatch) -> None:
         "thinking_mutation_events": 0,
         "task_score": 100,
         "repeated_active_file_reads": 0,
+        "goal": "",
+        "context_compression_detected": 0,
     }
+
+
+def test_health_endpoint_does_not_report_system_reminder_as_goal(tmp_path) -> None:
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    session = BridgeSession(port=9191, memory_dir=tmp_path / ".tok", tracker=tracker)
+    session.runtime_session.bridge_memory.hot["goal"] = [
+        MemoryEntry("<system-reminder> hidden framing"),
+        MemoryEntry("fix resolver output"),
+    ]
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["goal"] == "fix resolver output"
+
+
+def test_flush_ledger_endpoint_persists_live_session(tmp_path: Path) -> None:
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=1200,
+        actual_output=200,
+        cache_read=0,
+        cache_write=0,
+        input_saved=600,
+        output_saved=100,
+    )
+    session = BridgeSession(memory_dir=tmp_path / ".tok", tracker=tracker)
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.post("/flush-ledger")
+
+    assert response.status_code == 200
+    assert response.json()["action"] == "ledger_flushed"
+    last = tracker.last_session_summary()
+    assert last is not None
+    assert last["actual_tokens"] == 1400
+    assert last["baseline_tokens"] == 2100
+    assert last["tokens_saved"] == 700
+
+
+def test_flush_ledger_endpoint_persists_pending_runtime_signals(tmp_path: Path) -> None:
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=1200,
+        actual_output=200,
+        cache_read=0,
+        cache_write=0,
+        input_saved=600,
+        output_saved=100,
+        behavior_signals={"tok_fallback_activated": 1},
+    )
+    session = BridgeSession(memory_dir=tmp_path / ".tok", tracker=tracker)
+    session.runtime_session.pending_behavior_signals["tok_fallback_activated"] = 1
+    app = create_app(session)
+    client = TestClient(app)
+
+    response = client.post("/flush-ledger")
+
+    assert response.status_code == 200
+    summary = tracker.lifetime_summary(include_inflight=False)
+    assert summary is not None
+    assert summary["fallback_count"] == 2
 
 
 def test_non_streaming_processing_error_records_visible_fallback(monkeypatch, tmp_path) -> None:
@@ -1065,7 +1145,7 @@ def test_health_endpoint_aggregates_behavior_signals_across_sessions(tmp_path) -
         output_saved=5,
         behavior_signals={"repeat_search": 3, "repeat_target_hot": 1},
     )
-    beta_session._bump_signals({"stream_recovery_started": 1})
+    beta_session.runtime_session._bump_signals({"stream_recovery_started": 1})
     app = create_app(session)
     client = TestClient(app)
 
@@ -1075,6 +1155,7 @@ def test_health_endpoint_aggregates_behavior_signals_across_sessions(tmp_path) -
     assert aggregate_response.status_code == 200
     aggregate = aggregate_response.json()
     assert aggregate["actual_tokens"] == 210
+    assert aggregate["session_count"] == 2
     assert aggregate["repeat_search_count"] == 5
     assert aggregate["repeat_file_read_count"] == 1
     assert aggregate["repeat_target_hot_count"] == 1
@@ -1083,6 +1164,7 @@ def test_health_endpoint_aggregates_behavior_signals_across_sessions(tmp_path) -
     assert alpha_response.status_code == 200
     alpha = alpha_response.json()
     assert alpha["actual_tokens"] == 120
+    assert alpha["session_count"] == 1
     assert alpha["repeat_search_count"] == 2
     assert alpha["repeat_target_hot_count"] == 0
     assert alpha["stream_recovery_attempt_count"] == 0
@@ -1195,7 +1277,7 @@ def test_bridge_session_load_memory(tmp_path) -> None:
 
     session = BridgeSession(memory_dir=memory_dir)
 
-    assert session.load_memory() == ">>> t:3|g:fix_gateway"
+    assert session.runtime_session.load_memory() == ">>> t:3|g:fix_gateway"
 
 
 def test_bridge_session_prefers_structured_memory(tmp_path) -> None:
@@ -1208,8 +1290,8 @@ def test_bridge_session_prefers_structured_memory(tmp_path) -> None:
 
     session = BridgeSession(memory_dir=memory_dir)
 
-    assert session.load_memory(model="claude-sonnet-4") == ">>> t:2|g:fresh_hot"
-    assert session.consume_behavior_signals()["cold_start_structured_memory"] == 1
+    assert session.runtime_session.load_memory(model="claude-sonnet-4") == ">>> t:2|g:fresh_hot"
+    assert session.runtime_session.consume_behavior_signals()["cold_start_structured_memory"] == 1
 
 
 def test_cold_start_request_injects_persisted_memory(tmp_path, monkeypatch) -> None:
@@ -2398,7 +2480,7 @@ def test_gateway_blocks_invalid_tool_history_locally_without_upstream_send(tmp_p
     }
     assert "bridge_preflight_rejected_blocked_local" in caplog.text
     assert "reverted_to_original=True" not in caplog.text
-    signals = session.consume_behavior_signals()
+    signals = session.runtime_session.consume_behavior_signals()
     assert signals["tok_bridge_preflight_failed_local"] == 1
     assert signals["tok_bridge_invalid_tool_history_blocked"] == 1
     assert signals["tok_bridge_strict_invalid_tool_use_block"] == 1
@@ -2576,7 +2658,7 @@ def test_gateway_repeated_invalid_tool_history_recovery_resets_session_state(tmp
         json=original_payload,
     )
     assert first.status_code == 400
-    session.consume_behavior_signals()
+    session.runtime_session.consume_behavior_signals()
 
     second = client.post(
         "/v1/messages",
@@ -2584,7 +2666,7 @@ def test_gateway_repeated_invalid_tool_history_recovery_resets_session_state(tmp
         json=original_payload,
     )
     assert second.status_code == 400
-    signals = session.consume_behavior_signals()
+    signals = session.runtime_session.consume_behavior_signals()
     # After repeated invalid tool history (empty_messages due to stripped invalid blocks),
     # the session state should be reset
     assert (
@@ -3344,12 +3426,12 @@ def test_gateway_prompt_cached_runtime_request_preserves_system_shape_and_prefli
 def test_bridge_session_updates_family_mode_from_pressure() -> None:
     session = BridgeSession()
 
-    session.update_family_mode(
+    session.runtime_session.update_family_mode(
         "google/gemini-2.0-flash",
         {"repeat_file_read": 1, "repeat_search": 1},
     )
 
-    mode, policy = session.policy_snapshot("google/gemini-2.0-flash")
+    mode, policy = session.runtime_session.policy_snapshot("google/gemini-2.0-flash")
     assert mode == "tok-universal"
     assert policy.family.key == "universal:universal"  # type: ignore[union-attr]
 
@@ -3503,10 +3585,10 @@ def test_cold_start_wire_fallback_is_upgraded_to_structured_memory_on_startup(
     # No bridge_memory.tok → structured memory will be empty
 
     session = BridgeSession(memory_dir=memory_dir)
-    result = session.load_memory()
+    result = session.runtime_session.load_memory()
 
     assert result == ">>> t:5|g:debug"
-    signals = session.consume_behavior_signals()
+    signals = session.runtime_session.consume_behavior_signals()
     assert signals.get("cold_start_structured_memory", 0) == 1
 
 
@@ -3520,8 +3602,8 @@ def test_bridge_session_restores_persisted_fallback_memory_on_startup(
     session = BridgeSession(memory_dir=memory_dir)
 
     assert session.runtime_session.fallback_memory == ">>> g:resume_gateway|t:8"
-    assert session.load_memory() == ">>> t:8|g:resume_gateway"
-    signals = session.consume_behavior_signals()
+    assert session.runtime_session.load_memory() == ">>> t:8|g:resume_gateway"
+    signals = session.runtime_session.consume_behavior_signals()
     assert signals.get("cold_start_structured_memory", 0) == 1
 
 
@@ -3534,10 +3616,10 @@ def test_cold_start_structured_memory_signal_fires_when_bridge_memory_present(
     (memory_dir / "bridge_memory.tok").write_text("@mem v:b1 t:3\n@h\n@f goal\n  |> fix_tests|score:3|last:3\n")
 
     session = BridgeSession(memory_dir=memory_dir)
-    result = session.load_memory(model="claude-sonnet-4")
+    result = session.runtime_session.load_memory(model="claude-sonnet-4")
 
     assert "g:fix_tests" in result
-    signals = session.consume_behavior_signals()
+    signals = session.runtime_session.consume_behavior_signals()
     assert signals.get("cold_start_structured_memory", 0) == 1
     assert signals.get("cold_start_wire_fallback", 0) == 0
 
@@ -7046,3 +7128,34 @@ class TestRateLimitThunderingHerd:
         asyncio.run(_run())
 
         assert not upstream_called
+
+
+def test_non_streaming_connection_error_returns_502_not_500(monkeypatch, tmp_path) -> None:
+    from tok.gateway import _app_factory
+
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "tok_savings.tok"),
+        ledger_path=tmp_path / "global_savings.tok",
+    )
+    tracker.reset_session_stats()
+    app = create_app(BridgeSession(port=9191, tracker=tracker, fail_open=True))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    async def raise_connect_error(*args, **kwargs):
+        raise httpx.ConnectError("simulated connection refused")
+
+    monkeypatch.setattr(_app_factory, "send_with_tok_fail_open_retry", raise_connect_error)
+
+    response = client.post(
+        "/v1/messages",
+        headers={"x-api-key": "test"},
+        json={
+            "model": "claude-sonnet-4",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 502
+    assert "connection" in response.text.lower()

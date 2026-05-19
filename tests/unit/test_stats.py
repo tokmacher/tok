@@ -1,5 +1,7 @@
 """Tests for tok.stats — savings ledger load/save/merge."""
 
+import os
+
 import pytest
 
 from tok.stats import SavingsTracker
@@ -332,6 +334,47 @@ class TestSavingsTracker:
         assert "tokens_saved: 300" in content
         assert content.count("2026-04-28T12:00:00Z;") == 1
 
+    def test_merge_session_to_ledger_repairs_inflated_header_totals(self, tracker) -> None:
+        tracker.ledger_path.write_text(
+            "@lifetime_savings\n"
+            "  sessions: 99\n"
+            "  total_turns: 999\n"
+            "  total_prompt_tokens: 999000\n"
+            "  total_completion_tokens: 999000\n"
+            "  total_tokens: 999000\n"
+            "  total_cost_usd: 999.000000\n"
+            "  estimated_baseline_cost_usd: 999.000000\n"
+            "  tokens_saved: 999000\n"
+            "  net_tokens_saved: 999000\n"
+            "  cost_saved_usd: 999.000000\n"
+            "  savings_pct: 99.0\n\n"
+            "@per_session_log\n"
+            "  2026-04-28T10:00:00Z;old11111;2;1000;0.010000;0.020000;0.010000;500;0;0;0;0;0;0;;900;100;0;0;800;500;300;0;0;0\n"
+        )
+        stats = tracker.load_stats()
+        stats["session_start"] = "2026-04-28T12:00:00Z"
+        tracker.save_stats(stats)
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=1000,
+            actual_output=100,
+            cache_read=0,
+            cache_write=0,
+            input_saved=400,
+            output_saved=0,
+        )
+
+        tracker.merge_session_to_ledger()
+
+        content = tracker.ledger_path.read_text()
+        assert "sessions: 2" in content
+        assert "total_turns: 3" in content
+        assert "total_prompt_tokens: 1900" in content
+        assert "total_completion_tokens: 200" in content
+        assert "total_tokens: 2100" in content
+        assert "tokens_saved: 900" in content
+        assert "cost_saved_usd: 0.011200" in content
+
     def test_lifetime_summary_dedupes_session_log_rows(self, tracker) -> None:
         tracker.ledger_path.write_text(
             "@lifetime_savings\n"
@@ -358,6 +401,46 @@ class TestSavingsTracker:
         assert summary["baseline_tokens"] == 6000
         assert summary["tokens_saved"] == 2500
         assert summary["cost_saved_usd"] == pytest.approx(0.045)
+
+    def test_lifetime_summary_does_not_overlay_stale_flushed_session_file(self, tmp_path) -> None:
+        ledger_path = tmp_path / "global_savings.tok"
+        savings_file = tmp_path / "session_stats" / "live.tok"
+        savings_file.parent.mkdir()
+
+        tracker = SavingsTracker(savings_file=str(savings_file), ledger_path=ledger_path)
+        stats = tracker.load_stats()
+        stats["session_start"] = "2026-05-14T10:00:00Z"
+        tracker.save_stats(stats)
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=1000,
+            actual_output=100,
+            cache_read=0,
+            cache_write=0,
+            input_saved=400,
+            output_saved=0,
+        )
+        tracker.merge_session_to_ledger()
+
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=5000,
+            actual_output=500,
+            cache_read=0,
+            cache_write=0,
+            input_saved=2000,
+            output_saved=0,
+        )
+        newer = savings_file.stat().st_mtime + 10
+        os.utime(ledger_path, (newer, newer))
+
+        summary = tracker.lifetime_summary()
+
+        assert summary is not None
+        assert summary["sessions"] == 1
+        assert summary["total_turns"] == 1
+        assert summary["actual_tokens"] == 1100
+        assert summary["tokens_saved"] == 400
 
     def test_tracker_flushes_lifetime_ledger_periodically(self, tmp_path, monkeypatch) -> None:
         from tok.stats import SavingsTracker
@@ -861,6 +944,20 @@ class TestSavingsTracker:
         assert summary["tokens_saved"] == 1950
         assert summary["actual_tokens"] == 4200
 
+    def test_lifetime_summary_ignores_empty_session_log_rows(self, tracker) -> None:
+        tracker.ledger_path.write_text(
+            "@lifetime_savings\n  sessions: 2\n\n@per_session_log\n"
+            "  2026-04-01T10:00:00Z;empty000;0;0;0.000000;0.000000;0.000000;0;0;0\n"
+            "  2026-04-01T10:01:00Z;real1111;3;3000;0.030000;0.060000;0.030000;1500;0;0\n"
+        )
+
+        summary = tracker.lifetime_summary(include_inflight=False)
+
+        assert summary is not None
+        assert summary["sessions"] == 1
+        assert summary["total_turns"] == 3
+        assert summary["actual_tokens"] == 3000
+
     def test_lifetime_summary_shows_inflight_when_no_ledger_exists(self, tracker) -> None:
         """If the ledger file does not exist yet, return the in-flight session as the sole entry."""
         assert not tracker.ledger_path.exists()
@@ -1120,3 +1217,26 @@ class TestLifetimeSummaryNoDoubleCountHealthOverlay:
         assert summary["sessions"] == 2
         assert summary["actual_tokens"] == 4200
         assert summary["tokens_saved"] == 1900
+
+
+def test_lifetime_summary_always_includes_net_tokens_saved(tmp_path) -> None:
+    """net_tokens_saved must be present in all non-None lifetime_summary return paths."""
+    from tok.utils.savings_tracker import SavingsTracker
+
+    tracker = SavingsTracker(
+        savings_file=str(tmp_path / "stats.tok"),
+        ledger_path=tmp_path / "lifetime.tok",
+    )
+    tracker.record_call(
+        model="claude-sonnet-4",
+        actual_input=800,
+        actual_output=200,
+        cache_read=0,
+        cache_write=0,
+        input_saved=300,
+        output_saved=0,
+    )
+    summary = tracker.lifetime_summary()
+    assert summary is not None
+    assert "net_tokens_saved" in summary
+    assert summary["net_tokens_saved"] >= 0

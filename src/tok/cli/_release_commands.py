@@ -68,8 +68,28 @@ def stats(
         bool,
         typer.Option("--json", help="Emit machine-readable JSON stats"),
     ] = False,
+    detail: Annotated[
+        bool,
+        typer.Option("--detail", help="Show extra detail (bloat attribution, evidence forms, macro activity)"),
+    ] = False,
+    share: Annotated[
+        bool,
+        typer.Option("--share", help="Show a concise pasteable savings summary"),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option("--verbose", help="Show diagnostic details (degradation reason, evidence safety)"),
+    ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option("--debug", help="Show full diagnostic output (interaction quality, all internal metrics)"),
+    ] = False,
 ) -> None:
-    """Show token savings and fallback state."""
+    """Show token savings and fallback state.
+
+    Displays compression metrics for the current session and lifetime statistics.
+    Use --json for machine-readable output, --total for lifetime-only view.
+    """
     from ._release import stats_command
 
     stats_command(
@@ -83,6 +103,10 @@ def stats(
         window=window,
         reset=reset,
         json_output=json_output,
+        detail=detail,
+        share=share,
+        verbose=verbose,
+        debug=debug,
     )
 
 
@@ -127,7 +151,11 @@ def doctor(
         typer.Option("--json", help="Emit machine-readable JSON diagnostics"),
     ] = False,
 ) -> None:
-    """Check bridge health and runtime contract conformance."""
+    """Check bridge health and runtime contract conformance.
+
+    Shows bridge status, active sessions, and diagnostic information.
+    Use --report to generate a shareable environment report.
+    """
     from ._release import doctor_command
 
     doctor_command(verbose=verbose, report=report, json_output=json_output)
