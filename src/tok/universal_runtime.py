@@ -35,15 +35,23 @@ from .runtime.types import (
     NormalizedToolEvent,
     PreparedRuntimeRequest,
     ProcessedRuntimeResponse,
+    RecoveryAnchor,
     RuntimeRequest,
+    SafetyDecision,
+    SignalPacket,
+    SurfaceMetadata,
 )
 
 __all__ = [
     "NormalizedToolEvent",
     "PreparedRuntimeRequest",
     "ProcessedRuntimeResponse",
+    "RecoveryAnchor",
     "RuntimeRequest",
     "RuntimeSession",
+    "SafetyDecision",
+    "SignalPacket",
+    "SurfaceMetadata",
     "SemanticValidator",
     "UniversalTokRuntime",
     "_discover_project_markers",

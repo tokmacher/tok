@@ -230,9 +230,9 @@ class TestProtocolLayers:
         layers = _parse_contract()["implemented_protocol_layers"]
         assert layers.get("tok_trace") == "draft_l0_l2_audit_validation"
 
-    def test_tok_resolver_is_deferred(self) -> None:
+    def test_tok_resolver_is_beta_local(self) -> None:
         layers = _parse_contract()["implemented_protocol_layers"]
-        assert layers.get("tok_resolver") == "deferred"
+        assert layers.get("tok_resolver") == "beta-local"
 
     def test_tok_capability_is_deferred(self) -> None:
         layers = _parse_contract()["implemented_protocol_layers"]

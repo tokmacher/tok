@@ -1,6 +1,6 @@
 # Tok Philosophy: The Invisible Bridge
 
-**Version:** 0.1.5 **Audience:** contributors, reviewers, and anyone proposing a change
+**Version:** 0.2.0 **Audience:** contributors, reviewers, and anyone proposing a change
 to Tok behaviour
 
 ______________________________________________________________________

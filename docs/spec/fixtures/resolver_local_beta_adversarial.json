@@ -1,0 +1,43 @@
+{
+  "schema": "tok-trace-adversarial-packs/v0.1-draft",
+  "packs": [
+    {
+      "id": "resolver-local-beta-adversarial",
+      "status": "implemented-local",
+      "conformance_levels": ["L3a"],
+      "description": "Local-only resolver beta adversarial cases for 0.2.0. No remote routing or referral following.",
+      "cases": [
+        {
+          "id": "resolver_returns_wrong_bytes",
+          "expected_status": "fail",
+          "expected_error": "payload_digest_mismatch"
+        },
+        {
+          "id": "hash_exists_but_content_missing",
+          "expected_status": "fail",
+          "expected_error": "available_local_missing_resolver"
+        },
+        {
+          "id": "resolver_uri_path_traversal",
+          "expected_status": "fail",
+          "expected_error": "available_local_unresolved_content_uri"
+        },
+        {
+          "id": "manifest_corruption_ignored",
+          "expected_status": "fail",
+          "expected_error": "resolver_manifest_invalid"
+        },
+        {
+          "id": "cross_project_path_leak",
+          "expected_status": "fail",
+          "expected_error": "resolver_project_scope_violation"
+        },
+        {
+          "id": "available_local_claimed_but_absent",
+          "expected_status": "fail",
+          "expected_error": "available_local_missing_resolver"
+        }
+      ]
+    }
+  ]
+}

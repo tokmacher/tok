@@ -12,14 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from tok.provider_request_shapes import validate_bridge_body, validate_outgoing_bridge_body
 from tok.runtime.pipeline.request_validation import (
     has_blocking_outgoing_failures,
     has_provider_sensitive_failures,
     has_recoverable_immediate_pairing_failures,
     summarize_bridge_pairing,
     summarize_message_structure,
-    validate_anthropic_bridge_body,
-    validate_anthropic_outgoing_bridge_body,
 )
 
 from . import BridgeSession, _log_bridge_body_structure, logger
@@ -142,7 +141,7 @@ def _validate_outgoing_bridge_body_from_bytes(
     body = _decode_bridge_body(raw_content)
     if not isinstance(body, dict):
         return ["body_not_dict"]
-    return validate_anthropic_outgoing_bridge_body(body)
+    return validate_outgoing_bridge_body(body)
 
 
 def _rate_limit_retry_delay_seconds(session: BridgeSession, *, attempt_index: int, retry_after: str | None) -> float:
@@ -324,7 +323,7 @@ async def send_with_tok_fail_open_retry(
         if isinstance(prepared_body, dict):
             prepared_summary = summarize_message_structure(prepared_body.get("messages", []))
             prepared_pairing = summarize_bridge_pairing(prepared_body.get("messages", []))
-            prepared_failures = validate_anthropic_bridge_body(prepared_body)
+            prepared_failures = validate_bridge_body(prepared_body)
             prepared_mixed_user_tool_result_messages = _count_user_messages_with_mixed_tool_result_content(
                 prepared_body.get("messages", [])
             )
@@ -346,7 +345,7 @@ async def send_with_tok_fail_open_retry(
         if isinstance(fallback_body, dict):
             provider_safe_summary = summarize_message_structure(fallback_body.get("messages", []))
             provider_safe_pairing = summarize_bridge_pairing(fallback_body.get("messages", []))
-            provider_safe_failures = validate_anthropic_bridge_body(fallback_body)
+            provider_safe_failures = validate_bridge_body(fallback_body)
             provider_safe_mixed_user_tool_result_messages = _count_user_messages_with_mixed_tool_result_content(
                 fallback_body.get("messages", [])
             )
@@ -406,9 +405,7 @@ async def send_with_tok_fail_open_retry(
             )
         if fallback_content is not None and _payloads_materially_differ(content, fallback_content):
             provider_safe_outgoing_failures = (
-                validate_anthropic_outgoing_bridge_body(fallback_body)
-                if isinstance(fallback_body, dict)
-                else ["body_not_dict"]
+                validate_outgoing_bridge_body(fallback_body) if isinstance(fallback_body, dict) else ["body_not_dict"]
             )
             if has_blocking_outgoing_failures(provider_safe_failures + provider_safe_outgoing_failures):
                 retry_signals["fail_open_retry_provider_safe_invalid"] = 1
@@ -421,9 +418,7 @@ async def send_with_tok_fail_open_retry(
                     original_outgoing_failures = _validate_outgoing_bridge_body_from_bytes(original_content)
                     original_body = _decode_bridge_body(original_content)
                     original_bridge_failures = (
-                        validate_anthropic_bridge_body(original_body)
-                        if isinstance(original_body, dict)
-                        else ["body_not_dict"]
+                        validate_bridge_body(original_body) if isinstance(original_body, dict) else ["body_not_dict"]
                     )
                     original_has_hard_failures = (
                         original_bridge_failures

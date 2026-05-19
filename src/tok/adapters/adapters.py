@@ -12,6 +12,7 @@ from tok.runtime.core import (
     RuntimeSession,
     UniversalTokRuntime,
 )
+from tok.runtime.types import SignalPacket, SurfaceMetadata
 
 
 def _system_to_messages(
@@ -51,6 +52,10 @@ class RuntimeAdapter:
     runtime: UniversalTokRuntime = field(default_factory=UniversalTokRuntime)
     session: RuntimeSession = field(default_factory=RuntimeSession)
 
+    @property
+    def surface(self) -> SurfaceMetadata:
+        return SurfaceMetadata.from_adapter_kind(self.adapter_kind)
+
     def prepare(
         self,
         *,
@@ -63,17 +68,19 @@ class RuntimeAdapter:
         deltas: str | None = None,
     ) -> PreparedRuntimeRequest:
         """Prepare a runtime request with the given parameters."""
-        return self.runtime.prepare_request(
-            RuntimeRequest(
-                model=model,
-                messages=messages,
-                system=system,
-                adapter_kind=self.adapter_kind,
-                tool_compatible=tool_compatible,
-                grammar=grammar,
-                todo=todo,
-                deltas=deltas,
-            ),
+        request = RuntimeRequest(
+            model=model,
+            messages=messages,
+            system=system,
+            adapter_kind=self.adapter_kind,
+            surface=self.surface,
+            tool_compatible=tool_compatible,
+            grammar=grammar,
+            todo=todo,
+            deltas=deltas,
+        )
+        return self.runtime.prepare_signal_packet(
+            SignalPacket.from_request(request),
             self.session,
         )
 
@@ -98,6 +105,10 @@ class ClaudeBridgeAdapter(RuntimeAdapter):
     """Adapter for Claude Bridge integration."""
 
     adapter_kind: str = "claude-bridge"
+
+    @property
+    def surface(self) -> SurfaceMetadata:
+        return SurfaceMetadata.claude_bridge()
 
 
 @dataclass

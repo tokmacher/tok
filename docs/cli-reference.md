@@ -1,8 +1,8 @@
 # CLI Reference
 
-This page summarizes the supported Tok CLI surface for the first public release. The
-default `tok --help` output intentionally highlights only the bridge-first onboarding
-path plus the `tok stats` command.
+This page summarizes the supported Tok 0.2.x CLI surface. The default `tok --help`
+output intentionally highlights only the bridge-first onboarding path plus the
+`tok stats` command.
 
 If you are new to Tok, start with [`README.md`](../README.md) or the full workflow in
 [`docs/bridge.md`](./bridge.md).
@@ -56,7 +56,9 @@ Use:
 - `status` to confirm the bridge is live and Tok is helping
 - `logs` to inspect the bridge log file
 - `stop` to end the session and print a compact summary
-- `stop --force` to intentionally stop from an active bridged Claude turn
+- `stop --force` to intentionally stop a bridge from a separate shell. Tok refuses to
+  honor `--force` from the active bridged Claude Code session when that would strand the
+  current turn.
 
 ## Health And Savings
 
@@ -85,6 +87,37 @@ tok audit ~/.tok/traces/20260430_061100_live_example.jsonl
 tok audit --latest --json
 ```
 
+## Resolver (beta, local-only)
+
+```bash
+tok resolver --help
+tok resolver init
+tok resolver status
+tok resolver store
+tok resolver put <path>
+tok resolver get tok-resolver://sha256:... --out ./artifact.bin
+```
+
+The resolver is a local content-addressed store. Tok 0.2.0 does not do remote routing,
+referral following, or any network resolution.
+
+Use:
+
+- `tok resolver init` to create the resolver manifest and store directory
+- `tok resolver status` to check whether the manifest exists
+- `tok resolver store` to show object count
+- `tok resolver put <path>` to store file bytes and print the digest and resolver URI
+- `tok resolver get <uri>` to retrieve content by resolver URI
+
+`tok resolver get <uri>` writes raw bytes to stdout when `--out` is omitted. This is
+useful for pipes and byte-for-byte checks, but it can emit NULs, invalid UTF-8, or
+terminal escape sequences. Use `--out <path>` for binary or untrusted content.
+
+Configuration:
+
+- `TOK_RESOLVER_ROOT`: overrides the resolver root directory. Default is
+  `~/.tok/resolver/`.
+
 `TOK_TRACE=1` enables opt-in sidecar traces under `~/.tok/traces/`.
 `TOK_TRACE_CAPTURE_ARTIFACTS=1` writes sanitized metadata artifacts next to the trace so
 audit can verify local hashes and byte sizes. This does not capture raw prompts,
@@ -96,6 +129,12 @@ durable client id across bridge restarts; the client bucket hint appears in
 
 `tok audit` is a draft trace-audit feature for inspecting what Tok did. It is not a
 universal protocol compliance certificate.
+
+Fixture file format note:
+
+- `tok audit docs/spec/fixtures/trace_fixtures.json` expects a JSON **list** of fixture
+  objects shaped like `{ "id": "...", "block": { ... } }`.
+- For live traces, `tok audit --latest` reads a JSONL file (one block per line).
 
 Audit output uses three statuses:
 
@@ -109,6 +148,17 @@ without storing original prompt, response, or tool-result bytes. Artifact-backed
 metadata mode can produce `PASS`, but it still verifies sanitized trace metadata rather
 than raw session content.
 
+`tok audit --json` returns a bare JSON list, not the `tok-cli-result/v0.1` envelope used
+by `tok bridge status --json`, `tok doctor --json`, and `tok stats --json`. Each list
+item has:
+
+- `id`: fixture id, live block id, or trace-file error id
+- `status`: one of `pass`, `warn`, or `fail`
+- `errors`: list of audit error or warning codes
+- `summary`: short human-readable qualifier when available
+- `evidence_mode`: `trace-validated` for normal fixture/trace checks, or
+  `metadata-only non-exact` for live non-exact metadata blocks
+
 Exactness terms:
 
 - `exact`: Tok observed exact evidence before treating that evidence identity as
@@ -118,7 +168,7 @@ Exactness terms:
 - `fallback`: Tok used raw/baseline behavior because compact representation was unsafe.
 
 Advanced maintainer utilities remain available, but they are intentionally hidden from
-the default help surface in `0.1.x` so new users land on one clear workflow. Hidden
+the default help surface in `0.2.0` so new users land on one clear workflow. Hidden
 commands such as capture review, release gating, conversion helpers, and developer tools
 are maintainer-only for this release and may change without compatibility guarantees.
 

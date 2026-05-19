@@ -12,7 +12,7 @@ import typer
 
 from tok.spec.trace import audit_trace_file
 
-from ._cli_support import console, memory_root
+from ._cli_support import console, json_envelope, memory_root
 
 FIXTURE_FILE_ARG = typer.Argument(None, help="Path to a Tok Trace v0.1 fixture or live JSONL trace file.")
 JSON_OUTPUT_OPT = typer.Option(False, "--json", help="Emit machine-readable audit results.")
@@ -37,22 +37,34 @@ def register(app: typer.Typer) -> None:
         """Audit Tok Trace v0.1 draft fixtures or live bridge traces."""
         trace_file = _resolve_audit_path(fixture_file, latest=latest)
         if trace_file is None:
-            if latest:
-                console.print("[red]No trace files found in the active .tok/traces directory.[/red]")
+            msg = (
+                "No trace files found in the active .tok/traces directory."
+                if latest
+                else "Provide a trace file path or use --latest."
+            )
+            if json_output:
+                print(json.dumps(json_envelope("audit", ok=False, status="error", data={"message": msg})))
             else:
-                console.print("[red]Provide a trace file path or use --latest.[/red]")
+                console.print(f"[red]{msg}[/red]")
             raise typer.Exit(5)
         if not trace_file.exists():
-            console.print(f"[red]Trace file not found: {trace_file}[/red]")
+            msg = f"Trace file not found: {trace_file}"
+            if json_output:
+                print(json.dumps(json_envelope("audit", ok=False, status="error", data={"message": msg})))
+            else:
+                console.print(f"[red]{msg}[/red]")
             raise typer.Exit(5)
 
         results = audit_trace_file(trace_file)
+        live_receipt = _load_live_trace_blocks(trace_file)
+        non_exact_live_ids = _non_exact_live_ids(live_receipt)
         payload = [
             {
                 "id": result.id,
                 "status": result.status,
                 "errors": list(result.errors),
-                "summary": result.summary,
+                "summary": _audit_result_summary(result.summary, result.id, non_exact_live_ids),
+                "evidence_mode": _audit_evidence_mode(result.id, non_exact_live_ids),
             }
             for result in results
         ]
@@ -68,8 +80,10 @@ def register(app: typer.Typer) -> None:
                 else:
                     style = "red"
                 suffix = f" {', '.join(result.errors)}" if result.errors else ""
+                if result.id in non_exact_live_ids:
+                    suffix += " (metadata-only non-exact)"
                 console.print(f"[{style}]{result.status.upper()}[/{style}] {result.id}{suffix}")
-            _print_live_trace_receipt(trace_file, payload)
+            _print_live_trace_receipt(trace_file, payload, receipt=live_receipt)
             if any(result.status == "warn" and "missing_identifiable" in result.errors for result in results):
                 console.print(
                     "[yellow]Hint:[/yellow] metadata-only live traces warn when artifacts are not captured. "
@@ -93,8 +107,35 @@ def _resolve_audit_path(fixture_file: Path | None, *, latest: bool) -> Path | No
     return fixture_file
 
 
-def _print_live_trace_receipt(trace_file: Path, payload: list[dict[str, Any]]) -> None:
-    receipt = _load_live_trace_blocks(trace_file)
+def _non_exact_live_ids(receipt: _LiveTraceReceipt) -> set[str]:
+    return {
+        str(block.get("envelope", {}).get("block_id", ""))
+        for block in receipt.blocks
+        if block.get("content", {}).get("exact") is False
+    }
+
+
+def _audit_evidence_mode(result_id: str, non_exact_live_ids: set[str]) -> str:
+    if result_id in non_exact_live_ids:
+        return "metadata-only non-exact"
+    return "trace-validated"
+
+
+def _audit_result_summary(summary: str, result_id: str, non_exact_live_ids: set[str]) -> str:
+    if summary:
+        return summary
+    if result_id in non_exact_live_ids:
+        return "metadata-only non-exact"
+    return ""
+
+
+def _print_live_trace_receipt(
+    trace_file: Path,
+    payload: list[dict[str, Any]],
+    *,
+    receipt: _LiveTraceReceipt | None = None,
+) -> None:
+    receipt = receipt if receipt is not None else _load_live_trace_blocks(trace_file)
     blocks = receipt.blocks
     if not blocks:
         return
@@ -115,11 +156,12 @@ def _print_live_trace_receipt(trace_file: Path, payload: list[dict[str, Any]]) -
         f"Warn: {status_counts['warn']} | "
         f"Fail: {status_counts['fail']}"
     )
+    artifact_label = "Metadata artifacts" if exact_count == 0 and non_exact_count else "Artifacts"
     console.print(
         f"Live blocks: {len(blocks)} | "
         f"Exact: {exact_count} | "
         f"Non-exact: {non_exact_count} | "
-        f"Artifacts: {artifact_count}/{len(blocks)}"
+        f"{artifact_label}: {artifact_count}/{len(blocks)}"
     )
     if receipt.skipped_records:
         console.print(f"Skipped receipt records: {receipt.skipped_records}")

@@ -13,10 +13,12 @@ Vectors:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
 
+from tok.compression._feature_flags import TOK_ENABLE_PYTEST_FAIL_COMPRESSION
 from tok.compression._tool_result_codecs import (
     _CODE_PATTERNS,
     _compress_git_log,
@@ -29,6 +31,7 @@ from tok.compression._tool_result_codecs import (
     _detect_tool_content_type,
     truncate_large_result,
 )
+from tok.utils.token_utils import count_tokens
 
 logger = logging.getLogger("tok.gateway.anthropic")
 
@@ -124,8 +127,11 @@ def _scrub_leaked_tok_context_text(text: str) -> tuple[str, int]:
     return cleaned, max(0, len(text) - len(cleaned))
 
 
-def scrub_leaked_tok_context(body: dict[str, Any]) -> dict[str, Any]:
-    """Remove leaked Tok control state from client-provided context blocks."""
+def scrub_leaked_tok_context(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    """Remove leaked Tok control state from client-provided context blocks.
+
+    Returns (body, saved_chars).
+    """
     total_saved_chars = 0
 
     def _clean_value(value: Any) -> Any:
@@ -173,26 +179,29 @@ def scrub_leaked_tok_context(body: dict[str, Any]) -> dict[str, Any]:
             total_saved_chars,
             total_saved_chars // 4,
         )
-    return body
+    return body, total_saved_chars
 
 
 def sift_tool_results(
     body: dict[str, Any],
     *,
     behavior_signals: dict[str, int] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], int]:
     """
     Vector 2: Compress tool_result stdout before forwarding to Anthropic.
 
     Walks all user messages, finds tool_result blocks, and applies content-type
     aware compression to raw stdout. This strips visual noise (ANSI codes,
     human-readable formatting, redundant headers) that wastes tokens.
+
+    Returns (body, saved_chars).
     """
     messages = body.get("messages")
     if not isinstance(messages, list):
         return body
 
     total_saved_chars = 0
+    total_saved_tokens = 0
 
     for msg in messages:
         if msg.get("role") != "user":
@@ -212,27 +221,33 @@ def sift_tool_results(
             if isinstance(inner, list):
                 for sub in inner:
                     if isinstance(sub, dict) and sub.get("type") == "text":
-                        original_len = len(sub.get("text", ""))
+                        original_text = str(sub.get("text", ""))
+                        original_len = len(original_text)
                         if cache_marked:
-                            cache_marked_original_tokens += original_len // 4
-                        compressed = _sift_stdout(sub.get("text", ""))
+                            cache_marked_original_tokens += count_tokens(original_text)
+                        compressed = _sift_stdout(original_text)
                         if len(compressed) < original_len:
                             sub["text"] = compressed
                             saved_chars = original_len - len(compressed)
                             total_saved_chars += saved_chars
                             if cache_marked:
-                                cache_marked_saved_tokens += saved_chars // 4
+                                cache_marked_saved_tokens += max(
+                                    0, count_tokens(original_text) - count_tokens(compressed)
+                                )
+                            total_saved_tokens += max(0, count_tokens(original_text) - count_tokens(compressed))
             elif isinstance(inner, str):
-                original_len = len(inner)
+                original_text = inner
+                original_len = len(original_text)
                 if cache_marked:
-                    cache_marked_original_tokens += original_len // 4
-                compressed = _sift_stdout(inner)
+                    cache_marked_original_tokens += count_tokens(original_text)
+                compressed = _sift_stdout(original_text)
                 if len(compressed) < original_len:
                     block["content"] = compressed
                     saved_chars = original_len - len(compressed)
                     total_saved_chars += saved_chars
                     if cache_marked:
-                        cache_marked_saved_tokens += saved_chars // 4
+                        cache_marked_saved_tokens += max(0, count_tokens(original_text) - count_tokens(compressed))
+                    total_saved_tokens += max(0, count_tokens(original_text) - count_tokens(compressed))
             if behavior_signals is not None and cache_marked and cache_marked_original_tokens > 0:
                 behavior_signals["tok_sift_cache_marked_blocks"] = (
                     behavior_signals.get("tok_sift_cache_marked_blocks", 0) + 1
@@ -248,10 +263,10 @@ def sift_tool_results(
         logger.info(
             "anthropic_opt: sifted tool results, saved ~%d chars (~%d tokens)",
             total_saved_chars,
-            total_saved_chars // 4,
+            total_saved_tokens,
         )
 
-    return body
+    return body, total_saved_chars
 
 
 _SIFT_MIN_CHARS = 80
@@ -279,6 +294,8 @@ def _sift_stdout(text: str) -> str:
     if content_type == "grep":
         return _compress_grep(text)
     if content_type == "pytest":
+        if " FAILED" in text and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
+            return text
         return _compress_pytest(text)
     if content_type == "stack_trace":
         return _compress_stack_traces(text)
@@ -349,13 +366,15 @@ def _translate_bpe(text: str) -> str:
     return _BLANK_BETWEEN_BLOCKS_RE.sub("\n", result)
 
 
-def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:
+def bpe_translate_request(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
     """
     Apply BPE translation to all Tok-formatted text in a request body.
 
     Walks message text blocks and translates canonical Tok syntax to
     Anthropic-optimized wire format. Only touches text that contains
     Tok markers (>>>, @, |>).
+
+    Returns (body, saved_chars).
     """
     messages = body.get("messages")
     if not isinstance(messages, list):
@@ -406,7 +425,7 @@ def bpe_translate_request(body: dict[str, Any]) -> dict[str, Any]:
             total_saved_chars // 4,
         )
 
-    return body
+    return body, total_saved_chars
 
 
 def apply_anthropic_optimizations(
@@ -414,21 +433,29 @@ def apply_anthropic_optimizations(
     *,
     is_claude_bridge: bool = True,
     behavior_signals: dict[str, int] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], int]:
     """
     Apply all Anthropic-specific optimizations to a request body.
 
     This is the single entry point called from the gateway bridge handler.
     Only applies when is_claude_bridge is True (i.e., traffic is going to
     api.anthropic.com via the Claude bridge adapter).
+
+    Returns (body, saved_tokens).
     """
     if not is_claude_bridge:
-        return body
+        return body, 0
+    before = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
     try:
-        body = scrub_leaked_tok_context(body)
+        body, _saved_chars = scrub_leaked_tok_context(body)
         body = split_system_for_caching(body)
-        body = sift_tool_results(body, behavior_signals=behavior_signals)
-        body = bpe_translate_request(body)
+        body, _saved_chars = sift_tool_results(body, behavior_signals=behavior_signals)
+        body, _saved_chars = bpe_translate_request(body)
     except Exception as exc:
         logger.debug("anthropic_opt: skipping due to error: %s", exc)
-    return body
+    after = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    saved_tokens = max(0, count_tokens(before) - count_tokens(after))
+    saved_chars = max(0, len(before) - len(after))
+    if saved_chars:
+        logger.info("anthropic_opt: total saved ~%d chars (~%d tokens)", saved_chars, saved_tokens)
+    return body, saved_tokens

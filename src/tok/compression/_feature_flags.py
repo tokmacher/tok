@@ -5,26 +5,28 @@ from __future__ import annotations
 import logging
 import os
 
+from tok.utils.env_utils import env_int
+
 logger = logging.getLogger("tok.compression.flags")
 
 
 def _env_int(name: str, fallback: int) -> int:
     raw = os.getenv(name)
-    if raw is None:
-        return fallback
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
-        return fallback
+    value = env_int(name, fallback)
+    if raw is not None and value == fallback:
+        try:
+            int(raw)
+        except ValueError:
+            logger.warning("Invalid integer config %s=%r; using fallback %d", name, raw, fallback)
+    return value
 
 
 TOK_FORCE_FILE_CODEC: bool = os.getenv("TOK_FORCE_FILE_CODEC", "0") == "1"
 
 TOK_ENABLE_PYTEST_FAIL_COMPRESSION: bool = os.getenv("TOK_ENABLE_PYTEST_FAIL_COMPRESSION", "0") == "1"
-TOK_ENABLE_JSON_NONEXPANSION_GUARD: bool = os.getenv("TOK_ENABLE_JSON_NONEXPANSION_GUARD", "0") == "1"
-TOK_ENABLE_FILE_OVERLAP_DELTA: bool = os.getenv("TOK_ENABLE_FILE_OVERLAP_DELTA", "0") == "1"
-TOK_ENABLE_FILE_REREAD_DIFF: bool = os.getenv("TOK_ENABLE_FILE_REREAD_DIFF", "0") == "1"
+TOK_ENABLE_JSON_NONEXPANSION_GUARD: bool = os.getenv("TOK_ENABLE_JSON_NONEXPANSION_GUARD", "1") == "1"
+TOK_ENABLE_FILE_OVERLAP_DELTA: bool = os.getenv("TOK_ENABLE_FILE_OVERLAP_DELTA", "1") == "1"
+TOK_ENABLE_FILE_REREAD_DIFF: bool = os.getenv("TOK_ENABLE_FILE_REREAD_DIFF", "1") == "1"
 TOK_ENABLE_SEARCH_OVERLAP_DELTA: bool = os.getenv("TOK_ENABLE_SEARCH_OVERLAP_DELTA", "1") == "1"
 TOK_ENABLE_STACK_REPEAT_DELTA: bool = os.getenv("TOK_ENABLE_STACK_REPEAT_DELTA", "0") == "1"
 

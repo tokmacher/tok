@@ -343,12 +343,11 @@ def _prepare_bridge_pressure(messages: list[dict[str, Any]], tmp_path) -> Pressu
     )
     assert response is None
     return PressureMetrics(
-        baseline_prompt_tokens=int(payload.prompt_metrics.get("baseline_prompt_tokens", 0)),
-        prepared_prompt_tokens=int(payload.prompt_metrics.get("prepared_prompt_tokens", 0)),
+        baseline_prompt_tokens=payload.prompt_metrics.baseline_prompt_tokens,
+        prepared_prompt_tokens=payload.prompt_metrics.prepared_prompt_tokens,
         tok_overhead_tokens=max(
             0,
-            int(payload.prompt_metrics.get("prepared_prompt_tokens", 0))
-            - int(payload.prompt_metrics.get("baseline_prompt_tokens", 0)),
+            payload.prompt_metrics.prepared_prompt_tokens - payload.prompt_metrics.baseline_prompt_tokens,
         ),
         retained_tool_result_bytes=_tool_result_bytes(payload.body["messages"]),
         behavior_signals=dict(payload.behavior_signals),
@@ -562,8 +561,9 @@ def test_ugly_path_unit_matrix_baseline_degradation_is_visible(tmp_path) -> None
 
     assert response is None
     assert validate_anthropic_outgoing_bridge_body(payload.body) == []
-    assert payload.behavior_signals.get("tok_fallback_activated") == 1
-    assert payload.prompt_metrics["saved_prompt_tokens"] == 0
+    assert payload.behavior_signals.get("baseline_only_session") == 1
+    assert payload.behavior_signals.get("tok_fallback_activated") is None
+    assert payload.prompt_metrics.saved_prompt_tokens == 0
 
 
 def test_varied_parallel_reads_are_bounded_or_visibly_degraded(tmp_path) -> None:
@@ -996,3 +996,97 @@ def test_answer_ready_repair_active_second_miss_fails_closed(tmp_path) -> None:
 
     assert processed.behavior_signals.get("answer_ready_repair_failed", 0) == 1
     assert session._answer_ready_repair_pending is False
+
+
+# ---------------------------------------------------------------------------
+# Regression: baseline-only mode must not inflate tok_fallback_activated
+# ---------------------------------------------------------------------------
+
+
+def test_baseline_only_session_does_not_set_tok_fallback_activated(tmp_path) -> None:
+    """A single baseline-only request must NOT increment tok_fallback_activated.
+
+    Before the fix, every request in baseline-only mode added 1 to
+    tok_fallback_activated, causing fallback_count to reach e.g. 125 for 125
+    calls even though only 3 real failures triggered the degradation.
+    """
+    session = BridgeSession(memory_dir=tmp_path / ".tok", fail_open=True)
+    session.runtime_session._baseline_only = True
+
+    payload, response = prepare_bridge_payload(
+        session=session,
+        body={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": _parallel_file_read_messages(count=3, lines=20),
+            "stream": False,
+        },
+        headers={"x-api-key": "test"},
+        path="v1/messages",
+        tok_tool_header="1",
+    )
+
+    assert response is None
+    assert payload.behavior_signals.get("tok_fallback_activated") is None
+    assert payload.behavior_signals.get("baseline_only_session") == 1
+
+
+def test_repeated_baseline_only_requests_do_not_accumulate_tok_fallback_activated(tmp_path) -> None:
+    """Multiple baseline-only requests must not cause tok_fallback_activated to grow.
+
+    The health endpoint reports fallback_count as the cumulative sum of
+    tok_fallback_activated across the session.  If baseline-only requests each
+    add 1, 100 degraded calls would show fallback_count=100, hiding the fact
+    that only the initial 3 failures mattered.
+    """
+    session = BridgeSession(memory_dir=tmp_path / ".tok", fail_open=True)
+    session.runtime_session._baseline_only = True
+    messages = _parallel_file_read_messages(count=2, lines=10)
+    body = {
+        "model": "claude-sonnet-4",
+        "max_tokens": 8192,
+        "messages": messages,
+        "stream": False,
+    }
+
+    total_tok_fallback = 0
+    for _ in range(5):
+        payload, _ = prepare_bridge_payload(
+            session=session,
+            body=body,
+            headers={"x-api-key": "test"},
+            path="v1/messages",
+            tok_tool_header="1",
+        )
+        total_tok_fallback += payload.behavior_signals.get("tok_fallback_activated", 0)
+
+    assert total_tok_fallback == 0
+
+
+def test_baseline_only_and_real_failure_signals_are_distinct(tmp_path) -> None:
+    """baseline_only_session and tok_fallback_activated must be orthogonal.
+
+    A degraded-mode request must set baseline_only_session (so degradation is
+    still observable) but leave tok_fallback_activated unset so the health
+    fallback_count reflects only genuine per-request failure events.
+    """
+    session = BridgeSession(memory_dir=tmp_path / ".tok", fail_open=True)
+    session.runtime_session._baseline_only = True
+
+    payload, _ = prepare_bridge_payload(
+        session=session,
+        body={
+            "model": "claude-sonnet-4",
+            "max_tokens": 8192,
+            "messages": _parallel_file_read_messages(count=2, lines=10),
+            "stream": False,
+        },
+        headers={"x-api-key": "test"},
+        path="v1/messages",
+        tok_tool_header="1",
+    )
+
+    # Degradation is observable via baseline_only_session …
+    assert payload.behavior_signals.get("baseline_only_session") == 1
+    # … but does NOT pollute the per-request failure counter.
+    assert "tok_fallback_activated" not in payload.behavior_signals

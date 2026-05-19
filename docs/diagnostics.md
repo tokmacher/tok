@@ -1,18 +1,21 @@
-# Tok Diagnostics (0.1.x)
+# Tok Diagnostics (0.2.x)
 
 This document explains the key health and recovery signals you may see in:
 
 - `tok bridge status`
+- `tok bridge status --json`
 - `tok doctor --report`
+- `tok doctor --json`
 - `tok bridge logs`
 
 The goal is to help you distinguish normal, self-contained recovery (expected under
 stress) from a real degradation that should be reported as a bug.
 
-## What Is "Supported" For 0.1.x
+## What Is "Supported" For 0.2.x
 
-The supported product path for `0.1.x` is Claude Code routed through the local Tok
-bridge:
+The supported product path for `0.2.x` is Claude Code routed through the local Tok
+bridge, with local trace audit and local resolver beta commands available for inspection
+and recovery:
 
 ```bash
 tok claude
@@ -57,6 +60,20 @@ If you hit any of these, capture:
 - `tok doctor --report`
 - `tok bridge logs 600` (filtered to the relevant signal bundle)
 
+### Bridge Log Size
+
+`tok bridge start` bounds `~/.tok/bridge.log` before appending to it. By default Tok
+trims the log when it exceeds 50 MiB and keeps the newest 10 MiB, with a `log_trimmed`
+marker at the top of the retained file.
+
+For local diagnosis you can override the thresholds:
+
+```bash
+TOK_BRIDGE_LOG_MAX_BYTES=104857600 TOK_BRIDGE_LOG_KEEP_BYTES=20971520 tok bridge start
+```
+
+Set either value to `0` to disable automatic trimming for that start.
+
 ## Interpreting Session Signals
 
 ### `compat-fallback`
@@ -80,7 +97,9 @@ What to check:
 stress test that repeats reads/searches will increase it quickly.
 
 High `reacq` is usually a sign that Tok has useful dedup/delta opportunities, not a
-problem by itself.
+problem by itself. It is still overhead: `tok stats` shows `Net Tokens Saved` when
+recorded reacquisition token cost exists, so compare that line with gross `Tokens Saved`
+for high-reacquisition sessions.
 
 ### Low Or Zero Savings
 
@@ -99,6 +118,20 @@ Common explanations:
 
 Low savings is not automatically a Tok failure. Treat it as a prompt to inspect
 `Session signals`, fallback counts, exactness labels, and `tok audit --latest`.
+
+### JSON Diagnostics Shape
+
+`tok bridge status --json` and `tok doctor --json` use the shared `tok-cli-result/v0.1`
+envelope. Important session fields include `session_quality`, `degradation_reason`,
+`fallback_count`, `baseline_only`, `tokens_saved`, `savings_pct`, and `goal`.
+
+The `goal` field is a compact orientation hint, not an exact transcript. It is capped at
+40 characters by the live bridge health endpoint, so it may end mid-sentence. Tok strips
+internal system-reminder tags before exposing it.
+
+`tok audit --json` is different: it returns a bare list of audit results because a trace
+file can contain many independently passing, warning, or failing records. See
+[`docs/cli-reference.md`](./cli-reference.md) for the item schema.
 
 ### Evidence-safety labels
 
@@ -159,10 +192,10 @@ Meaning (plain English):
 - `answer_ready_repair_failed=1` means that specific repair attempt could not establish
   a clean answer-ready anchor for that turn.
 
-How to interpret it for `0.1.x`:
+How to interpret it for `0.2.x`:
 
 - If `Fallbacks` stays `0` and `Degraded to baseline` stays `no`, this is a
-  self-contained recovery path. It's acceptable for `0.1.x` under stress, but is useful
+  self-contained recovery path. It's acceptable for `0.2.x` under stress, but is useful
   evidence for hardening future versions.
 - If you see repeated `answer_ready_repair_failed` on normal usage (not a synthetic
   parallel-tool stress test), file an issue with the filtered log bundle.

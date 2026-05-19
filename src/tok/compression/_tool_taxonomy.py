@@ -43,6 +43,7 @@ LISTING_LIKE_TOOLS = frozenset({"list_dir", "ls"})
 COMMAND_LIKE_TOOLS = frozenset(
     {
         "bash",
+        "run_bash",
         "sh",
         "run_terminal",
         "computer",

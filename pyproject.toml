@@ -4,7 +4,7 @@ requires = [ "hatchling" ]
 
 [project]
 name = "tok-protocol"
-version = "0.1.9"
+version = "0.2.0"
 description = "Bridge-first CLI and runtime for Claude Code that compresses conversations and exposes savings and fallback health"
 readme = "README.md"
 keywords = [ "bridge", "claude-code", "compression", "developer-tools", "llm", "tokens" ]
@@ -71,7 +71,11 @@ build.targets.sdist.exclude = [
   ".mypy_cache/",
   ".ruff_cache/",
   "dist/",
-  "tmp/"
+  "tmp/",
+  "docs/maintainers/",
+  "docs/audits/",
+  "docs/plans/",
+  "src/tok/testing/",
 ]
 build.targets.wheel.packages = [ "src/tok" ]
 build.targets.wheel.exclude = [
@@ -83,6 +87,7 @@ build.targets.wheel.exclude = [
   "examples/",
   "docs/maintainers/",
   "CLAUDE.md",
+  "src/tok/testing/",
 ]
 
 [tool.ruff]

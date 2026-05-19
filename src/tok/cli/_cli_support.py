@@ -24,9 +24,26 @@ logger = logging.getLogger(__name__)
 
 console = Console()
 
-TOK_DIR = Path.home() / ".tok"
+# Defaults are evaluated at import time but can be monkeypatched in tests.
+# The bridge PID/log location should be stable across terminals; use TOK_DIR as
+# the explicit override rather than implicitly depending on TOK_PROJECT_DIR.
+TOK_DIR = Path(os.getenv("TOK_DIR", str(Path.home() / ".tok")))
 PID_FILE = TOK_DIR / "bridge.pid"
 LOG_FILE = TOK_DIR / "bridge.log"
+
+
+def tok_dir() -> Path:
+    return PID_FILE.parent
+
+
+def pid_file() -> Path:
+    return PID_FILE
+
+
+def log_file() -> Path:
+    return LOG_FILE
+
+
 _LOOPBACK_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 RUNTIME_WARNING_SIGNALS = (
@@ -149,16 +166,17 @@ def msg_text(msg: dict[str, Any]) -> str:
 
 def read_pid() -> int | None:
     """Read PID from file and validate it's alive."""
-    if not PID_FILE.exists():
+    path = pid_file()
+    if not path.exists():
         return None
     try:
-        pid = int(PID_FILE.read_text().strip())
+        pid = int(path.read_text().strip())
         os.kill(pid, 0)
         return pid
     except (ValueError, ProcessLookupError, PermissionError):
         pass
     with contextlib.suppress(PermissionError):
-        PID_FILE.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
     return None
 
 
@@ -245,21 +263,43 @@ def find_pids_on_port(port: int) -> list[int]:
 
 def get_running_bridge_pid(port: int) -> int | None:
     """Get the running bridge PID, with fallback to port check and self-healing."""
+    # When TOK_PROJECT_DIR is set but TOK_DIR is not, treat the bridge as
+    # project-scoped for diagnostics and avoid binding to a global pidfile.
+    if os.getenv("TOK_PROJECT_DIR", "").strip() and not os.getenv("TOK_DIR", "").strip():
+        return None
+
     pid = read_pid()
     if pid is not None:
         return pid
 
-    on_port = find_pids_on_port(port)
-    if on_port:
-        pid = on_port[0]
-        try:
-            TOK_DIR.mkdir(parents=True, exist_ok=True)
-            PID_FILE.write_text(str(pid))
-        except Exception:
-            pass
-        return pid
+    # If the pidfile is missing, only trust a port scan if we can confirm the
+    # listener is actually the Tok bridge (via /health). This avoids false
+    # positives from unrelated processes that happen to bind the same port.
+    try:
+        resp = get_bridge_health_response(port, timeout=0.35, attempts=1, backoff_seconds=0)
+    except Exception:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        payload = resp.json()
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("bridge") != "tok":
+        return None
 
-    return None
+    on_port = find_pids_on_port(port)
+    if len(on_port) != 1:
+        return None
+    pid = on_port[0]
+    try:
+        tok_dir().mkdir(parents=True, exist_ok=True)
+        pid_file().write_text(str(pid))
+    except Exception:
+        pass
+    return pid
 
 
 def memory_root() -> Path:
@@ -270,6 +310,12 @@ def memory_root() -> Path:
 
 
 def savings_style(pct: float) -> str:
+    """Return rich markup style based on savings percentage.
+
+    Green (>= 40%): Strong savings
+    Yellow (15-39%): Solid savings
+    Red (< 15%): Light or no savings
+    """
     if pct >= 40:
         return "bold green"
     if pct >= 15:
@@ -297,6 +343,13 @@ def render_stats_panel(
 
 
 def savings_verdict(pct: float) -> str:
+    """Return human-readable verdict for savings percentage.
+
+    Strong (>= 40%): Substantial compression benefits.
+    Solid (15-39%): Meaningful compression benefits.
+    Light (0-14%): Minimal but present compression.
+    None (<= 0%): No visible token savings.
+    """
     if pct >= 40:
         return "Strong savings"
     if pct >= 15:
@@ -332,6 +385,8 @@ def runtime_verdict(
         return ("Tok active, watch session", "bold yellow")
     if session_quality == "degraded":
         return ("Session degraded to baseline", "bold yellow")
+    if 0 < tokens_saved < 50:
+        return ("Tok active, early sample", "bold yellow")
     if tokens_saved > 0:
         return ("Tok active and helping", "bold green")
     return ("Tok active, waiting for first savings", "bold yellow")
@@ -393,6 +448,9 @@ def session_signals_text(payload: dict[str, Any]) -> str:
     for label, value in signal_map:
         if value > 0:
             parts.append(f"{label}={value}")
+    compression_detected = int(payload.get("context_compression_detected", 0))
+    if compression_detected > 0:
+        parts.append(f"compress-recovery={compression_detected}")
     if reacq_required_count > 0 or reacq_satisfied_count > 0:
         parts.append(f"reacq-safe={reacq_satisfied_count}/{reacq_required_count}")
     if compression_blocked_count > 0:
@@ -485,9 +543,9 @@ def savings_headline(
         ts = 0 if tokens_saved is None else tokens_saved
         cost_pct = pct
         return (
-            f"Saved {ts:,} tokens",
-            f"{cost_pct:.1f}% saved",
-            f"{savings_verdict(cost_pct)}" + (" • $0.0000 cost saved" if tokens_saved is not None else ""),
+            f"Saved {ts:,} tokens • $0.0000 saved",
+            f"{pct:.1f}% token savings • {cost_pct:.1f}% cost savings",
+            savings_verdict(cost_pct),
         )
 
     savings_pct_val = summary["savings_pct"]
@@ -500,13 +558,18 @@ def savings_headline(
     cost_pct = float(cost_savings_pct_val) if isinstance(cost_savings_pct_val, int | float | str) else 0.0
     saved_usd = float(cost_saved_val) if isinstance(cost_saved_val, int | float | str) else 0.0
     tokens_saved = int(tokens_saved_val) if isinstance(tokens_saved_val, int | float | str) else 0
-    pct_label = f"{pct:.1f}% saved"
+    calls = int(summary.get("calls", summary.get("total_turns", summary.get("turns", 0))))
+    baseline_tokens = int(summary.get("baseline_tokens", int(summary.get("actual_tokens", 0)) + tokens_saved))
+    pct_label = f"{pct:.1f}% token savings • {cost_pct:.1f}% cost savings"
     if peak_pct > pct + 5:
-        pct_label = f"{pct:.1f}% saved (peak {peak_pct:.0f}%)"
+        pct_label = f"{pct:.1f}% token savings (peak {peak_pct:.0f}%) • {cost_pct:.1f}% cost savings"
+    verdict = savings_verdict(peak_pct)
+    if calls < 3 or baseline_tokens < 100:
+        verdict = "Early sample"
     return (
-        f"Saved {tokens_saved:,} tokens",
+        f"Saved {tokens_saved:,} tokens • ${saved_usd:.4f} saved",
         pct_label,
-        f"{savings_verdict(peak_pct)} • ~${saved_usd:.4f} est. cost saved ({cost_pct:.1f}% cost)",
+        verdict,
     )
 
 
@@ -561,7 +624,18 @@ def session_status_rows(
         )
     if session_signals is not None:
         rows.append(("Session signals", session_signals))
+    goal = str(summary.get("goal", "")) if summary is not None else ""
+    if goal:
+        rows.append(("Goal", goal[:60]))
     if summary is not None:
+        gross_tokens_saved = int(summary.get("gross_tokens_saved", summary.get("tokens_saved", 0)))
+        net_tokens_saved = int(summary.get("net_tokens_saved", summary.get("tokens_saved", 0)))
+        if gross_tokens_saved != net_tokens_saved:
+            rows.append(("Tokens saved (gross)", str(gross_tokens_saved)))
+            rows.append(("Tokens saved (net)", str(net_tokens_saved)))
+        reacq_cost_tokens = int(summary.get("reacquisition_cost_tokens", 0))
+        if reacq_cost_tokens:
+            rows.append(("Reacquisition cost", str(reacq_cost_tokens)))
         exact_count = int(summary.get("evidence_exact_observed_count", 0))
         nonexact_count = int(summary.get("evidence_non_exact_reference_count", 0))
         summary_count = int(summary.get("evidence_non_exact_summary_count", 0))
@@ -619,6 +693,10 @@ def session_status_rows(
                     "Cost (with Tok / est. no Tok)",
                     f"${float(summary['actual_cost_usd']) if isinstance(summary.get('actual_cost_usd'), int | float | str) else 0.0:.4f} / ${float(summary['baseline_cost_usd']) if isinstance(summary.get('baseline_cost_usd'), int | float | str) else 0.0:.4f}",
                 ),
+                (
+                    "Cost saved",
+                    f"${float(summary['cost_saved_usd']) if isinstance(summary.get('cost_saved_usd'), int | float | str) else 0.0:.4f} ({float(summary['cost_savings_pct']) if isinstance(summary.get('cost_savings_pct'), int | float | str) else 0.0:.1f}%)",
+                ),
             ]
         )
     note = savings_diagnostic_note(
@@ -635,6 +713,40 @@ def session_status_rows(
     if fallback_count is not None:
         rows.append(("Fallbacks", str(fallback_count)))
     return rows
+
+
+def format_savings_line(
+    *,
+    pct: float,
+    actual: float,
+    baseline: float,
+    is_cost: bool,
+) -> tuple[str, str]:
+    pct_str = f"{pct:.1f}% less"
+    if pct >= 40:
+        pct_str = f"[green]{pct_str}[/green]"
+    elif pct >= 15:
+        pct_str = f"[yellow]{pct_str}[/yellow]"
+    else:
+        pct_str = f"[red]{pct_str}[/red]"
+
+    if is_cost:
+        actual_str = f"${actual:.2f}"
+        baseline_str = f"${baseline:.2f}"
+    else:
+        actual_str = _format_token_count(int(actual))
+        baseline_str = _format_token_count(int(baseline))
+
+    subline = f"[dim]{actual_str} with Tok vs {baseline_str} base[/dim]"
+    return pct_str, subline
+
+
+def _format_token_count(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}K"
+    return f"{n:,}"
 
 
 def interaction_quality_rows(
@@ -670,6 +782,43 @@ def interaction_quality_rows(
     return rows
 
 
+def reliability_line(
+    *,
+    smoothness_score: int | None,
+    fallback_count: int,
+    calls: int,
+) -> str:
+    smoothness_str = "N/A"
+    if smoothness_score is not None:
+        smoothness_str = f"{smoothness_score}/100"
+
+    parts = [f"[bold]{smoothness_str}[/bold] smoothness"]
+    if fallback_count > 0:
+        parts.append(f"[yellow]{fallback_count} fallbacks[/yellow]")
+    else:
+        parts.append("[green]0 fallbacks[/green]")
+    parts.append(f"{calls} calls handled")
+    return " · ".join(parts)
+
+
+def status_sentence(
+    *,
+    tok_active: bool,
+    baseline_only: bool,
+    fallback_count: int,
+    calls: int = 1,
+) -> str:
+    if baseline_only:
+        return "Tok has degraded to baseline for this session."
+    if not tok_active:
+        return "Tok is not active for this session."
+    if calls <= 0:
+        return "Tok is active. No completed calls recorded for this session yet."
+    if fallback_count > 0:
+        return "Tok is active, with fallback events recorded this session."
+    return "Tok is active and handling this session normally."
+
+
 def json_envelope(
     command: str,
     *,
@@ -691,19 +840,18 @@ def json_envelope(
 
 
 __all__ = [
-    "LOG_FILE",
-    "PID_FILE",
     "RUNTIME_WARNING_SIGNALS",
-    "TOK_DIR",
     "bridge_url",
     "console",
     "find_pids_on_port",
+    "format_savings_line",
     "get_running_bridge_pid",
     "interaction_quality_rows",
     "json_envelope",
     "memory_root",
     "msg_text",
     "read_pid",
+    "reliability_line",
     "render_stats_panel",
     "runtime_verdict",
     "savings_headline",
@@ -714,4 +862,8 @@ __all__ = [
     "session_signals_text",
     "session_status_rows",
     "status_border",
+    "status_sentence",
+    "log_file",
+    "pid_file",
+    "tok_dir",
 ]

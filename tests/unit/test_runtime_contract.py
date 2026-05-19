@@ -128,6 +128,40 @@ def test_response_contract_marks_malformed_hybrid_tool_blocks() -> None:
     assert contract.behavior_signals.get("fail_open_compat_response", 0) == 1
 
 
+def test_normalize_tool_events_accepts_list_of_dict_args() -> None:
+    """Regression: AskUserQuestion passes questions as list[dict], which must not raise ValidationError."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "AskUserQuestion",
+                    "input": {
+                        "questions": [
+                            {
+                                "question": "Which approach?",
+                                "header": "Approach",
+                                "options": [
+                                    {"label": "A", "description": "Option A"},
+                                    {"label": "B", "description": "Option B"},
+                                ],
+                                "multiSelect": False,
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    ]
+    events = normalize_tool_events(messages)
+    assert len(events) == 1
+    assert events[0].name == "AskUserQuestion"
+    assert isinstance(events[0].args["questions"], list)
+    assert events[0].args["questions"][0]["question"] == "Which approach?"
+
+
 def test_normalize_tool_events_captures_file_command_search_classes() -> None:
     messages = [
         {
@@ -163,6 +197,27 @@ def test_normalize_tool_events_captures_file_command_search_classes() -> None:
     assert events[1].command == "pytest -q"
     assert events[2].compressibility_class == "search"
     assert events[2].query == "pattern"
+
+
+def test_provider_shapes_match_anthropic_validation_helpers() -> None:
+    from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body
+    from tok.runtime.pipeline.request_validation import (
+        canonicalize_anthropic_bridge_body,
+        validate_anthropic_bridge_body,
+    )
+
+    body = {
+        "model": "claude-3-5-sonnet-latest",
+        "messages": [{"role": "user", "content": "hi"}],
+        "system": "",
+    }
+
+    expected_canonical, expected_changed, expected_signals = canonicalize_anthropic_bridge_body(dict(body))
+    actual_canonical, actual_changed, actual_signals = canonicalize_bridge_body(dict(body))
+
+    assert (actual_changed, actual_signals) == (expected_changed, expected_signals)
+    assert actual_canonical == expected_canonical
+    assert validate_bridge_body(dict(body)) == validate_anthropic_bridge_body(dict(body))
 
 
 def test_response_contract_repairs_structured_answer_from_session_anchors(tmp_path) -> None:

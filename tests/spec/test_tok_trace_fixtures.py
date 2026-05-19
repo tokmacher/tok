@@ -189,6 +189,20 @@ def test_extension_cannot_override_core_sections() -> None:
     assert "extension_namespace_overrides_core" in validate_block(block)
 
 
+def test_payload_digest_ignores_extensions() -> None:
+    fixture = next(fixture for fixture in load_fixtures() if fixture["id"] == "first_exact_file_observation")
+    block = deepcopy(fixture["block"])
+    assert isinstance(block, dict)
+    block.setdefault("extensions", {})
+    block["envelope"]["payload_digest"] = canonical_payload_digest(block)
+
+    baseline = canonical_payload_digest(block)
+    block["extensions"]["mutation"] = {"k": "v"}
+    mutated = canonical_payload_digest(block)
+
+    assert baseline == mutated
+
+
 def test_reserved_delta_algorithm_fails_audit_until_supported() -> None:
     fixture = next(fixture for fixture in load_fixtures() if fixture["id"] == "delta_result")
     block = deepcopy(fixture["block"])
@@ -200,6 +214,18 @@ def test_reserved_delta_algorithm_fails_audit_until_supported() -> None:
 
     assert result.status == "fail"
     assert "unsupported_delta_algorithm_for_audit" in result.errors
+
+
+def test_binary_delta_algorithm_is_rejected() -> None:
+    fixture = next(fixture for fixture in load_fixtures() if fixture["id"] == "delta_result")
+    block = deepcopy(fixture["block"])
+    assert isinstance(block, dict)
+    block["content"]["delta_algorithm"] = "binary"
+    block["envelope"]["payload_digest"] = canonical_payload_digest(block)
+
+    errors = validate_block(block)
+
+    assert "missing_or_invalid_delta_algorithm" in errors
 
 
 def test_jsonl_malformed_line_is_audit_failure(tmp_path: Path) -> None:

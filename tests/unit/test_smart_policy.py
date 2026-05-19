@@ -90,9 +90,9 @@ def test_detect_task_type_returns_mixed_for_empty() -> None:
 
 def test_select_optimal_mode_by_family_and_task() -> None:
     assert select_optimal_mode("claude-sonnet-4", "coding") == "tok-universal"
-    assert select_optimal_mode("gpt-4", "research") == "tok-universal"
+    assert select_optimal_mode("gpt-4", "research") == "research-safe"
     assert select_optimal_mode("deepseek-v3", "coding") == "tok-universal"
-    assert select_optimal_mode("deepseek-v3", "research") == "tok-universal"
+    assert select_optimal_mode("deepseek-v3", "research") == "research-safe"
     assert select_optimal_mode("unknown-model", "mixed") == "tok-universal"
 
 

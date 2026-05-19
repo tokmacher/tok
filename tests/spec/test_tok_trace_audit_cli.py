@@ -124,8 +124,35 @@ def test_audit_human_output_includes_live_trace_receipt(monkeypatch, tmp_path: P
     assert "Live blocks: 2" in result.output
     assert "Exact: 0" in result.output
     assert "Non-exact: 2" in result.output
-    assert "Artifacts: 1/2" in result.output
+    assert "Metadata artifacts: 1/2" in result.output
+    assert "PASS " in result.output
+    assert "(metadata-only non-exact)" in result.output
     assert "metadata-only request trace" in result.output
+
+
+def test_audit_json_includes_live_trace_evidence_mode(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TOK_TRACE", "1")
+    monkeypatch.setenv("TOK_TRACE_CAPTURE_ARTIFACTS", "1")
+    session = _Session(tmp_path)
+    emit_live_trace(
+        session,
+        "request_prepared",
+        trace_class="message",
+        action="summary_reference",
+        result="ok",
+        expectation="accept_non_exact_reference",
+        reason="metadata artifact request trace",
+        metadata={"input_saved_tokens": 17},
+    )
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+
+    result = runner.invoke(app, ["audit", str(trace_file), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload[0]["status"] == "pass"
+    assert payload[0]["evidence_mode"] == "metadata-only non-exact"
+    assert payload[0]["summary"] == "metadata-only non-exact"
 
 
 def test_audit_live_receipt_survives_malformed_jsonl_line(monkeypatch, tmp_path: Path) -> None:
@@ -166,7 +193,7 @@ def test_audit_live_receipt_survives_malformed_jsonl_line(monkeypatch, tmp_path:
     assert "Warn: 0" in result.output
     assert "Fail: 1" in result.output
     assert "Live blocks: 2" in result.output
-    assert "Artifacts: 2/2" in result.output
+    assert "Metadata artifacts: 2/2" in result.output
     assert "Skipped receipt records: 1" in result.output
 
 
@@ -204,7 +231,7 @@ def test_audit_live_receipt_skips_invalid_jsonl_records_without_hiding_valid_blo
     assert "Trace receipt" in result.output
     assert "Audit results: 3" in result.output
     assert "Live blocks: 1" in result.output
-    assert "Artifacts: 1/1" in result.output
+    assert "Metadata artifacts: 1/1" in result.output
     assert "Skipped receipt records: 2" in result.output
 
 
@@ -379,3 +406,17 @@ def test_audit_exit_code_priority_clean_warn_and_fail(monkeypatch, tmp_path: Pat
     fail_result = runner.invoke(app, ["audit", str(clean_trace)])
 
     assert fail_result.exit_code == 1
+
+
+def test_audit_json_missing_file_returns_parseable_json_envelope(tmp_path: Path) -> None:
+    missing = tmp_path / "no_such_trace.json"
+
+    result = runner.invoke(app, ["audit", str(missing), "--json"])
+
+    assert result.exit_code == 5
+    envelope = json.loads(result.output)
+    assert envelope["schema"] == "tok-cli-result/v0.1"
+    assert envelope["ok"] is False
+    assert envelope["status"] == "error"
+    assert "message" in envelope["data"]
+    assert "not found" in envelope["data"]["message"].lower()

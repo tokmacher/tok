@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
@@ -15,16 +16,14 @@ import typer
 
 from tok.stats import SavingsTracker
 
+from . import _cli_support as _cli_support_mod
 from ._cli_support import (
-    LOG_FILE,
-    PID_FILE,
-    TOK_DIR,
+    bridge_health_urls,
     console,
     env_int,
     get_bridge_health_response,
     get_running_bridge_pid,
     json_envelope,
-    memory_root,
     render_stats_panel,
     runtime_verdict,
     savings_headline,
@@ -35,6 +34,51 @@ from ._cli_support import (
 )
 
 _LOCAL_HOST_ALIASES = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+_DEFAULT_LOG_MAX_BYTES = 50 * 1024 * 1024
+_DEFAULT_LOG_KEEP_BYTES = 10 * 1024 * 1024
+
+# Defaults are mirrored from `_cli_support` but kept as module globals so tests
+# can monkeypatch `tok.cli._bridge.LOG_FILE` / `PID_FILE` directly.
+TOK_DIR = _cli_support_mod.TOK_DIR
+PID_FILE = _cli_support_mod.PID_FILE
+LOG_FILE = _cli_support_mod.LOG_FILE
+_DEFAULT_TOK_DIR = TOK_DIR
+_DEFAULT_PID_FILE = PID_FILE
+_DEFAULT_LOG_FILE = LOG_FILE
+
+
+def _tok_dir() -> Path:
+    if TOK_DIR != _DEFAULT_TOK_DIR:
+        return TOK_DIR
+    return _cli_support_mod.TOK_DIR
+
+
+def _pid_file() -> Path:
+    if PID_FILE != _DEFAULT_PID_FILE:
+        return PID_FILE
+    return _cli_support_mod.PID_FILE
+
+
+def _log_file() -> Path:
+    if LOG_FILE != _DEFAULT_LOG_FILE:
+        return LOG_FILE
+    return _cli_support_mod.LOG_FILE
+
+
+def _sanitize_api_base(url: str) -> str:
+    """Strip embedded credentials (userinfo) from a URL before display."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            host = parsed.hostname or ""
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
+            return parsed._replace(netloc=host).geturl()
+    except Exception:
+        pass
+    return url
 
 
 def _normalized_host(host: str | None) -> str | None:
@@ -76,9 +120,48 @@ def _is_self_bridged_invocation(port: int) -> bool:
     return target_host in _LOCAL_HOST_ALIASES and bridge_host in _LOCAL_HOST_ALIASES
 
 
+def _flush_bridge_ledger(port: int) -> None:
+    """Best-effort flush of live bridge session buckets before terminating."""
+    try:
+        import httpx
+    except Exception:
+        return
+
+    for health_url in bridge_health_urls(port=port):
+        flush_url = health_url.rsplit("/", 1)[0] + "/flush-ledger"
+        try:
+            response = httpx.post(flush_url, timeout=2.0)
+        except Exception:
+            continue
+        if response.status_code == 200:
+            return
+
+
+def _trim_bridge_log_if_needed(path: Any) -> None:
+    """Keep bridge.log bounded while preserving its most recent diagnostics."""
+    log_path = Path(path)
+    max_bytes = env_int("TOK_BRIDGE_LOG_MAX_BYTES", _DEFAULT_LOG_MAX_BYTES)
+    keep_bytes = env_int("TOK_BRIDGE_LOG_KEEP_BYTES", _DEFAULT_LOG_KEEP_BYTES)
+    if max_bytes <= 0 or keep_bytes <= 0:
+        return
+    keep_bytes = min(keep_bytes, max_bytes)
+    try:
+        if not log_path.exists() or log_path.stat().st_size <= max_bytes:
+            return
+        with log_path.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - keep_bytes))
+            tail = f.read()
+        marker = (f"[tok-bridge] log_trimmed: kept_last_bytes={len(tail)} previous_size_bytes={size}\n").encode()
+        log_path.write_bytes(marker + tail)
+    except OSError as exc:
+        console.print(f"[yellow]Could not trim bridge log {log_path}: {exc}[/yellow]")
+
+
 def bridge_start(
     port: Annotated[int, typer.Option("--port", "-p", help="Port to listen on")] = 9090,
-    keep_turns: Annotated[int, typer.Option("--keep-turns", help="Human turns to keep verbatim")] = 2,
+    keep_turns: Annotated[int, typer.Option("--keep-turns", help="Human turns to keep verbatim")] = 3,
     debug: Annotated[bool, typer.Option("--debug", help="Enable debug logging")] = False,
     foreground: Annotated[bool, typer.Option("--foreground", "-f", help="Run in foreground")] = False,
     fail_open: Annotated[
@@ -106,8 +189,6 @@ def bridge_start(
     if existing:
         console.print(f"[yellow]Bridge already running on :{port} (PID {existing})[/yellow]")
         raise typer.Exit(0)
-
-    TOK_DIR.mkdir(parents=True, exist_ok=True)
 
     if foreground:
         from tok.gateway import run_bridge
@@ -146,7 +227,9 @@ def bridge_start(
             env["TOK_API_BASE"] = api_base
         env["TOK_RESET_SESSION"] = "1"
 
-        log_file = open(LOG_FILE, "a")
+        log_path = _log_file()
+        _trim_bridge_log_if_needed(log_path)
+        log_file = open(log_path, "a")
         try:
             proc = subprocess.Popen(
                 [sys.executable, "-m", "tok.gateway"],
@@ -159,11 +242,11 @@ def bridge_start(
             console.print("[red]Failed to start bridge: Python interpreter not found.[/red]")
             raise typer.Exit(1) from None
         except PermissionError:
-            console.print(f"[red]Failed to start bridge: permission denied writing to {LOG_FILE}.[/red]")
+            console.print(f"[red]Failed to start bridge: permission denied writing to {log_path}.[/red]")
             raise typer.Exit(1) from None
         finally:
             log_file.close()
-        PID_FILE.write_text(str(proc.pid))
+        _pid_file().write_text(str(proc.pid))
 
         for _ in range(15):
             time.sleep(0.2)
@@ -171,30 +254,30 @@ def bridge_start(
                 r = get_bridge_health_response(port, timeout=1.0, attempts=1, backoff_seconds=0.0)
                 if r.status_code == 200:
                     console.print(f"[green]Bridge started on :{port} (PID {proc.pid})[/green]")
-                    console.print(f"Logs: {LOG_FILE}")
+                    console.print(f"Logs: {log_path}")
                     console.print(
                         f"[dim]Next step: run `ANTHROPIC_BASE_URL=http://localhost:{port} claude`, then "
                         "`tok bridge status` or `tok doctor`.[/dim]"
                     )
                     if capture:
-                        console.print(f"Capture directory: {memory_root() / 'sessions'}")
+                        console.print(f"Capture directory: {_cli_support_mod.memory_root() / 'sessions'}")
                     return
             except Exception:
                 pass
 
         if proc.poll() is not None:
             console.print(f"[red]Bridge process exited unexpectedly (exit code {proc.returncode}).[/red]")
-            console.print(f"Check logs: {LOG_FILE}")
+            console.print(f"Check logs: {log_path}")
             console.print("[dim]Try `tok bridge start --foreground` to see the error directly.[/dim]")
             raise typer.Exit(1)
 
         console.print(f"[yellow]Bridge started (PID {proc.pid}) but health check pending.[/yellow]")
-        console.print(f"Logs: {LOG_FILE}")
+        console.print(f"Logs: {log_path}")
         console.print(
             "[dim]Next step: wait a moment, then run `tok bridge status`; if it still fails, restart with `tok bridge start --foreground`.[/dim]"
         )
         if capture:
-            console.print(f"Capture directory: {memory_root() / 'sessions'}")
+            console.print(f"Capture directory: {_cli_support_mod.memory_root() / 'sessions'}")
 
 
 def bridge_stop(force: bool = False) -> None:
@@ -207,7 +290,7 @@ def bridge_stop(force: bool = False) -> None:
         console.print("[yellow]Bridge not running[/yellow]")
         raise typer.Exit(0)
 
-    if _is_self_bridged_invocation(port) and not force:
+    if _is_self_bridged_invocation(port):
         try:
             health = get_bridge_health_response(port, timeout=0.8, attempts=1, backoff_seconds=0.0)
             health_ok = health.status_code == 200
@@ -215,13 +298,21 @@ def bridge_stop(force: bool = False) -> None:
             health_ok = False
         if health_ok:
             console.print("[yellow]Refusing to stop bridge from an active bridged Claude session.[/yellow]")
-            console.print(
-                "[dim]Run `tok bridge stop --force` if intentional, or stop from a separate shell after this turn.[/dim]"
-            )
+            if force:
+                console.print(
+                    "[dim]`--force` is ignored here because it would strand the current Claude Code session. "
+                    "Stop the bridge from a separate shell instead.[/dim]"
+                )
+            else:
+                console.print(
+                    "[dim]Stop from a separate shell after this turn. "
+                    "`tok bridge stop --force` is only honored outside the active bridged session.[/dim]"
+                )
             raise typer.Exit(2)
 
     for p in [pid]:
         try:
+            _flush_bridge_ledger(port)
             os.kill(p, signal.SIGTERM)
             for _ in range(10):
                 time.sleep(0.1)
@@ -236,9 +327,9 @@ def bridge_stop(force: bool = False) -> None:
             console.print(f"[yellow]Failed to stop PID {p} (gone or permission denied)[/yellow]")
 
     try:
-        PID_FILE.unlink(missing_ok=True)
+        _pid_file().unlink(missing_ok=True)
     except PermissionError as exc:
-        console.print(f"[yellow]Could not remove bridge PID file {PID_FILE}: {exc}[/yellow]")
+        console.print(f"[yellow]Could not remove bridge PID file {_pid_file()}: {exc}[/yellow]")
 
     session_summary = tracker.session_summary()
     if session_summary:
@@ -309,11 +400,31 @@ def bridge_status(*, json_output: bool = False) -> None:
     if r.status_code == 200:
         try:
             payload = r.json()
+            gross_tokens_saved = int(payload.get("session_tokens_saved", 0))
+            net_tokens_saved = int(payload.get("session_net_tokens_saved", gross_tokens_saved))
+            actual_tokens = int(payload.get("actual_tokens", 0))
+            baseline_tokens = int(payload.get("baseline_tokens", actual_tokens + gross_tokens_saved))
             session_summary: dict[str, Any] = {
-                "actual_tokens": int(payload.get("actual_tokens", 0)),
-                "baseline_tokens": int(payload.get("baseline_tokens", 0)),
-                "tokens_saved": int(payload.get("session_tokens_saved", 0)),
+                "calls": int(payload.get("calls", 3 if net_tokens_saved >= 50 else 0)),
+                "actual_tokens": actual_tokens,
+                "baseline_tokens": baseline_tokens,
+                "tokens_saved": net_tokens_saved,
+                "gross_tokens_saved": gross_tokens_saved,
+                "net_tokens_saved": net_tokens_saved,
+                "reacquisition_cost_tokens": int(payload.get("reacquisition_cost_tokens", 0)),
                 "savings_pct": float(payload.get("session_savings_pct", 0.0)),
+                "cost_savings_pct": float(
+                    payload.get(
+                        "session_cost_savings_pct",
+                        (
+                            float(payload.get("cost_saved_usd", 0.0))
+                            / float(payload.get("baseline_cost_usd", 0.0))
+                            * 100
+                            if float(payload.get("baseline_cost_usd", 0.0)) > 0
+                            else float(payload.get("session_savings_pct", 0.0))
+                        ),
+                    )
+                ),
                 "actual_cost_usd": float(payload.get("actual_cost_usd", 0.0)),
                 "baseline_cost_usd": float(payload.get("baseline_cost_usd", 0.0)),
                 "cost_saved_usd": float(payload.get("cost_saved_usd", 0.0)),
@@ -340,6 +451,7 @@ def bridge_status(*, json_output: bool = False) -> None:
                 "evidence_compression_blocked_for_safety_count": int(
                     payload.get("evidence_compression_blocked_for_safety_count", 0)
                 ),
+                "goal": str(payload.get("goal", "")),
             }
             baseline_only = bool(payload.get("baseline_only"))
             fallback_count = int(payload.get("fallback_count", 0))
@@ -355,13 +467,30 @@ def bridge_status(*, json_output: bool = False) -> None:
             headline, headline_pct, subhead = savings_headline(
                 session_summary,
                 savings_pct=float(payload.get("session_savings_pct", 0.0)),
-                tokens_saved=int(payload.get("session_tokens_saved", 0)),
+                tokens_saved=net_tokens_saved,
             )
             capability = payload.get("capability")
             conformance = "unknown"
             if isinstance(capability, dict):
                 conformance = str(capability.get("max_conformance_level", "unknown"))
             if json_output:
+                fail_open_count = int(payload.get("fail_open_count", 0))
+                degradation_reason = str(payload.get("last_degradation_reason", ""))
+                session_quality = str(payload.get("session_quality", "clean"))
+                warnings: list[str] = []
+                if baseline_only:
+                    warnings.append("Session degraded to baseline")
+                elif session_quality != "clean" or fail_open_count > 0 or degradation_reason:
+                    if degradation_reason:
+                        warnings.append(
+                            f"Session quality is {session_quality}; degradation reason: {degradation_reason}"
+                        )
+                    elif fail_open_count > 0:
+                        warnings.append(
+                            f"Session quality is {session_quality}; fail-open compatibility events: {fail_open_count}"
+                        )
+                    else:
+                        warnings.append(f"Session quality is {session_quality}")
                 envelope = json_envelope(
                     "tok bridge status",
                     ok=True,
@@ -373,15 +502,22 @@ def bridge_status(*, json_output: bool = False) -> None:
                         "health_reachable": True,
                         "tok_active": not baseline_only,
                         "mode": mode,
+                        "request_policy": str(payload.get("request_policy", "")),
+                        "api_base": _sanitize_api_base(str(payload.get("api_base", ""))),
                         "conformance": conformance,
                         "baseline_only": baseline_only,
                         "degraded_to_baseline": baseline_only,
                         "fallback_count": fallback_count,
-                        "session_quality": str(payload.get("session_quality", "clean")),
+                        "fail_open_count": fail_open_count,
+                        "degradation_reason": degradation_reason,
+                        "session_quality": session_quality,
                         "tokens_saved": int(session_summary["tokens_saved"]),
                         "savings_pct": float(session_summary["savings_pct"]),
                         "cost_saved_usd": float(session_summary["cost_saved_usd"]),
+                        "goal": str(payload.get("goal", "")),
+                        "context_compression_detected": int(payload.get("context_compression_detected", 0)),
                     },
+                    warnings=warnings,
                 )
                 print(json.dumps(envelope, indent=2))
                 return

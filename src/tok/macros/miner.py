@@ -12,6 +12,7 @@ import collections
 from tok.utils.event_logging import log_macro_created
 
 from .ir import Instruction, Macro, MacroProvenance, MacroRegistry, TokIR
+from .parameterization import parameterize_instructions
 
 
 class IRPatternMiner:
@@ -116,24 +117,7 @@ class IRPatternMiner:
             if not found_ins:
                 continue
 
-            param_inputs: list[str] = []
-            arg_to_param: dict[str, str] = {}
-            context_file: str | None = None
-            final_instructions: list[Instruction] = []
-            for ins in found_ins:
-                new_args: list[str] = []
-                for arg in ins.args:
-                    if isinstance(arg, str) and len(arg) > 3 and "/" in arg:
-                        if context_file is None:
-                            context_file = arg
-                        if arg not in arg_to_param:
-                            p_name = f"p{len(param_inputs)}"
-                            arg_to_param[arg] = f"${p_name}"
-                            param_inputs.append(p_name)
-                        new_args.append(arg_to_param[arg])
-                    else:
-                        new_args.append(arg)
-                final_instructions.append(Instruction(op=ins.op, args=tuple(new_args), target=ins.target))
+            final_instructions, param_inputs, context_file = parameterize_instructions(found_ins)
 
             dep_str = "|".join(f"{p}->{c}" for p, c in dep_fp) if dep_fp else "none"
             new_macro = Macro(

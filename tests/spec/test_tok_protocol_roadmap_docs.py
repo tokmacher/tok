@@ -49,7 +49,9 @@ def test_trace_roadmap_keeps_0_1_7_routing_out_of_release_claims() -> None:
 
     assert "**0.1.7:** draft bridge trace/audit only; no Resolver, Routing, Capability, or Session" in text
     assert "**0.2.x:** scoped resolver routing" in text
-    assert "no DHT, no ambient discovery" in text
+    assert "no DHT" in text
+    assert "no ambient discovery" in text
+    assert "no remote routing layer" in text
 
 
 def test_trace_roadmap_lists_routing_adversarial_cases() -> None:
@@ -114,15 +116,16 @@ def test_conformance_doc_defines_l0_l2_reader_boundary_without_future_claims() -
         assert phrase in text
 
 
-def test_trace_roadmap_defines_0_1_8_as_l0_l2_protocol_hardening() -> None:
+def test_trace_roadmap_defines_0_2_0_as_l0_l2_plus_local_resolver_beta() -> None:
     prose = _squash_ws(ROADMAP_DOC.read_text())
 
     for phrase in (
-        "0.1.8 protocol claim is Trace L0-L2 only",
+        "0.2.0 protocol claim is Trace L0-L2 plus L3a local resolver beta only",
         "parse JSON arrays and JSONL traces",
         "validate required fields, enum values, extension namespaces, canonical payload digests, and pass/warn/fail outcomes",
-        "verify local artifacts, exact hashes and sizes, exact versus non-exact references, fallback/degradation reasons, sequence consistency, and supported unified_diff deltas",
-        "L3-L5 remain future design only",
+        "verify local artifacts, exact hashes and sizes, exact versus non-exact references, fallback/degradation reasons, sequence consistency, supported unified_diff deltas",
+        "local resolver-backed content availability",
+        "Remote resolver routing, referral following, capability negotiation, and agent-to-agent exchange remain future design only",
     ):
         assert phrase in prose
 

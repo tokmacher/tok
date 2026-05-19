@@ -36,7 +36,7 @@ from ._bridge_comparison import _safe_headers
 from ._bridge_request_handler import send_with_tok_fail_open_retry
 from ._bridge_runtime_pipeline import prepare_bridge_payload
 from ._bridge_streaming import _emit_sse_block, _run_macro_mining, buffer_strip_restream_impl, passthrough_stream_impl
-from ._types import build_capability_manifest
+from ._types import PromptMetrics, build_capability_manifest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -68,18 +68,12 @@ def _handle_retried_without_tok(
     compressed = False
     saved_toks = 0
     tool_breakdown: dict[str, int] = {}
-    prompt_metrics = {
-        "baseline_prompt_tokens": 0,
-        "prepared_prompt_tokens": 0,
-        "saved_prompt_tokens": 0,
-        "hot_hint_tokens_added": 0,
-        "reacquisition_tokens_avoided_estimate": 0,
-    }
+    prompt_metrics = PromptMetrics()
     behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
     behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
     logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
     _record_fallback_once(active_session, request_state)
-    return compressed, saved_toks, tool_breakdown, prompt_metrics
+    return compressed, saved_toks, tool_breakdown, prompt_metrics.as_dict()
 
 
 def _expand_macros_in_blocks(blocks: list[dict[str, Any]], active_session: BridgeSession) -> list[dict[str, Any]]:
@@ -128,7 +122,7 @@ def _build_response_signals(
         resp_json["content"] = new_content
         total_output_saved = processed.output_saved_tokens
 
-        session_signals = active_session.consume_behavior_signals()
+        session_signals = active_session.runtime_session.consume_behavior_signals()
         if session_signals:
             for k, v in session_signals.items():
                 response_signals[k] = response_signals.get(k, 0) + v
@@ -152,7 +146,7 @@ def _build_response_signals(
             resp_json["content"].append(passthrough_blocks[passthrough_idx])
             passthrough_idx += 1
 
-        session_signals = active_session.consume_behavior_signals()
+        session_signals = active_session.runtime_session.consume_behavior_signals()
         if session_signals:
             for k, v in session_signals.items():
                 response_signals[k] = response_signals.get(k, 0) + v
@@ -269,7 +263,7 @@ def _handle_nonstreaming_failopen(
     try:
         model = resp_json.get("model", "")
         usage = resp_json.get("usage", {})
-        session_signals = active_session.consume_behavior_signals()
+        session_signals = active_session.runtime_session.consume_behavior_signals()
         error_signals: dict[str, int] = {"processing_error": 1, "tok_fallback_activated": 1}
         if session_signals:
             for k, v in session_signals.items():
@@ -455,6 +449,20 @@ async def _json_to_sse(resp_json: dict[str, Any]) -> AsyncIterator[bytes]:
     yield b'event: message_stop\ndata: {"type": "message_stop"}\n\n'
 
 
+def _session_goal(rs: Any) -> str:
+    for bucket in (rs.bridge_memory.hot, rs.bridge_memory.durable):
+        entries = bucket.get("goal", [])
+        for entry in entries:
+            goal = str(entry.value).strip()
+            if not goal:
+                continue
+            lowered = goal.lower()
+            if lowered.startswith("<system-reminder") or lowered.startswith("system-reminder"):
+                continue
+            return goal[:40]
+    return ""
+
+
 def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
     """Create the bridge FastAPI application."""
     if session is None:
@@ -509,12 +517,19 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             task_score=rs.current_task_smoothness_score,
             stream_instability_events=sum(v for k, v in rs.smoothness_event_counts.items() if "stream" in k.lower()),
             thinking_mutation_events=int(rs.smoothness_event_counts.get("thinking_block_mutation", 0)),
+            goal=_session_goal(rs),
             stream_recovery_attempt_count=max(
                 snap.stream_recovery_attempt_count,
                 sum(v for k, v in rs.smoothness_event_counts.items() if "stream_recovery" in k.lower()),
             ),
         )
         health_response = snap.to_health_response()
+        if explicit_session_key:
+            health_response["session_count"] = 1
+        else:
+            session_count = session.aggregate_session_count()
+            if session_count > 1:
+                health_response["session_count"] = session_count
         health_response["capability"] = asdict(
             build_capability_manifest(bridge_mode=str(health_response.get("mode", "unknown")))
         )
@@ -538,6 +553,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         session.activate_session_for_request(dict(request.headers), request_body_obj)
         session.reset_active_session()
         return {"status": "ok", "action": "session_reset"}
+
+    @app.post("/flush-ledger")
+    async def flush_ledger_endpoint() -> dict[str, str]:
+        """Persist live session buckets into the lifetime ledger before shutdown."""
+        session.merge_all_trackers_to_ledger()
+        return {"status": "ok", "action": "ledger_flushed"}
 
     @app.api_route(
         "/{path:path}",
@@ -608,13 +629,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         saved_toks = 0
         tool_breakdown: dict[str, int] = {}
         behavior_signals: dict[str, int] = {}
-        prompt_metrics = {
-            "baseline_prompt_tokens": 0,
-            "prepared_prompt_tokens": 0,
-            "saved_prompt_tokens": 0,
-            "hot_hint_tokens_added": 0,
-            "reacquisition_tokens_avoided_estimate": 0,
-        }
+        prompt_metrics = PromptMetrics().as_dict()
         request_tool_compatible = False
         request_policy = "forced_baseline"
         provider_safe_original_body_bytes = original_body_bytes
@@ -637,7 +652,11 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     request_state=request_state,
                 )
                 if preflight_response is not None:
-                    return preflight_response
+                    return Response(
+                        content=preflight_response.content,
+                        status_code=preflight_response.status_code,
+                        media_type=preflight_response.media_type,
+                    )
 
                 body = dict(bridge_payload.body)
                 behavior_signals = dict(bridge_payload.behavior_signals)
@@ -646,7 +665,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 compressed = bridge_payload.compressed
                 saved_toks = bridge_payload.saved_toks
                 tool_breakdown = dict(bridge_payload.tool_breakdown)
-                prompt_metrics = dict(bridge_payload.prompt_metrics)
+                prompt_metrics = bridge_payload.prompt_metrics.as_dict()
                 raw_retry_forbidden = bridge_payload.retry_forbidden
                 provider_safe_original_body = dict(bridge_payload.provider_safe_original_body)
                 provider_safe_original_body_bytes = json.dumps(provider_safe_original_body).encode()
@@ -695,7 +714,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                         }
                     )
                     if not behavior_signals.get("plan_finalization_passthrough", 0):
-                        body = apply_anthropic_optimizations(body, behavior_signals=behavior_signals)
+                        body, gateway_saved_toks = apply_anthropic_optimizations(
+                            body, behavior_signals=behavior_signals
+                        )
+                        if gateway_saved_toks > 0:
+                            saved_toks += gateway_saved_toks
+                            compressed = True
                     body_bytes = json.dumps(body).encode()
                     emit_live_trace(
                         active_session,
@@ -871,13 +895,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     compressed = False
                     saved_toks = 0
                     tool_breakdown = {}
-                    prompt_metrics = {
-                        "baseline_prompt_tokens": 0,
-                        "prepared_prompt_tokens": 0,
-                        "saved_prompt_tokens": 0,
-                        "hot_hint_tokens_added": 0,
-                        "reacquisition_tokens_avoided_estimate": 0,
-                    }
+                    prompt_metrics = PromptMetrics().as_dict()
                     behavior_signals["tok_fail_open_retry"] = behavior_signals.get("tok_fail_open_retry", 0) + 1
                     behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
                     logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
@@ -1002,23 +1020,31 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                 )
 
         async with httpx.AsyncClient(timeout=300.0) as client:
-            (
-                response,
-                retried_without_tok,
-                retry_signals,
-            ) = await send_with_tok_fail_open_retry(
-                active_session,
-                client,
-                method=request.method,
-                url=target_url,
-                headers=headers,
-                content=body_bytes,
-                original_content=original_body_bytes,
-                retry_content=provider_safe_original_body_bytes,
-                allow_original_retry=not raw_retry_forbidden,
-                compressed_request=compressed,
-                sleep_fn=asyncio.sleep,
-            )
+            try:
+                (
+                    response,
+                    retried_without_tok,
+                    retry_signals,
+                ) = await send_with_tok_fail_open_retry(
+                    active_session,
+                    client,
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body_bytes,
+                    original_content=original_body_bytes,
+                    retry_content=provider_safe_original_body_bytes,
+                    allow_original_retry=not raw_retry_forbidden,
+                    compressed_request=compressed,
+                    sleep_fn=asyncio.sleep,
+                )
+            except httpx.NetworkError as e:
+                logger.error("Non-streaming upstream connection error: %s", str(e), exc_info=True)
+                return Response(
+                    content=f"Upstream connection error: {e!s}",
+                    status_code=502,
+                    media_type="text/plain",
+                )
             if retry_signals:
                 for key, value in retry_signals.items():
                     behavior_signals[key] = behavior_signals.get(key, 0) + value

@@ -40,6 +40,7 @@ from tok.universal_runtime import (
     collect_behavior_signals,
     response_contract_for_mode,
 )
+from tok.utils.env_utils import env_bool, env_int
 
 from ._bridge_comparison import _request_fingerprint_diff
 
@@ -101,30 +102,19 @@ def _default_bind_host() -> str:
 
 
 def _env_int(name: str, fallback: int, *, legacy_name: str | None = None) -> int:
-    raw = os.getenv(name)
-    source_name = name
-    if raw is None and legacy_name is not None:
-        raw = os.getenv(legacy_name)
-        source_name = legacy_name
-    if raw is None:
-        return fallback
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning(
-            "Invalid integer config %s=%r; using fallback %d",
-            source_name,
-            raw,
-            fallback,
-        )
-        return fallback
+    raw = os.getenv(name) if os.getenv(name) is not None else (os.getenv(legacy_name) if legacy_name else None)
+    value = env_int(name, fallback, legacy_name=legacy_name)
+    if raw is not None and value == fallback:
+        try:
+            int(raw)
+        except ValueError:
+            source_name = legacy_name or name
+            logger.warning("Invalid integer config %s=%r; using fallback %d", source_name, raw, fallback)
+    return value
 
 
 def _env_bool(name: str, fallback: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return fallback
-    return raw == "1"
+    return env_bool(name, fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +395,7 @@ class BridgeSession:
     """HTTP gateway configuration and telemetry (delegates runtime state to RuntimeSession)."""
 
     port: int = field(default_factory=lambda: _env_int("TOK_BRIDGE_PORT", 9090, legacy_name="TOK_PROXY_PORT"))
-    keep_turns: int = field(default_factory=lambda: _env_int("TOK_KEEP_TURNS", 2, legacy_name="TOK_PROXY_KEEP_TURNS"))
+    keep_turns: int = field(default_factory=lambda: _env_int("TOK_KEEP_TURNS", 3, legacy_name="TOK_PROXY_KEEP_TURNS"))
     debug: bool = field(default_factory=lambda: _env_bool("TOK_DEBUG", False))
     fail_open: bool = field(default_factory=lambda: _env_bool("TOK_FAIL_OPEN", True))
     capture: bool = field(default_factory=lambda: _env_bool("TOK_CAPTURE", False))
@@ -441,6 +431,7 @@ class BridgeSession:
     _session_buckets: dict[str, _BridgeSessionBucket] = field(default_factory=dict, init=False, repr=False)
     _active_session_key: str = field(default="default", init=False, repr=False)
     _auto_fingerprint_to_key: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _deterministic_to_minted_key: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _live_trace_instance_id: str = field(default_factory=lambda: secrets.token_hex(12), init=False, repr=False)
     _per_key_previous_tool_result_cache_blocks: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
@@ -525,6 +516,9 @@ class BridgeSession:
             distill_bridge_history(bucket.runtime_session.bridge_memory)
         except Exception as exc:
             logger.warning("distill_bridge_history error on eviction: %s", exc)
+        if bucket.runtime_session.pending_behavior_signals:
+            bucket.tracker.record_behavior_signals(bucket.runtime_session.pending_behavior_signals)
+            bucket.runtime_session.pending_behavior_signals.clear()
         bucket.tracker.merge_session_to_ledger()
 
     def _cleanup_session_buckets(self, *, keep_key: str) -> None:
@@ -532,6 +526,9 @@ class BridgeSession:
             stale = [fp for fp, mapped in self._auto_fingerprint_to_key.items() if mapped == session_key]
             for fp in stale:
                 self._auto_fingerprint_to_key.pop(fp, None)
+            stale_det = [det for det, minted in self._deterministic_to_minted_key.items() if minted == session_key]
+            for det in stale_det:
+                self._deterministic_to_minted_key.pop(det, None)
 
         now = time.time()
         ttl = max(1, int(self.session_ttl_seconds))
@@ -577,7 +574,10 @@ class BridgeSession:
         if isinstance(messages, list) and messages:
             first = messages[0]
             if isinstance(first, dict):
-                message_seed = json.dumps(first, sort_keys=True, default=str)[:2048]
+                # Hash the full first message rather than truncating so that sessions
+                # whose unique content falls after byte 2048 (e.g. long CLAUDE.md
+                # preambles) receive distinct keys instead of structurally colliding.
+                message_seed = _session_digest(json.dumps(first, sort_keys=True, default=str), length=32)
         seed = json.dumps(
             {
                 "auth": _auth_bucket_token(auth),
@@ -624,7 +624,20 @@ class BridgeSession:
                     self._activate_session_bucket(self._session_buckets[mapped_key])
                     return mapped_key
 
-        key = self.resolve_session_key(headers, body)
+        det_key = self.resolve_session_key(headers, body)
+        key = det_key
+        # For auto-fingerprinted sessions, look up the minted key established by
+        # the first request of this logical session.  If none exists yet and the
+        # bucket is new, mint a fresh random key so two parallel instances with
+        # identical inputs (same API key, UA, and first user message) create
+        # separate buckets rather than colliding in a shared one.
+        if key.startswith("auto:"):
+            minted = self._deterministic_to_minted_key.get(det_key)
+            if minted is not None and minted in self._session_buckets:
+                key = minted
+            elif det_key not in self._session_buckets:
+                key = f"auto:{secrets.token_hex(12)}"
+                self._deterministic_to_minted_key[det_key] = key
         bucket = self._session_buckets.get(key)
         if bucket is None:
             default_bucket = self._session_buckets.get("default")
@@ -639,7 +652,10 @@ class BridgeSession:
                 bucket = self._create_session_bucket(key)
             self._session_buckets[key] = bucket
         if key.startswith("auto:"):
-            self._auto_fingerprint_to_key[self._auto_fingerprint(normalized_headers)] = key
+            # First-writer-wins: do not overwrite an established mapping so that a
+            # late-arriving parallel instance cannot hijack an active session's
+            # bodyless-request routing.
+            self._auto_fingerprint_to_key.setdefault(self._auto_fingerprint(normalized_headers), key)
         self._cleanup_session_buckets(keep_key=key)
         self._activate_session_bucket(bucket)
         return key
@@ -714,6 +730,12 @@ class BridgeSession:
                 merged[key] = rep_summary[key]
 
         return merged
+
+    def aggregate_session_count(self) -> int:
+        """Return the number of live session buckets with recorded calls."""
+        return sum(
+            1 for bucket in self._session_buckets.values() if (bucket.tracker.session_summary() or {}).get("calls", 0)
+        )
 
     def aggregate_behavior_signals(self) -> dict[str, int]:
         """Merge tracked and pending behavior signals across all live buckets."""
@@ -800,51 +822,16 @@ class BridgeSession:
         except Exception as exc:
             logger.debug("Capture write error: %s", exc)
 
-    def write_memory(self, text: str) -> str:
-        """Delegate to runtime session."""
-        return self.runtime_session.write_memory(text)
-
-    def policy_snapshot(self, model: str) -> tuple[str, object]:
-        """Delegate to runtime session."""
-        return self.runtime_session.policy_snapshot(model)
-
-    def load_memory(self, model: str = "") -> str:
-        """Delegate to runtime session."""
-        return self.runtime_session.load_memory(model)
-
-    def refresh_hot_memory(self, tok_state: str, model: str = "") -> str:
-        """Delegate to runtime session."""
-        return self.runtime_session.refresh_hot_memory(tok_state, model)
-
-    def update_family_mode(self, model: str, signals: dict[str, int]) -> str:
-        """Delegate to runtime session."""
-        return self.runtime_session.update_family_mode(model, signals)
-
-    def consume_behavior_signals(self) -> dict[str, int]:
-        """Delegate to runtime session."""
-        return self.runtime_session.consume_behavior_signals()
-
-    def _bump_signals(self, signals: dict[str, int]) -> None:
-        """Delegate internal runtime signal updates."""
-        self.runtime_session._bump_signals(signals)
-
-    def _save_bridge_memory(self) -> None:
-        """Delegate bridge memory persistence to runtime session."""
-        self.runtime_session._save_bridge_memory()
-
     @property
     def result_cache(self) -> dict[str, tuple[str, str]]:
-        """Delegate to runtime session."""
         return cast("dict[str, tuple[str, str]]", self.runtime_session.result_cache)
 
     @property
     def bridge_memory(self) -> BridgeMemoryState:
-        """Delegate to runtime session."""
         return self.runtime_session.bridge_memory
 
     @bridge_memory.setter
     def bridge_memory(self, value: BridgeMemoryState) -> None:
-        """Delegate to runtime session."""
         self.runtime_session.bridge_memory = value
 
 
@@ -939,7 +926,7 @@ def run_bridge(
     """Start the bridge server."""
     _port_env: str = os.getenv("TOK_BRIDGE_PORT", os.getenv("TOK_PROXY_PORT", "9090"))
     port = int(port if port is not None else _port_env)
-    _keep_turns_env: str = os.getenv("TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "2"))
+    _keep_turns_env: str = os.getenv("TOK_KEEP_TURNS", os.getenv("TOK_PROXY_KEEP_TURNS", "3"))
     keep_turns = int(keep_turns if keep_turns is not None else _keep_turns_env)
     debug = debug if debug is not None else os.getenv("TOK_DEBUG", "0") == "1"
     fail_open = fail_open if fail_open is not None else os.getenv("TOK_FAIL_OPEN", "1") == "1"

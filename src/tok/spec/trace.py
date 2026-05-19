@@ -43,7 +43,7 @@ ALLOWED_EXPECTATIONS = {
     "reject_malformed",
     "accept_non_exact_reference",
 }
-ALLOWED_DELTA_ALGORITHMS = {"line", "unified_diff", "json_patch", "binary"}
+ALLOWED_DELTA_ALGORITHMS = {"line", "unified_diff", "json_patch"}
 CORE_SECTION_NAMES = {"envelope", "observation", "content", "audit"}
 TRACE_INVARIANT_MATRIX_VERSION = "tok-trace-invariant-matrix/v0.1-l0-l2"
 NON_EXACT_REFERENCE_ACTIONS = {"skeleton_reference", "summary_reference"}
@@ -113,7 +113,11 @@ class AuditContext:
 
 
 def audit_fixture_file(path: Path) -> list[AuditResult]:
-    """Audit a JSON fixture file containing draft trace fixture objects."""
+    """Audit a JSON fixture file containing draft trace fixture objects.
+
+    Expected format: a JSON list of objects shaped like:
+    - {"id": "...", "block": {...}}
+    """
     try:
         fixtures = json.loads(path.read_text())
     except UnicodeDecodeError:
@@ -225,8 +229,6 @@ def audit_block(
 def canonical_payload_digest(block: dict[str, Any]) -> str:
     """Return the draft canonical digest for stable semantic payload fields."""
     payload = {key: block[key] for key in ("observation", "content", "audit")}
-    if "extensions" in block:
-        payload["extensions"] = block["extensions"]
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -630,7 +632,23 @@ def _verify_artifact_identity(
 
 
 def _resolve_fixture_uri(uri: object, context: AuditContext) -> Path | None:
-    if not isinstance(uri, str) or context.fixture_dir is None:
+    if not isinstance(uri, str):
+        return None
+    if uri.startswith("tok-resolver://"):
+        try:
+            from tok.resolver.paths import resolver_root
+            from tok.resolver.store import ContentStore, parse_resolver_uri
+        except Exception:
+            return None
+        try:
+            digest = parse_resolver_uri(uri)
+        except ValueError:
+            return None
+        store = ContentStore(resolver_root())
+        path = store._object_path(digest)
+        return path if path.exists() and path.is_file() else None
+
+    if context.fixture_dir is None:
         return None
     fixture_dir = context.fixture_dir.resolve()
     if uri.startswith("tok-fixture://"):

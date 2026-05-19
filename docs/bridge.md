@@ -12,7 +12,7 @@ Tok's first open-source release is intentionally narrow and Claude-first:
 - diagnose with `status`, `doctor`, `stats`, and logs
 
 The bridge is the supported product path. Broader platform and SDK work come later. The
-default CLI help intentionally centers that bridge-first path for `0.1.x`.
+default CLI help intentionally centers that bridge-first path for `0.2.x`.
 
 ## What The Bridge Does
 
@@ -183,7 +183,7 @@ non-responsive session.
 
 ## Runtime Defaults
 
-- default compressed path: `tool-compatible` (`natural_first` request policy)
+- default request policy: `natural_first` (`natural-first` in status output)
 - legacy rollback path: `legacy_tool_compatible`
 - default posture: compress aggressively, shape behavior conservatively
 - conservative fallback: `baseline`
