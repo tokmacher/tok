@@ -541,6 +541,14 @@ def test_health_endpoint(monkeypatch) -> None:
         "repeated_active_file_reads": 0,
         "goal": "",
         "context_compression_detected": 0,
+        "evidence_exact_observed_count": 0,
+        "evidence_non_exact_reference_count": 0,
+        "evidence_non_exact_summary_count": 0,
+        "evidence_non_exact_skeleton_count": 0,
+        "evidence_exact_reacquisition_required_count": 0,
+        "evidence_exact_reacquisition_satisfied_count": 0,
+        "evidence_compression_blocked_for_safety_count": 0,
+        "savings_source": "session_tracker",
     }
 
 
