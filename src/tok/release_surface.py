@@ -83,6 +83,8 @@ EXPERIMENTAL_CLI_ROOT_COMMANDS: tuple[str, ...] = (
     "stress-language",
     "jit-check",
     "gate-check",
+    "review",
+    "verify-contract",
 )
 
 

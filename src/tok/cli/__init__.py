@@ -13,6 +13,7 @@ from ._audit_commands import register as register_audit_commands
 from ._bridge_commands import register as register_bridge_commands
 from ._claude import register as register_claude_command
 from ._cli_support import console
+from ._contract import register as register_contract_commands
 from ._dev import dev_app
 from ._init_commands import register as register_init_commands
 from ._install_commands import register as register_install_commands
@@ -20,6 +21,8 @@ from ._memory_commands import register as register_memory_commands
 from ._metrics import metrics_app
 from ._release_commands import register as register_release_commands
 from ._resolver_commands import register as register_resolver_commands
+from ._review import register as register_review_commands
+from ._savings_audit_commands import register as register_savings_audit_commands
 
 load_dotenv()
 logging.basicConfig(
@@ -73,9 +76,12 @@ register_claude_command(app)
 register_init_commands(app)
 register_bridge_commands(bridge_app)
 register_audit_commands(app)
+register_contract_commands(app)
 register_memory_commands(app)
 register_release_commands(app)
 register_resolver_commands(app)
+register_review_commands(app)
+register_savings_audit_commands(app)
 
 
 if __name__ == "__main__":
