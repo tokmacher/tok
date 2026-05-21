@@ -25,6 +25,10 @@ def emit_operation_receipt(
 ) -> None:
     if bool(getattr(active_session, "_operation_receipt_emitted", False)):
         return
+    effective_compressed = bool(compressed and not fallback)
+    effective_input_saved = 0 if fallback else int(input_saved)
+    effective_output_saved = 0 if fallback else int(output_saved)
+    effective_prompt_metrics = {} if fallback else dict(prompt_metrics or {})
     try:
         from tok.receipt import emit_bridge_receipt_for_session
 
@@ -35,13 +39,13 @@ def emit_operation_receipt(
         emit_bridge_receipt_for_session(
             active_session,
             request_policy=request_policy,
-            compression_applied=compressed,
+            compression_applied=effective_compressed,
             evidence_summary=evidence_summary,
             savings={
-                "input_saved_tokens": int(input_saved),
-                "output_saved_tokens": int(output_saved),
-                "tokens_saved": int(input_saved) + int(output_saved),
-                **{str(k): int(v) for k, v in (prompt_metrics or {}).items()},
+                "input_saved_tokens": effective_input_saved,
+                "output_saved_tokens": effective_output_saved,
+                "tokens_saved": effective_input_saved + effective_output_saved,
+                **{str(k): int(v) for k, v in effective_prompt_metrics.items()},
             },
             fallback=fallback,
         )
@@ -65,6 +69,11 @@ def emit_savings_event(
 ) -> None:
     if bool(getattr(active_session, "_savings_event_emitted", False)):
         return
+    effective_compressed = bool(compressed and not fallback)
+    effective_input_saved = 0 if fallback else max(0, int(input_saved))
+    effective_output_saved = 0 if fallback else max(0, int(output_saved))
+    effective_tool_breakdown = {} if fallback else dict(tool_breakdown or {})
+    effective_prompt_metrics = {} if fallback else dict(prompt_metrics or {})
     try:
         from tok.receipt import _session_id_from_session as receipt_session_id
         from tok.receipt import bridge_receipt_path
@@ -77,28 +86,26 @@ def emit_savings_event(
         )
         actual_input = int(usage.get("input_tokens", 0) or 0)
         actual_output = int(usage.get("output_tokens", 0) or 0)
-        input_saved = max(0, int(input_saved))
-        output_saved = max(0, int(output_saved))
         event = SavingsEvent(
             event_id=str(uuid.uuid4()),
             session_id=session_id,
             request_id=str(uuid.uuid4()),
             timestamp=datetime.now(UTC).isoformat(),
             model=model,
-            mode="tok" if compressed and not fallback else "baseline",
+            mode="tok" if effective_compressed else "baseline",
             request_policy=request_policy,
-            baseline_input_tokens=actual_input + input_saved,
+            baseline_input_tokens=actual_input + effective_input_saved,
             actual_input_tokens=actual_input,
-            input_tokens_saved=input_saved,
-            baseline_output_tokens=actual_output + output_saved,
+            input_tokens_saved=effective_input_saved,
+            baseline_output_tokens=actual_output + effective_output_saved,
             actual_output_tokens=actual_output,
-            output_tokens_saved=output_saved,
+            output_tokens_saved=effective_output_saved,
             cache_read_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
             cache_write_tokens=int(usage.get("cache_creation_input_tokens", 0) or 0),
             fallback=bool(fallback),
             degraded_to_baseline=bool(fallback or not compressed),
-            compression_paths={str(k): int(v) for k, v in (tool_breakdown or {}).items()},
-            non_headline_estimates={str(k): int(v) for k, v in (prompt_metrics or {}).items()},
+            compression_paths={str(k): int(v) for k, v in effective_tool_breakdown.items()},
+            non_headline_estimates={str(k): int(v) for k, v in effective_prompt_metrics.items()},
         )
         append_savings_event(event, events_path)
         active_session._savings_event_emitted = True

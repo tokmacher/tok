@@ -103,6 +103,51 @@ def test_handle_nonstreaming_failopen_records_signals() -> None:
     assert request_state.get("fallback_recorded") is True
 
 
+def test_handle_nonstreaming_failopen_reports_zero_headline_savings(tmp_path) -> None:
+    session = _make_session(memory_dir=tmp_path)
+    behavior_signals: dict[str, int] = {}
+    request_state: dict[str, bool] = {"fallback_recorded": False}
+    resp_json: dict[str, Any] = {
+        "model": "claude-sonnet-4",
+        "usage": {"input_tokens": 100, "output_tokens": 20},
+    }
+
+    _handle_nonstreaming_failopen(
+        RuntimeError("processing failure"),
+        session,
+        behavior_signals,
+        request_state,
+        resp_json,
+        saved_toks=10,
+        compressed=True,
+        tool_breakdown={"tool_a": 5},
+        prompt_metrics={
+            "baseline_prompt_tokens": 100,
+            "prepared_prompt_tokens": 90,
+            "saved_prompt_tokens": 10,
+            "hot_hint_tokens_added": 0,
+            "reacquisition_tokens_avoided_estimate": 0,
+        },
+    )
+
+    session_id = receipt_session_id(session)
+    receipt_path = bridge_receipt_path(memory_dir=tmp_path, session_id=session_id)
+    receipts = read_bridge_receipts(receipt_path)
+    assert len(receipts) == 1
+    assert receipts[0].fallback is True
+    assert receipts[0].compression_applied is False
+    assert receipts[0].savings["input_saved_tokens"] == 0
+    assert receipts[0].savings["output_saved_tokens"] == 0
+    assert receipts[0].savings["tokens_saved"] == 0
+
+    events = read_savings_events(receipt_path.with_name("savings_events.jsonl"))
+    assert len(events) == 1
+    assert events[0].fallback is True
+    assert events[0].input_tokens_saved == 0
+    assert events[0].output_tokens_saved == 0
+    assert events[0].baseline_input_tokens == events[0].actual_input_tokens
+
+
 def test_handle_nonstreaming_failopen_raises_when_closed() -> None:
     session = _make_session(fail_open=False)
     behavior_signals: dict[str, int] = {}

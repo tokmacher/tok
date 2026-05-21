@@ -298,32 +298,32 @@ def _handle_nonstreaming_failopen(
                 actual_output=usage.get("output_tokens", 0),
                 cache_read=usage.get("cache_read_input_tokens", 0),
                 cache_write=usage.get("cache_creation_input_tokens", 0),
-                input_saved=saved_toks if compressed else 0,
+                input_saved=0,
                 output_saved=0,
-                type_breakdown=tool_breakdown if compressed else None,
+                type_breakdown=None,
                 behavior_signals=error_signals,
-                prompt_metrics=prompt_metrics if compressed else None,
+                prompt_metrics=None,
             )
             _emit_operation_receipt(
                 active_session,
                 request_policy=str(getattr(active_session, "request_policy_default", "")),
-                compressed=compressed,
+                compressed=False,
                 fallback=True,
-                input_saved=saved_toks if compressed else 0,
+                input_saved=0,
                 output_saved=0,
-                prompt_metrics=prompt_metrics,
+                prompt_metrics={},
             )
             _emit_savings_event(
                 active_session,
                 model=str(model),
                 usage=usage,
                 request_policy=str(getattr(active_session, "request_policy_default", "")),
-                compressed=compressed,
+                compressed=False,
                 fallback=True,
-                input_saved=saved_toks if compressed else 0,
+                input_saved=0,
                 output_saved=0,
-                tool_breakdown=tool_breakdown if compressed else {},
-                prompt_metrics=prompt_metrics,
+                tool_breakdown={},
+                prompt_metrics={},
             )
     except Exception as _exc:
         logger.debug("Failed to record usage in fail-open path: %s", _exc)
