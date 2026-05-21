@@ -11,6 +11,7 @@ Contract (docs/bridge-standard.md):
 - Repeated reads may compress only after exact evidence exists.
 - Novel failures must not be compressed away (first failure observation is exact).
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,6 +23,7 @@ from tok.runtime.evidence_safety import EvidenceSafetyState, normalize_evidence_
 # ---------------------------------------------------------------------------
 # Evidence ledger state transitions
 # ---------------------------------------------------------------------------
+
 
 class TestExactnessGateStateMachine:
     def test_unknown_key_requires_reacquisition(self) -> None:
@@ -94,6 +96,7 @@ class TestExactnessGateStateMachine:
 # Scenario: read once exact, second read compressible
 # ---------------------------------------------------------------------------
 
+
 class TestRepeatReadAfterExact:
     def test_first_read_sets_first_exact_turn(self) -> None:
         state = EvidenceSafetyState()
@@ -119,6 +122,7 @@ class TestRepeatReadAfterExact:
 # ---------------------------------------------------------------------------
 # Scenario: non-exact file targeted by edit tool
 # ---------------------------------------------------------------------------
+
 
 class TestEditToolTargetingNonExactFile:
     def test_skeleton_file_targeted_by_edit_requires_reacquisition(self) -> None:
@@ -147,6 +151,7 @@ class TestEditToolTargetingNonExactFile:
 # ---------------------------------------------------------------------------
 # Compression pipeline: first observation must be exact
 # ---------------------------------------------------------------------------
+
 
 class TestCompressionPipelineFirstExact:
     """The compression pipeline must preserve first file observations verbatim."""
@@ -191,9 +196,7 @@ class TestCompressionPipelineFirstExact:
         ]
         assert len(result_blocks) >= 1
         first_content = str(result_blocks[0].get("content", ""))
-        assert content[:50] in first_content, (
-            "First file observation must be delivered verbatim (not compressed)"
-        )
+        assert content[:50] in first_content, "First file observation must be delivered verbatim (not compressed)"
 
     def test_first_exact_seen_populated_after_first_read(self) -> None:
         from tok.compression._history_pipeline import compress_tool_results_impl
@@ -213,9 +216,7 @@ class TestCompressionPipelineFirstExact:
             preserve_exact_search_evidence=True,
         )
         # After first read, the path must be in first_exact_evidence_seen
-        assert len(first_exact_seen) >= 1, (
-            "first_exact_evidence_seen must be populated after first file read"
-        )
+        assert len(first_exact_seen) >= 1, "first_exact_evidence_seen must be populated after first file read"
 
     def test_second_read_same_file_with_first_exact_can_be_compressed(self) -> None:
         from tok.compression._history_pipeline import compress_tool_results_impl
@@ -250,6 +251,7 @@ class TestCompressionPipelineFirstExact:
 # Adversarial: novel failures must not be compressed away
 # ---------------------------------------------------------------------------
 
+
 class TestNovelFailurePreservation:
     def test_first_failure_observation_preserved_verbatim(self) -> None:
         from tok.compression._history_pipeline import compress_tool_results_impl
@@ -264,15 +266,12 @@ class TestNovelFailurePreservation:
             {
                 "role": "assistant",
                 "content": [
-                    {"type": "tool_use", "id": "c1", "name": "Bash",
-                     "input": {"command": "pytest tests/test_foo.py"}}
+                    {"type": "tool_use", "id": "c1", "name": "Bash", "input": {"command": "pytest tests/test_foo.py"}}
                 ],
             },
             {
                 "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": "c1", "content": failure_content}
-                ],
+                "content": [{"type": "tool_result", "tool_use_id": "c1", "content": failure_content}],
             },
         ]
         tool_use_id_to_context = build_tool_use_id_to_context(messages)
@@ -308,21 +307,18 @@ class TestNovelFailurePreservation:
 # TOK_EXACTNESS_GATE=warn phased rollout (risk register §8)
 # ---------------------------------------------------------------------------
 
+
 class TestExactnessGateWarnMode:
     """In warn mode the gate must allow operations and emit a WARNING instead of blocking."""
 
-    def test_requires_reacquisition_enforce_mode_returns_true(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_requires_reacquisition_enforce_mode_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Default (no env var) — gate enforces: requires_reacquisition returns True."""
         monkeypatch.delenv("TOK_EXACTNESS_GATE", raising=False)
         state = EvidenceSafetyState()
         state.record_non_exact("src/foo.py", form="skeleton", turn=1)
         assert state.requires_reacquisition("src/foo.py") is True
 
-    def test_requires_reacquisition_warn_mode_returns_false(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_requires_reacquisition_warn_mode_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """TOK_EXACTNESS_GATE=warn — gate allows: requires_reacquisition returns False."""
         monkeypatch.setenv("TOK_EXACTNESS_GATE", "warn")
         state = EvidenceSafetyState()
@@ -345,9 +341,7 @@ class TestExactnessGateWarnMode:
             "Expected a warning about exactness gate warn mode, got: " + caplog.text
         )
 
-    def test_require_exact_reacquisition_enforce_mode_sets_flag(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_require_exact_reacquisition_enforce_mode_sets_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Default (enforce) — require_exact_reacquisition sets the flag and emits signals."""
         monkeypatch.delenv("TOK_EXACTNESS_GATE", raising=False)
         state = EvidenceSafetyState()
@@ -356,9 +350,7 @@ class TestExactnessGateWarnMode:
         assert signals.get("evidence_compression_blocked_for_safety", 0) == 1
         assert state.ledger["src/foo.py"].exact_reacquisition_required is True
 
-    def test_require_exact_reacquisition_warn_mode_does_not_set_flag(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_require_exact_reacquisition_warn_mode_does_not_set_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """TOK_EXACTNESS_GATE=warn — require_exact_reacquisition must NOT set blocking flag."""
         monkeypatch.setenv("TOK_EXACTNESS_GATE", "warn")
         state = EvidenceSafetyState()
@@ -371,18 +363,14 @@ class TestExactnessGateWarnMode:
             "In warn mode, exact_reacquisition_required flag must not be set"
         )
 
-    def test_enforce_mode_explicit_value(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_enforce_mode_explicit_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """TOK_EXACTNESS_GATE=enforce — behaves identically to default (block)."""
         monkeypatch.setenv("TOK_EXACTNESS_GATE", "enforce")
         state = EvidenceSafetyState()
         state.record_non_exact("src/foo.py", form="skeleton", turn=1)
         assert state.requires_reacquisition("src/foo.py") is True
 
-    def test_unknown_mode_falls_back_to_enforce(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unknown_mode_falls_back_to_enforce(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Unrecognized TOK_EXACTNESS_GATE value — must default to enforce (safe)."""
         monkeypatch.setenv("TOK_EXACTNESS_GATE", "permissive_xyzzy")
         state = EvidenceSafetyState()

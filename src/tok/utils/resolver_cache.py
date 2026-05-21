@@ -100,10 +100,7 @@ class ResolverCache:
 
     def _write_manifest(self, manifest: dict[str, ResolverCacheEntry]) -> None:
         self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            key: entry.to_dict()
-            for key, entry in sorted(manifest.items(), key=lambda item: item[0])
-        }
+        data = {key: entry.to_dict() for key, entry in sorted(manifest.items(), key=lambda item: item[0])}
         fd, tmp_name = tempfile.mkstemp(
             prefix="tok-resolver-cache-",
             suffix=".json",

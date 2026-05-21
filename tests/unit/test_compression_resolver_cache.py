@@ -9,6 +9,7 @@ Target behavior:
 - A file path manifest tracks path -> (digest, mtime) for cache invalidation.
 - Modified files (mtime change) must be re-read, not served from cache.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -31,6 +32,7 @@ def test_runtime_record_exact_evidence_writes_resolver_cache(tmp_path: Path) -> 
 # ---------------------------------------------------------------------------
 # ResolverCache: new module for resolver-backed compression cache
 # ---------------------------------------------------------------------------
+
 
 class TestResolverCacheModuleExists:
     def test_resolver_cache_module_importable(self) -> None:
@@ -60,6 +62,7 @@ class TestResolverCacheModuleExists:
 # ---------------------------------------------------------------------------
 # Store and retrieve content
 # ---------------------------------------------------------------------------
+
 
 class TestResolverCacheStoreRetrieve:
     def test_put_returns_digest(self, tmp_path: Path) -> None:
@@ -102,6 +105,7 @@ class TestResolverCacheStoreRetrieve:
 # ---------------------------------------------------------------------------
 # Mtime-based invalidation
 # ---------------------------------------------------------------------------
+
 
 class TestResolverCacheMtimeInvalidation:
     def test_cache_miss_when_mtime_changed(self, tmp_path: Path) -> None:
@@ -151,6 +155,7 @@ class TestResolverCacheMtimeInvalidation:
 # EvidenceSafetyState.record_exact integration
 # ---------------------------------------------------------------------------
 
+
 class TestEvidenceSafetyResolverIntegration:
     def test_record_exact_without_resolver_still_works(self) -> None:
         from tok.runtime.evidence_safety import EvidenceSafetyState
@@ -199,6 +204,7 @@ class TestEvidenceSafetyResolverIntegration:
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestResolverCacheEdgeCases:
     def test_empty_content_can_be_stored(self, tmp_path: Path) -> None:

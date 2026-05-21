@@ -4,6 +4,7 @@ Verifies that all state group objects exist on RuntimeSession, have the correct
 fields and reset behavior, and that reset_session() resets ALL groups without
 state bleed.
 """
+
 from __future__ import annotations
 
 from tok.runtime.core import RuntimeSession
@@ -12,27 +13,23 @@ from tok.runtime.core import RuntimeSession
 # State group objects exist on RuntimeSession
 # ---------------------------------------------------------------------------
 
+
 class TestSessionPersistenceGroup:
     """session_persistence state group must exist and delegate bridge_memory correctly."""
 
     def test_session_persistence_attribute_exists(self) -> None:
         s = RuntimeSession()
-        assert hasattr(s, "session_persistence"), (
-            "RuntimeSession must have session_persistence state group"
-        )
+        assert hasattr(s, "session_persistence"), "RuntimeSession must have session_persistence state group"
 
     def test_session_persistence_has_reset_method(self) -> None:
         s = RuntimeSession()
-        assert hasattr(s.session_persistence, "reset"), (
-            "session_persistence must have reset() method"
-        )
+        assert hasattr(s.session_persistence, "reset"), "session_persistence must have reset() method"
 
     def test_session_persistence_exposes_bridge_memory(self) -> None:
         from tok.runtime.memory.bridge_memory import BridgeMemoryState
+
         s = RuntimeSession()
-        assert hasattr(s.session_persistence, "bridge_memory"), (
-            "session_persistence must expose bridge_memory"
-        )
+        assert hasattr(s.session_persistence, "bridge_memory"), "session_persistence must expose bridge_memory"
         assert isinstance(s.session_persistence.bridge_memory, BridgeMemoryState)
 
     def test_session_persistence_bridge_memory_is_same_object_as_session(self) -> None:
@@ -91,6 +88,7 @@ class TestSessionPersistenceAdversarial:
         """Even when bridge_memory is constructed with custom flags,
         session_persistence must alias whatever bridge_memory the session settles on."""
         from tok.runtime.memory.bridge_memory import BridgeMemoryState
+
         s = RuntimeSession(bridge_memory=BridgeMemoryState(load_global_macros=False))
         # initialize_session_storage replaces bridge_memory, but session_persistence
         # must alias the final object regardless.
@@ -179,6 +177,7 @@ class TestStateGroupsExist:
 # Each state group has a reset() method
 # ---------------------------------------------------------------------------
 
+
 class TestStateGroupsHaveReset:
     _GROUP_NAMES = [
         "evidence_safety",
@@ -208,6 +207,7 @@ class TestStateGroupsHaveReset:
 # ---------------------------------------------------------------------------
 # reset_session() resets all grouped states
 # ---------------------------------------------------------------------------
+
 
 class TestResetSessionResetsAllGroups:
     def test_evidence_safety_cleared_by_reset(self) -> None:
@@ -259,6 +259,7 @@ class TestResetSessionResetsAllGroups:
 # ---------------------------------------------------------------------------
 # No state bleed between groups after reset
 # ---------------------------------------------------------------------------
+
 
 class TestNoStateBleedAfterReset:
     def test_evidence_safety_does_not_bleed_into_cache(self) -> None:

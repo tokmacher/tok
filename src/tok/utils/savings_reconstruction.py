@@ -3,6 +3,7 @@
 Reconstructs totals from per-request SavingsEvent JSONL files rather than
 from in-memory counters, enabling offline auditing and consistency checks.
 """
+
 from __future__ import annotations
 
 import logging

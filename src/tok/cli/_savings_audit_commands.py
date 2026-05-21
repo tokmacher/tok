@@ -3,6 +3,7 @@
 Reads per-request savings events and checks invariants from
 docs/savings-accounting.md.
 """
+
 from __future__ import annotations
 
 import json
@@ -80,7 +81,9 @@ def register(app: typer.Typer) -> None:
         ok = len(violations) == 0
 
         if json_output:
-            print(json.dumps(json_envelope("savings-audit", ok=ok, status="ok" if ok else "violations", data=audit_data)))
+            print(
+                json.dumps(json_envelope("savings-audit", ok=ok, status="ok" if ok else "violations", data=audit_data))
+            )
         else:
             _print_audit_report(audit_data, violations)
 

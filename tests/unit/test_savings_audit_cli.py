@@ -4,6 +4,7 @@ Tests tok savings-audit CLI invocation with known-good and known-bad event
 streams.  Also tests adversarial inputs: duplicate event IDs, out-of-order
 timestamps, missing events.
 """
+
 from __future__ import annotations
 
 import json
@@ -63,6 +64,7 @@ def _write_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
 # CLI module and command registration
 # ---------------------------------------------------------------------------
 
+
 class TestSavingsAuditCommandExists:
     def test_savings_audit_module_exists(self) -> None:
         from tok.cli import _savings_audit_commands  # type: ignore[import]
@@ -90,6 +92,7 @@ class TestSavingsAuditCommandExists:
 # ---------------------------------------------------------------------------
 # Known-good event streams
 # ---------------------------------------------------------------------------
+
 
 class TestSavingsAuditGoodStream:
     def test_good_stream_exits_zero(self, tmp_path: Path) -> None:
@@ -146,6 +149,7 @@ class TestSavingsAuditGoodStream:
 # Known-bad: invariant violations
 # ---------------------------------------------------------------------------
 
+
 class TestSavingsAuditBadStream:
     def test_negative_input_tokens_saved_flagged(self, tmp_path: Path) -> None:
         from tok.cli import app
@@ -166,7 +170,8 @@ class TestSavingsAuditBadStream:
         events_file = tmp_path / "savings_events.jsonl"
         # A fallback request should report zero headline savings
         bad_event = _make_event_dict(
-            "e1", "s1",
+            "e1",
+            "s1",
             input_tokens_saved=300,  # should be 0 for a fallback
             fallback=True,
         )
@@ -176,14 +181,13 @@ class TestSavingsAuditBadStream:
         result = runner.invoke(app, ["savings-audit", str(events_file), "--json"])
         data = json.loads(result.output.strip())
         # Fallback with savings is a warning-level violation
-        assert data.get("ok") is False or (
-            "violations" in data.get("data", {}) and len(data["data"]["violations"]) > 0
-        )
+        assert data.get("ok") is False or ("violations" in data.get("data", {}) and len(data["data"]["violations"]) > 0)
 
 
 # ---------------------------------------------------------------------------
 # Missing / empty files
 # ---------------------------------------------------------------------------
+
 
 class TestSavingsAuditEdgeCases:
     def test_missing_file_exits_nonzero(self, tmp_path: Path) -> None:
@@ -211,6 +215,7 @@ class TestSavingsAuditEdgeCases:
 # Adversarial: duplicate IDs, out-of-order timestamps, corrupt lines
 # ---------------------------------------------------------------------------
 
+
 class TestSavingsAuditAdversarial:
     def test_duplicate_event_ids_flagged(self, tmp_path: Path) -> None:
         from tok.cli import app
@@ -226,8 +231,7 @@ class TestSavingsAuditAdversarial:
         result = runner.invoke(app, ["savings-audit", str(events_file), "--json"])
         data = json.loads(result.output.strip())
         assert data.get("ok") is False or (
-            isinstance(data.get("data", {}).get("violations"), list)
-            and len(data["data"]["violations"]) > 0
+            isinstance(data.get("data", {}).get("violations"), list) and len(data["data"]["violations"]) > 0
         )
 
     def test_corrupt_lines_skipped_gracefully(self, tmp_path: Path) -> None:

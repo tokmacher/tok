@@ -2,6 +2,7 @@
 
 Verifies SavingsEvent schema correctness, JSONL round-trip, and append durability.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -13,6 +14,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # Schema tests
 # ---------------------------------------------------------------------------
+
 
 class TestSavingsEventSchema:
     """SavingsEvent must declare all required fields from docs/savings-accounting.md."""
@@ -157,6 +159,7 @@ class TestSavingsEventSchema:
 # JSONL serialization tests
 # ---------------------------------------------------------------------------
 
+
 class TestSavingsEventJSONL:
     """SavingsEvent must support JSONL serialization and round-trip."""
 
@@ -181,7 +184,6 @@ class TestSavingsEventJSONL:
         )
 
     def test_savings_event_to_dict(self) -> None:
-
         ev = self._make_event()
         d = ev.to_dict()
         assert isinstance(d, dict)
@@ -190,7 +192,6 @@ class TestSavingsEventJSONL:
         assert d["input_tokens_saved"] == 300
 
     def test_savings_event_to_jsonl_line(self) -> None:
-
         ev = self._make_event()
         line = ev.to_jsonl_line()
         assert isinstance(line, str)
@@ -245,7 +246,6 @@ class TestSavingsEventJSONL:
         assert ev.input_tokens_saved == 0
 
     def test_jsonl_line_is_single_line(self) -> None:
-
         ev = self._make_event()
         line = ev.to_jsonl_line()
         # Must be exactly one newline at the end and no newlines inside
@@ -256,6 +256,7 @@ class TestSavingsEventJSONL:
 # ---------------------------------------------------------------------------
 # Append durability tests
 # ---------------------------------------------------------------------------
+
 
 class TestSavingsEventAppend:
     """append_savings_event must write and persist JSONL without corruption."""
@@ -363,6 +364,7 @@ class TestSavingsEventAppend:
 # ---------------------------------------------------------------------------
 # Crash-safety tests (RED for step 3)
 # ---------------------------------------------------------------------------
+
 
 class TestSavingsEventCrashSafety:
     """Previous events must survive a partial write."""

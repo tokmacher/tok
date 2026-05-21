@@ -3,6 +3,7 @@
 Provides the canonical ``SavingsEvent`` dataclass (schema tok-savings-event/v1)
 and helpers for append-only JSONL persistence.
 """
+
 from __future__ import annotations
 
 import dataclasses

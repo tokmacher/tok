@@ -4,6 +4,7 @@ Creates synthetic SavingsEvent JSONL files and verifies that
 reconstruct_session_summary() and reconstruct_lifetime_summary() compute
 correct totals.
 """
+
 from __future__ import annotations
 
 import json
@@ -67,6 +68,7 @@ def _write_events(path: Path, events: list) -> None:
 # SavingsSummary dataclass
 # ---------------------------------------------------------------------------
 
+
 class TestSavingsSummaryDataclass:
     def test_savings_summary_exists(self) -> None:
         from tok.utils.savings_reconstruction import SavingsSummary
@@ -97,6 +99,7 @@ class TestSavingsSummaryDataclass:
 # reconstruct_session_summary
 # ---------------------------------------------------------------------------
 
+
 class TestReconstructSessionSummary:
     def test_empty_events_returns_zero_summary(self) -> None:
         from tok.utils.savings_reconstruction import reconstruct_session_summary
@@ -109,7 +112,9 @@ class TestReconstructSessionSummary:
         from tok.utils.savings_reconstruction import reconstruct_session_summary
 
         ev = _make_event(
-            "e1", "s1", "r1",
+            "e1",
+            "s1",
+            "r1",
             input_tokens_saved=300,
             baseline_input_tokens=1000,
             actual_input_tokens=700,
@@ -185,6 +190,7 @@ class TestReconstructSessionSummary:
 # reconstruct_session_summary_from_file
 # ---------------------------------------------------------------------------
 
+
 class TestReconstructFromFile:
     def test_reconstruct_from_jsonl_file(self, tmp_path: Path) -> None:
         from tok.utils.savings_reconstruction import reconstruct_session_summary_from_file
@@ -246,6 +252,7 @@ class TestReconstructFromFile:
 # reconstruct_lifetime_summary
 # ---------------------------------------------------------------------------
 
+
 class TestReconstructLifetimeSummary:
     def test_reconstruct_lifetime_empty_returns_zero(self, tmp_path: Path) -> None:
         from tok.utils.savings_reconstruction import reconstruct_lifetime_summary
@@ -303,6 +310,7 @@ class TestReconstructLifetimeSummary:
 # ---------------------------------------------------------------------------
 # Invariant checks on reconstructed summaries
 # ---------------------------------------------------------------------------
+
 
 class TestReconstructedSummaryInvariants:
     """Invariants from docs/savings-accounting.md must hold for reconstructed totals."""

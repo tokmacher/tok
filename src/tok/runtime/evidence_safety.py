@@ -24,6 +24,7 @@ EvidenceForm = Literal["exact", "summary", "skeleton", "reference"]
 
 logger = logging.getLogger("tok.evidence_safety")
 
+
 def _exactness_gate_mode() -> str:
     """Return the active exactness gate mode from TOK_EXACTNESS_GATE.
 
@@ -34,6 +35,7 @@ def _exactness_gate_mode() -> str:
     Any other value defaults to ``"enforce"`` (fail-safe).
     """
     import os
+
     mode = os.environ.get("TOK_EXACTNESS_GATE", "enforce").strip().lower()
     return mode if mode in ("warn", "enforce") else "enforce"
 

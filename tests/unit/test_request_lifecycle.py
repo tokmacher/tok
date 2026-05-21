@@ -192,23 +192,22 @@ class TestAllFourteenStages:
     def test_request_lifecycle_declares_all_14_stages(self) -> None:
         """RequestLifecycle dataclass must declare all 14 expected stage fields."""
         import dataclasses
+
         fields = {f.name for f in dataclasses.fields(RequestLifecycle)}
         missing = [s for s in self._ALL_14_STAGES if s not in fields]
-        assert not missing, (
-            f"RequestLifecycle is missing {len(missing)} stage(s): {missing}"
-        )
+        assert not missing, f"RequestLifecycle is missing {len(missing)} stage(s): {missing}"
 
     def test_compression_safety_applied_stage_declared(self) -> None:
         """compression_safety_applied must exist on RequestLifecycle."""
         import dataclasses
+
         fields = {f.name for f in dataclasses.fields(RequestLifecycle)}
-        assert "compression_safety_applied" in fields, (
-            "compression_safety_applied missing — add it to RequestLifecycle"
-        )
+        assert "compression_safety_applied" in fields, "compression_safety_applied missing — add it to RequestLifecycle"
 
     def test_response_processing_complete_stage_declared(self) -> None:
         """response_processing_complete must exist on RequestLifecycle."""
         import dataclasses
+
         fields = {f.name for f in dataclasses.fields(RequestLifecycle)}
         assert "response_processing_complete" in fields, (
             "response_processing_complete missing — add it to RequestLifecycle"
