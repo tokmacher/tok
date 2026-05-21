@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -109,6 +110,43 @@ class ClaudeBridgeAdapter(RuntimeAdapter):
     @property
     def surface(self) -> SurfaceMetadata:
         return SurfaceMetadata.claude_bridge()
+
+    def identify_runtime(self) -> str:
+        return "claude-code"
+
+    def parse_inbound_request(self, raw_bytes: bytes) -> RuntimeRequest:
+        data = json.loads(raw_bytes.decode("utf-8"))
+        messages = data.get("messages", [])
+        if not isinstance(messages, list):
+            messages = []
+        return RuntimeRequest(
+            model=str(data.get("model", "")),
+            messages=messages,
+            system=cast("Any", data.get("system")),
+            adapter_kind=self.adapter_kind,
+            surface=self.surface,
+            tool_compatible=bool(data.get("tools")),
+            request_has_tools=bool(data.get("tools")),
+        )
+
+    def build_outbound_response(self, processed: ProcessedRuntimeResponse) -> bytes:
+        return json.dumps(
+            {
+                "content": processed.content_blocks,
+                "tok": {
+                    "mode": processed.mode,
+                    "output_saved_tokens": processed.output_saved_tokens,
+                    "behavior_signals": processed.behavior_signals,
+                },
+            },
+            sort_keys=True,
+        ).encode()
+
+    def supported_capabilities(self) -> frozenset[str]:
+        return frozenset({"tool-pair", "streaming", "extended-thinking"})
+
+    def transport_boundary(self) -> str:
+        return "http-proxy"
 
 
 @dataclass

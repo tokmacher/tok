@@ -1,0 +1,14 @@
+{
+  "conversation_id": "codex-fixture-1",
+  "output": [
+    {
+      "role": "assistant",
+      "content": "Use small changes and do not revert user work."
+    }
+  ],
+  "tok": {
+    "adapter": "codex-cli-probe",
+    "runtime": "codex-cli",
+    "fixture_only": true
+  }
+}

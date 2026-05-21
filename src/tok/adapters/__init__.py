@@ -1,5 +1,6 @@
 """Tok adapter module for various LLM runtime integrations."""
 
+from .adapter_protocol import AdapterProtocol
 from .adapters import (
     ClaudeBridgeAdapter,
     OpenAIChatAdapter,
@@ -21,6 +22,7 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "ClaudeBridgeAdapter",
+    "AdapterProtocol",
     "OpenAIChatAdapter",
     "OrchestratorAdapter",
     "RuntimeAdapter",

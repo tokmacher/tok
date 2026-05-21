@@ -1,0 +1,18 @@
+{
+  "id": "opencode-fixture-1",
+  "model": "test-model",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Read README.md and summarize the supported path."
+    }
+  ],
+  "tools": [
+    {
+      "name": "read"
+    }
+  ],
+  "metadata": {
+    "cwd": "/repo"
+  }
+}

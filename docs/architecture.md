@@ -52,8 +52,9 @@ Surface adapter
 
 Definitions:
 
-- **Surface**: a concrete external entry point such as Claude Code, an HTTP bridge, a
-  CLI command, Opencode, Pi Code, Codex CLI, or a future agent runtime.
+- **Surface**: a concrete external entry point such as Claude Code, an HTTP bridge, or
+  a CLI command. Opencode, Pi Code, Codex CLI, and other runtimes are future adapter
+  candidates, not supported 0.2.x live bridge surfaces.
 - **Adapter**: thin code that maps a surface's native request/response shape into or out
   of Tok's internal request shape.
 - **Signal packet**: the normalized runtime input. It carries the request plus recovery,
