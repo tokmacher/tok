@@ -1038,7 +1038,7 @@ def compress_tool_results_impl(
         key = _evidence_key_for_context(context)
         if not key or not hasattr(session, "record_exact_evidence"):
             return
-        session.record_exact_evidence(key, digest=_compute_semantic_hash(raw))
+        session.record_exact_evidence(key, digest=_compute_semantic_hash(raw), content=raw.encode("utf-8"))
 
     def _looks_like_failure_evidence(raw: str) -> bool:
         lowered = raw.lower()

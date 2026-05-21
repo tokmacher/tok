@@ -64,6 +64,8 @@ class TestRequestLifecycleDataclass:
             repeat_target_capture=True,
             tool_event_normalization=True,
             hot_memory_refresh=True,
+            compression_safety_applied=True,
+            response_processing_complete=True,
         )
         assert all(getattr(lc, f.name) is True for f in lc.__dataclass_fields__.values())
 
@@ -150,9 +152,9 @@ class TestPipelineLifecycleFlagsCoverage:
         assert lc.runtime_preparation is False
         assert lc.final_payload_construction is False
 
-    def test_runtime_internal_stages_remain_false_from_bridge_layer(self) -> None:
+    def test_runtime_internal_stages_wired_after_prepare_request(self) -> None:
         # repeat_target_capture, tool_event_normalization, hot_memory_refresh
-        # are runtime-internal and not yet wired at the bridge layer.
+        # are set atomically when prepare_request() completes (0.2.1 wiring).
         session = BridgeSession()
         payload, _ = prepare_bridge_payload(
             session=session,
@@ -162,9 +164,82 @@ class TestPipelineLifecycleFlagsCoverage:
         )
         lc = payload.lifecycle
         assert lc is not None
-        assert lc.repeat_target_capture is False
-        assert lc.tool_event_normalization is False
-        assert lc.hot_memory_refresh is False
+        assert lc.repeat_target_capture is True
+        assert lc.tool_event_normalization is True
+        assert lc.hot_memory_refresh is True
+
+
+class TestAllFourteenStages:
+    """RED: all 14 stages must exist and be wired after a full pipeline run."""
+
+    _ALL_14_STAGES = [
+        "initial_preflight",
+        "model_extraction",
+        "tool_compatibility_check",
+        "request_preparation",
+        "runtime_preparation",
+        "signals_and_metrics",
+        "prepared_preflight",
+        "plan_finalization_guard",
+        "final_payload_construction",
+        "repeat_target_capture",
+        "tool_event_normalization",
+        "hot_memory_refresh",
+        "compression_safety_applied",
+        "response_processing_complete",
+    ]
+
+    def test_request_lifecycle_declares_all_14_stages(self) -> None:
+        """RequestLifecycle dataclass must declare all 14 expected stage fields."""
+        import dataclasses
+        fields = {f.name for f in dataclasses.fields(RequestLifecycle)}
+        missing = [s for s in self._ALL_14_STAGES if s not in fields]
+        assert not missing, (
+            f"RequestLifecycle is missing {len(missing)} stage(s): {missing}"
+        )
+
+    def test_compression_safety_applied_stage_declared(self) -> None:
+        """compression_safety_applied must exist on RequestLifecycle."""
+        import dataclasses
+        fields = {f.name for f in dataclasses.fields(RequestLifecycle)}
+        assert "compression_safety_applied" in fields, (
+            "compression_safety_applied missing — add it to RequestLifecycle"
+        )
+
+    def test_response_processing_complete_stage_declared(self) -> None:
+        """response_processing_complete must exist on RequestLifecycle."""
+        import dataclasses
+        fields = {f.name for f in dataclasses.fields(RequestLifecycle)}
+        assert "response_processing_complete" in fields, (
+            "response_processing_complete missing — add it to RequestLifecycle"
+        )
+
+    def test_request_preparation_does_not_mark_response_processing_complete(self) -> None:
+        """Request preparation must not claim response processing completed."""
+        session = BridgeSession()
+        payload, preflight = prepare_bridge_payload(
+            session=session,
+            body=_minimal_body(),
+            headers={"x-api-key": "test-key"},
+            path="v1/messages",
+        )
+        assert preflight is None
+        lc = payload.lifecycle
+        assert lc is not None
+        request_stages = [s for s in self._ALL_14_STAGES if s != "response_processing_complete"]
+        not_set = [s for s in request_stages if not getattr(lc, s, False)]
+        assert not not_set, (
+            f"Lifecycle stages not set after full pipeline: {not_set}\n"
+            "Wire these stages in _bridge_runtime_pipeline.py or _request_preparation.py."
+        )
+        assert lc.response_processing_complete is False
+
+    def test_lifecycle_with_all_14_stages_can_be_constructed(self) -> None:
+        """RequestLifecycle must accept all 14 stage arguments."""
+        kwargs = {s: True for s in self._ALL_14_STAGES}
+        lc = RequestLifecycle(**kwargs)
+        for stage in self._ALL_14_STAGES:
+            assert getattr(lc, stage) is True, f"Stage {stage!r} not set to True"
 
 
 class TestLifecycleStateAfterFailOpenRetry:

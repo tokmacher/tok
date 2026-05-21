@@ -242,7 +242,14 @@ def prepare_bridge_payload(
         session.runtime_session,
         result_cache=session.result_cache,
     )
-    lifecycle = replace(lifecycle, runtime_preparation=True)
+    lifecycle = replace(
+        lifecycle,
+        runtime_preparation=True,
+        # These run atomically inside prepare_request()
+        repeat_target_capture=True,
+        tool_event_normalization=True,
+        hot_memory_refresh=True,
+    )
     request_policy = prepared.request_policy
     request_tool_compatible = prepared.effective_tool_compatible
     compressed = prepared.compressed
@@ -313,7 +320,7 @@ def prepare_bridge_payload(
         path=path,
     )
     retry_forbidden = retry_forbidden or prepared_retry_forbidden
-    lifecycle = replace(lifecycle, prepared_preflight=True)
+    lifecycle = replace(lifecycle, prepared_preflight=True, compression_safety_applied=True)
     if behavior_signals.get("tok_bridge_pairing_degraded_to_provider_safe", 0):
         if saved_toks > 0:
             behavior_signals["tok_compression_worked_before_pairing_degraded"] = 1

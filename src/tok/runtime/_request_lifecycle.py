@@ -34,7 +34,11 @@ class RequestLifecycle:
     prepared_preflight: bool = False
     plan_finalization_guard: bool = False
     final_payload_construction: bool = False
-    # Runtime-internal: not yet set by the bridge layer.
+    # Runtime-internal: set inside _request_preparation.prepare_request().
     repeat_target_capture: bool = False
     tool_event_normalization: bool = False
     hot_memory_refresh: bool = False
+    # Evidence-safety and response tracking. response_processing_complete is a
+    # reserved post-response stage and must not be set during request preparation.
+    compression_safety_applied: bool = False
+    response_processing_complete: bool = False
