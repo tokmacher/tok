@@ -1121,6 +1121,10 @@ class RuntimeSession:
         return self.project.files_fully_delivered
 
     @property
+    def _files_read_fingerprints(self) -> dict[str, str]:
+        return self.fidelity.files_read_fingerprints
+
+    @property
     def _skeleton_delivered_paths(self) -> set[str]:
         return self.project.skeleton_delivered_paths
 

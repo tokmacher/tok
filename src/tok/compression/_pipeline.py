@@ -117,6 +117,7 @@ def compress_tool_results_impl(
     file_heat: dict[str, float] | None = None,
     session: Any | None = None,
     model_profile: Any | None = None,
+    files_read_fingerprints: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Compress tool results in messages using the history pipeline."""
     _sync_threshold()
@@ -138,6 +139,7 @@ def compress_tool_results_impl(
         file_heat=file_heat,
         session=session,
         model_profile=model_profile,
+        files_read_fingerprints=files_read_fingerprints,
     )
 
 

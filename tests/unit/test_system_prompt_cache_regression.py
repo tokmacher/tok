@@ -56,6 +56,37 @@ class TestFirstTurnPassthrough:
         assert result.body.get("system", system_text) == system_text
         assert "system_prompt_cache_hint_chars" not in result.behavior_signals
 
+    def test_step8_short_session_still_injects_reads_manifest(self) -> None:
+        """A cached file read is tiny enough to carry even while state injection is skipped."""
+        session = RuntimeSession()
+        session._files_read_fingerprints["src/tok/compression/_file_integrity.py"] = "a3f2c1d4"
+        session._files_fully_delivered["src/tok/compression/_file_integrity.py"] = 1
+
+        system_text = "You are a helpful assistant."
+        result = run_step_8(
+            runtime_self=None,
+            request=_make_request(),
+            session=session,
+            body=_make_body(system=system_text),
+            session_memory="",
+            history_skip_reason=None,
+            skip_reason="short_session",
+            behavior_signals={},
+            runtime_hints=[],
+            effective_tool_compatible=False,
+            current_pressure=0,
+            hot_hint_metrics={},
+            translated_messages=[],
+            should_skip_history=False,
+            recent=[],
+            has_answer_anchor=False,
+        )
+
+        assert result.body["system"].startswith(system_text)
+        assert "@reads" in result.body["system"]
+        assert "compression/_file_integrity.py  t:1  fp:a3f2c1d4" in result.body["system"]
+        assert result.behavior_signals["short_session_system_additions_skipped"] == 1
+
     def test_short_system_never_converted_to_list(self) -> None:
         """A system prompt shorter than MIN_CACHEABLE_CHARS is never converted."""
         from tok.compression._system_prompt_cache import _MIN_CACHEABLE_CHARS, apply_system_cache_hint

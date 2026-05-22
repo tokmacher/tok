@@ -1388,6 +1388,7 @@ def test_runtime_prepare_request_reverts_when_mutated_body_fails_preflight(tmp_p
         pressure=0,
         behavior_signals=None,
         runtime_hints=None,
+        file_integrity_manifest=None,
     ):
         del (
             tok_state,
@@ -1398,6 +1399,7 @@ def test_runtime_prepare_request_reverts_when_mutated_body_fails_preflight(tmp_p
             pressure,
             behavior_signals,
             runtime_hints,
+            file_integrity_manifest,
         )
         body["messages"] = "not-a-list"
         return body

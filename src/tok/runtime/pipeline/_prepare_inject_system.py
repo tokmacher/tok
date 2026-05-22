@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tok.compression import inject_system_additions
+from tok.compression._file_integrity import format_file_integrity_manifest
 from tok.compression._system_prompt_cache import apply_system_cache_hint
 from tok.runtime.core import RuntimeSession, UniversalTokRuntime
 from tok.runtime.pipeline.request_preparation import _inject_system
@@ -47,6 +48,20 @@ def run_step_8(
     if effective_tool_compatible:
         if skip_reason in {"short_session", "broad_audit"}:
             behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
+            if skip_reason == "short_session":
+                file_integrity_manifest = format_file_integrity_manifest(
+                    session._files_read_fingerprints,
+                    session._files_fully_delivered,
+                )
+                if file_integrity_manifest:
+                    body = inject_system_additions(
+                        body,
+                        tok_state=None,
+                        tool_compatible=False,
+                        pressure=current_pressure,
+                        behavior_signals=behavior_signals,
+                        file_integrity_manifest=file_integrity_manifest,
+                    )
             return Step8Result(
                 body=body,
                 behavior_signals=behavior_signals,
@@ -96,6 +111,20 @@ def run_step_8(
             tok_state = injected_state_payload
     elif skip_reason in {"short_session", "broad_audit"}:
         behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
+        if skip_reason == "short_session":
+            file_integrity_manifest = format_file_integrity_manifest(
+                session._files_read_fingerprints,
+                session._files_fully_delivered,
+            )
+            if file_integrity_manifest:
+                body = inject_system_additions(
+                    body,
+                    tok_state=None,
+                    tool_compatible=False,
+                    pressure=current_pressure,
+                    behavior_signals=behavior_signals,
+                    file_integrity_manifest=file_integrity_manifest,
+                )
         return Step8Result(
             body=body,
             behavior_signals=behavior_signals,

@@ -805,6 +805,7 @@ def compress_tool_results_impl(
     file_heat: dict[str, float] | None = None,
     session: Any | None = None,
     model_profile: Any | None = None,
+    files_read_fingerprints: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
     precision_ranges_by_path: dict[str, list[tuple[int, int]]] = {}
@@ -1109,8 +1110,19 @@ def compress_tool_results_impl(
         _mark_file_fully_delivered(norm_path)
         if session_files_read is not None:
             session_files_read.add(norm_path)
+        if files_read_fingerprints is not None and raw:
+            files_read_fingerprints[norm_path] = _compute_semantic_hash(raw)[:8]
         if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
             _cache_semantic_hash(context, raw, semantic_hash_cache)
+
+    def _text_from_tool_result_content_blocks(raw: list[Any]) -> str:
+        parts: list[str] = []
+        for item in raw:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text", "")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
 
     def _stable_result_header(content_hash: str) -> str:
         return f"@stable_result(hash:{content_hash};fidelity:summary;lossy:true)"
@@ -1326,6 +1338,11 @@ def compress_tool_results_impl(
             if not (isinstance(block, dict) and block.get("type") == "tool_result"):
                 continue
 
+            tool_id = block.get("tool_use_id", "")
+            ctx: dict[str, Any] | None = None
+            if tool_use_id_to_context is not None:
+                ctx = tool_use_id_to_context.get(tool_id)
+
             raw = block.get("content", "")
             if not isinstance(raw, str):
                 if isinstance(raw, list):
@@ -1333,12 +1350,12 @@ def compress_tool_results_impl(
                     if img_saved > 0:
                         block["content"] = new_content
                         breakdown["image_dedup"] = breakdown.get("image_dedup", 0) + img_saved
+                    if ctx:
+                        text_raw = _text_from_tool_result_content_blocks(new_content)
+                        norm_path = _extract_normalized_path(ctx)
+                        if text_raw and _preserve_first_exact_observation(ctx, text_raw, norm_path):
+                            continue
                 continue
-
-            tool_id = block.get("tool_use_id", "")
-            ctx: dict[str, Any] | None = None
-            if tool_use_id_to_context is not None:
-                ctx = tool_use_id_to_context.get(tool_id)
 
             if ctx:
                 norm_path = _extract_normalized_path(ctx)
@@ -1793,6 +1810,7 @@ def inject_system_additions_impl(
     pressure: int = 0,
     runtime_hints: list[str] | None = None,
     behavior_signals: dict[str, int] | None = None,
+    file_integrity_manifest: str | None = None,
 ) -> dict[str, Any]:
     """Inject dynamic state into system prompt."""
     output_directive = ""
@@ -1824,6 +1842,8 @@ def inject_system_additions_impl(
             dynamic_blocks.append(f"@state\n{tok_state}")
         else:
             dynamic_blocks.append(tok_state)
+    if file_integrity_manifest:
+        dynamic_blocks.append(f"@reads\n{file_integrity_manifest}")
     if deltas:
         dynamic_blocks.append(f"@delta\n{deltas}")
     if todo:
@@ -1832,7 +1852,7 @@ def inject_system_additions_impl(
     dynamic_state = "\n\n".join(dynamic_blocks)
     current_sys_prompt = body.get("system", "")
     if isinstance(current_sys_prompt, str):
-        additions = [output_directive]
+        additions = [output_directive] if output_directive.strip() else []
         if dynamic_state:
             additions.append(dynamic_state)
         addition = "\n\n".join(additions)
@@ -1845,7 +1865,7 @@ def inject_system_additions_impl(
             new_blocks.append({"type": "text", "text": dynamic_state})
         body["system"] = new_blocks
     else:
-        additions = [output_directive]
+        additions = [output_directive] if output_directive.strip() else []
         if dynamic_state:
             additions.append(dynamic_state)
         body["system"] = "\n\n".join(additions)

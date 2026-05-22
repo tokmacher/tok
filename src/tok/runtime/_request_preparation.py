@@ -17,6 +17,7 @@ from tok.compression import (
     inject_system_additions,
     text_of,
 )
+from tok.compression._file_integrity import format_file_integrity_manifest
 from tok.macros.ir import Instruction
 from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body
 from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
@@ -1174,6 +1175,7 @@ def prepare_request_impl(
                 file_heat=dict(session.bridge_memory._file_heat),
                 session=session,
                 model_profile=session.effective_model_profile,
+                files_read_fingerprints=session._files_read_fingerprints,
             )
             tool_saved = sum(type_breakdown.values()) // 4
             if tool_saved > 0:
@@ -1571,10 +1573,29 @@ def prepare_request_impl(
         elif skip_reason in {"short_session", "broad_audit"}:
             # Skip all Tok additions when overhead would dominate the turn.
             behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
+            if skip_reason == "short_session":
+                file_integrity_manifest = format_file_integrity_manifest(
+                    session._files_read_fingerprints,
+                    session._files_fully_delivered,
+                )
+                if file_integrity_manifest:
+                    system_body = inject_system_additions(
+                        body,
+                        tok_state=None,
+                        tool_compatible=False,
+                        pressure=current_pressure,
+                        behavior_signals=behavior_signals,
+                        file_integrity_manifest=file_integrity_manifest,
+                    )
+                    body["system"] = system_body.get("system", body.get("system", ""))
         else:
             max_runtime_hints = RUNTIME_HINTS_MAX_PER_TURN
             if len(runtime_hints) > max_runtime_hints:
                 runtime_hints = runtime_hints[:max_runtime_hints]
+            file_integrity_manifest = format_file_integrity_manifest(
+                session._files_read_fingerprints,
+                session._files_fully_delivered,
+            )
             system_body = inject_system_additions(
                 body,
                 tok_state=session_memory,
@@ -1582,6 +1603,7 @@ def prepare_request_impl(
                 pressure=current_pressure,
                 runtime_hints=runtime_hints,
                 behavior_signals=behavior_signals,
+                file_integrity_manifest=file_integrity_manifest,
             )
             body["system"] = system_body.get("system", body.get("system", ""))
 
