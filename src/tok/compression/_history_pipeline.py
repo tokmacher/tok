@@ -49,6 +49,7 @@ from ._feature_flags import (
     TOK_ENABLE_SEARCH_OVERLAP_DELTA,
     TOK_ENABLE_STACK_REPEAT_DELTA,
 )
+from ._image_dedup import strip_duplicate_images as _strip_duplicate_images
 from ._registry import Compressor
 from ._tool_result_codecs import (
     _compress_config_json,
@@ -65,12 +66,6 @@ from ._tool_result_codecs import (
     _compress_search_results,
     _compress_stack_traces,
 )
-from ._tool_taxonomy import (
-    LISTING_LIKE_TOOLS,
-    SEARCH_LIKE_TOOLS,
-)
-
-WEB_RESULT_TOOLS = frozenset({"web_search", "websearch", "web_fetch", "webfetch"})
 from ._tool_result_pipeline import (
     compress_git_log_impl as _compress_git_log_impl_fn,
 )
@@ -80,6 +75,12 @@ from ._tool_result_pipeline import (
 from ._tool_result_pipeline import (
     tok_tool_result_impl as _tok_tool_result_impl,
 )
+from ._tool_taxonomy import (
+    LISTING_LIKE_TOOLS,
+    SEARCH_LIKE_TOOLS,
+)
+
+WEB_RESULT_TOOLS = frozenset({"web_search", "websearch", "web_fetch", "webfetch"})
 
 __all__ = [
     "RECENT_WINDOW_THRESHOLD",
@@ -811,6 +812,7 @@ def compress_tool_results_impl(
     search_seen_matches: dict[str, set[str]] = {}
     stack_prev_by_signature: dict[str, str] = {}
     feature_telemetry: dict[str, dict[str, int]] = {}
+    _seen_image_fps: set[str] = set()
     _skip_stable_result = model_profile is not None and not getattr(model_profile, "stable_result_enabled", True)
     _skip_file_skeleton = model_profile is not None and not getattr(model_profile, "skeletonize_files", True)
     # Tracks paths first seen in this compress pass — used to dedup parallel reads
@@ -1326,6 +1328,11 @@ def compress_tool_results_impl(
 
             raw = block.get("content", "")
             if not isinstance(raw, str):
+                if isinstance(raw, list):
+                    new_content, img_saved = _strip_duplicate_images(raw, _seen_image_fps)
+                    if img_saved > 0:
+                        block["content"] = new_content
+                        breakdown["image_dedup"] = breakdown.get("image_dedup", 0) + img_saved
                 continue
 
             tool_id = block.get("tool_use_id", "")

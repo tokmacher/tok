@@ -229,6 +229,9 @@ class RuntimeSession:
     # session_persistence groups bridge_memory + persistence helpers (§5.3.2)
     # Initialized in __post_init__ so it aliases the same bridge_memory object.
     session_persistence: SessionPersistenceState = field(init=False, repr=False, default=None)
+    # Paragraph-level fingerprints of the system prompt from the prior turn,
+    # used by _system_prompt_cache to detect the static prefix for cache hints.
+    _system_fingerprints: list[str] | None = field(default=None, init=False, repr=False)
 
     def record_fallback_event(self) -> None:
         self.fallback.record_fallback_event()

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tok.compression import inject_system_additions
+from tok.compression._system_prompt_cache import apply_system_cache_hint
 from tok.runtime.core import RuntimeSession, UniversalTokRuntime
 from tok.runtime.pipeline.request_preparation import _inject_system
 from tok.runtime.types import RuntimeRequest
@@ -116,6 +117,13 @@ def run_step_8(
         )
         body["system"] = system_body.get("system", body.get("system", ""))
         tok_state = session_memory
+
+    body["system"], session._system_fingerprints, _sys_static_chars = apply_system_cache_hint(
+        body.get("system", ""),
+        getattr(session, "_system_fingerprints", None),
+    )
+    if _sys_static_chars > 0:
+        behavior_signals["system_prompt_cache_hint_chars"] = _sys_static_chars
 
     return Step8Result(
         body=body,
