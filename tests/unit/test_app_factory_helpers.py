@@ -15,6 +15,7 @@ from tok.gateway._app_factory import (
 )
 from tok.receipt import _session_id_from_session as receipt_session_id
 from tok.receipt import bridge_receipt_path, read_bridge_receipts
+from tok.runtime._request_lifecycle import RequestLifecycle
 from tok.runtime.smoothness.models import SmoothnessEvent, SmoothnessEventType, TokMode, TurnSmoothnessReport
 from tok.utils.savings_event import read_savings_events
 
@@ -299,6 +300,31 @@ def test_operation_receipt_emits_at_most_once_per_request(tmp_path) -> None:
 
     path = bridge_receipt_path(memory_dir=tmp_path, session_id=receipt_session_id(session))
     assert len(read_bridge_receipts(path)) == 1
+
+
+def test_operation_receipt_includes_request_lifecycle_summary(tmp_path) -> None:
+    session = _make_session(memory_dir=tmp_path)
+    session._operation_receipt_emitted = False
+    session._last_request_lifecycle = RequestLifecycle(**{stage: True for stage in RequestLifecycle._GATEWAY_STAGES})
+
+    _emit_operation_receipt(
+        session,
+        request_policy="tool_compatible",
+        compressed=True,
+        fallback=False,
+        input_saved=10,
+        output_saved=0,
+        prompt_metrics={},
+    )
+
+    path = bridge_receipt_path(memory_dir=tmp_path, session_id=receipt_session_id(session))
+    receipts = read_bridge_receipts(path)
+    assert len(receipts) == 1
+    summary = receipts[0].evidence_summary["request_lifecycle"]
+    assert summary == {
+        "gateway_stages_complete": True,
+        "incomplete_gateway_stages": [],
+    }
 
 
 def test_build_response_signals_normalizes_tool_use_on_textless_response() -> None:

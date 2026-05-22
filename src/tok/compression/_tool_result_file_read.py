@@ -107,6 +107,7 @@ _SMALL_FILE_MAX_CHARS = 10000
 _SKELETON_HEAT_THRESHOLD = 3.0  # heat units before forcing skeleton on small hot files
 
 _SECTION_MAP_RE = re.compile(r"^(class |def |async def )\s*(\w+)")
+_TS_JS_EXTENSIONS: frozenset[str] = frozenset({".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs", ".cts", ".cjs"})
 
 
 def _build_section_map(lines: list[str]) -> str:
@@ -170,6 +171,17 @@ def _is_python_file(text: str, tool_context: dict[str, Any] | None = None) -> bo
                 if match_count >= 3:
                     return True
     return False
+
+
+def _is_ts_js_file(tool_context: dict[str, Any] | None = None) -> bool:
+    """Return True when tool_context names a TypeScript or JavaScript file path."""
+    if not tool_context:
+        return False
+    args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+    path = str(
+        args.get("path") or args.get("file_path") or args.get("AbsolutePath") or args.get("TargetFile") or ""
+    ).lower()
+    return any(path.endswith(ext) for ext in _TS_JS_EXTENSIONS)
 
 
 def _extract_python_skeleton(text: str) -> str | None:
@@ -503,6 +515,144 @@ def _extract_python_skeleton(text: str) -> str | None:
     return "\n".join(result)
 
 
+_TS_TOPLEVEL_RE = re.compile(
+    r"^(export\s+)?"
+    r"(default\s+)?"
+    r"(declare\s+)?"
+    r"(abstract\s+)?"
+    r"(async\s+)?"
+    r"(function|class|interface|type|enum|const|let|var)\b"
+)
+_TS_IMPORT_RE = re.compile(r"^import\b")
+_TS_EXPORT_BARE_RE = re.compile(r"^export\s+(default\b|\{)")
+_TS_DECORATOR_RE = re.compile(r"^\s*@\w+")
+_TS_METHOD_RE = re.compile(
+    r"^\s{1,4}(public|private|protected|static|abstract|override|async|readonly)?\s*"
+    r"(\[|[#a-zA-Z_$])\w*\s*[(<:]"
+)
+_TS_STMT_END_RE = re.compile(r"[;}\]]\s*$")
+
+
+def _extract_ts_js_skeleton(text: str) -> str | None:
+    """Extract a structural skeleton from TypeScript/JavaScript source."""
+    lines = text.splitlines()
+    if len(lines) <= _SMALL_FILE_MAX_LINES and len(text) <= _SMALL_FILE_MAX_CHARS:
+        return None
+
+    result: list[str] = []
+    i = 0
+    in_class_body = False
+    class_brace_depth = 0
+    pending_decorator: str | None = None
+    body_lines_skipped = 0
+
+    def _flush_body_skip() -> None:
+        nonlocal body_lines_skipped
+        if body_lines_skipped > 0:
+            result.append(f"  // ... [{body_lines_skipped} lines]")
+            body_lines_skipped = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if not stripped:
+            i += 1
+            continue
+
+        if _TS_DECORATOR_RE.match(line):
+            _flush_body_skip()
+            pending_decorator = stripped
+            i += 1
+            continue
+
+        if _TS_IMPORT_RE.match(stripped):
+            _flush_body_skip()
+            sig_parts = [stripped]
+            j = i + 1
+            while j < len(lines) and not _TS_STMT_END_RE.search(sig_parts[-1]):
+                sig_parts.append(lines[j].strip())
+                j += 1
+            result.append(" ".join(sig_parts))
+            pending_decorator = None
+            i = j
+            continue
+
+        if _TS_EXPORT_BARE_RE.match(stripped):
+            _flush_body_skip()
+            result.append(stripped)
+            pending_decorator = None
+            i += 1
+            continue
+
+        if _TS_TOPLEVEL_RE.match(stripped):
+            _flush_body_skip()
+            if pending_decorator:
+                result.append(pending_decorator)
+                pending_decorator = None
+            sig_parts = [stripped]
+            opens = stripped.count("{") - stripped.count("}")
+            j = i + 1
+            while j < len(lines) and opens <= 0 and "=>" not in sig_parts[-1]:
+                next_stripped = lines[j].strip()
+                sig_parts.append(next_stripped)
+                opens += next_stripped.count("{") - next_stripped.count("}")
+                j += 1
+                if "{" in next_stripped or "=>" in next_stripped:
+                    break
+            sig_line = " ".join(sig_parts)
+            brace_pos = sig_line.find("{")
+            if brace_pos != -1:
+                sig_line = sig_line[:brace_pos].rstrip() + " {"
+            result.append(sig_line)
+            if re.search(r"\bclass\b", sig_line):
+                in_class_body = True
+                class_brace_depth = 1
+            i = j
+            continue
+
+        if in_class_body:
+            opens = stripped.count("{") - stripped.count("}")
+            class_brace_depth += opens
+            if class_brace_depth <= 0:
+                _flush_body_skip()
+                result.append("}")
+                in_class_body = False
+                class_brace_depth = 0
+                i += 1
+                continue
+            if _TS_METHOD_RE.match(line):
+                _flush_body_skip()
+                method_parts = [stripped]
+                k = i + 1
+                while k < len(lines) and "{" not in method_parts[-1] and ";" not in method_parts[-1]:
+                    method_parts.append(lines[k].strip())
+                    k += 1
+                method_sig = " ".join(method_parts)
+                brace_pos = method_sig.find("{")
+                if brace_pos != -1:
+                    method_sig = method_sig[:brace_pos].rstrip() + " { ... }"
+                result.append("  " + method_sig)
+                i = k
+                continue
+            body_lines_skipped += 1
+            i += 1
+            continue
+
+        body_lines_skipped += 1
+        i += 1
+
+    _flush_body_skip()
+
+    if not result:
+        return None
+
+    skeleton = "\n".join(result)
+    if len(skeleton) >= len(text):
+        return None
+    return skeleton
+
+
 _OBSERVABILITY_PATH_FRAGMENTS = frozenset(
     {
         "bridge.log",
@@ -625,6 +775,37 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
                 + "\n# [tok optimized] File unchanged — showing structure to save tokens\n"
                 + f"# Full content: Read path={_path_hint} offset=1 (adds limit=N for specific section)\n"
                 + ast_skeleton
+            )
+
+    if _is_ts_js_file(tool_context):
+        ts_skeleton = _extract_ts_js_skeleton(text)
+        if ts_skeleton is not None:
+            original_chars = len(text)
+            skeleton_lines = ts_skeleton.count("\n") + 1
+            if session and hasattr(session, "_skeleton_delivered_paths") and tool_context:
+                args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
+                path = str(
+                    args.get("path")
+                    or args.get("file_path")
+                    or args.get("AbsolutePath")
+                    or args.get("TargetFile")
+                    or ""
+                )
+                if path:
+                    norm_path = normalize_path_target(path)
+                    session._skeleton_delivered_paths.add(norm_path)
+
+            header = (
+                f">>> tool:file_read|original_chars:{original_chars}|"
+                f"skeleton_lines:{skeleton_lines}|retained_skeleton_lines:{skeleton_lines}|"
+                "ts_skeleton:true|is_skeleton:true|fidelity:summary|lossy:true"
+            )
+            _path_hint = _path_label or "..."
+            return (
+                header
+                + "\n# [tok optimized] File unchanged — showing structure to save tokens\n"
+                + f"# Full content: Read path={_path_hint} offset=1 (adds limit=N for specific section)\n"
+                + ts_skeleton
             )
 
     # Fall back to heuristic skeletonization for non-Python files

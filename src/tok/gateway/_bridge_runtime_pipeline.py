@@ -184,6 +184,7 @@ def prepare_bridge_payload(
         surface_adapter=bridge_surface.adapter,
     )
     if preflight_response is not None:
+        session._last_request_lifecycle = lifecycle
         return payload, preflight_response
 
     cooldown_remaining = getattr(session.runtime_session, "_stream_recovery_cooldown_remaining", 0)
@@ -191,6 +192,7 @@ def prepare_bridge_payload(
         session.runtime_session._stream_recovery_cooldown_remaining = max(0, cooldown_remaining - 1)
 
     if path != "v1/messages":
+        session._last_request_lifecycle = lifecycle
         return payload, None
 
     if tok_tool_header.lower() in {"0", "false", "off", "no"}:
@@ -351,6 +353,12 @@ def prepare_bridge_payload(
     lifecycle = replace(lifecycle, plan_finalization_guard=True)
 
     lifecycle = replace(lifecycle, final_payload_construction=True)
+    incomplete_stages = lifecycle.incomplete_gateway_stages()
+    if incomplete_stages:
+        logger.warning(
+            "request_lifecycle_incomplete: stages not reached: %s",
+            ", ".join(incomplete_stages),
+        )
     payload = BridgePreparedPayload(
         body=prepared_body,
         behavior_signals=dict(behavior_signals),
@@ -372,4 +380,5 @@ def prepare_bridge_payload(
         "request_lifecycle: %s",
         {f: getattr(lifecycle, f) for f in lifecycle.__dataclass_fields__},
     )
+    session._last_request_lifecycle = lifecycle
     return payload, preflight_response

@@ -448,3 +448,81 @@ class TestSavingsEventCrashSafety:
         out_file = tmp_path / "nonexistent.jsonl"
         events = read_savings_events(out_file)
         assert events == []
+
+
+class TestEmitSavingsEventCostAccounting:
+    """emit_savings_event must populate cost fields using model pricing."""
+
+    def _make_mock_session(self, tmp_path: Path) -> object:
+        import types
+
+        session = types.SimpleNamespace()
+        session.memory_dir = tmp_path
+        session.session_id = "live:test_cost_accounting"
+        session._savings_event_emitted = False
+        session._operation_receipt_emitted = False
+        return session
+
+    def test_emit_savings_event_populates_cost_fields_for_known_model(self, tmp_path: Path) -> None:
+        from tok.gateway._operation_artifacts import emit_savings_event
+        from tok.utils.savings_event import read_savings_events
+
+        session = self._make_mock_session(tmp_path)
+        emit_savings_event(
+            session,
+            model="claude-sonnet-4-6",
+            usage={"input_tokens": 1000, "output_tokens": 200},
+            request_policy="natural_first",
+            compressed=True,
+            fallback=False,
+            input_saved=500,
+            output_saved=10,
+            tool_breakdown=None,
+            prompt_metrics=None,
+        )
+        from tok.receipt import _session_id_from_session, bridge_receipt_path
+
+        events_path = bridge_receipt_path(
+            memory_dir=tmp_path,
+            session_id=_session_id_from_session(session),
+        ).with_name("savings_events.jsonl")
+        assert events_path.exists(), "savings_events.jsonl was not created"
+        events = read_savings_events(events_path)
+        assert len(events) == 1
+        ev = events[0]
+        assert ev.actual_cost_usd > 0.0, "actual_cost_usd must be non-zero for known model"
+        assert ev.baseline_cost_usd > ev.actual_cost_usd, (
+            "baseline_cost_usd must exceed actual_cost_usd when tokens were saved"
+        )
+        assert ev.cost_saved_usd > 0.0, "cost_saved_usd must be non-zero when tokens were saved"
+
+    def test_emit_savings_event_zeroes_cost_on_fallback(self, tmp_path: Path) -> None:
+        from tok.gateway._operation_artifacts import emit_savings_event
+        from tok.utils.savings_event import read_savings_events
+
+        session = self._make_mock_session(tmp_path)
+        emit_savings_event(
+            session,
+            model="claude-sonnet-4-6",
+            usage={"input_tokens": 1000, "output_tokens": 200},
+            request_policy="natural_first",
+            compressed=False,
+            fallback=True,
+            input_saved=500,
+            output_saved=10,
+            tool_breakdown=None,
+            prompt_metrics=None,
+        )
+        from tok.receipt import _session_id_from_session, bridge_receipt_path
+
+        events_path = bridge_receipt_path(
+            memory_dir=tmp_path,
+            session_id=_session_id_from_session(session),
+        ).with_name("savings_events.jsonl")
+        assert events_path.exists()
+        events = read_savings_events(events_path)
+        assert len(events) == 1
+        ev = events[0]
+        assert ev.cost_saved_usd == 0.0, "cost_saved_usd must be zero when fallback=True"
+        assert ev.baseline_cost_usd == 0.0, "baseline_cost_usd must be zero when fallback=True"
+        assert ev.actual_cost_usd == 0.0, "actual_cost_usd must be zero when fallback=True"

@@ -968,3 +968,89 @@ def test_legacy_3tuple_cache_entry_requires_verbatim_first_read() -> None:
         "Legacy 3-tuple entries must require verbatim first read (first_read_complete=False)"
     )
     assert version == 3
+
+
+def test_is_ts_js_file_returns_true_for_ts_extension() -> None:
+    from tok.compression._tool_result_file_read import _is_ts_js_file
+
+    ctx = {"args": {"path": "/project/src/utils.ts"}}
+    assert _is_ts_js_file(ctx) is True
+
+
+def test_is_ts_js_file_returns_true_for_tsx_extension() -> None:
+    from tok.compression._tool_result_file_read import _is_ts_js_file
+
+    ctx = {"args": {"path": "/project/src/Component.tsx"}}
+    assert _is_ts_js_file(ctx) is True
+
+
+def test_is_ts_js_file_returns_false_for_py_extension() -> None:
+    from tok.compression._tool_result_file_read import _is_ts_js_file
+
+    ctx = {"args": {"path": "/project/src/utils.py"}}
+    assert _is_ts_js_file(ctx) is False
+
+
+def test_is_ts_js_file_returns_false_without_context() -> None:
+    from tok.compression._tool_result_file_read import _is_ts_js_file
+
+    assert _is_ts_js_file(None) is False
+
+
+def test_compress_file_read_skeletonizes_large_ts_file() -> None:
+    lines = [
+        "import { useState, useEffect } from 'react';",
+        "import type { FC } from 'react';",
+        "",
+        "interface UserProps {",
+        "  id: number;",
+        "  name: string;",
+        "}",
+        "",
+        "export interface ApiResponse<T> {",
+        "  data: T;",
+        "  error: string | null;",
+        "}",
+        "",
+        "export const fetchUser = async (id: number): Promise<ApiResponse<UserProps>> => {",
+    ]
+    lines += [f"  const x{i} = id + {i};" for i in range(200)]
+    lines += [
+        "  return { data: { id, name: 'test' }, error: null };",
+        "};",
+        "",
+        "export class UserService {",
+        "  private cache: Map<number, UserProps> = new Map();",
+        "",
+        "  async getUser(id: number): Promise<UserProps | null> {",
+    ]
+    lines += [f"    const tmp{i} = this.cache.get(id + {i});" for i in range(100)]
+    lines += [
+        "    return null;",
+        "  }",
+        "}",
+    ]
+    ts_content = "\n".join(lines)
+    ctx = {"args": {"path": "/project/src/user.ts"}}
+
+    compressed = _compress_file_read(ts_content, tool_context=ctx)
+
+    assert "ts_skeleton:true" in compressed
+    assert len(compressed) < len(ts_content)
+    assert "import { useState" in compressed
+    assert "UserService" in compressed
+
+
+def test_compress_file_read_does_not_skeletonize_small_ts_file() -> None:
+    small_ts = "\n".join(
+        [
+            "import { x } from './x';",
+            "export const greet = (name: string): string => `Hello ${name}`;",
+        ]
+    )
+    assert len(small_ts) < 10000
+    ctx = {"args": {"path": "/project/src/greet.ts"}}
+
+    result = _compress_file_read(small_ts, tool_context=ctx)
+
+    assert result == small_ts

@@ -67,7 +67,8 @@ class TestRequestLifecycleDataclass:
             compression_safety_applied=True,
             response_processing_complete=True,
         )
-        assert all(getattr(lc, f.name) is True for f in lc.__dataclass_fields__.values())
+        stage_fields = [name for name in lc.__dataclass_fields__ if not name.startswith("_")]
+        assert all(getattr(lc, name) is True for name in stage_fields)
 
 
 class TestBridgePreparedPayloadLifecycleField:
@@ -168,6 +169,17 @@ class TestPipelineLifecycleFlagsCoverage:
         assert lc.tool_event_normalization is True
         assert lc.hot_memory_refresh is True
 
+    def test_prepare_bridge_payload_stores_lifecycle_on_session_for_receipts(self) -> None:
+        session = BridgeSession()
+        payload, _ = prepare_bridge_payload(
+            session=session,
+            body=_minimal_body(),
+            headers={"x-api-key": "test-key"},
+            path="v1/messages",
+        )
+        assert payload.lifecycle is not None
+        assert session._last_request_lifecycle is payload.lifecycle
+
 
 class TestAllFourteenStages:
     """RED: all 14 stages must exist and be wired after a full pipeline run."""
@@ -262,3 +274,33 @@ class TestLifecycleStateAfterFailOpenRetry:
         # but does NOT touch the lifecycle field on the payload.
         assert payload.lifecycle is lc_before_retry  # lifecycle is the same object
         assert payload.lifecycle.final_payload_construction is True
+
+
+class TestRequestLifecycleGatewayCompleteness:
+    """gateway_stages_complete must reflect whether all bridge-pipeline stages ran."""
+
+    def _all_gateway_stages_true(self) -> dict[str, bool]:
+        return {stage: True for stage in RequestLifecycle._GATEWAY_STAGES}
+
+    def test_gateway_stages_complete_true_when_all_set(self) -> None:
+        lc = RequestLifecycle(**self._all_gateway_stages_true())
+        assert lc.gateway_stages_complete() is True
+        assert lc.incomplete_gateway_stages() == []
+
+    def test_gateway_stages_complete_false_when_one_missing(self) -> None:
+        stages = self._all_gateway_stages_true()
+        stages["signals_and_metrics"] = False
+        lc = RequestLifecycle(**stages)
+        assert lc.gateway_stages_complete() is False
+        assert "signals_and_metrics" in lc.incomplete_gateway_stages()
+
+    def test_response_processing_complete_not_in_gateway_stages(self) -> None:
+        assert "response_processing_complete" not in RequestLifecycle._GATEWAY_STAGES, (
+            "response_processing_complete is a post-response stage and must not be included"
+        )
+
+    def test_default_lifecycle_reports_all_stages_incomplete(self) -> None:
+        lc = RequestLifecycle()
+        assert lc.gateway_stages_complete() is False
+        incomplete = lc.incomplete_gateway_stages()
+        assert len(incomplete) == len(RequestLifecycle._GATEWAY_STAGES)
