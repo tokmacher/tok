@@ -1,7 +1,9 @@
 """Tests for tok.translator — output-side Tok -> readable English."""
 
 from tok.runtime.policy.translator import (
-    _is_likely_tok,
+    is_likely_tok as _is_likely_tok,
+)
+from tok.runtime.policy.translator import (
     postprocess_response,
     strip_markdown_fallback,
     tok_to_readable,
