@@ -37,12 +37,6 @@ def _make_long_convo(n_turns: int, content: str = "short") -> list[dict[str, Any
 
 
 class TestAuditDataclassesRegression:
-    def test_stage_hit_equality(self) -> None:
-        from tok.compression._audit import StageHit
-
-        assert StageHit(key="a", tokens_saved=1) == StageHit(key="a", tokens_saved=1)
-        assert StageHit(key="a", tokens_saved=1) != StageHit(key="b", tokens_saved=1)
-
     def test_message_audit_is_frozen(self) -> None:
         from tok.compression._audit import MessageAudit
 

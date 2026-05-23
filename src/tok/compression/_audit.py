@@ -8,14 +8,6 @@ from typing import Any
 
 
 @dataclass(frozen=True)
-class StageHit:
-    """Reserved for future per-message stage attribution."""
-
-    key: str
-    tokens_saved: int
-
-
-@dataclass(frozen=True)
 class MessageAudit:
     index: int
     role: str

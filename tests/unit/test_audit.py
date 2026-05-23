@@ -69,24 +69,6 @@ def _make_long_convo(n_turns: int, content: str = "short") -> list[dict[str, Any
 
 
 class TestAuditDataclasses:
-    def test_stage_hit_has_key_and_tokens_saved(self) -> None:
-        from tok.compression._audit import StageHit
-
-        sh = StageHit(key="command_cached", tokens_saved=120)
-        assert sh.key == "command_cached"
-        assert sh.tokens_saved == 120
-
-    def test_stage_hit_is_frozen(self) -> None:
-        from tok.compression._audit import StageHit
-
-        sh = StageHit(key="x", tokens_saved=0)
-        raised = False
-        try:
-            sh.key = "y"  # type: ignore[misc]
-        except Exception:
-            raised = True
-        assert raised, "StageHit should be frozen"
-
     def test_message_audit_fields(self) -> None:
         from tok.compression._audit import MessageAudit
 

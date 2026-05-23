@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger("tok.adapters")
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,7 @@ def parse_or_fail_open(adapter: Any, raw_bytes: bytes) -> Any | None:
     try:
         return adapter.parse_inbound_request(raw_bytes)
     except Exception:
+        logger.debug("parse_or_fail_open: parse failed", exc_info=True)
         return None
 
 

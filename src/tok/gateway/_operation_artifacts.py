@@ -13,6 +13,26 @@ from . import BridgeSession
 logger = logging.getLogger("tok.gateway")
 
 
+def _fallback_zeroed(
+    *,
+    fallback: bool,
+    compressed: bool,
+    input_saved: int,
+    output_saved: int,
+    tool_breakdown: dict[str, int] | None,
+    prompt_metrics: dict[str, int] | None,
+) -> tuple[bool, int, int, dict[str, int], dict[str, int]]:
+    if fallback:
+        return False, 0, 0, {}, {}
+    return (
+        bool(compressed),
+        max(0, int(input_saved)),
+        max(0, int(output_saved)),
+        dict(tool_breakdown or {}),
+        dict(prompt_metrics or {}),
+    )
+
+
 def emit_operation_receipt(
     active_session: BridgeSession,
     *,
@@ -25,10 +45,14 @@ def emit_operation_receipt(
 ) -> None:
     if bool(getattr(active_session, "_operation_receipt_emitted", False)):
         return
-    effective_compressed = bool(compressed and not fallback)
-    effective_input_saved = 0 if fallback else int(input_saved)
-    effective_output_saved = 0 if fallback else int(output_saved)
-    effective_prompt_metrics = {} if fallback else dict(prompt_metrics or {})
+    effective_compressed, effective_input_saved, effective_output_saved, _, effective_prompt_metrics = _fallback_zeroed(
+        fallback=fallback,
+        compressed=compressed,
+        input_saved=input_saved,
+        output_saved=output_saved,
+        tool_breakdown=None,
+        prompt_metrics=prompt_metrics,
+    )
     try:
         from tok.receipt import emit_bridge_receipt_for_session
 
@@ -76,11 +100,20 @@ def emit_savings_event(
 ) -> None:
     if bool(getattr(active_session, "_savings_event_emitted", False)):
         return
-    effective_compressed = bool(compressed and not fallback)
-    effective_input_saved = 0 if fallback else max(0, int(input_saved))
-    effective_output_saved = 0 if fallback else max(0, int(output_saved))
-    effective_tool_breakdown = {} if fallback else dict(tool_breakdown or {})
-    effective_prompt_metrics = {} if fallback else dict(prompt_metrics or {})
+    (
+        effective_compressed,
+        effective_input_saved,
+        effective_output_saved,
+        effective_tool_breakdown,
+        effective_prompt_metrics,
+    ) = _fallback_zeroed(
+        fallback=fallback,
+        compressed=compressed,
+        input_saved=input_saved,
+        output_saved=output_saved,
+        tool_breakdown=tool_breakdown,
+        prompt_metrics=prompt_metrics,
+    )
     try:
         from tok.receipt import _session_id_from_session as receipt_session_id
         from tok.receipt import bridge_receipt_path
