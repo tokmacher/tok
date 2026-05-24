@@ -66,6 +66,8 @@ SUPPORTED_CLI_ROOT_COMMANDS: tuple[str, ...] = (
 )
 
 EXPERIMENTAL_CLI_ROOT_COMMANDS: tuple[str, ...] = (
+    "benchmark",
+    "mcp",
     "metrics",
     "dev",
     "capture-summary",

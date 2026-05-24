@@ -49,3 +49,40 @@ jobs:
         with:
           name: benchmark-smoke-${{ inputs.mode }}
           path: tmp/benchmark-smoke/
+
+  public-benchmark:
+    runs-on: ubuntu-latest
+    needs: benchmark-smoke
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Create benchmark artifact directory
+        run: mkdir -p tmp/benchmark-smoke-artifacts
+
+      - name: Run benchmark
+        run: uv run tok benchmark run --fixtures tests/fixtures/replay --output tmp/benchmark-smoke-artifacts/benchmark_latest.json --quiet
+
+      - name: Render benchmark Markdown
+        run: >
+          uv run tok benchmark report
+          --input tmp/benchmark-smoke-artifacts/benchmark_latest.json
+          --markdown
+          > tmp/benchmark-smoke-artifacts/benchmark.md
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-benchmark-${{ inputs.mode }}
+          path: |
+            tmp/benchmark-smoke-artifacts/benchmark_latest.json
+            tmp/benchmark-smoke-artifacts/benchmark.md

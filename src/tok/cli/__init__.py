@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from rich.logging import RichHandler
 
 from ._audit_commands import register as register_audit_commands
+from ._benchmark_commands import register as register_benchmark_commands
 from ._bridge_commands import register as register_bridge_commands
 from ._claude import register as register_claude_command
 from ._cli_support import console
@@ -17,6 +18,7 @@ from ._contract import register as register_contract_commands
 from ._dev import dev_app
 from ._init_commands import register as register_init_commands
 from ._install_commands import register as register_install_commands
+from ._mcp_commands import register as register_mcp_commands
 from ._memory_commands import register as register_memory_commands
 from ._metrics import metrics_app
 from ._release_commands import register as register_release_commands
@@ -82,6 +84,8 @@ register_release_commands(app)
 register_resolver_commands(app)
 register_review_commands(app)
 register_savings_audit_commands(app)
+register_mcp_commands(app)
+register_benchmark_commands(app)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1 @@
+{"model":"gpt-5.4","provider":"openai","family":"gpt","min_savings_pct":10.0,"max_invisible_pressure":2,"max_repeat_file_read":0,"max_repeat_search":0,"max_non_tok_response":0,"max_fail_open_compat_response":0,"max_malformed_tok_response":0,"max_blocker_rediscovery":0,"fixture_kind":"compression","provenance":"synthetic","common_path":true,"usage_weight":1.1}

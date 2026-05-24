@@ -41,6 +41,7 @@ optional-dependencies.dev = [
   "build>=1.2.1",
   "hatchling>=1.25",
   "hypothesis>=6",
+  "mcp>=1,<2",
   "mypy>=1",
   "pre-commit>=3",
   "pytest>=8.3,<9.1",
@@ -52,11 +53,15 @@ optional-dependencies.dev = [
   "tomli>=2; python_version<'3.11'",
   "vulture>=2,<3",
 ]
+optional-dependencies.mcp = [
+  "mcp>=1,<2",
+]
 urls.Documentation = "https://github.com/tokmacher/tok#readme"
 urls.Homepage = "https://github.com/tokmacher/tok"
 urls.Issues = "https://github.com/tokmacher/tok/issues"
 urls.Repository = "https://github.com/tokmacher/tok"
 scripts.tok = "tok.cli:app"
+scripts.tok-mcp = "tok.mcp:main"
 
 [dependency-groups]
 dev = [
