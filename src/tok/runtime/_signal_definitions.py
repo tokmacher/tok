@@ -477,6 +477,13 @@ _SIGNALS = (
         affects_health=True,
     ),
     _signal(
+        "prompt_caching_message_cache_reduced",
+        category="provider_safety",
+        severity="info",
+        label="Message-level prompt cache topology changed (non-blocking)",
+        affects_health=False,
+    ),
+    _signal(
         "tok_bridge_prepared_pairing_rejected_local",
         category="provider_safety",
         severity="warning",

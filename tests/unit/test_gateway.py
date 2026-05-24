@@ -3431,6 +3431,398 @@ def test_gateway_prompt_cached_runtime_request_preserves_system_shape_and_prefli
     assert "prompt_caching_request_mutated" not in caplog.text
 
 
+def test_gateway_allows_compressed_when_only_message_cache_reduced(tmp_path, monkeypatch, caplog) -> None:
+    """System cache preserved; old messages (with cache_control) removed by compression.
+
+    This is the production scenario that caused 147 fallbacks: history winnowing removes
+    older messages whose cache_control blocks go with them, but system-level cache is intact.
+    The compressed request must be sent (NOT reverted) — reverting wastes the compression and
+    blocks all history-winnowing savings.
+
+    Bridge flow: canonicalize strips cache_control from messages (provider_safe_original has
+    system cache only). Tok's prepare_request returns a compressed body with system cache
+    and a single current-turn message with cache_control. Cache topology changed only for
+    message-text blocks — system blocks are unchanged → should allow through.
+    """
+    memory_dir = tmp_path / ".tok"
+    memory_dir.mkdir()
+    original_payload = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": [
+            {
+                "type": "text",
+                "text": "System prompt kept across turns.",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "First turn (old, will be dropped by history winnowing).",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "First answer.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Current turn.",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
+        ],
+        "stream": False,
+    }
+    # Compressed body: system intact, old first exchange dropped.
+    compressed_payload = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": [
+            {
+                "type": "text",
+                "text": "System prompt kept across turns.",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Current turn.",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+        ],
+        "stream": False,
+    }
+    sent_bodies: list[dict] = []
+
+    def _fake_prepare_request(request, session, *, result_cache=None):
+        del session, result_cache
+        return PreparedRuntimeRequest(
+            body=compressed_payload,
+            compressed=True,
+            input_saved_tokens=30,
+            behavior_signals={},
+            type_breakdown={},
+            mode="balanced",
+            normalized_tool_events=[],
+        )
+
+    async def _fake_send(self, request, stream=False):
+        del stream
+        payload = json.loads(request.read().decode())
+        sent_bodies.append(payload)
+        return httpx.Response(
+            200,
+            json={
+                "model": "claude-sonnet-4-6",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        )
+
+    monkeypatch.setattr(gateway._RUNTIME, "prepare_request", _fake_prepare_request)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _fake_send)
+    caplog.set_level(logging.INFO, logger="tok.gateway")
+
+    app = create_app(BridgeSession(memory_dir=memory_dir, fail_open=True))
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/messages",
+        headers={
+            "x-api-key": "test",
+            "anthropic-beta": "prompt-caching-2024-07-31",
+        },
+        json=original_payload,
+    )
+
+    assert response.status_code == 200
+    # Compressed body must be sent — NOT the original.
+    assert sent_bodies == [compressed_payload], (
+        "Bridge reverted to original despite system cache being intact. "
+        "This triggers the 147-fallback regression: history winnowing is blocked."
+    )
+    assert "tok_bridge_preflight_rejected" not in caplog.text
+    assert "prompt_caching_request_mutated" not in caplog.text
+    # Non-blocking signal logged instead of a strict failure.
+    assert "prompt_caching_message_cache_reduced" in caplog.text
+
+
+def test_preflight_emits_message_cache_reduced_signal_not_fallback(tmp_path) -> None:
+    """Direct preflight unit test: message-only topology change emits the non-blocking
+    signal and must NOT set tok_fallback_activated.
+
+    This is the signal-level regression guard for the 147-fallback root cause.
+    """
+    from tok.gateway._bridge_preflight import _run_bridge_preflight
+
+    session = BridgeSession(memory_dir=tmp_path / ".tok")
+    (tmp_path / ".tok").mkdir()
+
+    # provider_safe_original: canonicalization has stripped message cache_control.
+    provider_safe_original = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": [{"type": "text", "text": "System.", "cache_control": {"type": "ephemeral"}}],
+        "messages": [
+            {"role": "user", "content": "Current turn."},  # no cache_control after canonicalize
+        ],
+        "stream": False,
+    }
+    # Tok compressed body: same system cache, current-turn message has cache_control added.
+    compressed_body = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": [{"type": "text", "text": "System.", "cache_control": {"type": "ephemeral"}}],
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Current turn.", "cache_control": {"type": "ephemeral"}}],
+            }
+        ],
+        "stream": False,
+    }
+
+    behavior_signals: dict[str, int] = {}
+    result_body, out_signals, _, early_exit = _run_bridge_preflight(
+        session,
+        body=compressed_body,
+        original_body=provider_safe_original,
+        headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+        behavior_signals=behavior_signals,
+        compressed=True,
+        request_state={},
+        path="v1/messages",
+    )
+
+    assert out_signals.get("prompt_caching_message_cache_reduced", 0) >= 1, (
+        "Expected prompt_caching_message_cache_reduced to be set when only message "
+        "cache topology changed (system cache preserved)."
+    )
+    assert out_signals.get("tok_fallback_activated", 0) == 0, (
+        "tok_fallback_activated must be 0 — message-only cache reduction is not a fallback."
+    )
+    assert out_signals.get("tok_bridge_preflight_rejected", 0) == 0
+    # Compressed body should be returned unchanged (not reverted to original).
+    assert result_body["messages"] == compressed_body["messages"]
+
+
+def test_preflight_still_blocks_when_system_cache_removed(tmp_path) -> None:
+    """Regression: system cache_control removed by compression → MUST still revert.
+
+    This is the legitimate fallback case that the fix must NOT weaken.
+    """
+    from tok.gateway._bridge_preflight import _run_bridge_preflight
+
+    session = BridgeSession(memory_dir=tmp_path / ".tok")
+    (tmp_path / ".tok").mkdir()
+
+    # Original has system with cache_control.
+    provider_safe_original = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": [{"type": "text", "text": "Cached system.", "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": "Question."}],
+        "stream": False,
+    }
+    # Compressed stripped system cache_control (system is now a plain string).
+    compressed_body = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": "Cached system.",  # no cache_control
+        "messages": [{"role": "user", "content": "Question."}],
+        "stream": False,
+    }
+
+    result_body, out_signals, _, _ = _run_bridge_preflight(
+        session,
+        body=compressed_body,
+        original_body=provider_safe_original,
+        headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+        behavior_signals={},
+        compressed=True,
+        request_state={},
+        path="v1/messages",
+    )
+
+    assert out_signals.get("tok_bridge_preflight_rejected", 0) == 1, (
+        "System cache removal must still be a blocking fallback."
+    )
+    assert out_signals.get("tok_fallback_activated", 0) == 1
+    assert out_signals.get("prompt_caching_message_cache_reduced", 0) == 0
+    # Result body should be reverted to original.
+    assert isinstance(result_body.get("system"), list), "Revert must restore system list form."
+
+
+def test_preflight_still_blocks_when_all_text_system_cache_stripped(tmp_path) -> None:
+    """Regression: all text+system cache removed, only tool cache remains → MUST still revert.
+
+    This is the 'text_system_cache_control_removed_only_tool_cache_remains' topology
+    which is a legitimate blocking case even without system_cache_removed.
+    """
+    from tok.gateway._bridge_preflight import _run_bridge_preflight
+
+    session = BridgeSession(memory_dir=tmp_path / ".tok")
+    (tmp_path / ".tok").mkdir()
+
+    # Original: NO system cache, but messages have text cache_control.
+    provider_safe_original = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": "Plain system, no caching.",
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Msg.", "cache_control": {"type": "ephemeral"}}],
+            }
+        ],
+        "tools": [
+            {
+                "name": "Read",
+                "input_schema": {"type": "object", "properties": {}},
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        "stream": False,
+    }
+    # Compressed: all text cache gone, only tool cache remains.
+    compressed_body = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": "Plain system, no caching.",
+        "messages": [{"role": "user", "content": "Msg."}],  # no cache_control
+        "tools": [
+            {
+                "name": "Read",
+                "input_schema": {"type": "object", "properties": {}},
+                "cache_control": {"type": "ephemeral"},  # tool cache preserved
+            }
+        ],
+        "stream": False,
+    }
+
+    result_body, out_signals, _, _ = _run_bridge_preflight(
+        session,
+        body=compressed_body,
+        original_body=provider_safe_original,
+        headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+        behavior_signals={},
+        compressed=True,
+        request_state={},
+        path="v1/messages",
+    )
+
+    assert out_signals.get("tok_bridge_preflight_rejected", 0) == 1, (
+        "Stripping all text+system cache (only tool cache remains) must still block."
+    )
+    assert out_signals.get("tok_fallback_activated", 0) == 1
+    assert out_signals.get("prompt_caching_message_cache_reduced", 0) == 0
+
+
+def test_preflight_message_cache_reduced_does_not_increment_fallback_counter(tmp_path) -> None:
+    """Regression: the session fallback counter must not grow for message-only cache changes.
+
+    The 147-fallback issue was driven by this counter. Lock in that a message-only cache
+    topology change keeps it at zero.
+    """
+    from tok.gateway._bridge_preflight import _run_bridge_preflight
+
+    session = BridgeSession(memory_dir=tmp_path / ".tok")
+    (tmp_path / ".tok").mkdir()
+
+    provider_safe_original = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": [{"type": "text", "text": "Sys.", "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": "Current."}],
+        "stream": False,
+    }
+    compressed_body = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": [{"type": "text", "text": "Sys.", "cache_control": {"type": "ephemeral"}}],
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "Current.", "cache_control": {"type": "ephemeral"}}]}
+        ],
+        "stream": False,
+    }
+
+    _, out_signals, _, _ = _run_bridge_preflight(
+        session,
+        body=compressed_body,
+        original_body=provider_safe_original,
+        headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+        behavior_signals={},
+        compressed=True,
+        request_state={},
+        path="v1/messages",
+    )
+
+    # The session-level fallback state should not be bumped.
+    assert session.runtime_session._consecutive_fallback_count == 0, (
+        "Consecutive fallback counter must remain 0 — message-only cache reduction is "
+        "not a session-level failure that should degrade session quality."
+    )
+    assert out_signals.get("tok_fallback_activated", 0) == 0
+
+
+def test_preflight_blocking_cache_mutation_does_not_emit_message_reduced_signal(tmp_path) -> None:
+    """Regression: when system cache IS stripped (blocking), the non-blocking signal
+    must NOT be emitted — the two paths are mutually exclusive.
+    """
+    from tok.gateway._bridge_preflight import _run_bridge_preflight
+
+    session = BridgeSession(memory_dir=tmp_path / ".tok")
+    (tmp_path / ".tok").mkdir()
+
+    provider_safe_original = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": [{"type": "text", "text": "Cached.", "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": "Q."}],
+        "stream": False,
+    }
+    compressed_body = {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 8192,
+        "system": "Cached.",  # system cache stripped — blocking path
+        "messages": [{"role": "user", "content": "Q."}],
+        "stream": False,
+    }
+
+    _, out_signals, _, _ = _run_bridge_preflight(
+        session,
+        body=compressed_body,
+        original_body=provider_safe_original,
+        headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+        behavior_signals={},
+        compressed=True,
+        request_state={},
+        path="v1/messages",
+    )
+
+    assert out_signals.get("tok_bridge_preflight_rejected", 0) == 1
+    assert out_signals.get("prompt_caching_message_cache_reduced", 0) == 0, (
+        "Non-blocking signal must NOT be emitted when system cache was stripped (blocking path)."
+    )
+
+
 def test_bridge_session_updates_family_mode_from_pressure() -> None:
     session = BridgeSession()
 
