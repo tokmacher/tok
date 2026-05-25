@@ -3031,6 +3031,82 @@ def test_answer_anchor_verified_current_suppresses_forced_full_resend(
     assert second.behavior_signals.get("answer_ready_forced_full_state_verified_skipped", 0) == 1
 
 
+def test_prepare_request_preserves_plan_handoff_history(tmp_path) -> None:
+    from tok.compression import text_of
+    from tok.runtime.core import (
+        RuntimeRequest,
+        RuntimeSession,
+        UniversalTokRuntime,
+    )
+
+    runtime = UniversalTokRuntime()
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    session.bridge_memory.turn = 10
+    plan_text = "Plan: Deterministic tool-call short-circuit\n" + ("- exact safe step\n" * 200)
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "Create an implementation plan for this task."},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "read_plan",
+                    "name": "Read",
+                    "input": {"file_path": "/Users/jfj/.claude/plans/you-are-working-on-abstract-clock.md"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "read_plan", "content": plan_text}],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "write_plan",
+                    "name": "Edit",
+                    "input": {
+                        "file_path": "/Users/jfj/.claude/plans/you-are-working-on-abstract-clock.md",
+                        "old_string": "",
+                        "new_string": plan_text,
+                    },
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "write_plan",
+                    "content": "File created successfully at: /Users/jfj/.claude/plans/you-are-working-on-abstract-clock.md",
+                }
+            ],
+        },
+        {"role": "assistant", "content": f"Here is the implementation plan.\n{plan_text}"},
+        {"role": "user", "content": "List exact commands run and results."},
+        {"role": "assistant", "content": "The plan is ready to code."},
+        {"role": "user", "content": "proceed with your plan"},
+    ]
+    request = RuntimeRequest(
+        model="claude-sonnet-4",
+        tool_compatible=True,
+        adapter_kind="claude-bridge",
+        messages=messages,
+    )
+
+    prepared = runtime.prepare_request(request, session)
+    prepared_text = "\n".join(text_of(message.get("content", "")) for message in prepared.body["messages"])
+
+    assert prepared.behavior_signals.get("context_dependency_turn") == 1
+    assert prepared.behavior_signals.get("context_dependency_kind_plan_handoff") == 1
+    assert prepared.behavior_signals.get("context_dependency_slice_preserved") == 1
+    assert prepared.behavior_signals.get("plan_finalization_turn") == 1
+    assert "Plan: Deterministic tool-call short-circuit" in prepared_text
+
+
 def test_prepare_request_preserves_exact_search_evidence_on_anchor_turn(tmp_path) -> None:
     from tok.compression import text_of
     from tok.runtime.core import (

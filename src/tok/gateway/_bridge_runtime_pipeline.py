@@ -65,7 +65,9 @@ def _apply_plan_finalization_spend_guard(
     prompt_metrics: PromptMetrics,
 ) -> tuple[dict[str, Any], bool, int, dict[str, int], dict[str, int], bool]:
     """Force final-answer/plan turns to provider-safe passthrough unless Tok clearly saves input tokens."""
-    if not behavior_signals.get("plan_finalization_turn", 0):
+    if not behavior_signals.get("plan_finalization_turn", 0) or behavior_signals.get(
+        "context_dependency_kind_plan_handoff", 0
+    ):
         return prepared_body, compressed, saved_toks, prompt_metrics, behavior_signals, False
 
     original_prompt_tokens = int(prompt_metrics.baseline_prompt_tokens)

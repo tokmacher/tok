@@ -5,6 +5,7 @@ from dataclasses import fields
 from tok.runtime.core import RuntimeSession
 from tok.runtime.pipeline._prepare_bridge_cut_search import Step7aResult
 from tok.runtime.pipeline._prepare_compress_history import Step7Result
+from tok.runtime.pipeline.context_dependency import ContextDependencyDecision
 from tok.runtime.types import RuntimeRequest
 
 
@@ -187,6 +188,7 @@ class TestStep7CompressHistory:
             history_skip_reason="",
             preserve_exact_search_evidence=False,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             broad_audit_batch=True,
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=False,
@@ -232,6 +234,7 @@ class TestStep7CompressHistory:
             history_skip_reason="",
             preserve_exact_search_evidence=False,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             broad_audit_batch=False,
             edit_reacquisition_signals={"some_signal": 1},
             stream_recovery_history_floor_active=False,
@@ -276,6 +279,7 @@ class TestStep7CompressHistory:
             history_skip_reason="",
             preserve_exact_search_evidence=False,
             plan_finalization_turn=True,
+            context_dependency=ContextDependencyDecision(),
             broad_audit_batch=False,
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=False,
@@ -320,6 +324,7 @@ class TestStep7CompressHistory:
             history_skip_reason="",
             preserve_exact_search_evidence=False,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             broad_audit_batch=False,
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=True,
@@ -365,6 +370,7 @@ class TestStep7CompressHistory:
             history_skip_reason="already_skipped",
             preserve_exact_search_evidence=False,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             broad_audit_batch=False,
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=False,
@@ -389,6 +395,137 @@ class TestStep7CompressHistory:
         assert result.skip_reason == "already_skipped"
         assert result.history_skip_reason == "already_skipped"
 
+    def test_context_dependency_compresses_prefix_and_preserves_suffix(self) -> None:
+        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+
+        prefix: list[dict[str, str]] = []
+        for index in range(8):
+            prefix.append({"role": "user", "content": f"older prefix {index} " + ("x " * 100)})
+            prefix.append({"role": "assistant", "content": f"older reply {index} " + ("y " * 100)})
+        suffix = [
+            {
+                "role": "assistant",
+                "content": "Here is the implementation plan.\nPlan: guard\n- inspect\n- patch\n- test\n",
+            },
+            {"role": "user", "content": "proceed"},
+        ]
+        messages = prefix + suffix
+        protected_start = len(prefix)
+        session = RuntimeSession()
+        session.bridge_memory.turn = 10
+        req = _make_request(adapter_kind="claude-bridge", messages=messages)
+
+        result = run_step_7(
+            session=session,
+            request=req,
+            normalized_tool_events=[],
+            body={"model": "claude-sonnet-4", "messages": list(messages)},
+            id_to_context={},
+            behavior_signals={},
+            effective_tool_compatible=False,
+            mode="balanced",
+            policy={},
+            should_skip_history=False,
+            skip_reason="",
+            history_skip_reason="",
+            preserve_exact_search_evidence=False,
+            plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(
+                depends_on_context=True,
+                kind="plan_handoff",
+                protected_suffix_start=protected_start,
+                reason="test",
+            ),
+            broad_audit_batch=False,
+            edit_reacquisition_signals={},
+            stream_recovery_history_floor_active=False,
+            session_memory="",
+            history_baseline_prompt_tokens=1000,
+            seen_mutation_pairs=None,
+            saved_tokens=0,
+            compressed=False,
+            current_pressure=0.0,
+            request_policy="legacy_tool_compatible",
+            exact_search_evidence_keys_in_request=set(),
+            recent=list(messages),
+            tok_state="",
+            type_breakdown={},
+            keep_turns=2,
+            bridge_keep_turns=2,
+            bridge_profile={},
+            h_profile={},
+            _first_exact_evidence_seen_for_compression=frozenset(),
+        )
+
+        assert len(result.body["messages"]) < len(messages)
+        assert result.body["messages"][-2:] == suffix
+        assert result.behavior_signals.get("context_dependency_slice_preserved") == 1
+        assert result.behavior_signals.get("plan_finalization_history_skipped", 0) == 0, (
+            "context_dependency slice-preserved branch must not mislabel itself as plan_finalization"
+        )
+
+    def test_context_dependency_invalid_boundary_falls_back_to_full_history(self) -> None:
+        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+
+        messages = [
+            {"role": "assistant", "content": "Plan: keep exact\n- inspect\n- patch\n- test\n"},
+            {"role": "user", "content": "proceed"},
+        ]
+        session = RuntimeSession()
+        session.bridge_memory.turn = 10
+        req = _make_request(adapter_kind="claude-bridge", messages=messages)
+
+        result = run_step_7(
+            session=session,
+            request=req,
+            normalized_tool_events=[],
+            body={"model": "claude-sonnet-4", "messages": list(messages)},
+            id_to_context={},
+            behavior_signals={},
+            effective_tool_compatible=False,
+            mode="balanced",
+            policy={},
+            should_skip_history=False,
+            skip_reason="",
+            history_skip_reason="",
+            preserve_exact_search_evidence=False,
+            plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(
+                depends_on_context=True,
+                kind="plan_handoff",
+                protected_suffix_start=None,
+                reason="test",
+            ),
+            broad_audit_batch=False,
+            edit_reacquisition_signals={},
+            stream_recovery_history_floor_active=False,
+            session_memory="",
+            history_baseline_prompt_tokens=100,
+            seen_mutation_pairs=None,
+            saved_tokens=0,
+            compressed=False,
+            current_pressure=0.0,
+            request_policy="legacy_tool_compatible",
+            exact_search_evidence_keys_in_request=set(),
+            recent=list(messages),
+            tok_state="",
+            type_breakdown={},
+            keep_turns=2,
+            bridge_keep_turns=2,
+            bridge_profile={},
+            h_profile={},
+            _first_exact_evidence_seen_for_compression=frozenset(),
+        )
+
+        assert result.body["messages"] == messages
+        assert result.should_skip_history is True
+        assert result.skip_reason == "context_dependency"
+        assert result.behavior_signals.get("context_dependency_fallback_full_history") == 1
+        assert result.behavior_signals.get("context_dependency_history_skipped") == 1
+        assert result.behavior_signals.get("plan_finalization_history_skipped", 0) == 0, (
+            "context_dependency fallback branch must not mislabel itself as plan_finalization"
+        )
+
     def test_keep_turns_and_bridge_keep_turns_preserved(self) -> None:
         from tok.runtime.pipeline._prepare_compress_history import run_step_7
 
@@ -409,6 +546,7 @@ class TestStep7CompressHistory:
             history_skip_reason="",
             preserve_exact_search_evidence=False,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             broad_audit_batch=False,
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=False,

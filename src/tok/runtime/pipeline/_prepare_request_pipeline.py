@@ -46,6 +46,7 @@ def _prepare_request_impl(
     ctx.body = s3.body
     translated_messages = s3.translated_messages
     plan_finalization_turn = s3.plan_finalization_turn
+    context_dependency = s3.context_dependency
     id_to_context = s3.id_to_context
     exact_search_evidence_keys_in_request = s3.exact_search_evidence_keys_in_request
     stream_recovery_history_floor_active = s3.stream_recovery_history_floor_active
@@ -121,6 +122,7 @@ def _prepare_request_impl(
         edit_reacquisition_signals,
         stream_recovery_history_floor_active,
         plan_finalization_turn,
+        context_dependency,
         mode,
         policy,
         exact_search_evidence_keys_in_request,
@@ -172,6 +174,7 @@ def _prepare_request_impl(
         history_skip_reason=history_skip_reason,
         preserve_exact_search_evidence=preserve_exact_search_evidence,
         plan_finalization_turn=plan_finalization_turn,
+        context_dependency=context_dependency,
         broad_audit_batch=broad_audit_batch,
         edit_reacquisition_signals=edit_reacquisition_signals,
         stream_recovery_history_floor_active=stream_recovery_history_floor_active,

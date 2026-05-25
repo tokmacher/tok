@@ -1724,6 +1724,7 @@ def compress_tool_results(
     session: Any | None = None,
     model_profile: Any | None = None,
     files_read_fingerprints: dict[str, str] | None = None,
+    protected_suffix_start: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
@@ -1747,6 +1748,7 @@ def compress_tool_results(
         session=session,
         model_profile=model_profile,
         files_read_fingerprints=files_read_fingerprints,
+        protected_suffix_start=protected_suffix_start,
     )
 
 

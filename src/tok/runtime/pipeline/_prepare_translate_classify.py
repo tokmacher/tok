@@ -7,6 +7,11 @@ from tok.compression import EDIT_LIKE_TOOLS, text_of
 from tok.macros.ir import Instruction
 from tok.runtime.core import RuntimeSession
 from tok.runtime.memory.session_state import extract_memory_items
+from tok.runtime.pipeline.context_dependency import (
+    ContextDependencyDecision,
+    classify_context_dependency,
+    context_dependency_signals,
+)
 from tok.runtime.pipeline.request_preparation import collect_transient_error_snippets
 from tok.runtime.pipeline.response_processing import translate_request_results
 from tok.runtime.pipeline.tool_processing import (
@@ -123,6 +128,7 @@ class Step3Result:
     stream_recovery_history_floor_active: bool = False
     runtime_hints: list[str] = field(default_factory=list)
     translated_messages: list[dict[str, Any]] = field(default_factory=list)
+    context_dependency: ContextDependencyDecision = field(default_factory=ContextDependencyDecision)
 
 
 def run_step_3(
@@ -136,6 +142,7 @@ def run_step_3(
 
     translated_messages = translate_request_results(body.get("messages", []))
     body["messages"] = translated_messages
+    context_dependency = classify_context_dependency(translated_messages)
     plan_finalization_turn = request.uses_plan_finalization_guard and is_plan_or_answer_finalization_turn(
         translated_messages
     )
@@ -181,6 +188,8 @@ def run_step_3(
         id_to_context,
         suppress_reacquisition_once=suppress_reacquisition_once,
     )
+    for key, value in context_dependency_signals(context_dependency).items():
+        behavior_signals[key] = behavior_signals.get(key, 0) + value
     if suppress_reacquisition_once:
         session._stream_recovery_reacquisition_budget = max(0, session._stream_recovery_reacquisition_budget - 1)
     behavior_signals["_project_markers_proxy"] = len(session._project_markers)
@@ -235,4 +244,5 @@ def run_step_3(
         stream_recovery_history_floor_active=stream_recovery_history_floor_active,
         runtime_hints=runtime_hints,
         translated_messages=translated_messages,
+        context_dependency=context_dependency,
     )

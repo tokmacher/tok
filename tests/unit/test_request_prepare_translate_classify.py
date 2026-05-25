@@ -46,6 +46,7 @@ class TestStep3ResultDefaults:
         assert r.stream_recovery_history_floor_active is False
         assert r.runtime_hints == []
         assert r.translated_messages == []
+        assert r.context_dependency.depends_on_context is False
 
     def test_step3_result_all_fields_present(self) -> None:
         expected = {
@@ -65,6 +66,7 @@ class TestStep3ResultDefaults:
             "stream_recovery_history_floor_active",
             "runtime_hints",
             "translated_messages",
+            "context_dependency",
         }
         actual = {f.name for f in fields(Step3Result)}
         assert actual == expected
@@ -110,6 +112,24 @@ class TestStep3TranslateClassify:
         )
         result = run_step_3(req, session, body, is_bridge_adapter=True)
         assert result.plan_finalization_turn is True
+
+    def test_plan_handoff_uses_context_dependency_not_phrase_finalization(self) -> None:
+        session = RuntimeSession()
+        messages = [
+            {"role": "assistant", "content": "Plan: inspect, patch, test.\n- read\n- edit\n- verify"},
+            {"role": "user", "content": "proceed with your plan"},
+        ]
+        body = _make_body(messages=messages)
+        req = _make_request(adapter_kind="claude-bridge", messages=messages)
+
+        result = run_step_3(req, session, body, is_bridge_adapter=True)
+
+        assert result.plan_finalization_turn is False
+        assert result.context_dependency.depends_on_context is True
+        assert result.context_dependency.kind == "plan_handoff"
+        assert result.context_dependency.protected_suffix_start == 0
+        assert result.behavior_signals.get("context_dependency_kind_plan_handoff") == 1
+        assert result.behavior_signals.get("plan_finalization_turn") == 1
 
     def test_skip_history_defaults_false(self) -> None:
         session = RuntimeSession()

@@ -806,6 +806,7 @@ def compress_tool_results_impl(
     session: Any | None = None,
     model_profile: Any | None = None,
     files_read_fingerprints: dict[str, str] | None = None,
+    protected_suffix_start: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
     precision_ranges_by_path: dict[str, list[tuple[int, int]]] = {}
@@ -1266,7 +1267,9 @@ def compress_tool_results_impl(
             first_exact_evidence_seen.add(key)
         return True
 
-    for msg in messages:
+    for msg_index, msg in enumerate(messages):
+        if protected_suffix_start is not None and msg_index >= protected_suffix_start:
+            continue
         if msg.get("role") == "user" and not _is_tool_result_only_user_message(msg):
             _same_turn_seen_paths.clear()
         content = msg.get("content")

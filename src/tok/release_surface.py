@@ -54,6 +54,12 @@ EXPERIMENTAL_ROOT_EXPORTS: tuple[str, ...] = (
     "wrap",
 )
 
+# Experimental submodules: importable via explicit path, never via tok root namespace.
+# Not covered by the 0.2.x compatibility promise.
+EXPERIMENTAL_SUBMODULE_PATHS: tuple[str, ...] = (
+    "tok.deterministic",  # deterministic action receipts (Slice C/D)
+)
+
 SUPPORTED_CLI_ROOT_COMMANDS: tuple[str, ...] = (
     "audit",
     "bridge",

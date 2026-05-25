@@ -597,7 +597,23 @@ async def buffer_strip_restream_impl(
 
         recovery_required = _detect_recovery_needed(translated_blocks=translated_blocks, read_error=read_error)
         _cost_recorded_by_fallback = False
+        original_sse_call_recorded = False
         if recovery_required:
+            if sse_model != "unknown" and sse_usage:
+                stream_behavior_signals["stream_recovery_original_empty_call"] = 1
+                session.tracker.record_call(
+                    model=sse_model,
+                    actual_input=sse_usage.get("input_tokens", 0),
+                    actual_output=sse_usage.get("output_tokens", 0),
+                    cache_read=sse_usage.get("cache_read_input_tokens", 0),
+                    cache_write=sse_usage.get("cache_creation_input_tokens", 0),
+                    input_saved=0,
+                    output_saved=0,
+                    type_breakdown=type_breakdown,
+                    behavior_signals={"stream_recovery_original_empty_call": 1},
+                    prompt_metrics=prompt_metrics,
+                )
+                original_sse_call_recorded = True
             recovery_allowed, _recovery_reason = _stream_recovery_allowed_now(session)
             stream_behavior_signals["stream_empty_after_success"] = 1
             if read_error is not None:
@@ -903,7 +919,7 @@ async def buffer_strip_restream_impl(
                 if request_state is not None:
                     _record_fallback_once(session, request_state)
                 _cost_recorded_by_fallback = bool(recovery_model and recovery_usage)
-        if sse_model != "unknown" and sse_usage and not _cost_recorded_by_fallback:
+        if sse_model != "unknown" and sse_usage and not _cost_recorded_by_fallback and not original_sse_call_recorded:
             if not full_text:
                 processed = _RUNTIME.process_response(
                     "",
