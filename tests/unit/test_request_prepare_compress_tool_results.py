@@ -14,7 +14,7 @@ from tok.runtime.types import RuntimeRequest
 
 
 class TestCompressToolResultsResultDefaults:
-    def test_step6_result_has_correct_defaults(self) -> None:
+    def test_compress_tool_results_result_has_correct_defaults(self) -> None:
         r = CompressToolResultsResult()
         assert r.body == {}
         assert r.type_breakdown == {}
@@ -25,7 +25,7 @@ class TestCompressToolResultsResultDefaults:
         assert r.runtime_hints == []
         assert r.compress_tool_results_bypassed is False
 
-    def test_step6_result_all_fields_present(self) -> None:
+    def test_compress_tool_results_result_all_fields_present(self) -> None:
         expected = {
             "body",
             "type_breakdown",

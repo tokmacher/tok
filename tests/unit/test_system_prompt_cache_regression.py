@@ -27,7 +27,7 @@ def _make_body(system: str = "") -> dict:
 
 
 class TestFirstTurnPassthrough:
-    def test_step8_first_turn_system_string_unchanged(self) -> None:
+    def test_inject_system_first_turn_system_string_unchanged(self) -> None:
         """On the first call, system string must not be converted to list."""
         session = RuntimeSession()
         assert session._system_fingerprints is None
@@ -56,7 +56,7 @@ class TestFirstTurnPassthrough:
         assert result.body.get("system", system_text) == system_text
         assert "system_prompt_cache_hint_chars" not in result.behavior_signals
 
-    def test_step8_short_session_still_injects_reads_manifest(self) -> None:
+    def test_inject_system_short_session_still_injects_reads_manifest(self) -> None:
         """A cached file read is tiny enough to carry even while state injection is skipped."""
         session = RuntimeSession()
         session._files_read_fingerprints["src/tok/compression/_file_integrity.py"] = "a3f2c1d4"
@@ -132,7 +132,7 @@ class TestSignalAbsenceWhenNoHit:
 
 
 class TestExistingStep8BehaviorPreserved:
-    def test_step8_result_fields_unchanged(self) -> None:
+    def test_inject_system_result_fields_unchanged(self) -> None:
         """InjectSystemResult dataclass fields have not changed."""
         from dataclasses import fields
 
@@ -151,7 +151,7 @@ class TestExistingStep8BehaviorPreserved:
         actual = {f.name for f in fields(InjectSystemResult)}
         assert actual == expected
 
-    def test_step8_defaults_unchanged(self) -> None:
+    def test_inject_system_defaults_unchanged(self) -> None:
         r = InjectSystemResult()
         assert r.body == {}
         assert r.injected_state_payload == ""

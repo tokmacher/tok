@@ -5,7 +5,7 @@ from tok.runtime.types import PreparedRuntimeRequest
 
 
 class TestFinalizeResultDefaults:
-    def test_step9_result_has_prepared_request_field(self) -> None:
+    def test_finalize_result_has_prepared_request_field(self) -> None:
         r = FinalizeResult()
         assert hasattr(r, "prepared_request")
         assert r.prepared_request is None

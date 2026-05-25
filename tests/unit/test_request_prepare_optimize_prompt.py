@@ -29,12 +29,12 @@ def _make_body(system: str | None = None) -> dict:
 
 
 class TestOptimizePromptResultDefaults:
-    def test_step2_result_defaults(self) -> None:
+    def test_optimize_prompt_result_defaults(self) -> None:
         r = OptimizePromptResult()
         assert r.body == {}
         assert r.compressed is False
 
-    def test_step2_result_all_fields(self) -> None:
+    def test_optimize_prompt_result_all_fields(self) -> None:
         expected = {"body", "compressed"}
         actual = {f.name for f in fields(OptimizePromptResult)}
         assert actual == expected

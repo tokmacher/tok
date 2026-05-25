@@ -21,7 +21,7 @@ def _make_request(**overrides) -> RuntimeRequest:
 
 
 class TestCompressHistoryResultDefaults:
-    def test_step7_result_has_correct_defaults(self) -> None:
+    def test_compress_history_result_has_correct_defaults(self) -> None:
         r = CompressHistoryResult()
         assert r.body == {}
         assert r.recent == []
@@ -38,7 +38,7 @@ class TestCompressHistoryResultDefaults:
         assert r.keep_turns == 3
         assert r.bridge_keep_turns == 3
 
-    def test_step7_result_all_fields_present(self) -> None:
+    def test_compress_history_result_all_fields_present(self) -> None:
         expected = {
             "body",
             "recent",
@@ -60,7 +60,7 @@ class TestCompressHistoryResultDefaults:
 
 
 class TestBridgeCutSearchResultDefaults:
-    def test_step7a_result_has_correct_defaults(self) -> None:
+    def test_bridge_cut_search_result_has_correct_defaults(self) -> None:
         r = BridgeCutSearchResult()
         assert r.recent == []
         assert r.tok_state == ""
@@ -68,7 +68,7 @@ class TestBridgeCutSearchResultDefaults:
         assert r.bridge_search_success is False
         assert r.behavior_signals == {}
 
-    def test_step7a_result_all_fields_present(self) -> None:
+    def test_bridge_cut_search_result_all_fields_present(self) -> None:
         expected = {
             "recent",
             "tok_state",

@@ -19,7 +19,7 @@ def _make_request(**overrides) -> RuntimeRequest:
 
 
 class TestResolvePolicyResultDefaults:
-    def test_step4_result_has_correct_defaults(self) -> None:
+    def test_resolve_policy_result_has_correct_defaults(self) -> None:
         r = ResolvePolicyResult()
         assert r.effective_tool_compatible is False
         assert r.request_policy_reasons == []
@@ -36,7 +36,7 @@ class TestResolvePolicyResultDefaults:
         assert r.history_skip_reason == ""
         assert r.request_policy == ""
 
-    def test_step4_result_all_fields_present(self) -> None:
+    def test_resolve_policy_result_all_fields_present(self) -> None:
         expected = {
             "effective_tool_compatible",
             "request_policy_reasons",

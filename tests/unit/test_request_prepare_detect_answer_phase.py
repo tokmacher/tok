@@ -19,7 +19,7 @@ def _make_request(**overrides) -> RuntimeRequest:
 
 
 class TestDetectAnswerPhaseResultDefaults:
-    def test_step5_result_has_correct_defaults(self) -> None:
+    def test_detect_answer_phase_result_has_correct_defaults(self) -> None:
         r = DetectAnswerPhaseResult()
         assert r.answer_ready is False
         assert r.late_answer_followthrough_active is False
@@ -35,7 +35,7 @@ class TestDetectAnswerPhaseResultDefaults:
         assert r.resend_signals == {}
         assert r.exact_search_evidence_keys_in_request == set()
 
-    def test_step5_result_all_fields_present(self) -> None:
+    def test_detect_answer_phase_result_all_fields_present(self) -> None:
         expected = {
             "answer_ready",
             "late_answer_followthrough_active",

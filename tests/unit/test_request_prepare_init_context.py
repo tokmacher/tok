@@ -20,7 +20,7 @@ def _make_request(**overrides) -> RuntimeRequest:
 
 
 class TestInitContextResultDefaults:
-    def test_step1_result_has_correct_defaults(self) -> None:
+    def test_init_context_result_has_correct_defaults(self) -> None:
         r = InitContextResult()
         assert r.body == {}
         assert r.original_body == {}
@@ -33,7 +33,7 @@ class TestInitContextResultDefaults:
         assert r.pre_existing_session_signals == {}
         assert r.seen_mutation_pairs == set()
 
-    def test_step1_result_all_fields_present(self) -> None:
+    def test_init_context_result_all_fields_present(self) -> None:
         expected = {
             "body",
             "original_body",

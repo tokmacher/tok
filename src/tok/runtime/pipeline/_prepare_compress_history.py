@@ -250,7 +250,7 @@ def prepare_compress_history(
             model_profile=session.effective_model_profile,
         )
 
-        step7a_result = prepare_bridge_cut_search(
+        cut_search_result = prepare_bridge_cut_search(
             session=session,
             request=request,
             recent=recent_compressed,
@@ -268,10 +268,10 @@ def prepare_compress_history(
             effective_tool_compatible=effective_tool_compatible,
         )
 
-        recent_out = step7a_result.recent
-        tok_state_out = step7a_result.tok_state
-        recent_breakdown = step7a_result.recent_breakdown
-        for key, value in step7a_result.behavior_signals.items():
+        recent_out = cut_search_result.recent
+        tok_state_out = cut_search_result.tok_state
+        recent_breakdown = cut_search_result.recent_breakdown
+        for key, value in cut_search_result.behavior_signals.items():
             behavior_signals_out[key] = behavior_signals_out.get(key, 0) + value
 
         if preserve_exact_search_evidence:

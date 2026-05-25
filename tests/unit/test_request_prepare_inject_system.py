@@ -19,7 +19,7 @@ def _make_request(**overrides) -> RuntimeRequest:
 
 
 class TestInjectSystemResultDefaults:
-    def test_step8_result_has_correct_defaults(self) -> None:
+    def test_inject_system_result_has_correct_defaults(self) -> None:
         r = InjectSystemResult()
         assert r.body == {}
         assert r.injected_state_payload == ""
@@ -32,7 +32,7 @@ class TestInjectSystemResultDefaults:
         assert r.session_memory == ""
         assert r.tok_state == ""
 
-    def test_step8_result_all_fields_present(self) -> None:
+    def test_inject_system_result_all_fields_present(self) -> None:
         expected = {
             "body",
             "injected_state_payload",

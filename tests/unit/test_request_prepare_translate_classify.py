@@ -28,7 +28,7 @@ def _make_body(**overrides) -> dict:
 
 
 class TestTranslateClassifyResultDefaults:
-    def test_step3_result_has_correct_defaults(self) -> None:
+    def test_translate_classify_result_has_correct_defaults(self) -> None:
         r = TranslateClassifyResult()
         assert r.body == {}
         assert r.plan_finalization_turn is False
@@ -48,7 +48,7 @@ class TestTranslateClassifyResultDefaults:
         assert r.translated_messages == []
         assert r.context_dependency.depends_on_context is False
 
-    def test_step3_result_all_fields_present(self) -> None:
+    def test_translate_classify_result_all_fields_present(self) -> None:
         expected = {
             "body",
             "plan_finalization_turn",
