@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 (2026-05-25)
+
+- **Bridge trust hardening**: strengthened bridge trust signals, diagnostics, and
+  fallback visibility around the local Claude Code path.
+- **Prompt cache and lifecycle refinements**: added signal handling for prompt cache
+  topology changes and tighter lifecycle tracking for message and file handling.
+- **Audit and exactness regression coverage**: expanded tests around audit behavior,
+  image deduplication, file integrity, and result naming consistency.
+- **Experimental tooling**: added experimental MCP integration and a reproducible
+  benchmark command for maintainer use.
+
 ## 0.1.9 (2026-05-12)
 
 ### Added
