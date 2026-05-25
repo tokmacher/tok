@@ -6,13 +6,14 @@ from typing import Any
 from tok.compression import compress_tool_results
 from tok.runtime._context_fidelity import compute_fidelity_overrides
 from tok.runtime.core import RuntimeSession
+from tok.runtime.pipeline.context_dependency import ContextDependencyDecision, suffix_preserves_tool_pairs
 from tok.runtime.types import RuntimeRequest
 
 from ._prepare_translate_classify import _exact_search_evidence_keys_in_messages
 
 
 @dataclass
-class Step6Result:
+class CompressToolResultsResult:
     body: dict[str, Any] = field(default_factory=dict)
     type_breakdown: dict[str, int] = field(default_factory=dict)
     saved_tokens: int = 0
@@ -47,7 +48,7 @@ def _retains_required_exact_search_evidence(
     return exact_search_evidence_keys_in_request.issubset(retained_exact_keys)
 
 
-def run_step_6(
+def prepare_compress_tool_results(
     session: RuntimeSession,
     request: RuntimeRequest,
     body: dict[str, Any],
@@ -60,6 +61,7 @@ def run_step_6(
     edit_reacquisition_signals: dict[str, int],
     stream_recovery_history_floor_active: bool,
     plan_finalization_turn: bool,
+    context_dependency: ContextDependencyDecision,
     mode: str,
     policy: Any,
     exact_search_evidence_keys_in_request: set[str],
@@ -67,7 +69,7 @@ def run_step_6(
     saved_tokens: int,
     compressed: bool,
     result_cache: dict[str, Any] | None,
-) -> Step6Result:
+) -> CompressToolResultsResult:
     from tok.runtime.config import TOK_FILE_DELIVERY_STALE_TURNS
 
     type_breakdown: dict[str, int] = {}
@@ -95,12 +97,32 @@ def run_step_6(
         behavior_signals["compress_tool_results_bypassed"] = 1
     elif stream_recovery_history_floor_active:
         body["messages"] = translated_messages
+        behavior_signals["stream_recovery_history_floor_tool_result_compression_skipped"] = 1
         behavior_signals["compress_tool_results_bypassed"] = 1
     elif plan_finalization_turn:
         body["messages"] = translated_messages
         behavior_signals["plan_finalization_tool_result_compression_skipped"] = 1
         behavior_signals["compress_tool_results_bypassed"] = 1
     else:
+        protected_suffix_start = (
+            context_dependency.protected_suffix_start if context_dependency.depends_on_context else None
+        )
+        if context_dependency.depends_on_context and not suffix_preserves_tool_pairs(
+            translated_messages, protected_suffix_start
+        ):
+            body["messages"] = translated_messages
+            behavior_signals["context_dependency_fallback_full_history"] = 1
+            behavior_signals["compress_tool_results_bypassed"] = 1
+            return CompressToolResultsResult(
+                body=body,
+                type_breakdown=type_breakdown,
+                saved_tokens=saved_tokens,
+                compressed=compressed,
+                current_path=current_path,
+                behavior_signals=behavior_signals,
+                runtime_hints=runtime_hints,
+                compress_tool_results_bypassed=True,
+            )
         effective_compression_level = policy.tool_levels[mode]
         if session.model_profile.compression_aggressiveness < 0.8:
             aggressive_levels = {"aggressive", "full", "maximum"}
@@ -125,7 +147,11 @@ def run_step_6(
             file_heat=dict(session.bridge_memory._file_heat),
             session=session,
             model_profile=session.effective_model_profile,
+            protected_suffix_start=protected_suffix_start,
         )
+        if context_dependency.depends_on_context:
+            behavior_signals["context_dependency_slice_preserved"] = 1
+            behavior_signals["context_dependency_tool_result_compression_skipped"] = 1
         tool_saved = sum(type_breakdown.values()) // 4
         if tool_saved > 0:
             saved_tokens += tool_saved
@@ -171,7 +197,7 @@ def run_step_6(
 
     compress_tool_results_bypassed = bool(behavior_signals.get("compress_tool_results_bypassed", 0))
 
-    return Step6Result(
+    return CompressToolResultsResult(
         body=body,
         type_breakdown=type_breakdown,
         saved_tokens=saved_tokens,

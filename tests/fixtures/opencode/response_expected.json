@@ -1,0 +1,12 @@
+{
+  "id": "opencode-fixture-1",
+  "message": {
+    "role": "assistant",
+    "content": "Tok stays bridge-first."
+  },
+  "tok": {
+    "adapter": "opencode-probe",
+    "runtime": "opencode",
+    "fixture_only": true
+  }
+}

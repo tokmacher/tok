@@ -49,6 +49,7 @@ from ._feature_flags import (
     TOK_ENABLE_SEARCH_OVERLAP_DELTA,
     TOK_ENABLE_STACK_REPEAT_DELTA,
 )
+from ._image_dedup import strip_duplicate_images as _strip_duplicate_images
 from ._registry import Compressor
 from ._tool_result_codecs import (
     _compress_config_json,
@@ -65,12 +66,6 @@ from ._tool_result_codecs import (
     _compress_search_results,
     _compress_stack_traces,
 )
-from ._tool_taxonomy import (
-    LISTING_LIKE_TOOLS,
-    SEARCH_LIKE_TOOLS,
-)
-
-WEB_RESULT_TOOLS = frozenset({"web_search", "websearch", "web_fetch", "webfetch"})
 from ._tool_result_pipeline import (
     compress_git_log_impl as _compress_git_log_impl_fn,
 )
@@ -80,6 +75,12 @@ from ._tool_result_pipeline import (
 from ._tool_result_pipeline import (
     tok_tool_result_impl as _tok_tool_result_impl,
 )
+from ._tool_taxonomy import (
+    LISTING_LIKE_TOOLS,
+    SEARCH_LIKE_TOOLS,
+)
+
+WEB_RESULT_TOOLS = frozenset({"web_search", "websearch", "web_fetch", "webfetch"})
 
 __all__ = [
     "RECENT_WINDOW_THRESHOLD",
@@ -804,6 +805,8 @@ def compress_tool_results_impl(
     file_heat: dict[str, float] | None = None,
     session: Any | None = None,
     model_profile: Any | None = None,
+    files_read_fingerprints: dict[str, str] | None = None,
+    protected_suffix_start: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     breakdown: dict[str, int] = {}
     precision_ranges_by_path: dict[str, list[tuple[int, int]]] = {}
@@ -811,6 +814,7 @@ def compress_tool_results_impl(
     search_seen_matches: dict[str, set[str]] = {}
     stack_prev_by_signature: dict[str, str] = {}
     feature_telemetry: dict[str, dict[str, int]] = {}
+    _seen_image_fps: set[str] = set()
     _skip_stable_result = model_profile is not None and not getattr(model_profile, "stable_result_enabled", True)
     _skip_file_skeleton = model_profile is not None and not getattr(model_profile, "skeletonize_files", True)
     # Tracks paths first seen in this compress pass — used to dedup parallel reads
@@ -1038,7 +1042,7 @@ def compress_tool_results_impl(
         key = _evidence_key_for_context(context)
         if not key or not hasattr(session, "record_exact_evidence"):
             return
-        session.record_exact_evidence(key, digest=_compute_semantic_hash(raw))
+        session.record_exact_evidence(key, digest=_compute_semantic_hash(raw), content=raw.encode("utf-8"))
 
     def _looks_like_failure_evidence(raw: str) -> bool:
         lowered = raw.lower()
@@ -1107,8 +1111,19 @@ def compress_tool_results_impl(
         _mark_file_fully_delivered(norm_path)
         if session_files_read is not None:
             session_files_read.add(norm_path)
+        if files_read_fingerprints is not None and raw:
+            files_read_fingerprints[norm_path] = _compute_semantic_hash(raw)[:8]
         if semantic_hash_cache is not None and len(raw) >= _SEMANTIC_HASH_MIN_CHARS:
             _cache_semantic_hash(context, raw, semantic_hash_cache)
+
+    def _text_from_tool_result_content_blocks(raw: list[Any]) -> str:
+        parts: list[str] = []
+        for item in raw:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text", "")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
 
     def _stable_result_header(content_hash: str) -> str:
         return f"@stable_result(hash:{content_hash};fidelity:summary;lossy:true)"
@@ -1252,7 +1267,9 @@ def compress_tool_results_impl(
             first_exact_evidence_seen.add(key)
         return True
 
-    for msg in messages:
+    for msg_index, msg in enumerate(messages):
+        if protected_suffix_start is not None and msg_index >= protected_suffix_start:
+            continue
         if msg.get("role") == "user" and not _is_tool_result_only_user_message(msg):
             _same_turn_seen_paths.clear()
         content = msg.get("content")
@@ -1324,14 +1341,24 @@ def compress_tool_results_impl(
             if not (isinstance(block, dict) and block.get("type") == "tool_result"):
                 continue
 
-            raw = block.get("content", "")
-            if not isinstance(raw, str):
-                continue
-
             tool_id = block.get("tool_use_id", "")
             ctx: dict[str, Any] | None = None
             if tool_use_id_to_context is not None:
                 ctx = tool_use_id_to_context.get(tool_id)
+
+            raw = block.get("content", "")
+            if not isinstance(raw, str):
+                if isinstance(raw, list):
+                    new_content, img_saved = _strip_duplicate_images(raw, _seen_image_fps)
+                    if img_saved > 0:
+                        block["content"] = new_content
+                        breakdown["image_dedup"] = breakdown.get("image_dedup", 0) + img_saved
+                    if ctx:
+                        text_raw = _text_from_tool_result_content_blocks(new_content)
+                        norm_path = _extract_normalized_path(ctx)
+                        if text_raw and _preserve_first_exact_observation(ctx, text_raw, norm_path):
+                            continue
+                continue
 
             if ctx:
                 norm_path = _extract_normalized_path(ctx)
@@ -1786,6 +1813,7 @@ def inject_system_additions_impl(
     pressure: int = 0,
     runtime_hints: list[str] | None = None,
     behavior_signals: dict[str, int] | None = None,
+    file_integrity_manifest: str | None = None,
 ) -> dict[str, Any]:
     """Inject dynamic state into system prompt."""
     output_directive = ""
@@ -1817,6 +1845,8 @@ def inject_system_additions_impl(
             dynamic_blocks.append(f"@state\n{tok_state}")
         else:
             dynamic_blocks.append(tok_state)
+    if file_integrity_manifest:
+        dynamic_blocks.append(f"@reads\n{file_integrity_manifest}")
     if deltas:
         dynamic_blocks.append(f"@delta\n{deltas}")
     if todo:
@@ -1825,7 +1855,7 @@ def inject_system_additions_impl(
     dynamic_state = "\n\n".join(dynamic_blocks)
     current_sys_prompt = body.get("system", "")
     if isinstance(current_sys_prompt, str):
-        additions = [output_directive]
+        additions = [output_directive] if output_directive.strip() else []
         if dynamic_state:
             additions.append(dynamic_state)
         addition = "\n\n".join(additions)
@@ -1838,7 +1868,7 @@ def inject_system_additions_impl(
             new_blocks.append({"type": "text", "text": dynamic_state})
         body["system"] = new_blocks
     else:
-        additions = [output_directive]
+        additions = [output_directive] if output_directive.strip() else []
         if dynamic_state:
             additions.append(dynamic_state)
         body["system"] = "\n\n".join(additions)

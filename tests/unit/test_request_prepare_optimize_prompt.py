@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import fields
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_optimize_prompt import Step2Result, run_step_2
+from tok.runtime.pipeline._prepare_optimize_prompt import OptimizePromptResult, prepare_optimize_prompt
 from tok.runtime.types import RuntimeRequest
 
 
@@ -28,24 +28,24 @@ def _make_body(system: str | None = None) -> dict:
     return body
 
 
-class TestStep2ResultDefaults:
-    def test_step2_result_defaults(self) -> None:
-        r = Step2Result()
+class TestOptimizePromptResultDefaults:
+    def test_optimize_prompt_result_defaults(self) -> None:
+        r = OptimizePromptResult()
         assert r.body == {}
         assert r.compressed is False
 
-    def test_step2_result_all_fields(self) -> None:
+    def test_optimize_prompt_result_all_fields(self) -> None:
         expected = {"body", "compressed"}
-        actual = {f.name for f in fields(Step2Result)}
+        actual = {f.name for f in fields(OptimizePromptResult)}
         assert actual == expected
 
 
-class TestStep2PromptOptimization:
+class TestPrepareOptimizePrompt:
     def test_no_bloat_no_change(self) -> None:
         session = RuntimeSession()
         body = _make_body(system="short prompt")
         req = _make_request()
-        result = run_step_2(req, session, body, "hello", False, False)
+        result = prepare_optimize_prompt(req, session, body, "hello", False, False)
         assert result.compressed is False
         assert result.body["system"] == "short prompt"
 
@@ -53,7 +53,7 @@ class TestStep2PromptOptimization:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request()
-        result = run_step_2(req, session, body, "hello", False, False)
+        result = prepare_optimize_prompt(req, session, body, "hello", False, False)
         assert result.compressed is False
 
     def test_bridge_adapter_with_bloat_records_signal(self) -> None:
@@ -61,7 +61,7 @@ class TestStep2PromptOptimization:
         long_system = "x" * 3000
         body = _make_body(system=long_system)
         req = _make_request(adapter_kind="claude-bridge")
-        run_step_2(req, session, body, "hello", True, False)
+        prepare_optimize_prompt(req, session, body, "hello", True, False)
         assert session.pending_behavior_signals.get("tok_prompt_bloat_detected") == 1
         assert session.pending_behavior_signals.get("tok_prompt_optimization_skipped_bridge") == 1
 
@@ -70,14 +70,14 @@ class TestStep2PromptOptimization:
         long_system = "x" * 3000
         body = _make_body(system=long_system)
         req = _make_request(adapter_kind="unknown")
-        run_step_2(req, session, body, "hello", False, False)
+        prepare_optimize_prompt(req, session, body, "hello", False, False)
         assert session.pending_behavior_signals.get("tok_prompt_bloat_detected") == 1
 
     def test_compressed_preserved_when_no_bloat(self) -> None:
         session = RuntimeSession()
         body = _make_body(system="short")
         req = _make_request()
-        result = run_step_2(req, session, body, "hello", False, True)
+        result = prepare_optimize_prompt(req, session, body, "hello", False, True)
         assert result.compressed is True
 
     def test_compressed_set_when_optimization_applied(self) -> None:
@@ -85,6 +85,6 @@ class TestStep2PromptOptimization:
         long_system = "System prompt. " * 500
         body = _make_body(system=long_system)
         req = _make_request(adapter_kind="unknown")
-        result = run_step_2(req, session, body, "hello", False, False)
+        result = prepare_optimize_prompt(req, session, body, "hello", False, False)
         if result.body.get("system") != long_system:
             assert result.compressed is True

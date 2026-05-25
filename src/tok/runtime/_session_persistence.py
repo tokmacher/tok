@@ -403,3 +403,20 @@ def session_logger_for(_session: RuntimeSession) -> logging.Logger:
     from .core import logger
 
     return logger
+
+
+class SessionPersistenceState:
+    """State group for bridge memory and persistence (§5.3.2 state grouping).
+
+    Provides a named state group that wraps the session's ``BridgeMemoryState``
+    alongside persistence-related helpers. The ``bridge_memory`` attribute is the
+    same object as ``RuntimeSession.bridge_memory`` — not a copy.
+    """
+
+    def __init__(self, bridge_memory: BridgeMemoryState) -> None:
+        self.bridge_memory = bridge_memory
+
+    def reset(self) -> None:
+        """Partial reset: clear hot memory and rolling commands for a new request cycle."""
+        self.bridge_memory.hot.clear()
+        self.bridge_memory.rolling_cmds = []

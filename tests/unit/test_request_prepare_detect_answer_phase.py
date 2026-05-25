@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import fields
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_detect_answer_phase import Step5Result, run_step_5
+from tok.runtime.pipeline._prepare_detect_answer_phase import DetectAnswerPhaseResult, prepare_detect_answer_phase
 from tok.runtime.types import RuntimeRequest
 
 
@@ -18,9 +18,9 @@ def _make_request(**overrides) -> RuntimeRequest:
     return RuntimeRequest(**defaults)
 
 
-class TestStep5ResultDefaults:
-    def test_step5_result_has_correct_defaults(self) -> None:
-        r = Step5Result()
+class TestDetectAnswerPhaseResultDefaults:
+    def test_detect_answer_phase_result_has_correct_defaults(self) -> None:
+        r = DetectAnswerPhaseResult()
         assert r.answer_ready is False
         assert r.late_answer_followthrough_active is False
         assert r.late_answer_assembly_repair_active is False
@@ -35,7 +35,7 @@ class TestStep5ResultDefaults:
         assert r.resend_signals == {}
         assert r.exact_search_evidence_keys_in_request == set()
 
-    def test_step5_result_all_fields_present(self) -> None:
+    def test_detect_answer_phase_result_all_fields_present(self) -> None:
         expected = {
             "answer_ready",
             "late_answer_followthrough_active",
@@ -51,15 +51,15 @@ class TestStep5ResultDefaults:
             "resend_signals",
             "exact_search_evidence_keys_in_request",
         }
-        actual = {f.name for f in fields(Step5Result)}
+        actual = {f.name for f in fields(DetectAnswerPhaseResult)}
         assert actual == expected
 
 
-class TestStep5DetectAnswerPhase:
+class TestPrepareDetectAnswerPhase:
     def test_basic_request_no_tools_answer_ready_false(self) -> None:
         session = RuntimeSession()
         req = _make_request(tool_compatible=False)
-        result = run_step_5(
+        result = prepare_detect_answer_phase(
             session=session,
             request=req,
             translated_messages=[{"role": "user", "content": "hello"}],
@@ -80,7 +80,7 @@ class TestStep5DetectAnswerPhase:
     def test_answer_ready_flags_default_false_for_non_tool_compatible(self) -> None:
         session = RuntimeSession()
         req = _make_request(tool_compatible=False)
-        result = run_step_5(
+        result = prepare_detect_answer_phase(
             session=session,
             request=req,
             translated_messages=[{"role": "user", "content": "hello"}],
@@ -104,7 +104,7 @@ class TestStep5DetectAnswerPhase:
     def test_read_only_audit_turn_detected(self) -> None:
         session = RuntimeSession()
         req = _make_request(tool_compatible=True)
-        result = run_step_5(
+        result = prepare_detect_answer_phase(
             session=session,
             request=req,
             translated_messages=[
@@ -126,7 +126,7 @@ class TestStep5DetectAnswerPhase:
         session = RuntimeSession()
         assert session._tool_required_latch_streak == 0
         req = _make_request(tool_compatible=True)
-        run_step_5(
+        prepare_detect_answer_phase(
             session=session,
             request=req,
             translated_messages=[
@@ -152,7 +152,7 @@ class TestStep5DetectAnswerPhase:
         session = RuntimeSession()
         session._tool_required_latch_streak = 3
         req = _make_request(tool_compatible=False)
-        run_step_5(
+        prepare_detect_answer_phase(
             session=session,
             request=req,
             translated_messages=[{"role": "user", "content": "hello"}],
@@ -171,7 +171,7 @@ class TestStep5DetectAnswerPhase:
     def test_answer_phase_expected_set_on_session(self) -> None:
         session = RuntimeSession()
         req = _make_request(tool_compatible=False)
-        run_step_5(
+        prepare_detect_answer_phase(
             session=session,
             request=req,
             translated_messages=[{"role": "user", "content": "hello"}],

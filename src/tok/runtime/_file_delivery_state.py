@@ -15,6 +15,7 @@ class FileDeliveryState:
     file_reads_by_turn: dict[str, int] = field(default_factory=dict)
     last_elevated_path: str = ""
     skeleton_delivered_paths: set[str] = field(default_factory=set)
+    files_read_fingerprints: dict[str, str] = field(default_factory=dict)
 
     def reset(self) -> None:
         self.files_read_this_session.clear()
@@ -23,3 +24,4 @@ class FileDeliveryState:
         self.file_reads_by_turn.clear()
         self.last_elevated_path = ""
         self.skeleton_delivered_paths.clear()
+        self.files_read_fingerprints.clear()

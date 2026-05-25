@@ -9,9 +9,11 @@ class FidelityState:
     file_reads_by_turn: dict[str, int] = field(default_factory=dict)
     last_elevated_path: str = ""
     tool_required_latch_streak: int = 0
+    files_read_fingerprints: dict[str, str] = field(default_factory=dict)
 
     def reset(self) -> None:
         self.overrides.clear()
         self.file_reads_by_turn.clear()
         self.last_elevated_path = ""
         self.tool_required_latch_streak = 0
+        self.files_read_fingerprints.clear()

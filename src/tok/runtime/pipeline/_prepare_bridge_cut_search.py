@@ -79,7 +79,7 @@ def _retains_required_exact_search_evidence(
 
 
 @dataclass
-class Step7aResult:
+class BridgeCutSearchResult:
     recent: list[dict[str, Any]] = field(default_factory=list)
     tok_state: str = ""
     recent_breakdown: dict[str, int] = field(default_factory=dict)
@@ -87,7 +87,7 @@ class Step7aResult:
     behavior_signals: dict[str, int] = field(default_factory=dict)
 
 
-def run_step_7a_bridge_cut_search(
+def prepare_bridge_cut_search(
     *,
     session: RuntimeSession,
     request: RuntimeRequest,
@@ -104,9 +104,9 @@ def run_step_7a_bridge_cut_search(
     exact_search_evidence_keys_in_request: set[str],
     _first_exact_evidence_seen_for_compression: frozenset[str],
     effective_tool_compatible: bool,
-) -> Step7aResult:
+) -> BridgeCutSearchResult:
     if not (request.uses_cut_search and _messages_contain_tool_material(recent)):
-        return Step7aResult(recent=recent, bridge_search_success=False)
+        return BridgeCutSearchResult(recent=recent, bridge_search_success=False)
 
     behavior_signals: dict[str, int] = {"bridge_cut_search_guard_passed": 1}
     recent_breakdown: dict[str, int] = {}
@@ -214,7 +214,7 @@ def run_step_7a_bridge_cut_search(
         tok_state = ""
         recent_breakdown = {}
 
-    return Step7aResult(
+    return BridgeCutSearchResult(
         recent=recent,
         tok_state=tok_state,
         recent_breakdown=recent_breakdown,

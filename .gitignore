@@ -66,6 +66,9 @@ tmp/
 
 # Claude / AI tooling
 .claude/
+.claude/settings.local.json
+.opencode/
+.opencode/package.json
 CLAUDE.md
 
 # Campaign artifacts
@@ -75,6 +78,10 @@ ops/
 # Benchmark results
 Benchmark/assets/
 docs/images/tok_metrics.json
+benchmark_latest.json
+**/benchmark_latest.json
+*_benchmark_report.json
+*_benchmark_results.json
 
 # IDE
 .windsurf/
@@ -101,9 +108,8 @@ Benchmark/assets/
 
 # Agent smoke output
 out/
-
-# Agent-local working plans
-.opencode/
+agent_smoke_report.json
+**/agent_smoke_report.json
 
 # Tok
 .tok/

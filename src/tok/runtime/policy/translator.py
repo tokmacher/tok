@@ -33,7 +33,7 @@ _KNOWN_TOK_BLOCKS = frozenset(
 _CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 
 
-def _is_likely_tok(text: str) -> bool:
+def is_likely_tok(text: str) -> bool:
     # Strip fenced code blocks first to avoid false positives from
     # languages that use |> as a pipe operator (Elixir, F#, etc.).
     clean = _CODE_FENCE_RE.sub("", text)
@@ -178,7 +178,7 @@ def postprocess_response(text: str) -> tuple[str, str]:
 
     Returns (processed_text, mode) where mode is 'tok-native', 'tok-empty', 'tok', or 'markdown'.
     """
-    if _is_likely_tok(text):
+    if is_likely_tok(text):
         readable = tok_to_readable(text)
         if readable:
             return readable, "tok-native"

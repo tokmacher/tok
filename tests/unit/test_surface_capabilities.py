@@ -7,7 +7,7 @@ import pytest
 from tok.gateway import BridgeSession
 from tok.gateway._bridge_runtime_pipeline import prepare_bridge_payload
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_bridge_cut_search import Step7aResult, run_step_7a_bridge_cut_search
+from tok.runtime.pipeline._prepare_bridge_cut_search import BridgeCutSearchResult, prepare_bridge_cut_search
 from tok.runtime.types import RuntimeRequest, SignalPacket, SurfaceMetadata
 
 
@@ -129,7 +129,7 @@ def test_cut_search_guard_respects_uses_cut_search_not_adapter_string(tmp_path: 
     )
     session = RuntimeSession(memory_dir=tmp_path / "cut-search-cap")
 
-    result: Step7aResult = run_step_7a_bridge_cut_search(
+    result: BridgeCutSearchResult = prepare_bridge_cut_search(
         session=session,
         request=request,
         recent=recent,
@@ -175,7 +175,7 @@ def test_non_cut_search_surface_is_still_blocked_by_guard(tmp_path: pytest.Tempd
     )
     session = RuntimeSession(memory_dir=tmp_path / "orchestrator")
 
-    result: Step7aResult = run_step_7a_bridge_cut_search(
+    result: BridgeCutSearchResult = prepare_bridge_cut_search(
         session=session,
         request=request,
         recent=recent,

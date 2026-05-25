@@ -537,10 +537,25 @@ def _run_bridge_preflight(
         and (request_fingerprint["messages_changed"] or request_fingerprint["system_changed"])
         and request_fingerprint["cache_topology_changed"]
     ):
-        strict_failures = [
-            *list(strict_failures),
-            "prompt_caching_request_mutated",
-        ]
+        _topology_reasons = request_fingerprint.get("cache_topology_reasons", [])
+        _system_cache_removed = int(request_fingerprint.get("removed_cache_control", {}).get("system_blocks", 0)) > 0
+        _all_text_system_stripped = "text_system_cache_control_removed_only_tool_cache_remains" in _topology_reasons
+        if _system_cache_removed or _all_text_system_stripped:
+            # Blocking: system-level cache was stripped — this is a legitimate fallback because
+            # the client's prompt-caching contract is violated (cache topology is not preserved).
+            strict_failures = [*list(strict_failures), "prompt_caching_request_mutated"]
+        else:
+            # Non-blocking: only message-level cache blocks changed (e.g. history winnowing
+            # removed old messages). System cache is intact. The Anthropic API does not error
+            # on this — it just adjusts cache breakpoints. Allow the compressed body through.
+            behavior_signals["prompt_caching_message_cache_reduced"] = (
+                behavior_signals.get("prompt_caching_message_cache_reduced", 0) + 1
+            )
+            logger.info(
+                "prompt_caching_message_cache_reduced: message-level cache topology changed "
+                "(reasons=%s) but system cache is intact — allowing compressed body through",
+                _topology_reasons,
+            )
     _merge_signal_counts(
         behavior_signals,
         bridge_strict_failure_signals(strict_failures),

@@ -86,6 +86,20 @@ class DiagnosticsSnapshot:
     repeated_active_file_reads: int = 0
     goal: str = ""
     context_compression_detected: int = 0
+    # Evidence safety counters (mirrored from gateway health endpoint)
+    evidence_exact_observed_count: int = 0
+    evidence_non_exact_reference_count: int = 0
+    evidence_non_exact_summary_count: int = 0
+    evidence_non_exact_skeleton_count: int = 0
+    evidence_exact_reacquisition_required_count: int = 0
+    evidence_exact_reacquisition_satisfied_count: int = 0
+    evidence_compression_blocked_for_safety_count: int = 0
+    # Ledger attribution: how session savings were sourced
+    savings_source: str = "session_tracker"
+
+    @property
+    def is_degraded(self) -> bool:
+        return self.session_quality != "clean" or self.fail_open_count > 0 or self.fallback_count > 0
 
     def to_health_response(self) -> dict[str, Any]:
         return {
@@ -163,6 +177,14 @@ class DiagnosticsSnapshot:
             "repeated_active_file_reads": self.repeated_active_file_reads,
             "goal": self.goal,
             "context_compression_detected": self.context_compression_detected,
+            "evidence_exact_observed_count": self.evidence_exact_observed_count,
+            "evidence_non_exact_reference_count": self.evidence_non_exact_reference_count,
+            "evidence_non_exact_summary_count": self.evidence_non_exact_summary_count,
+            "evidence_non_exact_skeleton_count": self.evidence_non_exact_skeleton_count,
+            "evidence_exact_reacquisition_required_count": self.evidence_exact_reacquisition_required_count,
+            "evidence_exact_reacquisition_satisfied_count": self.evidence_exact_reacquisition_satisfied_count,
+            "evidence_compression_blocked_for_safety_count": self.evidence_compression_blocked_for_safety_count,
+            "savings_source": self.savings_source,
         }
 
     @classmethod
@@ -333,6 +355,35 @@ class DiagnosticsSnapshot:
             repeated_active_file_reads=int(signals.get("repeat_file_read", 0)),
             goal=str(session_summary.get("goal", "")),
             context_compression_detected=int(signals.get("tok_context_compression_detected", 0)),
+            evidence_exact_observed_count=int(
+                session_summary.get("evidence_exact_observed_count", signals.get("evidence_exact_observed", 0))
+            ),
+            evidence_non_exact_reference_count=int(
+                session_summary.get(
+                    "evidence_non_exact_reference_count", signals.get("evidence_non_exact_reference_emitted", 0)
+                )
+            ),
+            evidence_non_exact_summary_count=int(session_summary.get("evidence_non_exact_summary_count", 0)),
+            evidence_non_exact_skeleton_count=int(session_summary.get("evidence_non_exact_skeleton_count", 0)),
+            evidence_exact_reacquisition_required_count=int(
+                session_summary.get(
+                    "evidence_exact_reacquisition_required_count",
+                    signals.get("evidence_exact_reacquisition_required", 0),
+                )
+            ),
+            evidence_exact_reacquisition_satisfied_count=int(
+                session_summary.get(
+                    "evidence_exact_reacquisition_satisfied_count",
+                    signals.get("evidence_exact_reacquisition_satisfied", 0),
+                )
+            ),
+            evidence_compression_blocked_for_safety_count=int(
+                session_summary.get(
+                    "evidence_compression_blocked_for_safety_count",
+                    signals.get("evidence_compression_blocked_for_safety", 0),
+                )
+            ),
+            savings_source=str(session_summary.get("savings_source", "session_tracker")),
         )
 
     @classmethod

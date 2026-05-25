@@ -14,11 +14,11 @@ from tok.runtime.types import PreparedRuntimeRequest, RuntimeRequest
 
 
 @dataclass
-class Step9Result:
+class FinalizeResult:
     prepared_request: PreparedRuntimeRequest | None = None
 
 
-def run_step_9(
+def prepare_finalize(
     runtime_self: UniversalTokRuntime | None = None,
     request: RuntimeRequest | None = None,
     session: RuntimeSession | None = None,
@@ -39,7 +39,7 @@ def run_step_9(
     hot_hint_metrics: dict[str, int] | None = None,
     seen_mutation_pairs: set[tuple[str, str]] | None = None,
     _pre_existing_session_signals: dict[str, int] | None = None,
-) -> Step9Result:
+) -> FinalizeResult:
     if behavior_signals is None:
         behavior_signals = {}
     if type_breakdown is None:
@@ -71,7 +71,7 @@ def run_step_9(
             session._bump_signals(_mut_signals)
             session._save_bridge_memory()
             record_structured_answer_expectation(session, body)
-        return Step9Result(
+        return FinalizeResult(
             prepared_request=PreparedRuntimeRequest(
                 body=body,
                 compressed=False,
@@ -127,7 +127,7 @@ def run_step_9(
     if session:
         record_structured_answer_expectation(session, body)
 
-    return Step9Result(
+    return FinalizeResult(
         prepared_request=PreparedRuntimeRequest(
             body=body,
             compressed=compressed,

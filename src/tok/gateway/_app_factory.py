@@ -36,6 +36,8 @@ from ._bridge_comparison import _safe_headers
 from ._bridge_request_handler import send_with_tok_fail_open_retry
 from ._bridge_runtime_pipeline import prepare_bridge_payload
 from ._bridge_streaming import _emit_sse_block, _run_macro_mining, buffer_strip_restream_impl, passthrough_stream_impl
+from ._operation_artifacts import emit_operation_receipt as _emit_operation_receipt_impl
+from ._operation_artifacts import emit_savings_event as _emit_savings_event_impl
 from ._types import PromptMetrics, build_capability_manifest
 
 if TYPE_CHECKING:
@@ -219,6 +221,27 @@ def _rebuild_and_record_response(
             ),
         }
     )
+    _emit_operation_receipt(
+        active_session,
+        request_policy=request_policy,
+        compressed=compressed,
+        fallback=False,
+        input_saved=saved_toks if compressed else 0,
+        output_saved=total_output_saved,
+        prompt_metrics=prompt_metrics,
+    )
+    _emit_savings_event(
+        active_session,
+        model=str(resp_json["model"]),
+        usage=usage,
+        request_policy=request_policy,
+        compressed=compressed,
+        fallback=False,
+        input_saved=saved_toks if compressed else 0,
+        output_saved=total_output_saved,
+        tool_breakdown=tool_breakdown if compressed else {},
+        prompt_metrics=prompt_metrics,
+    )
     emit_live_trace(
         active_session,
         "response_processed",
@@ -275,11 +298,32 @@ def _handle_nonstreaming_failopen(
                 actual_output=usage.get("output_tokens", 0),
                 cache_read=usage.get("cache_read_input_tokens", 0),
                 cache_write=usage.get("cache_creation_input_tokens", 0),
-                input_saved=saved_toks if compressed else 0,
+                input_saved=0,
                 output_saved=0,
-                type_breakdown=tool_breakdown if compressed else None,
+                type_breakdown=None,
                 behavior_signals=error_signals,
-                prompt_metrics=prompt_metrics if compressed else None,
+                prompt_metrics=None,
+            )
+            _emit_operation_receipt(
+                active_session,
+                request_policy=str(getattr(active_session, "request_policy_default", "")),
+                compressed=False,
+                fallback=True,
+                input_saved=0,
+                output_saved=0,
+                prompt_metrics={},
+            )
+            _emit_savings_event(
+                active_session,
+                model=str(model),
+                usage=usage,
+                request_policy=str(getattr(active_session, "request_policy_default", "")),
+                compressed=False,
+                fallback=True,
+                input_saved=0,
+                output_saved=0,
+                tool_breakdown={},
+                prompt_metrics={},
             )
     except Exception as _exc:
         logger.debug("Failed to record usage in fail-open path: %s", _exc)
@@ -317,6 +361,54 @@ def _note_request_policy_recovery_watch(session: BridgeSession, signals: dict[st
         or signals.get("tok_history_pairing_safety_degraded", 0)
     ):
         session.runtime_session.note_request_policy_tool_mode_recovery()
+
+
+def _emit_operation_receipt(
+    active_session: BridgeSession,
+    *,
+    request_policy: str,
+    compressed: bool,
+    fallback: bool,
+    input_saved: int,
+    output_saved: int,
+    prompt_metrics: dict[str, int],
+) -> None:
+    _emit_operation_receipt_impl(
+        active_session,
+        request_policy=request_policy,
+        compressed=compressed,
+        fallback=fallback,
+        input_saved=input_saved,
+        output_saved=output_saved,
+        prompt_metrics=prompt_metrics,
+    )
+
+
+def _emit_savings_event(
+    active_session: BridgeSession,
+    *,
+    model: str,
+    usage: dict[str, Any],
+    request_policy: str,
+    compressed: bool,
+    fallback: bool,
+    input_saved: int,
+    output_saved: int,
+    tool_breakdown: dict[str, int],
+    prompt_metrics: dict[str, int],
+) -> None:
+    _emit_savings_event_impl(
+        active_session,
+        model=model,
+        usage=usage,
+        request_policy=request_policy,
+        compressed=compressed,
+        fallback=fallback,
+        input_saved=input_saved,
+        output_saved=output_saved,
+        tool_breakdown=tool_breakdown,
+        prompt_metrics=prompt_metrics,
+    )
 
 
 def _rate_limit_throttle_remaining(session: BridgeSession) -> float:
@@ -578,6 +670,8 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
         if path.startswith("v1/"):
             session_key = session.activate_session_for_request(dict(request.headers), request_body_obj)
             active_session = session.bound_session_for_key(session_key)
+        active_session._operation_receipt_emitted = False
+        active_session._savings_event_emitted = False
 
         if path.startswith("v1/") and _is_rate_limited(session):
             logger.warning(

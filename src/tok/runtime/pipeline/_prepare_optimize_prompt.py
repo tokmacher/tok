@@ -15,19 +15,19 @@ logger = logging.getLogger("tok.runtime.pipeline._prepare_optimize_prompt")
 
 
 @dataclass
-class Step2Result:
+class OptimizePromptResult:
     body: dict[str, Any] = field(default_factory=dict)
     compressed: bool = False
 
 
-def run_step_2(
+def prepare_optimize_prompt(
     request: RuntimeRequest,
     session: RuntimeSession,
     body: dict[str, Any],
     last_user_msg: str,
     is_bridge_adapter: bool,
     compressed: bool,
-) -> Step2Result:
+) -> OptimizePromptResult:
     if detect_prompt_bloat(body.get("system"), last_user_msg):
         session.pending_behavior_signals["tok_prompt_bloat_detected"] = 1
         if is_bridge_adapter:
@@ -82,7 +82,7 @@ def run_step_2(
                         len(text_of(cleaned_sys) if isinstance(cleaned_sys, list) else str(cleaned_sys)),
                     )
 
-    return Step2Result(
+    return OptimizePromptResult(
         body=body,
         compressed=compressed,
     )
