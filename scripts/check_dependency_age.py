@@ -14,6 +14,11 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
     import tomli as tomllib
 
 
+REVIEWED_RECENT_DEPENDENCIES: dict[tuple[str, str], str] = {
+    ("starlette", "1.0.1"): "security fix for PYSEC-2026-161",
+}
+
+
 def check_dependencies(lock_path: Path = Path("uv.lock")) -> list[str]:
     violations: list[str] = []
     lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
@@ -43,7 +48,9 @@ def check_dependencies(lock_path: Path = Path("uv.lock")) -> list[str]:
             continue
 
         package_age_days = (datetime.now(timezone.utc) - min(upload_times)).days
-        if package_age_days < 5:
+        package_name = str(package["name"])
+        package_version = str(package["version"])
+        if package_age_days < 5 and (package_name, package_version) not in REVIEWED_RECENT_DEPENDENCIES:
             violations.append(f"{package['name']}@{package['version']} is only {package_age_days} days old")
 
     return violations
