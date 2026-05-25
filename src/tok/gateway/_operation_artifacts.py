@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -149,7 +149,7 @@ def emit_savings_event(
             event_id=str(uuid.uuid4()),
             session_id=session_id,
             request_id=str(uuid.uuid4()),
-            timestamp=datetime.now(UTC).isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             model=model,
             mode="tok" if effective_compressed else "baseline",
             request_policy=request_policy,
