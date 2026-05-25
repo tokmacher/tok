@@ -27,6 +27,8 @@ RISK_SIGNALS = {
     "broad_audit_history_skipped",
     "broad_audit_system_additions_skipped",
     "broad_audit_tool_result_compression_skipped",
+    "context_dependency_history_skipped",
+    "context_dependency_tool_result_compression_skipped",
     "plan_finalization_history_skipped",
     "plan_finalization_tool_result_compression_skipped",
     "tok_bridge_assistant_block_order_normalized",

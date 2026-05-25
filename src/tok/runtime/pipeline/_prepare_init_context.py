@@ -52,7 +52,7 @@ def _has_exact_search_evidence(evidence_keys: set[str]) -> bool:
 
 
 @dataclass
-class Step1Result:
+class InitContextResult:
     body: dict[str, Any] = field(default_factory=dict)
     original_body: dict[str, Any] = field(default_factory=dict)
     thinking_snapshot: str | None = None
@@ -65,10 +65,10 @@ class Step1Result:
     seen_mutation_pairs: set[tuple[str, str]] = field(default_factory=set)
 
 
-def run_step_1(
+def prepare_init_context(
     request: RuntimeRequest,
     session: RuntimeSession,
-) -> Step1Result:
+) -> InitContextResult:
     session._request_has_tools = bool(request.request_has_tools)
     session._answer_phase_expected_this_turn = False
     session._natural_response_acceptable_this_turn = False
@@ -113,7 +113,7 @@ def run_step_1(
 
     is_bridge_adapter = request.uses_bridge_profile
 
-    return Step1Result(
+    return InitContextResult(
         body=body,
         original_body=original_body,
         thinking_snapshot=_thinking_snapshot,

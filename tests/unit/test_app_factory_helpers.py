@@ -8,11 +8,16 @@ import pytest
 from tok.gateway import BridgeSession
 from tok.gateway._app_factory import (
     _build_response_signals,
+    _emit_operation_receipt,
     _handle_nonstreaming_failopen,
     _handle_retried_without_tok,
     _rebuild_and_record_response,
 )
+from tok.receipt import _session_id_from_session as receipt_session_id
+from tok.receipt import bridge_receipt_path, read_bridge_receipts
+from tok.runtime._request_lifecycle import RequestLifecycle
 from tok.runtime.smoothness.models import SmoothnessEvent, SmoothnessEventType, TokMode, TurnSmoothnessReport
+from tok.utils.savings_event import read_savings_events
 
 
 def _make_session(**overrides: Any) -> BridgeSession:
@@ -97,6 +102,51 @@ def test_handle_nonstreaming_failopen_records_signals() -> None:
     assert behavior_signals.get("processing_error") == 1
     assert behavior_signals.get("tok_fallback_activated") == 1
     assert request_state.get("fallback_recorded") is True
+
+
+def test_handle_nonstreaming_failopen_reports_zero_headline_savings(tmp_path) -> None:
+    session = _make_session(memory_dir=tmp_path)
+    behavior_signals: dict[str, int] = {}
+    request_state: dict[str, bool] = {"fallback_recorded": False}
+    resp_json: dict[str, Any] = {
+        "model": "claude-sonnet-4",
+        "usage": {"input_tokens": 100, "output_tokens": 20},
+    }
+
+    _handle_nonstreaming_failopen(
+        RuntimeError("processing failure"),
+        session,
+        behavior_signals,
+        request_state,
+        resp_json,
+        saved_toks=10,
+        compressed=True,
+        tool_breakdown={"tool_a": 5},
+        prompt_metrics={
+            "baseline_prompt_tokens": 100,
+            "prepared_prompt_tokens": 90,
+            "saved_prompt_tokens": 10,
+            "hot_hint_tokens_added": 0,
+            "reacquisition_tokens_avoided_estimate": 0,
+        },
+    )
+
+    session_id = receipt_session_id(session)
+    receipt_path = bridge_receipt_path(memory_dir=tmp_path, session_id=session_id)
+    receipts = read_bridge_receipts(receipt_path)
+    assert len(receipts) == 1
+    assert receipts[0].fallback is True
+    assert receipts[0].compression_applied is False
+    assert receipts[0].savings["input_saved_tokens"] == 0
+    assert receipts[0].savings["output_saved_tokens"] == 0
+    assert receipts[0].savings["tokens_saved"] == 0
+
+    events = read_savings_events(receipt_path.with_name("savings_events.jsonl"))
+    assert len(events) == 1
+    assert events[0].fallback is True
+    assert events[0].input_tokens_saved == 0
+    assert events[0].output_tokens_saved == 0
+    assert events[0].baseline_input_tokens == events[0].actual_input_tokens
 
 
 def test_handle_nonstreaming_failopen_raises_when_closed() -> None:
@@ -184,6 +234,97 @@ def test_rebuild_and_record_response_calls_tracker() -> None:
     assert call_kwargs["input_saved"] == 10
     assert call_kwargs["output_saved"] == 20
     assert call_kwargs["behavior_signals"] == {"some_signal": 1}
+
+
+def test_rebuild_and_record_response_writes_savings_event(tmp_path) -> None:
+    session = _make_session(memory_dir=tmp_path)
+    session.smoothness_tracker.start_turn(task_id="task1")
+    session.smoothness_tracker.finish_turn = MagicMock(
+        return_value=TurnSmoothnessReport(
+            turn_id="t1",
+            task_id="task1",
+            score=100,
+            labour_index=0,
+            mode=TokMode.FULL_TOK,
+            events=[],
+        )
+    )
+    resp_json: dict[str, Any] = {
+        "model": "claude-sonnet-4",
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+    }
+
+    _rebuild_and_record_response(
+        resp_json,
+        session,
+        saved_toks=10,
+        compressed=True,
+        tool_breakdown={"file_read": 10},
+        response_signals={},
+        prompt_metrics={
+            "baseline_prompt_tokens": 100,
+            "prepared_prompt_tokens": 90,
+            "saved_prompt_tokens": 10,
+            "hot_hint_tokens_added": 0,
+            "reacquisition_tokens_avoided_estimate": 0,
+        },
+        total_output_saved=5,
+        request_policy="tool_compatible",
+        request_tool_compatible=True,
+    )
+
+    events_path = bridge_receipt_path(
+        memory_dir=tmp_path,
+        session_id=receipt_session_id(session),
+    ).with_name("savings_events.jsonl")
+    events = read_savings_events(events_path)
+    assert len(events) == 1
+    assert events[0].input_tokens_saved == 10
+    assert events[0].output_tokens_saved == 5
+
+
+def test_operation_receipt_emits_at_most_once_per_request(tmp_path) -> None:
+    session = _make_session(memory_dir=tmp_path)
+    session._operation_receipt_emitted = False
+
+    for fallback in (False, True):
+        _emit_operation_receipt(
+            session,
+            request_policy="tool_compatible",
+            compressed=True,
+            fallback=fallback,
+            input_saved=10,
+            output_saved=0,
+            prompt_metrics={},
+        )
+
+    path = bridge_receipt_path(memory_dir=tmp_path, session_id=receipt_session_id(session))
+    assert len(read_bridge_receipts(path)) == 1
+
+
+def test_operation_receipt_includes_request_lifecycle_summary(tmp_path) -> None:
+    session = _make_session(memory_dir=tmp_path)
+    session._operation_receipt_emitted = False
+    session._last_request_lifecycle = RequestLifecycle(**{stage: True for stage in RequestLifecycle._GATEWAY_STAGES})
+
+    _emit_operation_receipt(
+        session,
+        request_policy="tool_compatible",
+        compressed=True,
+        fallback=False,
+        input_saved=10,
+        output_saved=0,
+        prompt_metrics={},
+    )
+
+    path = bridge_receipt_path(memory_dir=tmp_path, session_id=receipt_session_id(session))
+    receipts = read_bridge_receipts(path)
+    assert len(receipts) == 1
+    summary = receipts[0].evidence_summary["request_lifecycle"]
+    assert summary == {
+        "gateway_stages_complete": True,
+        "incomplete_gateway_stages": [],
+    }
 
 
 def test_build_response_signals_normalizes_tool_use_on_textless_response() -> None:

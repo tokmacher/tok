@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from tok.protocol.models import TokNode
 from tok.protocol.parser import TokParser, serialize
 from tok.runtime.memory.answer_memory import extract_structured_answer_memory
-from tok.runtime.policy.translator import IS_TOK, postprocess_response
+from tok.runtime.policy.translator import IS_TOK, is_likely_tok, postprocess_response
 from tok.runtime.types import ProcessedRuntimeResponse
 
 from ._bridge_wire_models import normalize_tool_use_blocks
@@ -93,9 +93,9 @@ def _visible_text_from_content_blocks(
 def _strip_visible_tok_pipe_prefixes(text: str) -> str:
     original = text
     text = re.sub(r"(?m)^(\s*)\|(?:#|\d+)>\s?", r"\1", text)
-    # Strip bare |> only when the block contains Tok protocol markers; preserve
+    # Strip bare |> only when the block is Tok protocol; preserve
     # |> as a language operator (Elixir, F#, LiveScript) in plain responses.
-    if ">>>" in text:
+    if is_likely_tok(text):
         text = re.sub(r"(?m)^(\s*)\|>\s?", r"\1", text)
     return text.strip() if text != original else text
 

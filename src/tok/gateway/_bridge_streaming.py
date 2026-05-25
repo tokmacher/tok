@@ -25,6 +25,7 @@ from . import (
     _response_contract_for_mode,
     logger,
 )
+from ._operation_artifacts import emit_operation_receipt, emit_savings_event
 from ._signal_constants import _merge_signal_counts
 
 if TYPE_CHECKING:
@@ -484,6 +485,28 @@ async def passthrough_stream_impl(
                 behavior_signals=behavior_signals or None,
                 prompt_metrics=prompt_metrics or None,
             )
+            request_policy = "compressed" if input_saved_tokens > 0 else "baseline_passthrough"
+            emit_operation_receipt(
+                session,
+                request_policy=request_policy,
+                compressed=input_saved_tokens > 0,
+                fallback=False,
+                input_saved=input_saved_tokens,
+                output_saved=0,
+                prompt_metrics=prompt_metrics,
+            )
+            emit_savings_event(
+                session,
+                model=sse_model,
+                usage=sse_usage,
+                request_policy=request_policy,
+                compressed=input_saved_tokens > 0,
+                fallback=False,
+                input_saved=input_saved_tokens,
+                output_saved=0,
+                tool_breakdown=None,
+                prompt_metrics=prompt_metrics,
+            )
 
 
 async def buffer_strip_restream_impl(
@@ -574,7 +597,23 @@ async def buffer_strip_restream_impl(
 
         recovery_required = _detect_recovery_needed(translated_blocks=translated_blocks, read_error=read_error)
         _cost_recorded_by_fallback = False
+        original_sse_call_recorded = False
         if recovery_required:
+            if sse_model != "unknown" and sse_usage:
+                stream_behavior_signals["stream_recovery_original_empty_call"] = 1
+                session.tracker.record_call(
+                    model=sse_model,
+                    actual_input=sse_usage.get("input_tokens", 0),
+                    actual_output=sse_usage.get("output_tokens", 0),
+                    cache_read=sse_usage.get("cache_read_input_tokens", 0),
+                    cache_write=sse_usage.get("cache_creation_input_tokens", 0),
+                    input_saved=0,
+                    output_saved=0,
+                    type_breakdown=type_breakdown,
+                    behavior_signals={"stream_recovery_original_empty_call": 1},
+                    prompt_metrics=prompt_metrics,
+                )
+                original_sse_call_recorded = True
             recovery_allowed, _recovery_reason = _stream_recovery_allowed_now(session)
             stream_behavior_signals["stream_empty_after_success"] = 1
             if read_error is not None:
@@ -788,6 +827,27 @@ async def buffer_strip_restream_impl(
                                         behavior_signals=response_signals or None,
                                         prompt_metrics=prompt_metrics,
                                     )
+                                    emit_operation_receipt(
+                                        session,
+                                        request_policy="stream_recovery",
+                                        compressed=input_saved_tokens > 0,
+                                        fallback=False,
+                                        input_saved=input_saved_tokens,
+                                        output_saved=retry_output_saved,
+                                        prompt_metrics=prompt_metrics,
+                                    )
+                                    emit_savings_event(
+                                        session,
+                                        model=retry_model,
+                                        usage=retry_usage,
+                                        request_policy="stream_recovery",
+                                        compressed=input_saved_tokens > 0,
+                                        fallback=False,
+                                        input_saved=input_saved_tokens,
+                                        output_saved=retry_output_saved,
+                                        tool_breakdown=type_breakdown,
+                                        prompt_metrics=prompt_metrics,
+                                    )
                                 message_start = {
                                     "type": "message_start",
                                     "message": {
@@ -835,10 +895,31 @@ async def buffer_strip_restream_impl(
                         behavior_signals=empty_processed.behavior_signals or None,
                         prompt_metrics=prompt_metrics,
                     )
+                    emit_operation_receipt(
+                        session,
+                        request_policy="stream_recovery",
+                        compressed=False,
+                        fallback=True,
+                        input_saved=0,
+                        output_saved=0,
+                        prompt_metrics=prompt_metrics,
+                    )
+                    emit_savings_event(
+                        session,
+                        model=recovery_model,
+                        usage=recovery_usage,
+                        request_policy="stream_recovery",
+                        compressed=False,
+                        fallback=True,
+                        input_saved=0,
+                        output_saved=0,
+                        tool_breakdown=type_breakdown,
+                        prompt_metrics=prompt_metrics,
+                    )
                 if request_state is not None:
                     _record_fallback_once(session, request_state)
                 _cost_recorded_by_fallback = bool(recovery_model and recovery_usage)
-        if sse_model != "unknown" and sse_usage and not _cost_recorded_by_fallback:
+        if sse_model != "unknown" and sse_usage and not _cost_recorded_by_fallback and not original_sse_call_recorded:
             if not full_text:
                 processed = _RUNTIME.process_response(
                     "",
@@ -871,6 +952,28 @@ async def buffer_strip_restream_impl(
                 output_saved=output_saved,
                 type_breakdown=type_breakdown,
                 behavior_signals=response_signals or None,
+                prompt_metrics=prompt_metrics,
+            )
+            request_policy = "tool_compatible" if tool_compatible else "natural_first"
+            emit_operation_receipt(
+                session,
+                request_policy=request_policy,
+                compressed=input_saved_tokens > 0,
+                fallback=False,
+                input_saved=input_saved_tokens,
+                output_saved=output_saved,
+                prompt_metrics=prompt_metrics,
+            )
+            emit_savings_event(
+                session,
+                model=sse_model,
+                usage=sse_usage,
+                request_policy=request_policy,
+                compressed=input_saved_tokens > 0,
+                fallback=False,
+                input_saved=input_saved_tokens,
+                output_saved=output_saved,
+                tool_breakdown=type_breakdown,
                 prompt_metrics=prompt_metrics,
             )
             asyncio.create_task(_run_macro_mining(session))

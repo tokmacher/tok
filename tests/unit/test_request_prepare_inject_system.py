@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import fields
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_inject_system import Step8Result, run_step_8
+from tok.runtime.pipeline._prepare_inject_system import InjectSystemResult, prepare_inject_system
 from tok.runtime.types import RuntimeRequest
 
 
@@ -18,9 +18,9 @@ def _make_request(**overrides) -> RuntimeRequest:
     return RuntimeRequest(**defaults)
 
 
-class TestStep8ResultDefaults:
-    def test_step8_result_has_correct_defaults(self) -> None:
-        r = Step8Result()
+class TestInjectSystemResultDefaults:
+    def test_inject_system_result_has_correct_defaults(self) -> None:
+        r = InjectSystemResult()
         assert r.body == {}
         assert r.injected_state_payload == ""
         assert r.runtime_hints == []
@@ -32,7 +32,7 @@ class TestStep8ResultDefaults:
         assert r.session_memory == ""
         assert r.tok_state == ""
 
-    def test_step8_result_all_fields_present(self) -> None:
+    def test_inject_system_result_all_fields_present(self) -> None:
         expected = {
             "body",
             "injected_state_payload",
@@ -45,16 +45,16 @@ class TestStep8ResultDefaults:
             "session_memory",
             "tok_state",
         }
-        actual = {f.name for f in fields(Step8Result)}
+        actual = {f.name for f in fields(InjectSystemResult)}
         assert actual == expected
 
 
-class TestStep8InjectSystem:
+class TestPrepareInjectSystem:
     def test_tool_compatible_false_calls_inject_system_additions(self) -> None:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -78,7 +78,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -102,7 +102,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -126,7 +126,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request(tool_compatible=True)
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -150,7 +150,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -174,7 +174,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -198,7 +198,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -222,7 +222,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -246,7 +246,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -270,7 +270,7 @@ class TestStep8InjectSystem:
         session = RuntimeSession()
         req = _make_request()
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "hello"}]}
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=req,
             session=session,
@@ -326,7 +326,7 @@ class TestStep8InjectSystem:
         req = _make_request(tool_compatible=True, adapter_kind="claude-bridge")
         body = {"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "continue"}]}
 
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=FakeRuntime(),
             request=req,
             session=session,

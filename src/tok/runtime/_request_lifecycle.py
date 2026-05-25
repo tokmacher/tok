@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,35 @@ class RequestLifecycle:
     prepared_preflight: bool = False
     plan_finalization_guard: bool = False
     final_payload_construction: bool = False
-    # Runtime-internal: not yet set by the bridge layer.
+    # Runtime-internal: set inside _request_preparation.prepare_request().
     repeat_target_capture: bool = False
     tool_event_normalization: bool = False
     hot_memory_refresh: bool = False
+    # Evidence-safety and response tracking. response_processing_complete is a
+    # reserved post-response stage and must not be set during request preparation.
+    compression_safety_applied: bool = False
+    response_processing_complete: bool = False
+
+    _GATEWAY_STAGES: ClassVar[tuple[str, ...]] = (
+        "initial_preflight",
+        "model_extraction",
+        "tool_compatibility_check",
+        "request_preparation",
+        "runtime_preparation",
+        "repeat_target_capture",
+        "tool_event_normalization",
+        "hot_memory_refresh",
+        "signals_and_metrics",
+        "prepared_preflight",
+        "compression_safety_applied",
+        "plan_finalization_guard",
+        "final_payload_construction",
+    )
+
+    def gateway_stages_complete(self) -> bool:
+        """Return True only when all gateway-pipeline stages are set."""
+        return all(getattr(self, stage) for stage in self._GATEWAY_STAGES)
+
+    def incomplete_gateway_stages(self) -> list[str]:
+        """Return names of gateway-pipeline stages that are still False."""
+        return [stage for stage in self._GATEWAY_STAGES if not getattr(self, stage)]

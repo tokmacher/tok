@@ -5,14 +5,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tok.runtime.core import RuntimeSession
+from tok.runtime.pipeline.context_dependency import ContextDependencyDecision, suffix_preserves_tool_pairs
 from tok.runtime.types import RuntimeRequest
 
-from ._prepare_bridge_cut_search import run_step_7a_bridge_cut_search
+from ._prepare_bridge_cut_search import prepare_bridge_cut_search
 from ._prepare_translate_classify import _exact_search_evidence_keys_in_messages
 
 
 @dataclass
-class Step7Result:
+class CompressHistoryResult:
     body: dict[str, Any] = field(default_factory=dict)
     recent: list[dict[str, Any]] = field(default_factory=list)
     tok_state: str = ""
@@ -29,7 +30,7 @@ class Step7Result:
     bridge_keep_turns: int = 3
 
 
-def run_step_7(
+def prepare_compress_history(
     *,
     session: RuntimeSession,
     request: RuntimeRequest,
@@ -45,6 +46,7 @@ def run_step_7(
     history_skip_reason: str,
     preserve_exact_search_evidence: bool,
     plan_finalization_turn: bool,
+    context_dependency: ContextDependencyDecision,
     broad_audit_batch: bool,
     edit_reacquisition_signals: dict[str, int],
     stream_recovery_history_floor_active: bool,
@@ -64,7 +66,7 @@ def run_step_7(
     bridge_profile: dict[str, Any],
     h_profile: dict[str, Any],
     _first_exact_evidence_seen_for_compression: frozenset[str],
-) -> Step7Result:
+) -> CompressHistoryResult:
     from tok.compression import compress_history, compress_recent_window
     from tok.runtime._history_slicing import _stream_recovery_winnowing_floor_messages
     from tok.runtime.config import _SHORT_SESSION_THRESHOLD
@@ -119,6 +121,91 @@ def run_step_7(
                 tool_compatible=effective_tool_compatible,
             )
 
+    if context_dependency.depends_on_context and not should_skip_history_out:
+        protected_start = context_dependency.protected_suffix_start
+        if protected_start is None or not suffix_preserves_tool_pairs(body["messages"], protected_start):
+            should_skip_history_out = True
+            skip_reason_out = "context_dependency"
+            history_skip_reason_out = skip_reason_out
+            recent_out = body["messages"]
+            behavior_signals_out["context_dependency_fallback_full_history"] = 1
+            behavior_signals_out["tok_history_compression_skipped"] = (
+                behavior_signals_out.get("tok_history_compression_skipped", 0) + 1
+            )
+            behavior_signals_out["tok_skip_context_dependency"] = 1
+            behavior_signals_out["context_dependency_history_skipped"] = 1
+            session_memory_out = session.refresh_hot_memory("", model=request.model)
+            return CompressHistoryResult(
+                body=body,
+                recent=recent_out,
+                tok_state=tok_state_out,
+                session_memory=session_memory_out,
+                compressed=compressed_out,
+                behavior_signals=behavior_signals_out,
+                type_breakdown=type_breakdown_out,
+                should_skip_history=should_skip_history_out,
+                skip_reason=skip_reason_out,
+                history_skip_reason=history_skip_reason_out,
+                saved_tokens=saved_tokens_out,
+                injected_state_payload=injected_state_payload,
+                keep_turns=keep_turns,
+                bridge_keep_turns=bridge_keep_turns,
+            )
+        else:
+            prefix = body["messages"][:protected_start]
+            suffix = body["messages"][protected_start:]
+            recent_prefix = prefix
+            if prefix:
+                h_profile_out = dict(h_profile)
+                h_profile_out["_no_pointers"] = True
+                recent_prefix, tok_state_out, suppressed_markers = compress_history(
+                    prefix,
+                    keep_turns=bridge_keep_turns,
+                    profile=bridge_profile if request.uses_cut_search else h_profile_out,
+                    prune_tool_results=True,
+                )
+                session._suppressed_failure_markers = frozenset(suppressed_markers)
+                recent_prefix, recent_breakdown = compress_recent_window(
+                    recent_prefix,
+                    tool_use_id_to_context=id_to_context,
+                    tool_compatible=effective_tool_compatible,
+                    first_exact_evidence_seen=set(_first_exact_evidence_seen_for_compression),
+                    preserve_exact_search_evidence=preserve_exact_search_evidence,
+                    session_files_read=session._files_read_this_session,
+                    model_profile=session.effective_model_profile,
+                )
+                for k, v in recent_breakdown.items():
+                    type_breakdown_out[f"recent_{k}"] = type_breakdown_out.get(f"recent_{k}", 0) + v
+            recent_out = recent_prefix + suffix
+            body["messages"] = recent_out
+            behavior_signals_out["context_dependency_slice_preserved"] = 1
+            if tok_state_out:
+                _record_non_exact_history_evidence(session, tok_state_out)
+                compressed_out = True
+                if effective_tool_compatible:
+                    behavior_signals_out["tool_compatible_compression"] = (
+                        behavior_signals_out.get("tool_compatible_compression", 0) + 1
+                    )
+                session_memory_out = session.refresh_hot_memory(tok_state_out, model=request.model)
+            else:
+                session_memory_out = session.refresh_hot_memory("", model=request.model)
+            return CompressHistoryResult(
+                body=body,
+                recent=recent_out,
+                tok_state=tok_state_out,
+                session_memory=session_memory_out,
+                compressed=compressed_out,
+                behavior_signals=behavior_signals_out,
+                type_breakdown=type_breakdown_out,
+                should_skip_history=should_skip_history_out,
+                skip_reason=skip_reason_out,
+                history_skip_reason=history_skip_reason_out,
+                saved_tokens=saved_tokens_out,
+                injected_state_payload=injected_state_payload,
+                keep_turns=keep_turns,
+                bridge_keep_turns=bridge_keep_turns,
+            )
+
     if should_skip_history_out:
         if stream_recovery_history_floor_active:
             floored_recent = _stream_recovery_winnowing_floor_messages(body["messages"])
@@ -163,7 +250,7 @@ def run_step_7(
             model_profile=session.effective_model_profile,
         )
 
-        step7a_result = run_step_7a_bridge_cut_search(
+        cut_search_result = prepare_bridge_cut_search(
             session=session,
             request=request,
             recent=recent_compressed,
@@ -181,10 +268,10 @@ def run_step_7(
             effective_tool_compatible=effective_tool_compatible,
         )
 
-        recent_out = step7a_result.recent
-        tok_state_out = step7a_result.tok_state
-        recent_breakdown = step7a_result.recent_breakdown
-        for key, value in step7a_result.behavior_signals.items():
+        recent_out = cut_search_result.recent
+        tok_state_out = cut_search_result.tok_state
+        recent_breakdown = cut_search_result.recent_breakdown
+        for key, value in cut_search_result.behavior_signals.items():
             behavior_signals_out[key] = behavior_signals_out.get(key, 0) + value
 
         if preserve_exact_search_evidence:
@@ -262,7 +349,7 @@ def run_step_7(
     else:
         session_memory_out = session.refresh_hot_memory("", model=request.model)
 
-    return Step7Result(
+    return CompressHistoryResult(
         body=body,
         recent=recent_out,
         tok_state=tok_state_out,

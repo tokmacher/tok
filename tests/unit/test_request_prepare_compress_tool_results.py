@@ -4,17 +4,18 @@ from dataclasses import fields
 
 from tok.runtime.core import RuntimeSession
 from tok.runtime.pipeline._prepare_compress_tool_results import (
-    Step6Result,
+    CompressToolResultsResult,
     _first_exact_evidence_seen_for_compression,
     _retains_required_exact_search_evidence,
-    run_step_6,
+    prepare_compress_tool_results,
 )
+from tok.runtime.pipeline.context_dependency import ContextDependencyDecision
 from tok.runtime.types import RuntimeRequest
 
 
-class TestStep6ResultDefaults:
-    def test_step6_result_has_correct_defaults(self) -> None:
-        r = Step6Result()
+class TestCompressToolResultsResultDefaults:
+    def test_compress_tool_results_result_has_correct_defaults(self) -> None:
+        r = CompressToolResultsResult()
         assert r.body == {}
         assert r.type_breakdown == {}
         assert r.saved_tokens == 0
@@ -24,7 +25,7 @@ class TestStep6ResultDefaults:
         assert r.runtime_hints == []
         assert r.compress_tool_results_bypassed is False
 
-    def test_step6_result_all_fields_present(self) -> None:
+    def test_compress_tool_results_result_all_fields_present(self) -> None:
         expected = {
             "body",
             "type_breakdown",
@@ -35,11 +36,11 @@ class TestStep6ResultDefaults:
             "runtime_hints",
             "compress_tool_results_bypassed",
         }
-        actual = {f.name for f in fields(Step6Result)}
+        actual = {f.name for f in fields(CompressToolResultsResult)}
         assert actual == expected
 
 
-class TestStep6CompressToolResults:
+class TestPrepareCompressToolResults:
     def test_first_exact_evidence_seen_no_preserve(self) -> None:
         session = RuntimeSession()
         result = _first_exact_evidence_seen_for_compression(session, False, set())
@@ -71,7 +72,7 @@ class TestStep6CompressToolResults:
             adapter_kind="unknown",
             tool_compatible=False,
         )
-        result = run_step_6(
+        result = prepare_compress_tool_results(
             session=session,
             request=request,
             body={"messages": [{"role": "user", "content": "hello"}]},
@@ -84,6 +85,7 @@ class TestStep6CompressToolResults:
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=False,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             mode="balanced",
             policy=_MockPolicy(),
             exact_search_evidence_keys_in_request=set(),
@@ -103,7 +105,7 @@ class TestStep6CompressToolResults:
             adapter_kind="unknown",
             tool_compatible=False,
         )
-        result = run_step_6(
+        result = prepare_compress_tool_results(
             session=session,
             request=request,
             body={"messages": [{"role": "user", "content": "hello"}]},
@@ -116,6 +118,7 @@ class TestStep6CompressToolResults:
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=False,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             mode="balanced",
             policy=_MockPolicy(),
             exact_search_evidence_keys_in_request=set(),
@@ -136,7 +139,7 @@ class TestStep6CompressToolResults:
             adapter_kind="unknown",
             tool_compatible=False,
         )
-        result = run_step_6(
+        result = prepare_compress_tool_results(
             session=session,
             request=request,
             body={"messages": [{"role": "user", "content": "hello"}]},
@@ -149,6 +152,7 @@ class TestStep6CompressToolResults:
             edit_reacquisition_signals={"some_signal": 1},
             stream_recovery_history_floor_active=False,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             mode="balanced",
             policy=_MockPolicy(),
             exact_search_evidence_keys_in_request=set(),
@@ -169,7 +173,7 @@ class TestStep6CompressToolResults:
             adapter_kind="unknown",
             tool_compatible=False,
         )
-        result = run_step_6(
+        result = prepare_compress_tool_results(
             session=session,
             request=request,
             body={"messages": [{"role": "user", "content": "hello"}]},
@@ -182,6 +186,7 @@ class TestStep6CompressToolResults:
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=True,
             plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(),
             mode="balanced",
             policy=_MockPolicy(),
             exact_search_evidence_keys_in_request=set(),
@@ -201,7 +206,7 @@ class TestStep6CompressToolResults:
             adapter_kind="unknown",
             tool_compatible=False,
         )
-        result = run_step_6(
+        result = prepare_compress_tool_results(
             session=session,
             request=request,
             body={"messages": [{"role": "user", "content": "hello"}]},
@@ -214,6 +219,7 @@ class TestStep6CompressToolResults:
             edit_reacquisition_signals={},
             stream_recovery_history_floor_active=False,
             plan_finalization_turn=True,
+            context_dependency=ContextDependencyDecision(),
             mode="balanced",
             policy=_MockPolicy(),
             exact_search_evidence_keys_in_request=set(),
@@ -224,6 +230,63 @@ class TestStep6CompressToolResults:
         )
         assert result.compress_tool_results_bypassed is True
         assert result.behavior_signals.get("plan_finalization_tool_result_compression_skipped") == 1
+
+    def test_context_dependency_invalid_suffix_falls_back_to_full_messages(self) -> None:
+        session = RuntimeSession()
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "missing_plan_read",
+                        "content": "Plan: keep this exact\n- inspect\n- patch\n- test\n",
+                    }
+                ],
+            },
+            {"role": "user", "content": "proceed"},
+        ]
+        request = RuntimeRequest(
+            model="claude-sonnet-4",
+            messages=messages,
+            adapter_kind="claude-bridge",
+            tool_compatible=True,
+        )
+
+        result = prepare_compress_tool_results(
+            session=session,
+            request=request,
+            body={"messages": list(messages)},
+            translated_messages=list(messages),
+            id_to_context={},
+            behavior_signals={},
+            effective_tool_compatible=True,
+            preserve_exact_search_evidence=False,
+            broad_audit_batch=False,
+            edit_reacquisition_signals={},
+            stream_recovery_history_floor_active=False,
+            plan_finalization_turn=False,
+            context_dependency=ContextDependencyDecision(
+                depends_on_context=True,
+                kind="plan_handoff",
+                protected_suffix_start=None,
+                reason="test",
+            ),
+            mode="balanced",
+            policy=_MockPolicy(),
+            exact_search_evidence_keys_in_request=set(),
+            current_pressure=0,
+            saved_tokens=0,
+            compressed=False,
+            result_cache=None,
+        )
+
+        assert result.body["messages"] == messages
+        assert result.compress_tool_results_bypassed is True
+        assert result.behavior_signals.get("context_dependency_fallback_full_history") == 1
+        assert result.behavior_signals.get("plan_finalization_tool_result_compression_skipped", 0) == 0, (
+            "context_dependency fallback branch must not mislabel itself as plan_finalization"
+        )
 
 
 class _MockPolicy:

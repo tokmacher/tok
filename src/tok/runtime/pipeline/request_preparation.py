@@ -281,7 +281,7 @@ def _message_explicitly_requests_answer(
 
 
 def is_plan_or_answer_finalization_turn(messages: list[dict[str, Any]]) -> bool:
-    """Return True when the latest user turn asks for a final plan/answer, not new tool work."""
+    """Return True when the latest user turn needs intact prior plan or answer context."""
     latest_user = _latest_user_message(messages)
     lowered = _message_user_text(latest_user).lower()
     if not lowered:

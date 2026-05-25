@@ -33,9 +33,12 @@ __all__ = [
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger("tok.runtime")
+
+from tok.utils.resolver_cache import ResolverCache
 
 from ._answer_phase_state import AnswerPhaseState
 from ._cache_state import CacheState
@@ -86,6 +89,7 @@ from ._session_observation import (
     record_traceback_errors as record_traceback_errors_impl,
 )
 from ._session_persistence import (
+    SessionPersistenceState,
     bridge_memory_file,
     episode_ledger_file,
     fallback_memory_file,
@@ -175,9 +179,6 @@ from .types import (
     SignalPacket,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 @dataclass
 class RuntimeSession:
@@ -209,6 +210,7 @@ class RuntimeSession:
 
     # --- Grouped state sub-objects (0.1.9 architecture improvement) ---
     evidence_safety: EvidenceSafetyState = field(default_factory=EvidenceSafetyState, init=False, repr=False)
+    resolver_cache: ResolverCache | None = field(default=None, init=False, repr=False)
     streaming_recovery: StreamingRecoveryState = field(default_factory=StreamingRecoveryState, init=False, repr=False)
     request_policy: RequestPolicyState = field(default_factory=RequestPolicyState, init=False, repr=False)
     answer_phase: AnswerPhaseState = field(default_factory=AnswerPhaseState, init=False, repr=False)
@@ -224,6 +226,12 @@ class RuntimeSession:
     fidelity: FidelityState = field(default_factory=FidelityState, init=False, repr=False)
     user_prompt: UserPromptState = field(default_factory=UserPromptState, init=False, repr=False)
     project: ProjectState = field(default_factory=ProjectState, init=False, repr=False)
+    # session_persistence groups bridge_memory + persistence helpers (§5.3.2)
+    # Initialized in __post_init__ so it aliases the same bridge_memory object.
+    session_persistence: SessionPersistenceState = field(init=False, repr=False, default=None)
+    # Paragraph-level fingerprints of the system prompt from the prior turn,
+    # used by _system_prompt_cache to detect the static prefix for cache hints.
+    _system_fingerprints: list[str] | None = field(default=None, init=False, repr=False)
 
     def record_fallback_event(self) -> None:
         self.fallback.record_fallback_event()
@@ -379,9 +387,23 @@ class RuntimeSession:
         if norm_path in self.project.skeleton_delivered_paths:
             self.project.skeleton_delivered_paths.remove(norm_path)
 
-    def record_exact_evidence(self, key: str, digest: str = "") -> dict[str, int]:
+    def record_exact_evidence(
+        self,
+        key: str,
+        digest: str = "",
+        *,
+        content: bytes | None = None,
+        mtime: float | None = None,
+    ) -> dict[str, int]:
         turn = max(1, self.bridge_memory.turn)
-        signals = self.evidence_safety.record_exact(key, digest=digest, turn=turn)
+        signals = self.evidence_safety.record_exact(
+            key,
+            digest=digest,
+            turn=turn,
+            content=content,
+            mtime=mtime,
+            resolver_cache=self.resolver_cache,
+        )
         self._bump_signals(signals)
         return signals
 
@@ -439,6 +461,10 @@ class RuntimeSession:
         """Initialize memory directory and load persisted bridge memory."""
         explicit_memory_dir = self.memory_dir is not None
         initialize_session_storage(self, explicit_memory_dir=explicit_memory_dir)
+        root = (self.memory_dir or Path.home() / ".tok") / "resolver-cache"
+        self.resolver_cache = ResolverCache(root)
+        # Wire session_persistence to the same bridge_memory object (not a copy).
+        self.session_persistence = SessionPersistenceState(self.bridge_memory)
 
     def _bridge_memory_file(self) -> Path:
         """Return the path to the bridge memory file."""
@@ -1093,6 +1119,10 @@ class RuntimeSession:
     @property
     def _files_fully_delivered(self) -> dict[str, int]:
         return self.project.files_fully_delivered
+
+    @property
+    def _files_read_fingerprints(self) -> dict[str, str]:
+        return self.fidelity.files_read_fingerprints
 
     @property
     def _skeleton_delivered_paths(self) -> set[str]:

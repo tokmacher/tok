@@ -20,7 +20,7 @@ from ._prepare_init_context import _has_exact_search_evidence
 
 
 @dataclass
-class Step5Result:
+class DetectAnswerPhaseResult:
     answer_ready: bool = False
     late_answer_followthrough_active: bool = False
     late_answer_assembly_repair_active: bool = False
@@ -36,7 +36,7 @@ class Step5Result:
     exact_search_evidence_keys_in_request: set[str] = field(default_factory=set)
 
 
-def run_step_5(
+def prepare_detect_answer_phase(
     session: RuntimeSession,
     request: RuntimeRequest,
     translated_messages: list[dict[str, Any]],
@@ -49,7 +49,7 @@ def run_step_5(
     exact_search_evidence_keys_in_request: set[str],
     plan_finalization_turn: bool,
     initial_runtime_hints: list[str],
-) -> Step5Result:
+) -> DetectAnswerPhaseResult:
     runtime_hints = list(initial_runtime_hints)
     if session.consume_loop_detected():
         behavior_signals["loop_terminated"] = 1
@@ -130,7 +130,7 @@ def run_step_5(
         preserve_exact_search_evidence = bool(answer_ready_turn and exact_search_evidence_keys_in_request)
     session._answer_phase_expected_this_turn = bool(answer_ready_turn)
 
-    return Step5Result(
+    return DetectAnswerPhaseResult(
         answer_ready=answer_ready_turn,
         late_answer_followthrough_active=late_answer_followthrough_active,
         late_answer_assembly_repair_active=late_answer_assembly_repair_active,

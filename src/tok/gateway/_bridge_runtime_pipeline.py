@@ -65,7 +65,9 @@ def _apply_plan_finalization_spend_guard(
     prompt_metrics: PromptMetrics,
 ) -> tuple[dict[str, Any], bool, int, dict[str, int], dict[str, int], bool]:
     """Force final-answer/plan turns to provider-safe passthrough unless Tok clearly saves input tokens."""
-    if not behavior_signals.get("plan_finalization_turn", 0):
+    if not behavior_signals.get("plan_finalization_turn", 0) or behavior_signals.get(
+        "context_dependency_kind_plan_handoff", 0
+    ):
         return prepared_body, compressed, saved_toks, prompt_metrics, behavior_signals, False
 
     original_prompt_tokens = int(prompt_metrics.baseline_prompt_tokens)
@@ -184,6 +186,7 @@ def prepare_bridge_payload(
         surface_adapter=bridge_surface.adapter,
     )
     if preflight_response is not None:
+        session._last_request_lifecycle = lifecycle
         return payload, preflight_response
 
     cooldown_remaining = getattr(session.runtime_session, "_stream_recovery_cooldown_remaining", 0)
@@ -191,6 +194,7 @@ def prepare_bridge_payload(
         session.runtime_session._stream_recovery_cooldown_remaining = max(0, cooldown_remaining - 1)
 
     if path != "v1/messages":
+        session._last_request_lifecycle = lifecycle
         return payload, None
 
     if tok_tool_header.lower() in {"0", "false", "off", "no"}:
@@ -242,7 +246,14 @@ def prepare_bridge_payload(
         session.runtime_session,
         result_cache=session.result_cache,
     )
-    lifecycle = replace(lifecycle, runtime_preparation=True)
+    lifecycle = replace(
+        lifecycle,
+        runtime_preparation=True,
+        # These run atomically inside prepare_request()
+        repeat_target_capture=True,
+        tool_event_normalization=True,
+        hot_memory_refresh=True,
+    )
     request_policy = prepared.request_policy
     request_tool_compatible = prepared.effective_tool_compatible
     compressed = prepared.compressed
@@ -313,7 +324,7 @@ def prepare_bridge_payload(
         path=path,
     )
     retry_forbidden = retry_forbidden or prepared_retry_forbidden
-    lifecycle = replace(lifecycle, prepared_preflight=True)
+    lifecycle = replace(lifecycle, prepared_preflight=True, compression_safety_applied=True)
     if behavior_signals.get("tok_bridge_pairing_degraded_to_provider_safe", 0):
         if saved_toks > 0:
             behavior_signals["tok_compression_worked_before_pairing_degraded"] = 1
@@ -344,6 +355,12 @@ def prepare_bridge_payload(
     lifecycle = replace(lifecycle, plan_finalization_guard=True)
 
     lifecycle = replace(lifecycle, final_payload_construction=True)
+    incomplete_stages = lifecycle.incomplete_gateway_stages()
+    if incomplete_stages:
+        logger.warning(
+            "request_lifecycle_incomplete: stages not reached: %s",
+            ", ".join(incomplete_stages),
+        )
     payload = BridgePreparedPayload(
         body=prepared_body,
         behavior_signals=dict(behavior_signals),
@@ -365,4 +382,5 @@ def prepare_bridge_payload(
         "request_lifecycle: %s",
         {f: getattr(lifecycle, f) for f in lifecycle.__dataclass_fields__},
     )
+    session._last_request_lifecycle = lifecycle
     return payload, preflight_response

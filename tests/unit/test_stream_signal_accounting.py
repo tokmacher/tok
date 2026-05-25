@@ -14,7 +14,10 @@ from tok.gateway._bridge_streaming import (
     buffer_strip_restream_impl,
     passthrough_stream_impl,
 )
+from tok.receipt import _session_id_from_session as receipt_session_id
+from tok.receipt import bridge_receipt_path, read_bridge_receipts
 from tok.runtime.smoothness.models import SmoothnessEventType
+from tok.utils.savings_event import read_savings_events
 
 
 def test_passthrough_stream_impl_records_read_error() -> None:
@@ -251,6 +254,51 @@ def test_successful_visible_completion_clears_read_error_streak() -> None:
 
     assert session.runtime_session._stream_read_error_consecutive_count == 0
     assert session.runtime_session._stream_read_error_last_stage == ""
+
+
+def test_passthrough_stream_writes_operation_artifacts(tmp_path) -> None:
+    session = BridgeSession(memory_dir=tmp_path)
+    session.smoothness_tracker.start_turn("turn_artifacts", "task_artifacts")
+
+    class MockStreamResponse:
+        async def aiter_bytes(self):
+            yield b'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-sonnet-4","id":"msg_1","usage":{"input_tokens":10}}}\n\n'
+            yield b'event: content_block_start\ndata: {"index":0,"content_block":{"type":"text","text":""}}\n\n'
+            yield b'event: content_block_delta\ndata: {"index":0,"delta":{"type":"text_delta","text":"Hello world"}}\n\n'
+            yield b'event: message_delta\ndata: {"delta":{"stop_reason":"end_turn"},"type":"message_delta","usage":{"output_tokens":11}}\n\n'
+            yield b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+
+        async def aclose(self) -> None:
+            pass
+
+    class MockClient:
+        async def aclose(self) -> None:
+            pass
+
+    async def run_test():
+        chunks = []
+        async for chunk in passthrough_stream_impl(
+            session=session,
+            client=MockClient(),
+            response=MockStreamResponse(),
+            input_saved_tokens=7,
+            behavior_signals={"stream_test_signal": 1},
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(run_test())
+    assert chunks
+
+    session_id = receipt_session_id(session)
+    receipt_path = bridge_receipt_path(memory_dir=tmp_path, session_id=session_id)
+    savings_path = receipt_path.with_name("savings_events.jsonl")
+    receipts = read_bridge_receipts(receipt_path)
+    events = read_savings_events(savings_path)
+    assert len(receipts) == 1
+    assert receipts[0].savings["input_saved_tokens"] == 7
+    assert len(events) == 1
+    assert events[0].input_tokens_saved == 7
 
 
 def test_recovery_cooldown_suppresses_repeat_recovery_budget_assignment(

@@ -182,8 +182,29 @@ def bridge_start(
             help="Target API base URL (e.g., https://api.anthropic.com)",
         ),
     ] = None,
+    adapter: Annotated[
+        str | None,
+        typer.Option(
+            "--adapter",
+            help="Runtime adapter (claude by default; non-Claude requires TOK_UNSTABLE_ADAPTERS=1)",
+        ),
+    ] = None,
 ) -> None:
     """Start the Tok bridge server."""
+    from tok.adapters.adapter_config import resolve_adapter_config
+
+    try:
+        adapter_config = resolve_adapter_config(adapter)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+    if adapter_config.name != "claude":
+        console.print(
+            "[red]Bridge adapter selection is probe-only in Tok 0.2.x; "
+            "the live gateway supports only the Claude Code bridge path.[/red]"
+        )
+        raise typer.Exit(1)
+
     existing = get_running_bridge_pid(port)
 
     if existing:
@@ -195,8 +216,10 @@ def bridge_start(
 
         previous_capture = os.environ.get("TOK_CAPTURE")
         previous_reset = os.environ.get("TOK_RESET_SESSION")
+        previous_adapter = os.environ.get("TOK_ADAPTER")
         if capture:
             os.environ["TOK_CAPTURE"] = "1"
+        os.environ["TOK_ADAPTER"] = adapter_config.name
         os.environ["TOK_RESET_SESSION"] = "1"
 
         try:
@@ -216,6 +239,10 @@ def bridge_start(
                 os.environ.pop("TOK_RESET_SESSION", None)
             else:
                 os.environ["TOK_RESET_SESSION"] = previous_reset
+            if previous_adapter is None:
+                os.environ.pop("TOK_ADAPTER", None)
+            else:
+                os.environ["TOK_ADAPTER"] = previous_adapter
     else:
         env = os.environ.copy()
         env["TOK_BRIDGE_PORT"] = str(port)
@@ -223,6 +250,7 @@ def bridge_start(
         env["TOK_DEBUG"] = "1" if debug else "0"
         env["TOK_FAIL_OPEN"] = "1" if fail_open else "0"
         env["TOK_CAPTURE"] = "1" if capture else env.get("TOK_CAPTURE", "0")
+        env["TOK_ADAPTER"] = adapter_config.name
         if api_base is not None:
             env["TOK_API_BASE"] = api_base
         env["TOK_RESET_SESSION"] = "1"

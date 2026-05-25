@@ -20,8 +20,11 @@ from tok.utils.event_logging import log_delta_compress
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
 
+    from ._audit import AuditReport
+
 __all__ = [
     "TOOL_COMPRESS_THRESHOLD",
+    "audit_messages",
     "compress_user_prompt",
 ]
 
@@ -127,9 +130,6 @@ _COMMAND_CACHE_MUTATING_ROOTS = frozenset(
         "chown",
         "install",
         "pip",
-        "npm",
-        "pnpm",
-        "yarn",
         "bun",
         "brew",
         "curl",
@@ -154,9 +154,60 @@ _COMMAND_CACHE_ALLOWED_ROOTS = frozenset(
         "pytest",
         "ruff",
         "mypy",
+        "file",
+        "stat",
+        "tree",
+        "fd",
+        "jq",
+        "cargo",
+        "go",
+        "npm",
+        "pnpm",
+        "yarn",
+        "tsc",
+        "npx",
+        "vitest",
+        "jest",
+        "eslint",
     }
 )
-_COMMAND_CACHE_ALLOWED_GIT = frozenset({"status", "log", "show", "diff", "blame"})
+_COMMAND_CACHE_ALLOWED_GIT = frozenset(
+    {
+        "status",
+        "log",
+        "show",
+        "diff",
+        "blame",
+        "ls-files",
+        "grep",
+        "branch",
+        "rev-parse",
+        "remote",
+        "merge-base",
+    }
+)
+_COMMAND_CACHE_SAFE_PACKAGE_SCRIPTS = frozenset({"test", "lint", "typecheck"})
+_COMMAND_CACHE_MUTATING_PACKAGE_SUBCOMMANDS = frozenset(
+    {
+        "add",
+        "audit",
+        "ci",
+        "dedupe",
+        "exec",
+        "install",
+        "link",
+        "pack",
+        "publish",
+        "rebuild",
+        "remove",
+        "run-script",
+        "unlink",
+        "uninstall",
+        "update",
+        "upgrade",
+        "version",
+    }
+)
 
 _ERROR_EQUIVALENCE_PATTERNS = [
     (
@@ -710,6 +761,91 @@ def _split_command_parts(command: str) -> list[str] | None:
         return None
 
 
+def _has_flag(parts: list[str], *flags: str) -> bool:
+    return any(part in flags for part in parts)
+
+
+def _validate_git_cache_command(parts: list[str]) -> bool:
+    return len(parts) >= 2 and parts[1].lower() in _COMMAND_CACHE_ALLOWED_GIT
+
+
+def _validate_ruff_cache_command(parts: list[str]) -> bool:
+    return len(parts) >= 2 and parts[1] == "check" and "--fix" not in parts
+
+
+def _validate_sed_cache_command(parts: list[str]) -> bool:
+    return "-i" not in parts and "--in-place" not in parts and "-n" in parts
+
+
+def _validate_find_cache_command(parts: list[str]) -> bool:
+    return not any(part in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for part in parts)
+
+
+def _validate_cargo_cache_command(parts: list[str]) -> bool:
+    return len(parts) >= 2 and parts[1] in {"test", "check", "clippy"}
+
+
+def _validate_go_cache_command(parts: list[str]) -> bool:
+    return len(parts) >= 2 and parts[1] == "test"
+
+
+def _validate_package_manager_cache_command(parts: list[str]) -> bool:
+    if len(parts) < 2:
+        return False
+    subcommand = parts[1].lower()
+    if subcommand in _COMMAND_CACHE_MUTATING_PACKAGE_SUBCOMMANDS:
+        return False
+    if subcommand == "test":
+        return True
+    return len(parts) >= 3 and subcommand == "run" and parts[2].lower() in _COMMAND_CACHE_SAFE_PACKAGE_SCRIPTS
+
+
+def _validate_tsc_cache_command(parts: list[str]) -> bool:
+    return "--noEmit" in parts or "--noemit" in {part.lower() for part in parts}
+
+
+def _validate_npx_cache_command(parts: list[str]) -> bool:
+    return len(parts) >= 3 and parts[1] == "tsc" and _validate_tsc_cache_command(parts[1:])
+
+
+def _validate_eslint_cache_command(parts: list[str]) -> bool:
+    return not _has_flag(parts, "--fix", "--fix-dry-run")
+
+
+def _validate_jq_cache_command(parts: list[str]) -> bool:
+    # Require an explicit input file; bare jq reads stdin and is not stable here.
+    return len(parts) >= 3 and any(not part.startswith("-") for part in parts[2:])
+
+
+def _is_cacheable_command_shape(parts: list[str]) -> bool:
+    root = os.path.basename(parts[0]).lower()
+    if root in _COMMAND_CACHE_MUTATING_ROOTS or root not in _COMMAND_CACHE_ALLOWED_ROOTS:
+        return False
+    if root == "git":
+        return _validate_git_cache_command(parts)
+    if root == "ruff":
+        return _validate_ruff_cache_command(parts)
+    if root == "sed":
+        return _validate_sed_cache_command(parts)
+    if root == "find":
+        return _validate_find_cache_command(parts)
+    if root == "cargo":
+        return _validate_cargo_cache_command(parts)
+    if root == "go":
+        return _validate_go_cache_command(parts)
+    if root in {"npm", "pnpm", "yarn"}:
+        return _validate_package_manager_cache_command(parts)
+    if root == "tsc":
+        return _validate_tsc_cache_command(parts)
+    if root == "npx":
+        return _validate_npx_cache_command(parts)
+    if root == "eslint":
+        return _validate_eslint_cache_command(parts)
+    if root == "jq":
+        return _validate_jq_cache_command(parts)
+    return True
+
+
 def _normalized_cacheable_command(command: str) -> str | None:
     text = " ".join(str(command or "").strip().split())
     if not text or any(marker in text for marker in _COMMAND_CACHE_UNSAFE_RAW_MARKERS):
@@ -722,21 +858,8 @@ def _normalized_cacheable_command(command: str) -> str | None:
     parts = _strip_command_wrappers(original_parts)
     if not parts:
         return None
-    root = os.path.basename(parts[0]).lower()
-    if root in _COMMAND_CACHE_MUTATING_ROOTS or root not in _COMMAND_CACHE_ALLOWED_ROOTS:
+    if not _is_cacheable_command_shape(parts):
         return None
-    if root == "git":
-        if len(parts) < 2 or parts[1].lower() not in _COMMAND_CACHE_ALLOWED_GIT:
-            return None
-    elif root == "ruff":
-        if len(parts) < 2 or parts[1] != "check" or "--fix" in parts:
-            return None
-    elif root == "sed":
-        if "-i" in parts or "--in-place" in parts or "-n" not in parts:
-            return None
-    elif root == "find":
-        if any(part in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for part in parts):
-            return None
     return " ".join(parts)
 
 
@@ -776,6 +899,7 @@ def _is_cacheable_command_output(command: str, raw: str) -> bool:
         return False
     lowered = text.lower()
     command_root = os.path.basename(command.split(maxsplit=1)[0]).lower()
+    command_family = command.split(maxsplit=2)[:2]
     hard_failures = (
         "traceback (most recent call last)",
         "command not found",
@@ -793,6 +917,12 @@ def _is_cacheable_command_output(command: str, raw: str) -> bool:
     ):
         return False
     if command_root in {"ruff", "mypy"} and "error" in lowered and "success:" not in lowered:
+        return False
+    if command_root in {"cargo", "go", "npm", "pnpm", "yarn", "tsc", "npx", "vitest", "jest", "eslint"} and (
+        re.search(r"\b(failed|failures?|errors?)\b", lowered) or "panic:" in lowered or "compilation failed" in lowered
+    ):
+        return False
+    if command_family == ["npx", "tsc"] and "error ts" in lowered:
         return False
     return True
 
@@ -1593,6 +1723,8 @@ def compress_tool_results(
     file_heat: dict[str, float] | None = None,
     session: Any | None = None,
     model_profile: Any | None = None,
+    files_read_fingerprints: dict[str, str] | None = None,
+    protected_suffix_start: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk messages, apply caching and tok_tool_result() to large tool_result blocks."""
     from ._pipeline import compress_tool_results_impl
@@ -1615,6 +1747,8 @@ def compress_tool_results(
         file_heat=file_heat,
         session=session,
         model_profile=model_profile,
+        files_read_fingerprints=files_read_fingerprints,
+        protected_suffix_start=protected_suffix_start,
     )
 
 
@@ -1628,6 +1762,7 @@ def inject_system_additions(
     pressure: int = 0,
     runtime_hints: list[str] | None = None,
     behavior_signals: dict[str, int] | None = None,
+    file_integrity_manifest: str | None = None,
 ) -> dict[str, Any]:
     """Inject the Tok output directive into every request."""
     from ._pipeline import inject_system_additions_impl
@@ -1642,6 +1777,7 @@ def inject_system_additions(
         pressure=pressure,
         runtime_hints=runtime_hints,
         behavior_signals=behavior_signals,
+        file_integrity_manifest=file_integrity_manifest,
     )
 
 
@@ -1692,3 +1828,15 @@ def compress_recent_window(
 
 
 from ._prompt_compression import compress_user_prompt  # noqa: E402
+
+
+def audit_messages(
+    messages: list[dict[str, Any]],
+    system_prompt: str | None = None,
+    keep_turns: int = 6,
+) -> AuditReport:
+    """Run the compression pipeline in dry-run mode; return an AuditReport."""
+    from ._audit import AuditReport  # noqa: F401
+    from ._audit import audit_messages as _audit_messages
+
+    return _audit_messages(messages, system_prompt=system_prompt, keep_turns=keep_turns)

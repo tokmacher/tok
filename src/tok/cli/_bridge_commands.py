@@ -32,6 +32,13 @@ def bridge_start(
             help="Target API base URL (e.g., https://api.anthropic.com)",
         ),
     ] = None,
+    adapter: Annotated[
+        str | None,
+        typer.Option(
+            "--adapter",
+            help="Runtime adapter (claude by default; non-Claude requires TOK_UNSTABLE_ADAPTERS=1)",
+        ),
+    ] = None,
 ) -> None:
     """Start the Tok bridge server."""
     from ._bridge import bridge_start as bridge_start_command
@@ -44,6 +51,7 @@ def bridge_start(
         fail_open=fail_open,
         capture=capture,
         api_base=api_base,
+        adapter=adapter,
     )
 
 

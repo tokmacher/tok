@@ -108,7 +108,7 @@ def _resolve_effective_tool_compatible(
 
 
 @dataclass
-class Step4Result:
+class ResolvePolicyResult:
     effective_tool_compatible: bool = False
     request_policy_reasons: list[str] = field(default_factory=list)
     request_policy_escalated: bool = False
@@ -125,7 +125,7 @@ class Step4Result:
     request_policy: str = ""
 
 
-def run_step_4(
+def prepare_resolve_policy(
     request: RuntimeRequest,
     session: RuntimeSession,
     translated_messages: list[dict[str, Any]],
@@ -135,7 +135,7 @@ def run_step_4(
     skip_reason: str,
     history_skip_reason: str,
     plan_finalization_turn: bool,
-) -> Step4Result:
+) -> ResolvePolicyResult:
     from tok.runtime.smoothness.models import TokMode
 
     mode, policy = session.policy_snapshot(request.model)
@@ -339,7 +339,7 @@ def run_step_4(
             request_policy == "natural_first" and request.tool_compatible and not effective_tool_compatible
         )
 
-    return Step4Result(
+    return ResolvePolicyResult(
         effective_tool_compatible=effective_tool_compatible,
         request_policy_reasons=request_policy_reasons,
         request_policy_escalated=request_policy_escalated,

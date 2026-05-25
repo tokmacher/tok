@@ -4,13 +4,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tok.compression import inject_system_additions
+from tok.compression._file_integrity import format_file_integrity_manifest
+from tok.compression._system_prompt_cache import apply_system_cache_hint
 from tok.runtime.core import RuntimeSession, UniversalTokRuntime
 from tok.runtime.pipeline.request_preparation import _inject_system
 from tok.runtime.types import RuntimeRequest
 
 
 @dataclass
-class Step8Result:
+class InjectSystemResult:
     body: dict[str, Any] = field(default_factory=dict)
     injected_state_payload: str = ""
     runtime_hints: list[str] = field(default_factory=list)
@@ -23,7 +25,7 @@ class Step8Result:
     tok_state: str = ""
 
 
-def run_step_8(
+def prepare_inject_system(
     runtime_self: UniversalTokRuntime,
     request: RuntimeRequest,
     session: RuntimeSession,
@@ -40,13 +42,27 @@ def run_step_8(
     should_skip_history: bool,
     recent: list[dict[str, Any]],
     has_answer_anchor: bool,
-) -> Step8Result:
+) -> InjectSystemResult:
     resend_signals: dict[str, int] = {}
     answer_ready = False
     if effective_tool_compatible:
         if skip_reason in {"short_session", "broad_audit"}:
             behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
-            return Step8Result(
+            if skip_reason == "short_session":
+                file_integrity_manifest = format_file_integrity_manifest(
+                    session._files_read_fingerprints,
+                    session._files_fully_delivered,
+                )
+                if file_integrity_manifest:
+                    body = inject_system_additions(
+                        body,
+                        tok_state=None,
+                        tool_compatible=False,
+                        pressure=current_pressure,
+                        behavior_signals=behavior_signals,
+                        file_integrity_manifest=file_integrity_manifest,
+                    )
+            return InjectSystemResult(
                 body=body,
                 behavior_signals=behavior_signals,
             )
@@ -95,7 +111,21 @@ def run_step_8(
             tok_state = injected_state_payload
     elif skip_reason in {"short_session", "broad_audit"}:
         behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
-        return Step8Result(
+        if skip_reason == "short_session":
+            file_integrity_manifest = format_file_integrity_manifest(
+                session._files_read_fingerprints,
+                session._files_fully_delivered,
+            )
+            if file_integrity_manifest:
+                body = inject_system_additions(
+                    body,
+                    tok_state=None,
+                    tool_compatible=False,
+                    pressure=current_pressure,
+                    behavior_signals=behavior_signals,
+                    file_integrity_manifest=file_integrity_manifest,
+                )
+        return InjectSystemResult(
             body=body,
             behavior_signals=behavior_signals,
             resend_signals=resend_signals,
@@ -117,7 +147,14 @@ def run_step_8(
         body["system"] = system_body.get("system", body.get("system", ""))
         tok_state = session_memory
 
-    return Step8Result(
+    body["system"], session._system_fingerprints, _sys_static_chars = apply_system_cache_hint(
+        body.get("system", ""),
+        getattr(session, "_system_fingerprints", None),
+    )
+    if _sys_static_chars > 0:
+        behavior_signals["system_prompt_cache_hint_chars"] = _sys_static_chars
+
+    return InjectSystemResult(
         body=body,
         injected_state_payload=tok_state,
         runtime_hints=runtime_hints,

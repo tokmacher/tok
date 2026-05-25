@@ -1,0 +1,16 @@
+{
+  "conversation_id": "codex-fixture-1",
+  "model": "test-codex-model",
+  "input": [
+    {
+      "role": "user",
+      "content": "Inspect AGENTS.md and summarize the safe editing rules."
+    }
+  ],
+  "tools": [
+    {
+      "name": "shell"
+    }
+  ],
+  "workspace": "/repo"
+}

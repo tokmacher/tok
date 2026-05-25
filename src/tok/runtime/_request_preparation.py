@@ -17,6 +17,7 @@ from tok.compression import (
     inject_system_additions,
     text_of,
 )
+from tok.compression._file_integrity import format_file_integrity_manifest
 from tok.macros.ir import Instruction
 from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body
 from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
@@ -61,6 +62,11 @@ from .config import (
 from .core import RuntimeSession, UniversalTokRuntime, logger
 from .memory.bridge_memory import clean_system_context
 from .memory.session_state import extract_memory_items
+from .pipeline.context_dependency import (
+    classify_context_dependency,
+    context_dependency_signals,
+    suffix_preserves_tool_pairs,
+)
 from .pipeline.request_preparation import (
     _capture_repeat_target_snapshots,
     _has_unresolved_tool_required_conditions,
@@ -756,6 +762,7 @@ def prepare_request_impl(
 
     translated_messages = translate_request_results(body.get("messages", []))
     body["messages"] = translated_messages
+    context_dependency = classify_context_dependency(translated_messages)
     plan_finalization_turn = request.uses_plan_finalization_guard and is_plan_or_answer_finalization_turn(
         translated_messages
     )
@@ -801,6 +808,8 @@ def prepare_request_impl(
         id_to_context,
         suppress_reacquisition_once=suppress_reacquisition_once,
     )
+    for key, value in context_dependency_signals(context_dependency).items():
+        behavior_signals[key] = behavior_signals.get(key, 0) + value
     if suppress_reacquisition_once:
         session._stream_recovery_reacquisition_budget = max(0, session._stream_recovery_reacquisition_budget - 1)
     behavior_signals["_project_markers_proxy"] = len(session._project_markers)
@@ -1146,77 +1155,95 @@ def prepare_request_impl(
             behavior_signals["compress_tool_results_bypassed"] = 1
         elif stream_recovery_history_floor_active:
             body["messages"] = translated_messages
+            behavior_signals["stream_recovery_history_floor_tool_result_compression_skipped"] = 1
             behavior_signals["compress_tool_results_bypassed"] = 1
         elif plan_finalization_turn:
             body["messages"] = translated_messages
             behavior_signals["plan_finalization_tool_result_compression_skipped"] = 1
             behavior_signals["compress_tool_results_bypassed"] = 1
         else:
-            effective_compression_level = policy.tool_levels[mode]
-            if session.model_profile.compression_aggressiveness < 0.8:
-                aggressive_levels = {"aggressive", "full", "maximum"}
-                if effective_compression_level in aggressive_levels:
-                    effective_compression_level = "balanced"
-            body["messages"], type_breakdown = compress_tool_results(
-                translated_messages,
-                result_cache=(result_cache if result_cache is not None else session.result_cache),
-                tool_use_id_to_context=id_to_context,
-                compression_level=effective_compression_level,
-                semantic_hash_cache=session.semantic_hash_cache,
-                hot_summary_records=session._hot_summary_records,
-                session_files_read=session._files_read_this_session,
-                files_fully_delivered=session._files_fully_delivered,
-                first_exact_evidence_seen=_first_exact_evidence_seen_for_compression(),
-                current_turn=session.bridge_memory.turn,
-                keep_turns_window=TOK_FILE_DELIVERY_STALE_TURNS,
-                preserve_exact_search_evidence=preserve_exact_search_evidence,
-                recently_edited_files=dict(session._recently_edited_files),
-                file_heat=dict(session.bridge_memory._file_heat),
-                session=session,
-                model_profile=session.effective_model_profile,
+            protected_suffix_start = (
+                context_dependency.protected_suffix_start if context_dependency.depends_on_context else None
             )
-            tool_saved = sum(type_breakdown.values()) // 4
-            if tool_saved > 0:
-                saved_tokens += tool_saved
-                compressed = True
-            file_cache_hits = sum(v for k, v in type_breakdown.items() if k.endswith("_cached"))
-            if file_cache_hits > 0:
-                behavior_signals["tool_result_cache_hit"] = behavior_signals.get("tool_result_cache_hit", 0) + 1
-            command_cache_saved_chars = int(type_breakdown.get("command_cached", 0))
-            _cacheable_count = type_breakdown.get("command_cacheable_seen", 0)
-            if _cacheable_count > 0:
-                behavior_signals["command_result_cacheable_seen"] = (
-                    behavior_signals.get("command_result_cacheable_seen", 0) + _cacheable_count
-                )
-            if command_cache_saved_chars > 0:
-                behavior_signals["command_result_cache_hit"] = behavior_signals.get("command_result_cache_hit", 0) + 1
-                behavior_signals["command_result_cache_saved_tokens"] = (
-                    behavior_signals.get("command_result_cache_saved_tokens", 0) + command_cache_saved_chars // 4
-                )
-            for _cache_sig in (
-                "command_cache_stored",
-                "command_cache_hit",
-                "command_cache_refreshed_stale",
-                "command_cache_replaced_changed",
-                "command_cache_skip_ineligible_cmd",
-                "command_cache_first_exact_ineligible",
-                "command_cache_first_exact_no_cache",
-                "command_cache_reached_apply",
+            if context_dependency.depends_on_context and not suffix_preserves_tool_pairs(
+                translated_messages, protected_suffix_start
             ):
-                _cache_val = type_breakdown.get(_cache_sig, 0)
-                if _cache_val > 0:
-                    behavior_signals[_cache_sig] = behavior_signals.get(_cache_sig, 0) + _cache_val
-            semantic_dedup_hits = type_breakdown.get("semantic_dedup", 0)
-            if semantic_dedup_hits > 0:
-                behavior_signals["semantic_dedup_hit"] = behavior_signals.get("semantic_dedup_hit", 0) + 1
-                from tok.compression import _STABLE_RESULT_EXPLANATION
-
-                runtime_hints.append(_STABLE_RESULT_EXPLANATION)
-            if type_breakdown.get("stable_payload_validation_failed", 0) > 0:
-                behavior_signals["stable_payload_validation_failed"] = (
-                    behavior_signals.get("stable_payload_validation_failed", 0)
-                    + type_breakdown["stable_payload_validation_failed"]
+                body["messages"] = translated_messages
+                behavior_signals["context_dependency_fallback_full_history"] = 1
+                behavior_signals["compress_tool_results_bypassed"] = 1
+            else:
+                effective_compression_level = policy.tool_levels[mode]
+                if session.model_profile.compression_aggressiveness < 0.8:
+                    aggressive_levels = {"aggressive", "full", "maximum"}
+                    if effective_compression_level in aggressive_levels:
+                        effective_compression_level = "balanced"
+                body["messages"], type_breakdown = compress_tool_results(
+                    translated_messages,
+                    result_cache=(result_cache if result_cache is not None else session.result_cache),
+                    tool_use_id_to_context=id_to_context,
+                    compression_level=effective_compression_level,
+                    semantic_hash_cache=session.semantic_hash_cache,
+                    hot_summary_records=session._hot_summary_records,
+                    session_files_read=session._files_read_this_session,
+                    files_fully_delivered=session._files_fully_delivered,
+                    first_exact_evidence_seen=_first_exact_evidence_seen_for_compression(),
+                    current_turn=session.bridge_memory.turn,
+                    keep_turns_window=TOK_FILE_DELIVERY_STALE_TURNS,
+                    preserve_exact_search_evidence=preserve_exact_search_evidence,
+                    recently_edited_files=dict(session._recently_edited_files),
+                    file_heat=dict(session.bridge_memory._file_heat),
+                    session=session,
+                    model_profile=session.effective_model_profile,
+                    files_read_fingerprints=session._files_read_fingerprints,
+                    protected_suffix_start=protected_suffix_start,
                 )
+                if context_dependency.depends_on_context:
+                    behavior_signals["context_dependency_slice_preserved"] = 1
+                    behavior_signals["context_dependency_tool_result_compression_skipped"] = 1
+                tool_saved = sum(type_breakdown.values()) // 4
+                if tool_saved > 0:
+                    saved_tokens += tool_saved
+                    compressed = True
+                file_cache_hits = sum(v for k, v in type_breakdown.items() if k.endswith("_cached"))
+                if file_cache_hits > 0:
+                    behavior_signals["tool_result_cache_hit"] = behavior_signals.get("tool_result_cache_hit", 0) + 1
+                command_cache_saved_chars = int(type_breakdown.get("command_cached", 0))
+                _cacheable_count = type_breakdown.get("command_cacheable_seen", 0)
+                if _cacheable_count > 0:
+                    behavior_signals["command_result_cacheable_seen"] = (
+                        behavior_signals.get("command_result_cacheable_seen", 0) + _cacheable_count
+                    )
+                if command_cache_saved_chars > 0:
+                    behavior_signals["command_result_cache_hit"] = (
+                        behavior_signals.get("command_result_cache_hit", 0) + 1
+                    )
+                    behavior_signals["command_result_cache_saved_tokens"] = (
+                        behavior_signals.get("command_result_cache_saved_tokens", 0) + command_cache_saved_chars // 4
+                    )
+                for _cache_sig in (
+                    "command_cache_stored",
+                    "command_cache_hit",
+                    "command_cache_refreshed_stale",
+                    "command_cache_replaced_changed",
+                    "command_cache_skip_ineligible_cmd",
+                    "command_cache_first_exact_ineligible",
+                    "command_cache_first_exact_no_cache",
+                    "command_cache_reached_apply",
+                ):
+                    _cache_val = type_breakdown.get(_cache_sig, 0)
+                    if _cache_val > 0:
+                        behavior_signals[_cache_sig] = behavior_signals.get(_cache_sig, 0) + _cache_val
+                semantic_dedup_hits = type_breakdown.get("semantic_dedup", 0)
+                if semantic_dedup_hits > 0:
+                    behavior_signals["semantic_dedup_hit"] = behavior_signals.get("semantic_dedup_hit", 0) + 1
+                    from tok.compression import _STABLE_RESULT_EXPLANATION
+
+                    runtime_hints.append(_STABLE_RESULT_EXPLANATION)
+                if type_breakdown.get("stable_payload_validation_failed", 0) > 0:
+                    behavior_signals["stable_payload_validation_failed"] = (
+                        behavior_signals.get("stable_payload_validation_failed", 0)
+                        + type_breakdown["stable_payload_validation_failed"]
+                    )
 
         recent: list[dict[str, Any]] = body["messages"]
         tok_state = ""
@@ -1261,7 +1288,63 @@ def prepare_request_impl(
                 tool_compatible=effective_tool_compatible,
             )
 
-        if should_skip_history:
+        if context_dependency.depends_on_context and not should_skip_history:
+            protected_suffix_start = context_dependency.protected_suffix_start
+            if protected_suffix_start is None or not suffix_preserves_tool_pairs(
+                body["messages"], protected_suffix_start
+            ):
+                should_skip_history = True
+                skip_reason = "context_dependency"
+                history_skip_reason = skip_reason
+                recent = body["messages"]
+                behavior_signals["context_dependency_fallback_full_history"] = 1
+                behavior_signals["tok_history_compression_skipped"] = (
+                    behavior_signals.get("tok_history_compression_skipped", 0) + 1
+                )
+                behavior_signals["tok_skip_context_dependency"] = 1
+                behavior_signals["context_dependency_history_skipped"] = 1
+            else:
+                prefix = body["messages"][:protected_suffix_start]
+                suffix = body["messages"][protected_suffix_start:]
+                recent_prefix = prefix
+                if prefix:
+                    h_profile: dict[str, Any] = dict(policy.history_profiles[mode])
+                    h_profile["_no_pointers"] = True
+                    bridge_keep_turns = max(keep_turns, 4) if request.uses_cut_search else keep_turns
+                    bridge_profile = dict(h_profile)
+                    if request.uses_cut_search:
+                        bridge_profile["_bridge_cut_search"] = 1
+                    recent_prefix, tok_state, suppressed_markers = compress_history(
+                        prefix,
+                        keep_turns=bridge_keep_turns,
+                        profile=bridge_profile if request.uses_cut_search else h_profile,
+                        prune_tool_results=True,
+                    )
+                    session._suppressed_failure_markers = frozenset(suppressed_markers)
+                    recent_prefix, recent_breakdown = compress_recent_window(
+                        recent_prefix,
+                        tool_use_id_to_context=id_to_context,
+                        tool_compatible=effective_tool_compatible,
+                        first_exact_evidence_seen=_first_exact_evidence_seen_for_compression(),
+                        preserve_exact_search_evidence=preserve_exact_search_evidence,
+                        session_files_read=session._files_read_this_session,
+                        model_profile=session.effective_model_profile,
+                    )
+                    for k, v in recent_breakdown.items():
+                        type_breakdown[f"recent_{k}"] = type_breakdown.get(f"recent_{k}", 0) + v
+                recent = recent_prefix + suffix
+                body["messages"] = recent
+                behavior_signals["context_dependency_slice_preserved"] = 1
+                if not tok_state:
+                    should_skip_history = True
+                    skip_reason = "context_dependency"
+                    history_skip_reason = skip_reason
+                    behavior_signals["tok_history_compression_skipped"] = (
+                        behavior_signals.get("tok_history_compression_skipped", 0) + 1
+                    )
+                    behavior_signals["tok_skip_context_dependency"] = 1
+                    behavior_signals["context_dependency_history_skipped"] = 1
+        elif should_skip_history:
             if stream_recovery_history_floor_active:
                 floored_recent = _stream_recovery_winnowing_floor_messages(body["messages"])
                 if floored_recent:
@@ -1286,16 +1369,16 @@ def prepare_request_impl(
                 behavior_signals[f"tok_soft_{skip_reason}"] = 1
 
             history_baseline_prompt_tokens = session.prepared_prompt_tokens(body)
-            h_profile: dict[str, Any] = dict(policy.history_profiles[mode])
-            h_profile["_no_pointers"] = True
+            history_profile: dict[str, Any] = dict(policy.history_profiles[mode])
+            history_profile["_no_pointers"] = True
             bridge_keep_turns = max(keep_turns, 4) if request.uses_cut_search else keep_turns
-            bridge_profile = dict(h_profile)
+            bridge_profile = dict(history_profile)
             if request.uses_cut_search:
                 bridge_profile["_bridge_cut_search"] = 1
             recent, tok_state, suppressed_markers = compress_history(
                 body["messages"],
                 keep_turns=bridge_keep_turns,
-                profile=bridge_profile if request.uses_cut_search else h_profile,
+                profile=bridge_profile if request.uses_cut_search else history_profile,
                 prune_tool_results=True,
             )
             session._suppressed_failure_markers = frozenset(suppressed_markers)
@@ -1571,10 +1654,29 @@ def prepare_request_impl(
         elif skip_reason in {"short_session", "broad_audit"}:
             # Skip all Tok additions when overhead would dominate the turn.
             behavior_signals[f"{skip_reason}_system_additions_skipped"] = 1
+            if skip_reason == "short_session":
+                file_integrity_manifest = format_file_integrity_manifest(
+                    session._files_read_fingerprints,
+                    session._files_fully_delivered,
+                )
+                if file_integrity_manifest:
+                    system_body = inject_system_additions(
+                        body,
+                        tok_state=None,
+                        tool_compatible=False,
+                        pressure=current_pressure,
+                        behavior_signals=behavior_signals,
+                        file_integrity_manifest=file_integrity_manifest,
+                    )
+                    body["system"] = system_body.get("system", body.get("system", ""))
         else:
             max_runtime_hints = RUNTIME_HINTS_MAX_PER_TURN
             if len(runtime_hints) > max_runtime_hints:
                 runtime_hints = runtime_hints[:max_runtime_hints]
+            file_integrity_manifest = format_file_integrity_manifest(
+                session._files_read_fingerprints,
+                session._files_fully_delivered,
+            )
             system_body = inject_system_additions(
                 body,
                 tok_state=session_memory,
@@ -1582,6 +1684,7 @@ def prepare_request_impl(
                 pressure=current_pressure,
                 runtime_hints=runtime_hints,
                 behavior_signals=behavior_signals,
+                file_integrity_manifest=file_integrity_manifest,
             )
             body["system"] = system_body.get("system", body.get("system", ""))
 

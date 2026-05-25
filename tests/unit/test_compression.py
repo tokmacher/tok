@@ -20,6 +20,7 @@ from tok.compression import (
     _compress_install,
     _compress_ls,
     _detect_tool_content_type,
+    _normalized_cacheable_command,
     classify_cut_eligibility,
     compress_history,
     compress_recent_window,
@@ -852,6 +853,143 @@ class TestCompressToolResults:
         assert content.startswith(">>> tool:bash|unchanged|cached|")
         assert breakdown.get("command_cached", 0) > 0
         assert "command_cacheable_seen" in breakdown
+
+    def test_cacheable_command_normalization_accepts_core_readonly_commands(self) -> None:
+        accepted = {
+            "file src/tok/cli.py": "file src/tok/cli.py",
+            "stat src/tok/cli.py": "stat src/tok/cli.py",
+            "tree src/tok": "tree src/tok",
+            "fd gateway src": "fd gateway src",
+            "jq . pyproject.toml": "jq . pyproject.toml",
+            "git ls-files": "git ls-files",
+            "git grep RuntimeSession src": "git grep RuntimeSession src",
+            "git branch --show-current": "git branch --show-current",
+            "git rev-parse HEAD": "git rev-parse HEAD",
+            "git remote -v": "git remote -v",
+            "git merge-base HEAD main": "git merge-base HEAD main",
+        }
+        for command, normalized in accepted.items():
+            assert _normalized_cacheable_command(command) == normalized
+
+    def test_cacheable_command_normalization_accepts_safe_test_commands(self) -> None:
+        accepted = {
+            "cargo test": "cargo test",
+            "cargo check --workspace": "cargo check --workspace",
+            "cargo clippy --all-targets": "cargo clippy --all-targets",
+            "go test ./pkg": "go test ./pkg",
+            "npm test": "npm test",
+            "pnpm run lint": "pnpm run lint",
+            "yarn run typecheck": "yarn run typecheck",
+            "tsc --noEmit": "tsc --noEmit",
+            "npx tsc --noEmit": "npx tsc --noEmit",
+            "vitest run": "vitest run",
+            "jest --runInBand": "jest --runInBand",
+            "eslint src": "eslint src",
+        }
+        for command, normalized in accepted.items():
+            assert _normalized_cacheable_command(command) == normalized
+
+    def test_cacheable_command_normalization_rejects_unsafe_shapes(self) -> None:
+        rejected = [
+            "rg foo src | head",
+            "git status && git diff",
+            "sed -n '1,20p' src/*.py",
+            "echo $(git status)",
+            "find src -delete",
+            "find src -exec echo {} ;",
+            "sed -i 's/a/b/' src/a.py",
+            "npm install",
+            "pnpm add pytest",
+            "yarn publish",
+            "npm audit fix",
+            "eslint --fix src",
+            "cargo fix",
+            "tsc",
+            "npx eslint src",
+            "jq .",
+        ]
+        for command in rejected:
+            assert _normalized_cacheable_command(command) is None
+
+    def test_repeated_git_ls_files_result_uses_command_cache(self) -> None:
+        raw = "\n".join(f"src/tok/module_{i}.py" for i in range(120))
+        cache: dict[str, ResultCacheEntry] = {}
+        ctx = {"t1": {"name": "bash", "args": {"command": "git ls-files"}}}
+
+        compress_tool_results(self._make_messages_with_tool_result(raw), result_cache=cache, tool_use_id_to_context=ctx)
+        out, breakdown = compress_tool_results(
+            self._make_messages_with_tool_result(raw),
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+        )
+
+        content = out[1]["content"][0]["content"]
+        assert content.startswith(">>> tool:bash|unchanged|cached|")
+        assert breakdown.get("command_cached", 0) > 0
+
+    def test_repeated_tree_result_uses_command_cache(self) -> None:
+        raw = "src\n" + "\n".join(f"|-- module_{i}.py" for i in range(120))
+        cache: dict[str, ResultCacheEntry] = {}
+        ctx = {"t1": {"name": "bash", "args": {"command": "tree src"}}}
+
+        compress_tool_results(self._make_messages_with_tool_result(raw), result_cache=cache, tool_use_id_to_context=ctx)
+        out, breakdown = compress_tool_results(
+            self._make_messages_with_tool_result(raw),
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+        )
+
+        content = out[1]["content"][0]["content"]
+        assert content.startswith(">>> tool:bash|unchanged|cached|")
+        assert breakdown.get("command_cached", 0) > 0
+
+    def test_repeated_safe_test_runner_result_uses_command_cache(self) -> None:
+        raw = "\n".join(f"test package_{i} ... ok" for i in range(100))
+        cache: dict[str, ResultCacheEntry] = {}
+        ctx = {"t1": {"name": "bash", "args": {"command": "go test ./pkg"}}}
+
+        compress_tool_results(self._make_messages_with_tool_result(raw), result_cache=cache, tool_use_id_to_context=ctx)
+        out, breakdown = compress_tool_results(
+            self._make_messages_with_tool_result(raw),
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+        )
+
+        content = out[1]["content"][0]["content"]
+        assert content.startswith(">>> tool:bash|unchanged|cached|")
+        assert breakdown.get("command_cached", 0) > 0
+
+    def test_failed_test_runner_output_is_not_command_cached(self) -> None:
+        raw = "FAIL package ./pkg\n--- FAIL: TestExample\nfailed\n" * 20
+        cache: dict[str, ResultCacheEntry] = {}
+        ctx = {"t1": {"name": "bash", "args": {"command": "go test ./pkg"}}}
+
+        compress_tool_results(self._make_messages_with_tool_result(raw), result_cache=cache, tool_use_id_to_context=ctx)
+        out, breakdown = compress_tool_results(
+            self._make_messages_with_tool_result(raw),
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+        )
+
+        content = out[1]["content"][0]["content"]
+        assert not content.startswith(">>> tool:bash|unchanged|cached|")
+        assert breakdown.get("command_cached", 0) == 0
+
+    def test_env_output_compresses_without_command_cache_stub(self) -> None:
+        raw = "\n".join(["HOME=/Users/example", "PATH=/usr/bin:/bin"] + [f"VAR_{i}=value_{i}" for i in range(120)])
+        cache: dict[str, ResultCacheEntry] = {}
+        ctx = {"t1": {"name": "bash", "args": {"command": "env"}}}
+
+        out, breakdown = compress_tool_results(
+            self._make_messages_with_tool_result(raw),
+            result_cache=cache,
+            tool_use_id_to_context=ctx,
+        )
+
+        content = out[1]["content"][0]["content"]
+        assert content.startswith(">>> tool:env|")
+        assert not content.startswith(">>> tool:bash|unchanged|cached|")
+        assert breakdown.get("command_cached", 0) == 0
 
     def test_first_exact_search_result_stays_raw_then_compresses(self) -> None:
         content = _make_grep_output(n_files=5, matches_per_file=20)

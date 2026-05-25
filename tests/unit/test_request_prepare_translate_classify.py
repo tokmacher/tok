@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import fields
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_translate_classify import Step3Result, run_step_3
+from tok.runtime.pipeline._prepare_translate_classify import TranslateClassifyResult, prepare_translate_classify
 from tok.runtime.types import RuntimeRequest
 
 
@@ -27,9 +27,9 @@ def _make_body(**overrides) -> dict:
     return defaults
 
 
-class TestStep3ResultDefaults:
-    def test_step3_result_has_correct_defaults(self) -> None:
-        r = Step3Result()
+class TestTranslateClassifyResultDefaults:
+    def test_translate_classify_result_has_correct_defaults(self) -> None:
+        r = TranslateClassifyResult()
         assert r.body == {}
         assert r.plan_finalization_turn is False
         assert r.behavior_signals == {}
@@ -46,8 +46,9 @@ class TestStep3ResultDefaults:
         assert r.stream_recovery_history_floor_active is False
         assert r.runtime_hints == []
         assert r.translated_messages == []
+        assert r.context_dependency.depends_on_context is False
 
-    def test_step3_result_all_fields_present(self) -> None:
+    def test_translate_classify_result_all_fields_present(self) -> None:
         expected = {
             "body",
             "plan_finalization_turn",
@@ -65,17 +66,18 @@ class TestStep3ResultDefaults:
             "stream_recovery_history_floor_active",
             "runtime_hints",
             "translated_messages",
+            "context_dependency",
         }
-        actual = {f.name for f in fields(Step3Result)}
+        actual = {f.name for f in fields(TranslateClassifyResult)}
         assert actual == expected
 
 
-class TestStep3TranslateClassify:
+class TestPrepareTranslateClassify:
     def test_basic_request_translates_messages(self) -> None:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request()
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert result.translated_messages == [{"role": "user", "content": "hello"}]
         assert result.body["messages"] == result.translated_messages
 
@@ -83,14 +85,14 @@ class TestStep3TranslateClassify:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request()
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert isinstance(result.behavior_signals, dict)
 
     def test_plan_finalization_turn_false_for_non_bridge(self) -> None:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request(adapter_kind="unknown")
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert result.plan_finalization_turn is False
 
     def test_plan_finalization_turn_true_for_bridge_with_keyword(self) -> None:
@@ -108,14 +110,32 @@ class TestStep3TranslateClassify:
                 {"role": "user", "content": "finalize the plan"},
             ],
         )
-        result = run_step_3(req, session, body, is_bridge_adapter=True)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=True)
         assert result.plan_finalization_turn is True
+
+    def test_plan_handoff_uses_context_dependency_not_phrase_finalization(self) -> None:
+        session = RuntimeSession()
+        messages = [
+            {"role": "assistant", "content": "Plan: inspect, patch, test.\n- read\n- edit\n- verify"},
+            {"role": "user", "content": "proceed with your plan"},
+        ]
+        body = _make_body(messages=messages)
+        req = _make_request(adapter_kind="claude-bridge", messages=messages)
+
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=True)
+
+        assert result.plan_finalization_turn is False
+        assert result.context_dependency.depends_on_context is True
+        assert result.context_dependency.kind == "plan_handoff"
+        assert result.context_dependency.protected_suffix_start == 0
+        assert result.behavior_signals.get("context_dependency_kind_plan_handoff") == 1
+        assert result.behavior_signals.get("plan_finalization_turn") == 1
 
     def test_skip_history_defaults_false(self) -> None:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request()
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert result.should_skip_history is False
         assert result.skip_reason == ""
         assert result.history_skip_reason == ""
@@ -124,28 +144,28 @@ class TestStep3TranslateClassify:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request()
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert result.normalized_tool_events == []
 
     def test_broad_audit_batch_false_for_non_bridge(self) -> None:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request(adapter_kind="unknown")
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert result.broad_audit_batch is False
 
     def test_injected_state_payload_defaults_empty(self) -> None:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request()
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert result.injected_state_payload == ""
 
     def test_project_markers_proxy_in_signals(self) -> None:
         session = RuntimeSession()
         body = _make_body()
         req = _make_request()
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert "_project_markers_proxy" in result.behavior_signals
 
     def test_stream_recovery_budget_decremented(self) -> None:
@@ -153,6 +173,6 @@ class TestStep3TranslateClassify:
         session._stream_recovery_history_floor_budget = 2
         body = _make_body()
         req = _make_request()
-        result = run_step_3(req, session, body, is_bridge_adapter=False)
+        result = prepare_translate_classify(req, session, body, is_bridge_adapter=False)
         assert result.stream_recovery_history_floor_active is True
         assert session._stream_recovery_history_floor_budget == 1
