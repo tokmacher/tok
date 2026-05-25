@@ -8,12 +8,12 @@ from tok.runtime.core import RuntimeSession
 from tok.runtime.pipeline.context_dependency import ContextDependencyDecision, suffix_preserves_tool_pairs
 from tok.runtime.types import RuntimeRequest
 
-from ._prepare_bridge_cut_search import run_step_7a_bridge_cut_search
+from ._prepare_bridge_cut_search import prepare_bridge_cut_search
 from ._prepare_translate_classify import _exact_search_evidence_keys_in_messages
 
 
 @dataclass
-class Step7Result:
+class CompressHistoryResult:
     body: dict[str, Any] = field(default_factory=dict)
     recent: list[dict[str, Any]] = field(default_factory=list)
     tok_state: str = ""
@@ -30,7 +30,7 @@ class Step7Result:
     bridge_keep_turns: int = 3
 
 
-def run_step_7(
+def prepare_compress_history(
     *,
     session: RuntimeSession,
     request: RuntimeRequest,
@@ -66,7 +66,7 @@ def run_step_7(
     bridge_profile: dict[str, Any],
     h_profile: dict[str, Any],
     _first_exact_evidence_seen_for_compression: frozenset[str],
-) -> Step7Result:
+) -> CompressHistoryResult:
     from tok.compression import compress_history, compress_recent_window
     from tok.runtime._history_slicing import _stream_recovery_winnowing_floor_messages
     from tok.runtime.config import _SHORT_SESSION_THRESHOLD
@@ -135,7 +135,7 @@ def run_step_7(
             behavior_signals_out["tok_skip_context_dependency"] = 1
             behavior_signals_out["context_dependency_history_skipped"] = 1
             session_memory_out = session.refresh_hot_memory("", model=request.model)
-            return Step7Result(
+            return CompressHistoryResult(
                 body=body,
                 recent=recent_out,
                 tok_state=tok_state_out,
@@ -189,7 +189,7 @@ def run_step_7(
                 session_memory_out = session.refresh_hot_memory(tok_state_out, model=request.model)
             else:
                 session_memory_out = session.refresh_hot_memory("", model=request.model)
-            return Step7Result(
+            return CompressHistoryResult(
                 body=body,
                 recent=recent_out,
                 tok_state=tok_state_out,
@@ -250,7 +250,7 @@ def run_step_7(
             model_profile=session.effective_model_profile,
         )
 
-        step7a_result = run_step_7a_bridge_cut_search(
+        step7a_result = prepare_bridge_cut_search(
             session=session,
             request=request,
             recent=recent_compressed,
@@ -349,7 +349,7 @@ def run_step_7(
     else:
         session_memory_out = session.refresh_hot_memory("", model=request.model)
 
-    return Step7Result(
+    return CompressHistoryResult(
         body=body,
         recent=recent_out,
         tok_state=tok_state_out,

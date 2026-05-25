@@ -13,7 +13,7 @@ from ._prepare_translate_classify import _exact_search_evidence_keys_in_messages
 
 
 @dataclass
-class Step6Result:
+class CompressToolResultsResult:
     body: dict[str, Any] = field(default_factory=dict)
     type_breakdown: dict[str, int] = field(default_factory=dict)
     saved_tokens: int = 0
@@ -48,7 +48,7 @@ def _retains_required_exact_search_evidence(
     return exact_search_evidence_keys_in_request.issubset(retained_exact_keys)
 
 
-def run_step_6(
+def prepare_compress_tool_results(
     session: RuntimeSession,
     request: RuntimeRequest,
     body: dict[str, Any],
@@ -69,7 +69,7 @@ def run_step_6(
     saved_tokens: int,
     compressed: bool,
     result_cache: dict[str, Any] | None,
-) -> Step6Result:
+) -> CompressToolResultsResult:
     from tok.runtime.config import TOK_FILE_DELIVERY_STALE_TURNS
 
     type_breakdown: dict[str, int] = {}
@@ -113,7 +113,7 @@ def run_step_6(
             body["messages"] = translated_messages
             behavior_signals["context_dependency_fallback_full_history"] = 1
             behavior_signals["compress_tool_results_bypassed"] = 1
-            return Step6Result(
+            return CompressToolResultsResult(
                 body=body,
                 type_breakdown=type_breakdown,
                 saved_tokens=saved_tokens,
@@ -197,7 +197,7 @@ def run_step_6(
 
     compress_tool_results_bypassed = bool(behavior_signals.get("compress_tool_results_bypassed", 0))
 
-    return Step6Result(
+    return CompressToolResultsResult(
         body=body,
         type_breakdown=type_breakdown,
         saved_tokens=saved_tokens,

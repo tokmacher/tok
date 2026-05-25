@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import fields
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_resolve_policy import Step4Result, run_step_4
+from tok.runtime.pipeline._prepare_resolve_policy import ResolvePolicyResult, prepare_resolve_policy
 from tok.runtime.types import RuntimeRequest
 
 
@@ -18,9 +18,9 @@ def _make_request(**overrides) -> RuntimeRequest:
     return RuntimeRequest(**defaults)
 
 
-class TestStep4ResultDefaults:
+class TestResolvePolicyResultDefaults:
     def test_step4_result_has_correct_defaults(self) -> None:
-        r = Step4Result()
+        r = ResolvePolicyResult()
         assert r.effective_tool_compatible is False
         assert r.request_policy_reasons == []
         assert r.request_policy_escalated is False
@@ -53,11 +53,11 @@ class TestStep4ResultDefaults:
             "history_skip_reason",
             "request_policy",
         }
-        actual = {f.name for f in fields(Step4Result)}
+        actual = {f.name for f in fields(ResolvePolicyResult)}
         assert actual == expected
 
 
-class TestStep4ResolvePolicy:
+class TestPrepareResolvePolicy:
     def test_legacy_tool_compatible_effective_true(self) -> None:
         session = RuntimeSession()
         req = _make_request(
@@ -68,7 +68,7 @@ class TestStep4ResolvePolicy:
                 {"role": "user", "content": "follow up"},
             ],
         )
-        result = run_step_4(
+        result = prepare_resolve_policy(
             request=req,
             session=session,
             translated_messages=req.messages,
@@ -88,7 +88,7 @@ class TestStep4ResolvePolicy:
             tool_compatible=True,
             messages=[{"role": "user", "content": "hello"}],
         )
-        result = run_step_4(
+        result = prepare_resolve_policy(
             request=req,
             session=session,
             translated_messages=req.messages,
@@ -108,7 +108,7 @@ class TestStep4ResolvePolicy:
             tool_compatible=True,
             messages=[{"role": "user", "content": "hello"}],
         )
-        result = run_step_4(
+        result = prepare_resolve_policy(
             request=req,
             session=session,
             translated_messages=[],
@@ -132,7 +132,7 @@ class TestStep4ResolvePolicy:
             ],
         )
         behavior_signals: dict[str, int] = {}
-        result = run_step_4(
+        result = prepare_resolve_policy(
             request=req,
             session=session,
             translated_messages=req.messages,

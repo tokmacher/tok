@@ -15,52 +15,52 @@ def _prepare_request_impl(
     *,
     result_cache: dict[str, Any] | None = None,
 ) -> PreparedRuntimeRequest:
-    from ._prepare_init_context import run_step_1
+    from ._prepare_init_context import prepare_init_context
 
-    s1 = run_step_1(request, session)
-    body = s1.body
-    original_body = s1.original_body
-    _thinking_snapshot = s1.thinking_snapshot
-    _pre_existing_session_signals = s1.pre_existing_session_signals
+    ctx_init = prepare_init_context(request, session)
+    body = ctx_init.body
+    original_body = ctx_init.original_body
+    _thinking_snapshot = ctx_init.thinking_snapshot
+    _pre_existing_session_signals = ctx_init.pre_existing_session_signals
     ctx = PreparePipelineContext(
         body=body,
         original_body=original_body,
-        compressed=s1.compressed,
+        compressed=ctx_init.compressed,
         pre_existing_session_signals=_pre_existing_session_signals,
     )
-    seen_mutation_pairs = s1.seen_mutation_pairs
-    last_user_msg = s1.last_user_msg
-    is_bridge_adapter = s1.is_bridge_adapter
-    initial_answer_facts_present = s1.initial_answer_facts_present
-    initial_exact_search_evidence_present = s1.initial_exact_search_evidence_present
+    seen_mutation_pairs = ctx_init.seen_mutation_pairs
+    last_user_msg = ctx_init.last_user_msg
+    is_bridge_adapter = ctx_init.is_bridge_adapter
+    initial_answer_facts_present = ctx_init.initial_answer_facts_present
+    initial_exact_search_evidence_present = ctx_init.initial_exact_search_evidence_present
 
-    from ._prepare_optimize_prompt import run_step_2
+    from ._prepare_optimize_prompt import prepare_optimize_prompt
 
-    s2 = run_step_2(request, session, ctx.body, last_user_msg, is_bridge_adapter, ctx.compressed)
-    ctx.body = s2.body
-    ctx.compressed = s2.compressed
+    ctx_opt = prepare_optimize_prompt(request, session, ctx.body, last_user_msg, is_bridge_adapter, ctx.compressed)
+    ctx.body = ctx_opt.body
+    ctx.compressed = ctx_opt.compressed
 
-    from ._prepare_translate_classify import run_step_3
+    from ._prepare_translate_classify import prepare_translate_classify
 
-    s3 = run_step_3(request, session, ctx.body, is_bridge_adapter)
-    ctx.body = s3.body
-    translated_messages = s3.translated_messages
-    plan_finalization_turn = s3.plan_finalization_turn
-    context_dependency = s3.context_dependency
-    id_to_context = s3.id_to_context
-    exact_search_evidence_keys_in_request = s3.exact_search_evidence_keys_in_request
-    stream_recovery_history_floor_active = s3.stream_recovery_history_floor_active
-    ctx.behavior_signals = s3.behavior_signals
-    normalized_tool_events = s3.normalized_tool_events
-    broad_audit_batch = s3.broad_audit_batch
-    history_skip_reason = s3.history_skip_reason
-    should_skip_history = s3.should_skip_history
-    skip_reason = s3.skip_reason
-    edit_reacquisition_signals = s3.edit_reacquisition_signals
+    ctx_tc = prepare_translate_classify(request, session, ctx.body, is_bridge_adapter)
+    ctx.body = ctx_tc.body
+    translated_messages = ctx_tc.translated_messages
+    plan_finalization_turn = ctx_tc.plan_finalization_turn
+    context_dependency = ctx_tc.context_dependency
+    id_to_context = ctx_tc.id_to_context
+    exact_search_evidence_keys_in_request = ctx_tc.exact_search_evidence_keys_in_request
+    stream_recovery_history_floor_active = ctx_tc.stream_recovery_history_floor_active
+    ctx.behavior_signals = ctx_tc.behavior_signals
+    normalized_tool_events = ctx_tc.normalized_tool_events
+    broad_audit_batch = ctx_tc.broad_audit_batch
+    history_skip_reason = ctx_tc.history_skip_reason
+    should_skip_history = ctx_tc.should_skip_history
+    skip_reason = ctx_tc.skip_reason
+    edit_reacquisition_signals = ctx_tc.edit_reacquisition_signals
 
-    from ._prepare_resolve_policy import run_step_4
+    from ._prepare_resolve_policy import prepare_resolve_policy
 
-    s4 = run_step_4(
+    ctx_policy = prepare_resolve_policy(
         request,
         session,
         translated_messages,
@@ -71,22 +71,22 @@ def _prepare_request_impl(
         history_skip_reason,
         plan_finalization_turn,
     )
-    mode = s4.mode
-    policy = s4.policy
-    ctx.saved_tokens = s4.saved_tokens
-    ctx.type_breakdown = s4.type_breakdown
-    ctx.hot_hint_metrics = s4.hot_hint_metrics
-    should_skip_history = s4.should_skip_history
-    skip_reason = s4.skip_reason
-    history_skip_reason = s4.history_skip_reason
-    current_pressure = s4.current_pressure
-    request_policy = s4.request_policy
-    effective_tool_compatible = s4.effective_tool_compatible
-    request_policy_escalated = s4.request_policy_escalated
+    mode = ctx_policy.mode
+    policy = ctx_policy.policy
+    ctx.saved_tokens = ctx_policy.saved_tokens
+    ctx.type_breakdown = ctx_policy.type_breakdown
+    ctx.hot_hint_metrics = ctx_policy.hot_hint_metrics
+    should_skip_history = ctx_policy.should_skip_history
+    skip_reason = ctx_policy.skip_reason
+    history_skip_reason = ctx_policy.history_skip_reason
+    current_pressure = ctx_policy.current_pressure
+    request_policy = ctx_policy.request_policy
+    effective_tool_compatible = ctx_policy.effective_tool_compatible
+    request_policy_escalated = ctx_policy.request_policy_escalated
 
-    from ._prepare_detect_answer_phase import run_step_5
+    from ._prepare_detect_answer_phase import prepare_detect_answer_phase
 
-    s5 = run_step_5(
+    ctx_answer = prepare_detect_answer_phase(
         session,
         request,
         translated_messages,
@@ -98,18 +98,18 @@ def _prepare_request_impl(
         initial_exact_search_evidence_present,
         exact_search_evidence_keys_in_request,
         plan_finalization_turn,
-        list(s3.runtime_hints),
+        list(ctx_tc.runtime_hints),
     )
-    answer_ready = s5.answer_ready
-    resend_signals = s5.resend_signals
-    has_answer_anchor = s5.has_answer_anchor
-    preserve_exact_search_evidence = s5.preserve_exact_search_evidence
-    read_only_audit_turn = s5.read_only_audit_turn
-    runtime_hints = s5.runtime_hints
+    answer_ready = ctx_answer.answer_ready
+    resend_signals = ctx_answer.resend_signals
+    has_answer_anchor = ctx_answer.has_answer_anchor
+    preserve_exact_search_evidence = ctx_answer.preserve_exact_search_evidence
+    read_only_audit_turn = ctx_answer.read_only_audit_turn
+    runtime_hints = ctx_answer.runtime_hints
 
-    from ._prepare_compress_tool_results import run_step_6
+    from ._prepare_compress_tool_results import prepare_compress_tool_results
 
-    s6 = run_step_6(
+    ctx_tool = prepare_compress_tool_results(
         session,
         request,
         ctx.body,
@@ -131,10 +131,10 @@ def _prepare_request_impl(
         ctx.compressed,
         result_cache,
     )
-    ctx.body = s6.body
-    ctx.type_breakdown = s6.type_breakdown
-    ctx.saved_tokens = s6.saved_tokens
-    ctx.compressed = s6.compressed
+    ctx.body = ctx_tool.body
+    ctx.type_breakdown = ctx_tool.type_breakdown
+    ctx.saved_tokens = ctx_tool.saved_tokens
+    ctx.compressed = ctx_tool.compressed
 
     recent = ctx.body["messages"]
     tok_state = ""
@@ -157,9 +157,9 @@ def _prepare_request_impl(
     else:
         first_exact_evidence_seen_for_compression = set(session._first_exact_evidence_seen)
 
-    from ._prepare_compress_history import run_step_7
+    from ._prepare_compress_history import prepare_compress_history
 
-    s7 = run_step_7(
+    ctx_hist = prepare_compress_history(
         session=session,
         request=request,
         normalized_tool_events=normalized_tool_events,
@@ -195,21 +195,21 @@ def _prepare_request_impl(
         h_profile=h_profile,
         _first_exact_evidence_seen_for_compression=frozenset(first_exact_evidence_seen_for_compression),
     )
-    ctx.body = s7.body
-    recent = s7.recent
-    tok_state = s7.tok_state
-    session_memory = s7.session_memory
-    ctx.compressed = s7.compressed
-    ctx.behavior_signals = s7.behavior_signals
-    ctx.type_breakdown = s7.type_breakdown
-    should_skip_history = s7.should_skip_history
-    skip_reason = s7.skip_reason
-    history_skip_reason = s7.history_skip_reason
-    ctx.saved_tokens = s7.saved_tokens
+    ctx.body = ctx_hist.body
+    recent = ctx_hist.recent
+    tok_state = ctx_hist.tok_state
+    session_memory = ctx_hist.session_memory
+    ctx.compressed = ctx_hist.compressed
+    ctx.behavior_signals = ctx_hist.behavior_signals
+    ctx.type_breakdown = ctx_hist.type_breakdown
+    should_skip_history = ctx_hist.should_skip_history
+    skip_reason = ctx_hist.skip_reason
+    history_skip_reason = ctx_hist.history_skip_reason
+    ctx.saved_tokens = ctx_hist.saved_tokens
 
-    from ._prepare_inject_system import run_step_8
+    from ._prepare_inject_system import prepare_inject_system
 
-    s8 = run_step_8(
+    ctx_inject = prepare_inject_system(
         runtime_self,
         request,
         session,
@@ -227,13 +227,13 @@ def _prepare_request_impl(
         recent,
         has_answer_anchor,
     )
-    ctx.body = s8.body
-    ctx.behavior_signals = s8.behavior_signals
-    ctx.hot_hint_metrics = s8.hot_hint_metrics
-    resend_signals = s8.resend_signals
-    answer_ready = s8.answer_ready
-    has_answer_anchor = s8.has_answer_anchor
-    session_memory = s8.session_memory
+    ctx.body = ctx_inject.body
+    ctx.behavior_signals = ctx_inject.behavior_signals
+    ctx.hot_hint_metrics = ctx_inject.hot_hint_metrics
+    resend_signals = ctx_inject.resend_signals
+    answer_ready = ctx_inject.answer_ready
+    has_answer_anchor = ctx_inject.has_answer_anchor
+    session_memory = ctx_inject.session_memory
 
     for key, value in resend_signals.items():
         if value:
@@ -250,9 +250,9 @@ def _prepare_request_impl(
             session._late_answer_followthrough_pending = True
     session._save_bridge_memory()
 
-    from ._prepare_finalize import run_step_9
+    from ._prepare_finalize import prepare_finalize
 
-    s9 = run_step_9(
+    ctx_final = prepare_finalize(
         runtime_self=runtime_self,
         request=request,
         session=session,
@@ -274,4 +274,4 @@ def _prepare_request_impl(
         seen_mutation_pairs=seen_mutation_pairs,
         _pre_existing_session_signals=ctx.pre_existing_session_signals,
     )
-    return s9.prepared_request
+    return ctx_final.prepared_request

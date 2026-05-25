@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_inject_system import Step8Result, run_step_8
+from tok.runtime.pipeline._prepare_inject_system import InjectSystemResult, prepare_inject_system
 from tok.runtime.types import RuntimeRequest
 
 
@@ -34,7 +34,7 @@ class TestFirstTurnPassthrough:
 
         system_text = "You are a helpful assistant."
         body = _make_body(system=system_text)
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=_make_request(),
             session=session,
@@ -63,7 +63,7 @@ class TestFirstTurnPassthrough:
         session._files_fully_delivered["src/tok/compression/_file_integrity.py"] = 1
 
         system_text = "You are a helpful assistant."
-        result = run_step_8(
+        result = prepare_inject_system(
             runtime_self=None,
             request=_make_request(),
             session=session,
@@ -133,7 +133,7 @@ class TestSignalAbsenceWhenNoHit:
 
 class TestExistingStep8BehaviorPreserved:
     def test_step8_result_fields_unchanged(self) -> None:
-        """Step8Result dataclass fields have not changed."""
+        """InjectSystemResult dataclass fields have not changed."""
         from dataclasses import fields
 
         expected = {
@@ -148,11 +148,11 @@ class TestExistingStep8BehaviorPreserved:
             "session_memory",
             "tok_state",
         }
-        actual = {f.name for f in fields(Step8Result)}
+        actual = {f.name for f in fields(InjectSystemResult)}
         assert actual == expected
 
     def test_step8_defaults_unchanged(self) -> None:
-        r = Step8Result()
+        r = InjectSystemResult()
         assert r.body == {}
         assert r.injected_state_payload == ""
         assert r.runtime_hints == []

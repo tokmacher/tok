@@ -111,7 +111,7 @@ def _edit_events_requiring_exact_reacquisition(
 
 
 @dataclass
-class Step3Result:
+class TranslateClassifyResult:
     body: dict[str, Any] = field(default_factory=dict)
     plan_finalization_turn: bool = False
     behavior_signals: dict[str, int] = field(default_factory=dict)
@@ -131,12 +131,12 @@ class Step3Result:
     context_dependency: ContextDependencyDecision = field(default_factory=ContextDependencyDecision)
 
 
-def run_step_3(
+def prepare_translate_classify(
     request: RuntimeRequest,
     session: RuntimeSession,
     body: dict[str, Any],
     is_bridge_adapter: bool,
-) -> Step3Result:
+) -> TranslateClassifyResult:
     from tok.runtime.pipeline.request_preparation import is_plan_or_answer_finalization_turn
     from tok.runtime.policy.macro_handling import _jit_context_matches
 
@@ -227,7 +227,7 @@ def run_step_3(
 
     runtime_hints = [h for h in [_speculative_macro_hint] if h]
 
-    return Step3Result(
+    return TranslateClassifyResult(
         body=body,
         plan_finalization_turn=plan_finalization_turn,
         behavior_signals=behavior_signals,

@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import fields
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_bridge_cut_search import Step7aResult
-from tok.runtime.pipeline._prepare_compress_history import Step7Result
+from tok.runtime.pipeline._prepare_bridge_cut_search import BridgeCutSearchResult
+from tok.runtime.pipeline._prepare_compress_history import CompressHistoryResult
 from tok.runtime.pipeline.context_dependency import ContextDependencyDecision
 from tok.runtime.types import RuntimeRequest
 
@@ -20,9 +20,9 @@ def _make_request(**overrides) -> RuntimeRequest:
     return RuntimeRequest(**defaults)
 
 
-class TestStep7ResultDefaults:
+class TestCompressHistoryResultDefaults:
     def test_step7_result_has_correct_defaults(self) -> None:
-        r = Step7Result()
+        r = CompressHistoryResult()
         assert r.body == {}
         assert r.recent == []
         assert r.tok_state == ""
@@ -55,13 +55,13 @@ class TestStep7ResultDefaults:
             "keep_turns",
             "bridge_keep_turns",
         }
-        actual = {f.name for f in fields(Step7Result)}
+        actual = {f.name for f in fields(CompressHistoryResult)}
         assert actual == expected
 
 
-class TestStep7aResultDefaults:
+class TestBridgeCutSearchResultDefaults:
     def test_step7a_result_has_correct_defaults(self) -> None:
-        r = Step7aResult()
+        r = BridgeCutSearchResult()
         assert r.recent == []
         assert r.tok_state == ""
         assert r.recent_breakdown == {}
@@ -76,17 +76,17 @@ class TestStep7aResultDefaults:
             "bridge_search_success",
             "behavior_signals",
         }
-        actual = {f.name for f in fields(Step7aResult)}
+        actual = {f.name for f in fields(BridgeCutSearchResult)}
         assert actual == expected
 
 
-class TestStep7aBridgeCutSearch:
+class TestPrepareBridgeCutSearch:
     def test_non_bridge_adapter_returns_early(self) -> None:
-        from tok.runtime.pipeline._prepare_bridge_cut_search import run_step_7a_bridge_cut_search
+        from tok.runtime.pipeline._prepare_bridge_cut_search import prepare_bridge_cut_search
 
         session = RuntimeSession()
         req = _make_request(adapter_kind="openai")
-        result = run_step_7a_bridge_cut_search(
+        result = prepare_bridge_cut_search(
             session=session,
             request=req,
             recent=[{"role": "user", "content": "hello"}],
@@ -107,11 +107,11 @@ class TestStep7aBridgeCutSearch:
         assert result.recent == [{"role": "user", "content": "hello"}]
 
     def test_non_tool_material_recent_returns_early(self) -> None:
-        from tok.runtime.pipeline._prepare_bridge_cut_search import run_step_7a_bridge_cut_search
+        from tok.runtime.pipeline._prepare_bridge_cut_search import prepare_bridge_cut_search
 
         session = RuntimeSession()
         req = _make_request(adapter_kind="claude-bridge")
-        result = run_step_7a_bridge_cut_search(
+        result = prepare_bridge_cut_search(
             session=session,
             request=req,
             recent=[{"role": "user", "content": "hello"}],
@@ -131,7 +131,7 @@ class TestStep7aBridgeCutSearch:
         assert result.bridge_search_success is False
 
     def test_bridge_adapter_with_tool_material_proceeds(self) -> None:
-        from tok.runtime.pipeline._prepare_bridge_cut_search import run_step_7a_bridge_cut_search
+        from tok.runtime.pipeline._prepare_bridge_cut_search import prepare_bridge_cut_search
 
         session = RuntimeSession()
         req = _make_request(adapter_kind="claude-bridge")
@@ -146,7 +146,7 @@ class TestStep7aBridgeCutSearch:
                 "content": [{"type": "tool_result", "tool_use_id": "tool_1", "content": "file content"}],
             },
         ]
-        result = run_step_7a_bridge_cut_search(
+        result = prepare_bridge_cut_search(
             session=session,
             request=req,
             recent=messages_with_tool,
@@ -167,13 +167,13 @@ class TestStep7aBridgeCutSearch:
         assert result.recent == messages_with_tool
 
 
-class TestStep7CompressHistory:
+class TestPrepareCompressHistory:
     def test_skip_history_block_sets_should_skip(self) -> None:
-        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+        from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
 
         session = RuntimeSession()
         req = _make_request(adapter_kind="claude-bridge")
-        result = run_step_7(
+        result = prepare_compress_history(
             session=session,
             request=req,
             normalized_tool_events=[],
@@ -215,11 +215,11 @@ class TestStep7CompressHistory:
         assert result.behavior_signals.get("broad_audit_history_skipped") == 1
 
     def test_edit_reacquisition_signals_triggers_skip(self) -> None:
-        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+        from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
 
         session = RuntimeSession()
         req = _make_request(adapter_kind="claude-bridge")
-        result = run_step_7(
+        result = prepare_compress_history(
             session=session,
             request=req,
             normalized_tool_events=[],
@@ -260,11 +260,11 @@ class TestStep7CompressHistory:
         assert result.behavior_signals.get("evidence_history_compression_skipped") == 1
 
     def test_plan_finalization_triggers_skip(self) -> None:
-        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+        from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
 
         session = RuntimeSession()
         req = _make_request(adapter_kind="claude-bridge")
-        result = run_step_7(
+        result = prepare_compress_history(
             session=session,
             request=req,
             normalized_tool_events=[],
@@ -305,11 +305,11 @@ class TestStep7CompressHistory:
         assert result.behavior_signals.get("plan_finalization_history_skipped") == 1
 
     def test_stream_recovery_history_floor_triggers_skip(self) -> None:
-        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+        from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
 
         session = RuntimeSession()
         req = _make_request(adapter_kind="claude-bridge")
-        result = run_step_7(
+        result = prepare_compress_history(
             session=session,
             request=req,
             normalized_tool_events=[],
@@ -350,12 +350,12 @@ class TestStep7CompressHistory:
         assert result.behavior_signals.get("stream_recovery_history_floor_applied") == 1
 
     def test_should_skip_history_passthrough(self) -> None:
-        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+        from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
 
         session = RuntimeSession()
         session.bridge_memory.turn = 10
         req = _make_request(adapter_kind="claude-bridge")
-        result = run_step_7(
+        result = prepare_compress_history(
             session=session,
             request=req,
             normalized_tool_events=[],
@@ -396,7 +396,7 @@ class TestStep7CompressHistory:
         assert result.history_skip_reason == "already_skipped"
 
     def test_context_dependency_compresses_prefix_and_preserves_suffix(self) -> None:
-        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+        from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
 
         prefix: list[dict[str, str]] = []
         for index in range(8):
@@ -415,7 +415,7 @@ class TestStep7CompressHistory:
         session.bridge_memory.turn = 10
         req = _make_request(adapter_kind="claude-bridge", messages=messages)
 
-        result = run_step_7(
+        result = prepare_compress_history(
             session=session,
             request=req,
             normalized_tool_events=[],
@@ -465,7 +465,7 @@ class TestStep7CompressHistory:
         )
 
     def test_context_dependency_invalid_boundary_falls_back_to_full_history(self) -> None:
-        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+        from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
 
         messages = [
             {"role": "assistant", "content": "Plan: keep exact\n- inspect\n- patch\n- test\n"},
@@ -475,7 +475,7 @@ class TestStep7CompressHistory:
         session.bridge_memory.turn = 10
         req = _make_request(adapter_kind="claude-bridge", messages=messages)
 
-        result = run_step_7(
+        result = prepare_compress_history(
             session=session,
             request=req,
             normalized_tool_events=[],
@@ -527,11 +527,11 @@ class TestStep7CompressHistory:
         )
 
     def test_keep_turns_and_bridge_keep_turns_preserved(self) -> None:
-        from tok.runtime.pipeline._prepare_compress_history import run_step_7
+        from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
 
         session = RuntimeSession()
         req = _make_request(adapter_kind="claude-bridge")
-        result = run_step_7(
+        result = prepare_compress_history(
             session=session,
             request=req,
             normalized_tool_events=[],

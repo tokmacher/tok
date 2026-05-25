@@ -8,8 +8,8 @@ will catch it immediately.
 from __future__ import annotations
 
 from tok.runtime.core import RuntimeSession
-from tok.runtime.pipeline._prepare_compress_history import run_step_7
-from tok.runtime.pipeline._prepare_compress_tool_results import run_step_6
+from tok.runtime.pipeline._prepare_compress_history import prepare_compress_history
+from tok.runtime.pipeline._prepare_compress_tool_results import prepare_compress_tool_results
 from tok.runtime.pipeline.context_dependency import ContextDependencyDecision
 from tok.runtime.types import RuntimeRequest
 
@@ -97,7 +97,7 @@ def _drive_history(**override_flags) -> dict[str, int]:
         _first_exact_evidence_seen_for_compression=frozenset(),
     )
     defaults.update(override_flags)
-    result = run_step_7(**defaults)  # type: ignore[arg-type]
+    result = prepare_compress_history(**defaults)  # type: ignore[arg-type]
     return result.behavior_signals
 
 
@@ -126,7 +126,7 @@ def _drive_tool_results(**override_flags) -> dict[str, int]:
         result_cache=None,
     )
     defaults.update(override_flags)
-    result = run_step_6(**defaults)  # type: ignore[arg-type]
+    result = prepare_compress_tool_results(**defaults)  # type: ignore[arg-type]
     return result.behavior_signals
 
 

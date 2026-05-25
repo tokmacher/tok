@@ -12,7 +12,7 @@ from tok.runtime.types import RuntimeRequest
 
 
 @dataclass
-class Step8Result:
+class InjectSystemResult:
     body: dict[str, Any] = field(default_factory=dict)
     injected_state_payload: str = ""
     runtime_hints: list[str] = field(default_factory=list)
@@ -25,7 +25,7 @@ class Step8Result:
     tok_state: str = ""
 
 
-def run_step_8(
+def prepare_inject_system(
     runtime_self: UniversalTokRuntime,
     request: RuntimeRequest,
     session: RuntimeSession,
@@ -42,7 +42,7 @@ def run_step_8(
     should_skip_history: bool,
     recent: list[dict[str, Any]],
     has_answer_anchor: bool,
-) -> Step8Result:
+) -> InjectSystemResult:
     resend_signals: dict[str, int] = {}
     answer_ready = False
     if effective_tool_compatible:
@@ -62,7 +62,7 @@ def run_step_8(
                         behavior_signals=behavior_signals,
                         file_integrity_manifest=file_integrity_manifest,
                     )
-            return Step8Result(
+            return InjectSystemResult(
                 body=body,
                 behavior_signals=behavior_signals,
             )
@@ -125,7 +125,7 @@ def run_step_8(
                     behavior_signals=behavior_signals,
                     file_integrity_manifest=file_integrity_manifest,
                 )
-        return Step8Result(
+        return InjectSystemResult(
             body=body,
             behavior_signals=behavior_signals,
             resend_signals=resend_signals,
@@ -154,7 +154,7 @@ def run_step_8(
     if _sys_static_chars > 0:
         behavior_signals["system_prompt_cache_hint_chars"] = _sys_static_chars
 
-    return Step8Result(
+    return InjectSystemResult(
         body=body,
         injected_state_payload=tok_state,
         runtime_hints=runtime_hints,
