@@ -1,0 +1,15 @@
+{
+  "conversation_id": "codex-fallback-1",
+  "model": "test-codex-model",
+  "input": [
+    {
+      "role": "user",
+      "content": "Use an unknown tool shape that Tok cannot safely process."
+    }
+  ],
+  "tools": [
+    {
+      "name": "unknown_mutating_tool"
+    }
+  ]
+}

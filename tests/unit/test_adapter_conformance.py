@@ -1,9 +1,12 @@
 """Adapter conformance test: adapters must only own transport plumbing."""
 
 import ast
+import json
 import pathlib
 
-ADAPTERS_PATH = pathlib.Path("src/tok/adapters/adapters.py")
+_REPO_ROOT = pathlib.Path(__file__).parent.parent.parent
+ADAPTERS_PATH = _REPO_ROOT / "src/tok/adapters/adapters.py"
+CODEX_FIXTURE_PATH = _REPO_ROOT / "tests/fixtures/codex/exactness_labels.json"
 
 # These symbols must NOT be imported or defined inside adapters.py
 FORBIDDEN_IMPORTS = {
@@ -77,9 +80,7 @@ def test_orchestrator_finalize_does_not_double_consume_signals() -> None:
     OrchestratorAdapter.finalize() does NOT call consume_behavior_signals() on
     the session a second time within the adapter itself.
     """
-    import pathlib
-
-    source = pathlib.Path("src/tok/adapters/orchestrator.py").read_text()
+    source = (_REPO_ROOT / "src/tok/adapters/orchestrator.py").read_text()
 
     consume_count = source.count("consume_behavior_signals")
     assert consume_count == 0, (
@@ -97,10 +98,9 @@ def test_gateway_sse_path_does_not_double_consume_signals() -> None:
     consume_behavior_signals() are not called back-to-back (with only whitespace/comments
     between them) in gateway.py.
     """
-    import pathlib
     import re
 
-    source = pathlib.Path("src/tok/gateway/__init__.py").read_text()
+    source = (_REPO_ROOT / "src/tok/gateway/__init__.py").read_text()
     # Check that process_response(...) is NOT immediately followed by consume_behavior_signals
     # within a few lines (the problematic double-consume pattern)
     pattern = re.compile(
@@ -116,3 +116,29 @@ def test_gateway_sse_path_does_not_double_consume_signals() -> None:
             f"consume_behavior_signals() within {newline_count} lines — "
             "this is the stale double-consume pattern that was removed."
         )
+
+
+def test_codex_probe_in_conformance_matrix(monkeypatch) -> None:
+    """Codex probe must preserve the adapter contract while it remains unstable."""
+    from tok.adapters.adapter_config import get_adapter_probe
+
+    monkeypatch.setenv("TOK_UNSTABLE_ADAPTERS", "1")
+    adapter = get_adapter_probe("codex-cli")
+    request = adapter.parse_inbound_request(CODEX_FIXTURE_PATH.read_bytes())
+
+    assert adapter.identify_runtime() == "codex-cli"
+    assert adapter.transport_boundary() == "http-proxy"
+    assert request.surface_runtime == "codex-cli"
+    assert request.surface_adapter == "codex-cli-probe"
+    assert request.request_has_tools is True
+    assert request.request_policy == "legacy_tool_compatible"
+    assert [message["tok_probe"]["evidence_form"] for message in request.messages] == [
+        "exact",
+        "summary",
+        "skeleton",
+        "reference",
+    ]
+    assert request.todo is not None
+    signals = json.loads(request.todo)["diagnostic_signals"]
+    assert signals["adapter_probe_parsed"] == 1
+    assert signals["adapter_probe_fallback"] == 0
