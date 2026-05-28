@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any
 
 VALID_BENCHMARK_FAMILIES = {"execution_patch", "repo_grounding", "real_session"}
+PUBLIC_BENCHMARK_FAMILY_LABELS = {
+    "execution_patch": "Execution patch",
+    "repo_grounding": "Repository grounding",
+    "real_session": "Real session",
+}
 VALID_CLAIM_SCOPES = {"headline", "secondary"}
 VALID_BENCHMARK_CONDITIONS = {"baseline", "tok-universal"}
 VALID_WORKSPACE_SOURCE_KINDS = {"asset_snapshot", "local_checkout"}
