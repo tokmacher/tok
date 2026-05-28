@@ -4,7 +4,8 @@ This page is for autonomous agents inspecting Tok from a fresh clone.
 
 Tok is a bridge-first, protocol-aimed system for compact, auditable, model-facing
 context. The supported 0.2.x product surface is the local Claude Code bridge,
-diagnostics, trace audit, and local resolver beta.
+diagnostics, trace audit, and local resolver beta. Session receipts and handoff packets
+are experimental local artifacts for audit and fixture-based state transfer.
 
 Do not treat Tok as a hosted service, general agent framework, repo indexer, universal
 protocol implementation, or stable Python SDK.
@@ -115,6 +116,13 @@ Supported 0.2.x path:
 - diagnostics through `tok bridge status`, `tok doctor`, `tok stats`, and `tok audit`
 - local resolver beta commands through `tok resolver`
 
+Experimental local artifacts:
+
+- `tok session-receipt --latest --json`
+- `tok audit --session-receipt <path> --json`
+- `tok handoff export --latest --json`
+- `tok handoff inspect <path>`
+
 Experimental or unsupported:
 
 - hosted service behavior
@@ -122,7 +130,8 @@ Experimental or unsupported:
 - repo indexing
 - universal protocol compliance
 - stable Python SDK compatibility
-- Tok Capability, Tok Session, remote resolver, and agent-to-agent exchange
+- Tok Capability, stable Tok Session protocol, remote resolver, and universal
+  agent-to-agent exchange
 
 ## Safe Editing
 
@@ -145,6 +154,8 @@ Docs rules:
 - Update README and CLI docs when the first-run workflow changes.
 - Keep public docs free of hidden prompt instructions.
 - Use exact commands and conservative claims.
+- For session-receipt or handoff changes, run targeted receipt/handoff tests plus
+  release-surface and agent-docs checks.
 
 ## Useful Reports
 

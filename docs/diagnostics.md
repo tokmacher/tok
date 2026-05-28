@@ -121,9 +121,19 @@ Low savings is not automatically a Tok failure. Treat it as a prompt to inspect
 
 ### JSON Diagnostics Shape
 
-`tok bridge status --json` and `tok doctor --json` use the shared `tok-cli-result/v0.1`
-envelope. Important session fields include `session_quality`, `degradation_reason`,
-`fallback_count`, `baseline_only`, `tokens_saved`, `savings_pct`, and `goal`.
+`tok bridge status --json`, `tok doctor --json`, and `tok stats --json` use the shared
+`tok-cli-result/v0.1` envelope.
+
+Important session fields include:
+
+- `runtime_verdict` and `runtime_verdict_style` (a compact "what state am I in" summary)
+- `session_quality`
+- `fallback_count`
+- `baseline_only` and `degraded_to_baseline`
+- `last_degradation_reason` (`degradation_reason` is kept as a compatibility alias)
+- `tokens_saved` and `savings_pct`
+- `savings_source` (where savings numbers came from, such as `session_tracker`)
+- `goal`
 
 The `goal` field is a compact orientation hint, not an exact transcript. It is capped at
 40 characters by the live bridge health endpoint, so it may end mid-sentence. Tok strips
