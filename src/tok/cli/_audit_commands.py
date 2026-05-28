@@ -17,6 +17,7 @@ from ._cli_support import console, json_envelope, memory_root
 FIXTURE_FILE_ARG = typer.Argument(None, help="Path to a Tok Trace v0.1 fixture or live JSONL trace file.")
 JSON_OUTPUT_OPT = typer.Option(False, "--json", help="Emit machine-readable audit results.")
 LATEST_OPT = typer.Option(False, "--latest", help="Audit the newest trace in the active .tok/traces directory.")
+SESSION_RECEIPT_OPT = typer.Option(None, "--session-receipt", help="Verify a Tok session receipt JSON file.")
 
 
 @dataclass(frozen=True)
@@ -32,9 +33,13 @@ def register(app: typer.Typer) -> None:
     def audit(
         fixture_file: Path | None = FIXTURE_FILE_ARG,
         latest: bool = LATEST_OPT,
+        session_receipt: Path | None = SESSION_RECEIPT_OPT,
         json_output: bool = JSON_OUTPUT_OPT,
     ) -> None:
         """Audit Tok Trace v0.1 draft fixtures or live bridge traces."""
+        if session_receipt is not None:
+            _audit_session_receipt(session_receipt, json_output=json_output)
+            return
         trace_file = _resolve_audit_path(fixture_file, latest=latest)
         if trace_file is None:
             msg = (
@@ -94,6 +99,60 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(1)
         if any(result.status == "warn" for result in results):
             raise typer.Exit(2)
+
+
+def _audit_session_receipt(path: Path, *, json_output: bool) -> None:
+    if not path.exists():
+        msg = f"Session receipt not found: {path}"
+        if json_output:
+            print(json.dumps(json_envelope("audit", ok=False, status="error", data={"message": msg})))
+        else:
+            console.print(f"[red]{msg}[/red]")
+        raise typer.Exit(5)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        result = {
+            "passed": False,
+            "level": "L0_schema",
+            "errors": [f"json_invalid:{exc}"],
+            "warnings": [],
+            "deferred_levels": [
+                "L1_internal_consistency",
+                "L2_digest",
+                "L3_local_recovery",
+                "L4_signed_provenance",
+                "L5_remote_verification",
+            ],
+        }
+    else:
+        from tok.protocol.session_receipt import verify_session_receipt
+
+        result = verify_session_receipt(payload).model_dump()
+    if json_output:
+        print(json.dumps(result, sort_keys=True))
+    else:
+        passed = bool(result.get("passed", False))
+        level = str(result.get("level", ""))
+        errors = _string_list(result.get("errors", []))
+        warnings = _string_list(result.get("warnings", []))
+        deferred_levels = _string_list(result.get("deferred_levels", []))
+        style = "green" if passed else "red"
+        console.print(f"[{style}]SESSION RECEIPT {'PASS' if passed else 'FAIL'}[/{style}] {level}")
+        for error in errors:
+            console.print(f"[red]error:[/red] {error}")
+        for warning in warnings:
+            console.print(f"[yellow]warning:[/yellow] {warning}")
+        if deferred_levels:
+            console.print("Deferred: " + ", ".join(deferred_levels))
+    if not bool(result.get("passed", False)):
+        raise typer.Exit(1)
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    return [str(item) for item in value if item]
 
 
 def _resolve_audit_path(fixture_file: Path | None, *, latest: bool) -> Path | None:

@@ -1,0 +1,116 @@
+{
+  "schema": "tok-session-receipt/v0.1-draft",
+  "receipt_id": "tsr_good_fixture_001",
+  "created_at": "2026-05-26T00:00:00Z",
+  "session": {
+    "session_id": "live:exampleclean",
+    "started_at": "2026-05-26T00:00:00Z",
+    "ended_at": "2026-05-26T00:05:00Z",
+    "turn_count": 3
+  },
+  "adapter": {
+    "client": "claude-code",
+    "adapter": "claude-bridge",
+    "transport_boundary": "http-proxy",
+    "capabilities": [
+      "tool-pair",
+      "streaming",
+      "extended-thinking"
+    ],
+    "unstable": false
+  },
+  "provider": {
+    "name": "anthropic",
+    "model": "claude-sonnet-example",
+    "api_base": "https://api.anthropic.com"
+  },
+  "diagnostics_summary": {
+    "status": "ok",
+    "bridge": "tok",
+    "mode": "tok",
+    "request_policy": "legacy_tool_compatible",
+    "baseline_only": false,
+    "fallback_count": 0,
+    "fail_open_count": 0,
+    "session_quality": "clean",
+    "last_degradation_reason": "",
+    "calls": 3,
+    "persistence_failures": 0,
+    "evidence_exact_observed_count": 4,
+    "evidence_non_exact_reference_count": 2,
+    "evidence_non_exact_summary_count": 1,
+    "evidence_non_exact_skeleton_count": 1,
+    "evidence_exact_reacquisition_required_count": 0,
+    "evidence_exact_reacquisition_satisfied_count": 1,
+    "evidence_compression_blocked_for_safety_count": 0,
+    "savings_source": "savings_events"
+  },
+  "savings_summary": {
+    "baseline_input_tokens": 12000,
+    "tok_input_tokens": 7200,
+    "output_tokens": 1800,
+    "cache_read_tokens": 300,
+    "cache_write_tokens": 700,
+    "gross_tokens_saved": 4800,
+    "net_tokens_saved": 4600,
+    "reacquisition_tokens_spent": 200,
+    "estimated_baseline_cost_usd": 0.06,
+    "estimated_tok_cost_usd": 0.038,
+    "estimated_cost_saved_usd": 0.022,
+    "pricing_source": "tok.utils.pricing",
+    "pricing_freshness": "verified",
+    "fallback_count": 0,
+    "degraded_to_baseline": false,
+    "compression_bypass_count": 0,
+    "confidence": "event_backed"
+  },
+  "evidence_summary": {
+    "exact_count": 4,
+    "summary_count": 1,
+    "skeleton_count": 1,
+    "reference_count": 2,
+    "reacquisition_required_count": 0,
+    "reacquisition_satisfied_count": 1,
+    "resolver_backed_count": 3,
+    "non_exact_edit_block_count": 0
+  },
+  "artifacts": [
+    {
+      "kind": "bridge_receipts",
+      "path": ".tok/sessions/live_exampleclean/receipts.jsonl",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "exactness": "exact",
+      "available": true
+    },
+    {
+      "kind": "savings_events",
+      "path": ".tok/sessions/live_exampleclean/savings_events.jsonl",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "exactness": "exact",
+      "available": true
+    }
+  ],
+  "bridge_receipts": [
+    {
+      "receipt_id": "bridge_good_001",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "savings_events": [
+    {
+      "event_id": "savings_good_001",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "deterministic_action_receipts": [],
+  "validation": {
+    "level": "L3_local_recovery",
+    "passed": true,
+    "deferred_levels": [
+      "L4_signed_provenance",
+      "L5_remote_verification"
+    ],
+    "errors": []
+  },
+  "warnings": []
+}

@@ -1,0 +1,198 @@
+{
+  "schema": "tok-session-receipt-adversarial/v0.1",
+  "cases": [
+    {
+      "name": "forged_exact_label",
+      "expected_error": "exact_artifact_unavailable:tok://resolver/missing-exact",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_forged_exact",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-forged-exact"
+        },
+        "artifacts": [
+          {
+            "kind": "resolver",
+            "path": "tok://resolver/missing-exact",
+            "digest": "",
+            "exactness": "exact",
+            "available": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "missing_artifact",
+      "expected_error": "artifact_missing:/tmp/tok-session-receipt-missing-artifact",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_missing_artifact",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-missing-artifact"
+        },
+        "artifacts": [
+          {
+            "kind": "bridge_receipts",
+            "path": "/tmp/tok-session-receipt-missing-artifact",
+            "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "exactness": "exact",
+            "available": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "digest_mismatch",
+      "expected_error": "artifact_digest_mismatch:",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_digest_mismatch",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-digest-mismatch"
+        },
+        "artifacts": [
+          {
+            "kind": "bridge_receipts",
+            "path": "__TEST_ARTIFACT__",
+            "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "exactness": "exact",
+            "available": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown_resolver_uri",
+      "expected_error": "resolver_uri_unavailable:tok://resolver/unknown",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_unknown_resolver",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-unknown-resolver"
+        },
+        "artifacts": [
+          {
+            "kind": "resolver",
+            "path": "tok://resolver/unknown",
+            "digest": "",
+            "exactness": "reference",
+            "available": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "summary_pretending_exact",
+      "expected_error": "artifact_exactness_kind_mismatch:summary",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_summary_exact",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-summary-exact"
+        },
+        "artifacts": [
+          {
+            "kind": "summary",
+            "path": "",
+            "digest": "",
+            "exactness": "exact",
+            "available": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "fallback_omitted",
+      "expected_error": "fallback_count_inconsistent",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_fallback_omitted",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-fallback-omitted"
+        },
+        "diagnostics_summary": {
+          "fallback_count": 1
+        },
+        "savings_summary": {
+          "fallback_count": 0
+        }
+      }
+    },
+    {
+      "name": "degraded_baseline_omitted",
+      "expected_error": "degraded_baseline_omitted",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_degraded_omitted",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-degraded-omitted"
+        },
+        "diagnostics_summary": {
+          "baseline_only": true,
+          "session_quality": "degraded"
+        },
+        "savings_summary": {
+          "degraded_to_baseline": false
+        }
+      }
+    },
+    {
+      "name": "adapter_profile_mismatch",
+      "expected_error": "adapter_profile_mismatch",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_adapter_mismatch",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-adapter-mismatch"
+        },
+        "adapter": {
+          "client": "codex-cli",
+          "adapter": "claude-bridge"
+        }
+      }
+    },
+    {
+      "name": "invalid_bridge_receipt_reference",
+      "expected_error": "invalid_bridge_receipt_reference",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_bad_bridge_ref",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-bad-bridge-ref"
+        },
+        "bridge_receipts": [
+          {
+            "receipt_id": "",
+            "digest": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "inconsistent_savings_summary",
+      "expected_error": "savings_summary_inconsistent",
+      "receipt": {
+        "schema": "tok-session-receipt/v0.1-draft",
+        "receipt_id": "tsr_adv_bad_savings",
+        "created_at": "2026-05-26T00:00:00Z",
+        "session": {
+          "session_id": "adv-bad-savings"
+        },
+        "savings_summary": {
+          "baseline_input_tokens": 100,
+          "tok_input_tokens": 90,
+          "gross_tokens_saved": 50
+        }
+      }
+    }
+  ]
+}
