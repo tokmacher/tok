@@ -52,6 +52,27 @@ from ._prompting import _minimalize_system_prompt, _system_breakdown
 from ._utils import _content_text, _estimate_tokens, _sum_warning_signals, _system_to_messages
 
 
+def _messages_contain_any(messages: list[dict[str, Any]], terms: tuple[str, ...]) -> bool:
+    return any(any(term in str(message.get("content", "")) for term in terms) for message in messages)
+
+
+def _append_missing_grounding_messages(
+    provider_messages: list[dict[str, Any]],
+    original_messages: list[dict[str, Any]],
+    terms: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    merged = list(provider_messages)
+    existing = {str(message.get("content", "")) for message in merged}
+    for message in original_messages:
+        content = str(message.get("content", ""))
+        if content in existing:
+            continue
+        if any(term in content for term in terms):
+            merged.append(message)
+            existing.add(content)
+    return merged
+
+
 class LiveBenchmarkRunner:
     def __init__(
         self,
@@ -93,6 +114,7 @@ class LiveBenchmarkRunner:
         bridge_session: BridgeSession | None = None,
         adapter_kind: str = "text-loop",
         allowed_tools: tuple[str, ...] | None = None,
+        expected_file_terms: tuple[str, ...] = (),
     ) -> ConversationTurnResult:
         canonical_mode = "tok-universal" if mode in {"tok-tool-compatible", "tok-universal"} else mode
         use_openai_tools = bool(allowed_tools) and self.provider.lower() != "anthropic"
@@ -181,6 +203,8 @@ class LiveBenchmarkRunner:
                     adapter_kind="claude-bridge",
                     body=copy.deepcopy(bridge_payload.body),
                 )
+                if bridge_payload.compressed and bridge_payload.saved_toks <= 0:
+                    prepared_body = copy.deepcopy(bridge_payload.provider_safe_original_body)
                 request_policy = bridge_payload.request_policy
                 turn_tool_compatible = bridge_payload.request_tool_compatible
                 chat_messages = _system_to_messages(prepared_body.get("system")) + prepared_body.get("messages", [])
@@ -345,6 +369,18 @@ class LiveBenchmarkRunner:
             provider_messages = _adapt_tool_results_for_openai(adapted_chat_messages)
         else:
             provider_messages = _provider_safe_chat_messages(adapted_chat_messages, self.provider)
+        if canonical_mode == "tok-universal" and self.provider.lower() != "anthropic":
+            expected_terms = tuple(expected_file_terms or ())
+            if expected_terms and not _messages_contain_any(provider_messages, expected_terms):
+                original_messages = _provider_safe_chat_messages(
+                    bridge_payload.provider_safe_original_body.get("messages", []),
+                    self.provider,
+                )
+                provider_messages = _append_missing_grounding_messages(
+                    provider_messages,
+                    original_messages,
+                    expected_terms,
+                )
 
         provider_shape = _message_shape_forensics(provider_messages)
         compatibility_warnings: list[str] = []
@@ -579,6 +615,7 @@ class LiveBenchmarkRunner:
                     mode=canonical_mode,
                     session=session,
                     bridge_session=bridge_session,
+                    expected_file_terms=tuple(definition.expected_file_terms or ()),
                 )
                 prompt_tokens = step_result.provider_usage.prompt_tokens
                 completion_tokens = step_result.provider_usage.completion_tokens
