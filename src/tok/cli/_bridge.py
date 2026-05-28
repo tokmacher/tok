@@ -503,15 +503,15 @@ def bridge_status(*, json_output: bool = False) -> None:
                 conformance = str(capability.get("max_conformance_level", "unknown"))
             if json_output:
                 fail_open_count = int(payload.get("fail_open_count", 0))
-                degradation_reason = str(payload.get("last_degradation_reason", ""))
+                last_degradation_reason = str(payload.get("last_degradation_reason", ""))
                 session_quality = str(payload.get("session_quality", "clean"))
                 warnings: list[str] = []
                 if baseline_only:
                     warnings.append("Session degraded to baseline")
-                elif session_quality != "clean" or fail_open_count > 0 or degradation_reason:
-                    if degradation_reason:
+                elif session_quality != "clean" or fail_open_count > 0 or last_degradation_reason:
+                    if last_degradation_reason:
                         warnings.append(
-                            f"Session quality is {session_quality}; degradation reason: {degradation_reason}"
+                            f"Session quality is {session_quality}; degradation reason: {last_degradation_reason}"
                         )
                     elif fail_open_count > 0:
                         warnings.append(
@@ -537,7 +537,11 @@ def bridge_status(*, json_output: bool = False) -> None:
                         "degraded_to_baseline": baseline_only,
                         "fallback_count": fallback_count,
                         "fail_open_count": fail_open_count,
-                        "degradation_reason": degradation_reason,
+                        "runtime_verdict": verdict,
+                        "runtime_verdict_style": verdict_style,
+                        "savings_source": str(payload.get("savings_source", "session_tracker")),
+                        "last_degradation_reason": last_degradation_reason,
+                        "degradation_reason": last_degradation_reason,
                         "session_quality": session_quality,
                         "tokens_saved": int(session_summary["tokens_saved"]),
                         "savings_pct": float(session_summary["savings_pct"]),

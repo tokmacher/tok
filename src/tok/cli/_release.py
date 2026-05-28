@@ -85,6 +85,8 @@ def _health_session_summary(health_payload: dict[str, Any]) -> dict[str, Any]:
     """
     return {
         "actual_tokens": int(health_payload.get("actual_tokens", 0)),
+        "cache_read_tokens": int(health_payload.get("cache_read_tokens", 0)),
+        "cache_write_tokens": int(health_payload.get("cache_write_tokens", 0)),
         "baseline_tokens": int(health_payload.get("baseline_tokens", 0)),
         "tokens_saved": int(health_payload.get("session_tokens_saved", 0)),
         "net_tokens_saved": int(
@@ -230,10 +232,28 @@ def stats_command(
         if session_summary:
             fail_open_count = int(session_summary.get("fail_open_count", 0))
             session_quality = str(session_summary.get("session_quality", "clean"))
-            degradation_reason = str(session_summary.get("last_degradation_reason", ""))
+            last_degradation_reason = str(session_summary.get("last_degradation_reason", ""))
+            baseline_only = bool(session_summary.get("baseline_only", False))
+            degraded_to_baseline = (
+                baseline_only
+                or session_quality != "clean"
+                or fail_open_count > 0
+                or int(session_summary.get("fallback_count", 0)) > 0
+            )
+            compression_bypass_count = int(session_summary.get("compression_bypass_count", 0))
+            if compression_bypass_count <= 0:
+                compression_bypass_count = int(session_summary.get("fallback_count", 0)) + int(baseline_only)
+            verdict, verdict_style = runtime_verdict(
+                tok_active=not baseline_only,
+                baseline_only=baseline_only,
+                tokens_saved=int(session_summary.get("tokens_saved", 0)),
+                session_quality=session_quality,
+            )
             data["session"] = {
                 "calls": int(session_summary.get("calls", 0)),
                 "actual_tokens": int(session_summary.get("actual_tokens", 0)),
+                "cache_read_tokens": int(session_summary.get("cache_read_tokens", 0)),
+                "cache_write_tokens": int(session_summary.get("cache_write_tokens", 0)),
                 "baseline_tokens": int(session_summary.get("baseline_tokens", 0)),
                 "tokens_saved": int(session_summary.get("tokens_saved", 0)),
                 "net_tokens_saved": int(session_summary.get("net_tokens_saved", 0)),
@@ -244,16 +264,22 @@ def stats_command(
                 "cost_saved_usd": float(session_summary.get("cost_saved_usd", 0.0)),
                 "fallback_count": int(session_summary.get("fallback_count", 0)),
                 "fail_open_count": fail_open_count,
-                "baseline_only": bool(session_summary.get("baseline_only", False)),
+                "baseline_only": baseline_only,
+                "degraded_to_baseline": degraded_to_baseline,
+                "compression_bypass_count": compression_bypass_count,
                 "session_quality": session_quality,
-                "degradation_reason": degradation_reason,
+                "runtime_verdict": verdict,
+                "runtime_verdict_style": verdict_style,
+                "savings_source": str(session_summary.get("savings_source", "session_tracker")),
+                "last_degradation_reason": last_degradation_reason,
+                "degradation_reason": last_degradation_reason,
             }
-            if session_quality != "clean" or fail_open_count > 0 or degradation_reason:
+            if session_quality != "clean" or fail_open_count > 0 or last_degradation_reason:
                 warnings.append(
                     _degradation_warning(
                         fail_open_count=fail_open_count,
                         session_quality=session_quality,
-                        degradation_reason=degradation_reason,
+                        degradation_reason=last_degradation_reason,
                     )
                 )
         else:
@@ -263,6 +289,8 @@ def stats_command(
                 "sessions": int(lifetime_summary.get("sessions", 0)),
                 "total_turns": int(lifetime_summary.get("total_turns", 0)),
                 "actual_tokens": int(lifetime_summary.get("actual_tokens", 0)),
+                "cache_read_tokens": int(lifetime_summary.get("cache_read_tokens", 0)),
+                "cache_write_tokens": int(lifetime_summary.get("cache_write_tokens", 0)),
                 "baseline_tokens": int(lifetime_summary.get("baseline_tokens", 0)),
                 "tokens_saved": int(lifetime_summary.get("tokens_saved", 0)),
                 "net_tokens_saved": int(lifetime_summary.get("net_tokens_saved", 0)),
@@ -273,6 +301,13 @@ def stats_command(
                 "cost_saved_usd": float(lifetime_summary.get("cost_saved_usd", 0.0)),
                 "fallback_count": int(lifetime_summary.get("fallback_count", 0)),
                 "baseline_only_requests": int(lifetime_summary.get("baseline_only_requests", 0)),
+                "compression_bypass_count": int(
+                    lifetime_summary.get(
+                        "compression_bypass_count",
+                        int(lifetime_summary.get("fallback_count", 0))
+                        + int(lifetime_summary.get("baseline_only_requests", 0)),
+                    )
+                ),
             }
         envelope = json_envelope(
             "tok stats",
@@ -1164,7 +1199,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                 fallback_count = int(payload.get("fallback_count", 0))
                 fail_open_count = int(payload.get("fail_open_count", 0))
                 session_quality = str(payload.get("session_quality", "clean"))
-                degradation_reason = str(payload.get("last_degradation_reason", ""))
+                last_degradation_reason = str(payload.get("last_degradation_reason", ""))
                 session_view_summary = _health_session_summary(payload)
                 tokens_saved = int(session_view_summary["tokens_saved"])
                 verdict, verdict_style = runtime_verdict(
@@ -1257,7 +1292,11 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     json_data["degraded_to_baseline"] = baseline_only
                     json_data["fallback_count"] = fallback_count
                     json_data["fail_open_count"] = fail_open_count
-                    json_data["degradation_reason"] = degradation_reason
+                    json_data["runtime_verdict"] = verdict
+                    json_data["runtime_verdict_style"] = verdict_style
+                    json_data["savings_source"] = str(payload.get("savings_source", "session_tracker"))
+                    json_data["last_degradation_reason"] = last_degradation_reason
+                    json_data["degradation_reason"] = last_degradation_reason
                     json_data["session_quality"] = session_quality
                     json_data["goal"] = str(payload.get("goal", ""))
                     json_data["tokens_saved"] = tokens_saved
@@ -1277,19 +1316,21 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     if baseline_only:
                         json_warnings.append("Session degraded to baseline")
                         issues = True
-                    elif session_quality != "clean" or fail_open_count > 0 or degradation_reason:
+                    elif session_quality != "clean" or fail_open_count > 0 or last_degradation_reason:
                         watch_warning = _degradation_warning(
                             fail_open_count=fail_open_count,
                             session_quality=session_quality,
-                            degradation_reason=degradation_reason,
+                            degradation_reason=last_degradation_reason,
                         )
                         json_warnings.append(watch_warning)
                 else:
-                    if not baseline_only and (session_quality != "clean" or fail_open_count > 0 or degradation_reason):
+                    if not baseline_only and (
+                        session_quality != "clean" or fail_open_count > 0 or last_degradation_reason
+                    ):
                         watch_warning = _degradation_warning(
                             fail_open_count=fail_open_count,
                             session_quality=session_quality,
-                            degradation_reason=degradation_reason,
+                            degradation_reason=last_degradation_reason,
                         )
                     console.print(
                         render_stats_panel(
@@ -1305,7 +1346,7 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                                 api_base=str(payload.get("api_base", "")) or None,
                                 fallback_count=fallback_count,
                                 session_quality=session_quality,
-                                degradation_reason=degradation_reason,
+                                degradation_reason=last_degradation_reason,
                                 session_signals=session_signals_text(signal_payload),
                             ),
                             border_style=status_border(verdict_style),

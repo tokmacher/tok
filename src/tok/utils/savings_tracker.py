@@ -335,6 +335,8 @@ class SavingsTracker:
             m.get("actual_input_tokens", 0) + m.get("cache_read_tokens", 0) + m.get("cache_write_tokens", 0)
             for m in models.values()
         )
+        cache_read_tokens = sum(m.get("cache_read_tokens", 0) for m in models.values())
+        cache_write_tokens = sum(m.get("cache_write_tokens", 0) for m in models.values())
         actual_completion_tokens = sum(m.get("actual_output_tokens", 0) for m in models.values())
         actual_tokens = actual_prompt_tokens + actual_completion_tokens
         saved_tokens = sum(
@@ -440,6 +442,8 @@ class SavingsTracker:
             "actual_prompt_tokens": actual_prompt_tokens,
             "actual_completion_tokens": actual_completion_tokens,
             "actual_tokens": actual_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "cache_write_tokens": cache_write_tokens,
             "baseline_tokens": baseline_tokens,
             "tokens_saved": saved_tokens,
             "net_tokens_saved": net_saved_tokens,

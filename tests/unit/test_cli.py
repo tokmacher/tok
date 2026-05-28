@@ -3309,9 +3309,70 @@ class TestStatsTotalNoDoubleCounting:
         session = data["data"]["session"]
         assert session["fallback_count"] == 0
         assert session["fail_open_count"] == 65
+        assert session["degraded_to_baseline"] is True
+        assert session["compression_bypass_count"] == 0
         assert session["session_quality"] == "watch"
         assert session["degradation_reason"] == "fail-open compatibility"
         assert any("fail-open compatibility" in warning for warning in data["warnings"])
+
+    def test_stats_json_short_session_includes_full_savings_evidence_fields(self, tmp_path, monkeypatch) -> None:
+        savings_file = tmp_path / "tok_savings.tok"
+        tracker = SavingsTracker(savings_file=str(savings_file), ledger_path=tmp_path / "global_savings.tok")
+        tracker.record_call(
+            model="claude-sonnet-4",
+            actual_input=80,
+            actual_output=20,
+            cache_read=5,
+            cache_write=3,
+            input_saved=40,
+            output_saved=2,
+            behavior_signals={"reacquisition_cost_tokens": 7},
+        )
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(savings_file))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: None)
+
+        result = runner.invoke(app, ["stats", "--json"])
+
+        assert result.exit_code == 0, result.output
+        session = json.loads(result.output)["data"]["session"]
+        assert session["calls"] == 1
+        assert session["cache_read_tokens"] == 5
+        assert session["cache_write_tokens"] == 3
+        assert session["tokens_saved"] == 42
+        assert session["reacquisition_cost_tokens"] == 7
+        assert session["net_tokens_saved"] == 35
+        assert session["fallback_count"] == 0
+        assert session["baseline_only"] is False
+        assert session["degraded_to_baseline"] is False
+        assert session["compression_bypass_count"] == 0
+
+    def test_stats_json_repeated_fallback_session_exposes_bypass_count(self, tmp_path, monkeypatch) -> None:
+        savings_file = tmp_path / "tok_savings.tok"
+        tracker = SavingsTracker(savings_file=str(savings_file), ledger_path=tmp_path / "global_savings.tok")
+        for _ in range(2):
+            tracker.record_call(
+                model="claude-sonnet-4",
+                actual_input=100,
+                actual_output=10,
+                cache_read=0,
+                cache_write=0,
+                input_saved=0,
+                output_saved=0,
+                behavior_signals={"tok_fallback_activated": 1},
+            )
+        monkeypatch.setenv("TOK_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("TOK_SAVINGS_FILE", str(savings_file))
+        monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda _port: None)
+
+        result = runner.invoke(app, ["stats", "--json"])
+
+        assert result.exit_code == 0, result.output
+        session = json.loads(result.output)["data"]["session"]
+        assert session["calls"] == 2
+        assert session["fallback_count"] == 2
+        assert session["degraded_to_baseline"] is True
+        assert session["compression_bypass_count"] == 2
 
     def test_stats_json_uses_empty_degradation_reason_when_clean(self, tmp_path, monkeypatch) -> None:
         savings_file = tmp_path / "tok_savings.tok"
@@ -3348,4 +3409,5 @@ class TestStatsTotalNoDoubleCounting:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["data"]["session"]["degradation_reason"] == ""
+        assert data["data"]["session"]["degraded_to_baseline"] is False
         assert data["warnings"] == []
