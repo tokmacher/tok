@@ -260,3 +260,29 @@ def test_count_assistant_messages_with_opaque_blocks() -> None:
     assert _count_assistant_messages_with_opaque_blocks(body) == 2
     assert _count_assistant_messages_with_opaque_blocks({"messages": "bad"}) == 0
     assert _count_assistant_messages_with_opaque_blocks(None) == 0
+
+
+def test_find_protected_message_detects_signed_nonstandard_block() -> None:
+    """The protection machinery must consider any provider-signed block opaque,
+    not just the literal ``thinking`` / ``redacted_thinking`` types -- otherwise a
+    future/edge signed block would be reorder-protected (already via
+    content_has_opaque_provider_blocks) but silently left out of the
+    snapshot/restore + mutation-check protection, an inconsistent gap.
+    """
+    from tok.runtime.pipeline.request_validation import _find_protected_message
+
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "future_signed_kind", "signature": "SIG_OPAQUE", "data": "x"},
+                {"type": "text", "text": "answer"},
+            ],
+        },
+    ]
+
+    msg_id, content_id = _find_protected_message(messages)
+
+    assert msg_id is not None
+    assert content_id is not None

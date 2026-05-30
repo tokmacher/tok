@@ -795,7 +795,7 @@ def _find_protected_message(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        if any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
+        if content_has_opaque_provider_blocks(content):
             return id(msg), id(content)
     return None, None
 
@@ -849,7 +849,7 @@ def _check_thinking_block_mutation(
             content = msg.get("content")
             if not isinstance(content, list):
                 continue
-            if any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
+            if content_has_opaque_provider_blocks(content):
                 after_content = content
                 break
     if after_content is not None:
