@@ -930,9 +930,14 @@ def compress_tool_results_impl(
             unseen.append(f"{abs_index + 1}: {line}")
         if overlap_count == 0:
             return None
+        # coverage:delivered-exact records the *basis* of the overlap claim: the
+        # overlapping lines were delivered verbatim by a prior precision read
+        # (precision reads are never skeletonized or truncated), so an auditor can
+        # trust the suppression rather than treating it as coverage assumed
+        # against summarized/skeleton content.
         header = (
             f">>> tool:file_read_overlap_delta|path:{path}|range:{start + 1}-{end}"
-            f"|new_lines:{len(unseen)}|overlap_lines:{overlap_count}"
+            f"|new_lines:{len(unseen)}|overlap_lines:{overlap_count}|coverage:delivered-exact"
         )
         body = "\n".join(unseen) if unseen else "no new lines (all overlap with prior precision reads)"
         return header + "\n" + body

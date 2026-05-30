@@ -1087,3 +1087,34 @@ def test_verbatim_read_truncation_unchanged() -> None:
     out = tok_tool_result(single_long_line, tool_context=ctx)
 
     assert len(out) < len(single_long_line)
+
+
+def test_overlap_delta_marker_labels_delivered_exact_coverage() -> None:
+    """The overlap-delta marker must record the basis of its coverage claim.
+
+    When a re-read overlaps a prior precision read, the suppressed lines were
+    *delivered exactly* before (precision reads are never skeletonized or
+    truncated). The wire marker carries an explicit ``coverage:delivered-exact``
+    token so an auditor can verify the "all overlap" claim is sound rather than
+    an assumption against summarized content.
+    """
+    from tok.compression import compress_tool_results
+
+    # Longer per-line content so the overlap marker is clearly shorter than the
+    # re-delivered raw block (overlap-delta only fires when it actually saves).
+    full = "\n".join(f"line{i} = some descriptive content for row number {i} here" for i in range(1, 201))
+    mid = "\n".join(f"line{i} = some descriptive content for row number {i} here" for i in range(100, 140))
+
+    def read_msgs(tid: str, content: str, offset: int, limit: int):
+        ctx = {"name": "Read", "args": {"file_path": "/x/big.py", "offset": offset, "limit": limit}}
+        a = {"role": "assistant", "content": [{"type": "tool_use", "id": tid, "name": "Read", "input": ctx["args"]}]}
+        u = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tid, "content": content}]}
+        return ctx, a, u
+
+    ctx1, a1, u1 = read_msgs("t1", full, 1, 200)
+    ctx2, a2, u2 = read_msgs("t2", mid, 100, 40)
+    out, _bd = compress_tool_results([a1, u1, a2, u2], result_cache={}, tool_use_id_to_context={"t1": ctx1, "t2": ctx2})
+
+    second = out[3]["content"][0]["content"]
+    assert "file_read_overlap_delta" in second
+    assert "coverage:delivered-exact" in second
