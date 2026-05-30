@@ -6,6 +6,8 @@ import copy
 from dataclasses import dataclass
 from typing import Any
 
+from tok.provider_block_semantics import is_text_block, is_tool_result_block, is_tool_use_block
+
 
 @dataclass(frozen=True)
 class MessageAudit:
@@ -36,11 +38,11 @@ def _message_tokens(msg: dict[str, Any]) -> int:
         parts: list[str] = []
         for block in content:
             if isinstance(block, dict):
-                if block.get("type") == "text" and "text" in block:
+                if is_text_block(block) and "text" in block:
                     parts.append(str(block.get("text", "")))
-                elif block.get("type") == "tool_use":
+                elif is_tool_use_block(block):
                     parts.append(str(block.get("input", "")))
-                elif block.get("type") == "tool_result":
+                elif is_tool_result_block(block):
                     parts.append(str(block.get("content", "")))
             else:
                 parts.append(str(block))

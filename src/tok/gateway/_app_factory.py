@@ -18,6 +18,7 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
+from tok.provider_block_semantics import is_text_block
 from tok.runtime._diagnostics import DiagnosticsSnapshot
 from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
 from tok.runtime.smoothness import SmoothnessEventType
@@ -139,7 +140,7 @@ def _build_response_signals(
         for i, block in enumerate(resp_json.get("content", [])):
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "text":
+            if is_text_block(block):
                 continue
             if passthrough_idx < len(passthrough_blocks):
                 resp_json["content"][i] = passthrough_blocks[passthrough_idx]
@@ -490,7 +491,7 @@ def _rebuild_content_preserving_position(
     for block in original_content:
         if not isinstance(block, dict):
             continue
-        if block.get("type") == "text":
+        if is_text_block(block):
             if processed_idx < len(processed_blocks):
                 result.append(processed_blocks[processed_idx])
                 processed_idx += 1
@@ -1173,7 +1174,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     )
 
                     for block in resp_json.get("content", []):
-                        if isinstance(block, dict) and block.get("type") == "text":
+                        if is_text_block(block):
                             text_content = block.get("text")
                             if isinstance(text_content, str):
                                 full_response_text += text_content

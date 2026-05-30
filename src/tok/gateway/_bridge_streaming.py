@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import httpcore
 import httpx
 
+from tok.provider_block_semantics import is_text_block, is_tool_use_block
 from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
 from tok.runtime.policy.translator import IS_TOK
 from tok.runtime.smoothness.models import SmoothnessEventType
@@ -206,8 +207,8 @@ def _detect_recovery_needed(
     read_error: str | None,
 ) -> bool:
     has_visible_blocks = any(
-        block.get("type") == "tool_use"
-        or (block.get("type") == "text" and str(block.get("text", "")).strip())
+        is_tool_use_block(block)
+        or (is_text_block(block) and str(block.get("text", "")).strip())
         or block.get("type") == "thinking"
         or block.get("type") == "redacted_thinking"
         for block in translated_blocks
@@ -223,7 +224,7 @@ def _tool_use_only_signature(blocks: list[dict[str, Any]]) -> str:
     and input value hashes to detect repeated identical tool_use-only
     recovery patterns.
     """
-    tool_uses = [block for block in blocks if isinstance(block, dict) and block.get("type") == "tool_use"]
+    tool_uses = [block for block in blocks if is_tool_use_block(block)]
     if not tool_uses:
         return ""
     parts: list[str] = []
@@ -699,7 +700,7 @@ async def buffer_strip_restream_impl(
                             retry_text = "".join(
                                 str(block.get("text", ""))
                                 for block in retry_json.get("content", [])
-                                if isinstance(block, dict) and block.get("type") == "text"
+                                if is_text_block(block)
                             )
                             retry_output_saved = 0
                             # Initialize retry_response_signals to accumulate across branches
@@ -737,18 +738,18 @@ async def buffer_strip_restream_impl(
                                 # Keep response_signals as initialized from stream_behavior_signals
                                 translated_blocks = []
                             recovered = any(
-                                block.get("type") == "tool_use"
-                                or (block.get("type") == "text" and str(block.get("text", "")).strip())
+                                is_tool_use_block(block)
+                                or (is_text_block(block) and str(block.get("text", "")).strip())
                                 for block in translated_blocks
                             )
                             recovered_text = False
                             recovered_tool_use = False
                             if recovered:
                                 recovered_text = any(
-                                    block.get("type") == "text" and str(block.get("text", "")).strip()
+                                    is_text_block(block) and str(block.get("text", "")).strip()
                                     for block in translated_blocks
                                 )
-                                recovered_tool_use = any(block.get("type") == "tool_use" for block in translated_blocks)
+                                recovered_tool_use = any(is_tool_use_block(block) for block in translated_blocks)
                                 if recovered_tool_use and not recovered_text:
                                     signature = _tool_use_only_signature(translated_blocks)
                                     if (

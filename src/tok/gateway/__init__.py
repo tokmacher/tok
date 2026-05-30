@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, cast
 import uvicorn
 
 from tok.macros.integration import distill_bridge_history
+from tok.provider_block_semantics import is_text_block, is_tool_use_block
 from tok.runtime.pipeline.request_validation import (
     normalize_tool_use_blocks,
     summarize_message_structure,
@@ -367,9 +368,9 @@ def _record_fallback_once(session: BridgeSession, request_state: dict[str, bool]
 
 def _has_visible_content_block(content_blocks: list[dict[str, Any]]) -> bool:
     for block in content_blocks:
-        if block.get("type") == "tool_use":
+        if is_tool_use_block(block):
             return True
-        if block.get("type") == "text" and str(block.get("text", "")).strip():
+        if is_text_block(block) and str(block.get("text", "")).strip():
             return True
     return False
 

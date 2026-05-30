@@ -14,6 +14,7 @@ import time as time_module
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+from tok.provider_block_semantics import is_text_block, is_tool_result_block
 from tok.utils.env_utils import env_int
 from tok.utils.event_logging import log_delta_compress
 
@@ -92,8 +93,8 @@ def classify_cut_eligibility(msg: dict[str, Any]) -> CutEligibility:
     if isinstance(content, list):
         if not content:
             return CutEligibility(True, "eligible")
-        all_tool_results = all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
-        has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+        all_tool_results = all(is_tool_result_block(b) for b in content)
+        has_tool_result = any(is_tool_result_block(b) for b in content)
         if all_tool_results:
             return CutEligibility(True, "eligible")
         if has_tool_result:
@@ -502,10 +503,10 @@ def text_of(content: str | list[dict[str, Any]]) -> str:
         for block in content:
             if isinstance(block, dict):
                 # Standard text block
-                if block.get("type") == "text":
+                if is_text_block(block):
                     parts.append(block.get("text", ""))
                 # Tool result block — crucial for history context
-                elif block.get("type") == "tool_result":
+                elif is_tool_result_block(block):
                     c = block.get("content", "")
                     if isinstance(c, str):
                         parts.append(c)

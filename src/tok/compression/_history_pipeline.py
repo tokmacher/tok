@@ -11,6 +11,7 @@ import shlex
 from collections.abc import MutableMapping
 from typing import Any
 
+from tok.provider_block_semantics import is_text_block, is_tool_result_block, is_tool_use_block
 from tok.runtime.repeat_targets import (
     build_file_skeleton,
     build_file_summary,
@@ -130,7 +131,7 @@ def _is_tool_result_only_user_message(message: dict[str, Any]) -> bool:
     content = message.get("content")
     if not isinstance(content, list) or not content:
         return False
-    return all(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+    return all(is_tool_result_block(block) for block in content)
 
 
 _TASK_CONTINUATION_EXACT = frozenset(
@@ -253,7 +254,7 @@ def _cut_splits_tool_pair(messages: list[dict[str, Any]], cut_index: int) -> boo
         if not isinstance(content, list):
             continue
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "tool_use":
+            if is_tool_use_block(block):
                 tid = str(block.get("id", "")).strip()
                 if tid:
                     prefix_use_ids.add(tid)
@@ -271,7 +272,7 @@ def _cut_splits_tool_pair(messages: list[dict[str, Any]], cut_index: int) -> boo
         content = msg.get("content")
         if isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_result":
+                if is_tool_result_block(block):
                     tid = str(block.get("tool_use_id", "")).strip()
                     if tid:
                         suffix_result_ids.add(tid)
@@ -1119,7 +1120,7 @@ def compress_tool_results_impl(
     def _text_from_tool_result_content_blocks(raw: list[Any]) -> str:
         parts: list[str] = []
         for item in raw:
-            if isinstance(item, dict) and item.get("type") == "text":
+            if is_text_block(item):
                 text = item.get("text", "")
                 if isinstance(text, str):
                     parts.append(text)
@@ -1338,7 +1339,7 @@ def compress_tool_results_impl(
                         msg["content"] = compressed
             continue
         for block in content:
-            if not (isinstance(block, dict) and block.get("type") == "tool_result"):
+            if not (is_tool_result_block(block)):
                 continue
 
             tool_id = block.get("tool_use_id", "")
@@ -2121,7 +2122,7 @@ def compress_recent_window_impl(
         if not isinstance(content, list):
             continue
         for block in content:
-            if not (isinstance(block, dict) and block.get("type") == "tool_result"):
+            if not (is_tool_result_block(block)):
                 continue
             raw = block.get("content", "")
             if not isinstance(raw, str):

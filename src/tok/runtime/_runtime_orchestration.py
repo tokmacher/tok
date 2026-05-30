@@ -15,6 +15,7 @@ from tok.compression._tool_taxonomy import (
     LISTING_LIKE_TOOLS,
     SEARCH_LIKE_TOOLS,
 )
+from tok.provider_block_semantics import is_text_block, is_tool_use_block
 
 from .config import (
     ANSWER_READY_REPAIR_HINT,
@@ -315,7 +316,7 @@ def process_response_impl(
             _visible_text_from_content_blocks(contract.content_blocks),
             expected_labels=expected_labels,
         )
-        and not any(block.get("type") == "tool_use" for block in contract.content_blocks)
+        and not any(is_tool_use_block(block) for block in contract.content_blocks)
     )
     response_side_signals = (
         {}
@@ -373,9 +374,9 @@ def process_response_impl(
     visible_text = "\n".join(
         cast("str", block.get("text", ""))
         for block in contract.content_blocks
-        if block.get("type") == "text" and str(block.get("text", "")).strip()
+        if is_text_block(block) and str(block.get("text", "")).strip()
     ).strip()
-    has_tool = any(block.get("type") == "tool_use" for block in contract.content_blocks)
+    has_tool = any(is_tool_use_block(block) for block in contract.content_blocks)
     has_answer_text = _is_answer_like_visible_text(visible_text)
 
     # Track visible response word count for verbosity signal (capped at 5 samples)
@@ -474,7 +475,7 @@ def process_response_impl(
     session._step_count += 1
     session._token_count += count_tokens(text)
     for block in contract.content_blocks:
-        if block.get("type") == "tool_use" and block.get("name"):
+        if is_tool_use_block(block) and block.get("name"):
             session._tool_names_seen.add(cast("str", block["name"]))
             tool_input = block.get("input", {})
             if isinstance(tool_input, dict):
