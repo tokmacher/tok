@@ -141,6 +141,51 @@ class TestStatsRendering:
         assert ("Exact reacquisition", "required=2, satisfied=2") in rows
         assert ("Compression safety blocks", "1") in rows
 
+    def test_net_tokens_saved_row_shown_when_reacquisition_cost(self) -> None:
+        """The primary stats surface must show the conservative net (after
+        reacquisition), not only the gross tokens_saved figure."""
+        summary = {
+            "tokens_saved": 1000,
+            "net_tokens_saved": 850,
+            "reacquisition_cost_tokens": 150,
+            "actual_tokens": 5000,
+            "baseline_tokens": 6000,
+            "actual_cost_usd": 0.01,
+            "baseline_cost_usd": 0.02,
+            "cost_saved_usd": 0.01,
+            "cost_savings_pct": 50.0,
+            "fallback_count": 0,
+            "baseline_only": False,
+        }
+
+        rows = session_status_rows(summary=summary, tok_active=True, baseline_only=False)
+        labels = dict(rows)
+
+        assert "Net tokens saved (after reacquisition)" in labels
+        assert "850" in labels["Net tokens saved (after reacquisition)"]
+        assert "150" in labels["Net tokens saved (after reacquisition)"]
+
+    def test_net_tokens_saved_row_omitted_without_reacquisition_cost(self) -> None:
+        """When no reacquisition cost was incurred, net == gross; omit the extra
+        row to keep the default surface quiet."""
+        summary = {
+            "tokens_saved": 1000,
+            "net_tokens_saved": 1000,
+            "reacquisition_cost_tokens": 0,
+            "actual_tokens": 5000,
+            "baseline_tokens": 6000,
+            "actual_cost_usd": 0.01,
+            "baseline_cost_usd": 0.02,
+            "cost_saved_usd": 0.01,
+            "cost_savings_pct": 50.0,
+            "fallback_count": 0,
+            "baseline_only": False,
+        }
+
+        rows = session_status_rows(summary=summary, tok_active=True, baseline_only=False)
+
+        assert "Net tokens saved (after reacquisition)" not in dict(rows)
+
     def test_doctor_renders_interaction_quality_panel(self, monkeypatch) -> None:
         monkeypatch.setattr("tok.cli._release.get_running_bridge_pid", lambda port: 321)
         monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/claude")

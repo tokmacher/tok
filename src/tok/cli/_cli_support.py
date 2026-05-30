@@ -699,6 +699,27 @@ def session_status_rows(
                 ),
             ]
         )
+        # Show the conservative net (gross tokens_saved minus tokens actually
+        # spent re-acquiring exact evidence) whenever any reacquisition cost was
+        # incurred. Gross savings can include avoided-reacquisition estimates, so
+        # net is the credible, defensible figure to surface alongside it.
+        reacq_cost_tokens = (
+            int(summary["reacquisition_cost_tokens"])
+            if isinstance(summary.get("reacquisition_cost_tokens"), int | float | str)
+            else 0
+        )
+        if reacq_cost_tokens > 0:
+            net_tokens_saved = (
+                int(summary["net_tokens_saved"])
+                if isinstance(summary.get("net_tokens_saved"), int | float | str)
+                else 0
+            )
+            rows.append(
+                (
+                    "Net tokens saved (after reacquisition)",
+                    f"{net_tokens_saved:,} (reacq {reacq_cost_tokens:,})",
+                )
+            )
     note = savings_diagnostic_note(
         summary=summary,
         baseline_only=baseline_only,
