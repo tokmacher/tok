@@ -30,12 +30,43 @@ PRICING: dict[str, tuple[float, float, float, float]] = {
     "x-ai/grok-4.1-fast": (0.20, 0.50, 0.00, 0.00),
 }
 
-PRICING_DEFAULT = (3.00, 15.00, 0.30, 3.75)  # Sonnet rates fallback
+# Sonnet rates, kept as a labelled reference only. It is deliberately NOT the
+# fallback for unknown models: pricing an unknown model at a fabricated rate
+# produces misleading dollar cost/savings (an overclaim or underclaim that looks
+# authoritative). Callers that genuinely want a reference rate can import this.
+PRICING_DEFAULT = (3.00, 15.00, 0.30, 3.75)
+
+# Conservative pricing for a model whose rates we do not actually know. Dollar
+# cost/savings collapse to zero so the bridge never fabricates a dollar figure;
+# token savings (which are rate-independent) are unaffected.
+PRICING_UNKNOWN = (0.0, 0.0, 0.0, 0.0)
 
 
-def get_pricing(model: str) -> tuple[float, float, float, float]:
-    """Look up pricing for a model by prefix match."""
+def _lookup_pricing(model: str) -> tuple[float, float, float, float] | None:
+    """Return the registered rates for *model* by prefix match, or ``None``."""
     for prefix, rates in PRICING.items():
         if model.startswith(prefix):
             return rates
-    return PRICING_DEFAULT
+    return None
+
+
+def has_known_pricing(model: str) -> bool:
+    """Return ``True`` when *model* has registered (non-fabricated) pricing.
+
+    Lets cost/savings surfaces distinguish a real dollar figure from one that
+    would be guessed, so they can suppress or annotate dollar claims for models
+    Tok does not have verified rates for.
+    """
+    return _lookup_pricing(model) is not None
+
+
+def get_pricing(model: str) -> tuple[float, float, float, float]:
+    """Look up pricing for a model by prefix match.
+
+    Unknown models return conservative zero rates (``PRICING_UNKNOWN``) rather
+    than a fabricated default, so the bridge never reports misleading dollar
+    savings for a model whose price it does not actually know. Use
+    :func:`has_known_pricing` to detect the unknown case explicitly.
+    """
+    rates = _lookup_pricing(model)
+    return rates if rates is not None else PRICING_UNKNOWN
