@@ -21,6 +21,7 @@ from tok.runtime.policy.semantic_validation import (
 from tok.runtime.signals import EVIDENCE_SAFETY_SIGNAL_NAMES
 from tok.utils.env_utils import env_int
 
+from ._savings_compute import compute_session_savings
 from ._savings_persistence import (
     GLOBAL_LEDGER_FILENAME,
     SESSION_STATS_FILENAME,
@@ -339,28 +340,21 @@ class SavingsTracker:
         cache_write_tokens = sum(m.get("cache_write_tokens", 0) for m in models.values())
         actual_completion_tokens = sum(m.get("actual_output_tokens", 0) for m in models.values())
         actual_tokens = actual_prompt_tokens + actual_completion_tokens
-        saved_tokens = sum(
-            m.get("input_saved_tokens", 0)
-            + m.get("output_saved_tokens", 0)
-            + m.get("reacquisition_tokens_avoided_estimate", 0)
-            - m.get("hot_hint_tokens_added", 0)
-            for m in models.values()
-        )
+        signals = self.behavior_signals()
+        session_savings = compute_session_savings(models, signals)
+        saved_tokens = session_savings.gross_tokens_saved
         baseline_prompt_tokens = sum(m.get("baseline_prompt_tokens", 0) for m in models.values())
         prepared_prompt_tokens = sum(m.get("prepared_prompt_tokens", 0) for m in models.values())
         saved_prompt_tokens = sum(m.get("saved_prompt_tokens", 0) for m in models.values())
-        hot_hint_tokens_added = sum(m.get("hot_hint_tokens_added", 0) for m in models.values())
-        reacquisition_tokens_avoided_estimate = sum(
-            m.get("reacquisition_tokens_avoided_estimate", 0) for m in models.values()
-        )
+        hot_hint_tokens_added = session_savings.hot_hint_overhead_tokens
+        reacquisition_tokens_avoided_estimate = session_savings.reacquisition_avoided_estimate
         baseline_tokens = actual_tokens + saved_tokens
         actual_cost = sum(m.get("actual_cost_usd", 0.0) for m in models.values())
         baseline_cost = sum(m.get("baseline_cost_usd", 0.0) for m in models.values())
         cost_saved = baseline_cost - actual_cost
         calls = sum(m.get("calls", 0) for m in models.values())
-        signals = self.behavior_signals()
-        reacquisition_cost = int(signals.get("reacquisition_cost_tokens", 0))
-        net_saved_tokens = saved_tokens - reacquisition_cost
+        reacquisition_cost = session_savings.reacquisition_cost_tokens
+        net_saved_tokens = session_savings.net_tokens_saved
         fallback_count = int(signals.get(FALLBACK_SIGNAL, 0))
         baseline_only = bool(signals.get(BASELINE_ONLY_SIGNAL, 0))
         cost_savings_pct = cost_saved / baseline_cost * 100 if baseline_cost > 0 else 0.0
