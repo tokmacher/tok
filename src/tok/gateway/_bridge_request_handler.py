@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from tok.provider_opaque_blocks import content_has_opaque_provider_blocks
 from tok.provider_request_shapes import validate_bridge_body, validate_outgoing_bridge_body
 from tok.runtime.pipeline.request_validation import (
     has_blocking_outgoing_failures,
@@ -36,92 +37,58 @@ if TYPE_CHECKING:
 __all__ = ["send_with_tok_fail_open_retry"]
 
 
+def _count_assistant_messages_with_opaque_blocks(
+    body: dict[str, Any] | None,
+) -> int:
+    """Count assistant messages whose content holds opaque provider blocks.
+
+    Used only for tracing/observability. ``thinking`` / ``redacted_thinking``
+    blocks are provider-owned and opaque (see ``tok.provider_opaque_blocks``):
+    they must be forwarded byte-for-byte. This helper lets the fail-open retry
+    path record that it deliberately *preserved* such blocks rather than (as a
+    previous implementation did) stripping them, which produced the upstream
+    400 "thinking or redacted_thinking blocks in the latest assistant message
+    cannot be modified".
+    """
+    if not isinstance(body, dict):
+        return 0
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return 0
+    count = 0
+    for msg in messages:
+        if not isinstance(msg, dict) or str(msg.get("role", "")).strip() != "assistant":
+            continue
+        if content_has_opaque_provider_blocks(msg.get("content")):
+            count += 1
+    return count
+
+
 def _normalize_provider_safe_retry_payload(
     body: dict[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, bool]:
-    """
-    Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks.
+    """Return the fail-open retry body unchanged.
 
-    This handles the case where an assistant message has interleaved thinking/redacted_thinking
-    blocks between tool_use blocks, which can cause upstream pairing failures.
+    Opaque provider blocks (``thinking`` / ``redacted_thinking``) are immutable
+    pass-through data owned by the upstream provider. A previous implementation
+    of this function stripped those blocks out of assistant messages — including
+    the latest assistant message — to "repair" interleaved tool_use ordering.
+    That mutation is exactly what the provider rejects:
 
-    Returns (normalized_body, changed) where changed is True if any thinking blocks were removed.
+        messages.N.content.M: thinking or redacted_thinking blocks in the latest
+        assistant message cannot be modified. These blocks must remain as they
+        were in the original response.
+
+    Per the bridge preservation contract, Tok must never compress, reorder,
+    merge, dedupe, or strip these blocks, and fail-open retries must reuse the
+    original unmodified request body rather than a mutated reconstruction. This
+    function therefore performs no normalization and returns ``(body, False)``;
+    it is retained as a stable seam so callers keep a single, auditable place
+    where retry-body opacity preservation is asserted.
     """
     if not isinstance(body, dict):
         return body, False
-
-    messages = body.get("messages")
-    if not isinstance(messages, list):
-        return body, False
-
-    changed = False
-    normalized_messages: list[dict[str, Any]] = []
-
-    for msg_idx, msg in enumerate(messages):
-        if not isinstance(msg, dict):
-            normalized_messages.append(msg)
-            continue
-
-        role = str(msg.get("role", "")).strip()
-        content = msg.get("content")
-
-        if role != "assistant" or not isinstance(content, list):
-            normalized_messages.append(msg)
-            continue
-
-        has_tool_use = any(isinstance(block, dict) and block.get("type") == "tool_use" for block in content)
-
-        if not has_tool_use:
-            normalized_messages.append(msg)
-            continue
-
-        is_current_turn = all(not isinstance(m, dict) or m.get("role") != "assistant" for m in messages[msg_idx + 1 :])
-
-        if is_current_turn:
-            message_changed = False
-            filtered_content: list[dict[str, Any]] = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}:
-                    message_changed = True
-                    changed = True
-                    continue
-                filtered_content.append(block)
-        else:
-            first_tool_index = next(
-                (
-                    block_index
-                    for block_index, block in enumerate(content)
-                    if isinstance(block, dict) and block.get("type") == "tool_use"
-                ),
-                None,
-            )
-            message_changed = False
-            filtered_content = []
-            for block_index, block in enumerate(content):
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") in {"thinking", "redacted_thinking"}
-                    and first_tool_index is not None
-                    and block_index > first_tool_index
-                ):
-                    message_changed = True
-                    changed = True
-                    continue
-                filtered_content.append(block)
-
-        if message_changed:
-            new_msg = dict(msg.items())
-            new_msg["content"] = filtered_content
-            normalized_messages.append(new_msg)
-        else:
-            normalized_messages.append(msg)
-
-    if not changed:
-        return body, False
-
-    new_body = dict(body.items())
-    new_body["messages"] = normalized_messages
-    return new_body, True
+    return body, False
 
 
 def _decode_bridge_body(raw_content: bytes | None) -> dict[str, Any] | None:
@@ -329,18 +296,20 @@ async def send_with_tok_fail_open_retry(
             )
             prepared_split_boundaries = _count_user_tool_result_split_boundaries(prepared_body.get("messages", []))
         fallback_body = _decode_bridge_body(fallback_content)
-        # Normalize provider-safe retry payload to remove thinking blocks between tool_use blocks
+        # Opaque provider blocks (thinking / redacted_thinking) must survive the
+        # fail-open retry byte-for-byte; the retry reuses the original/provider-safe
+        # body without stripping or reordering them. We only record that they were
+        # preserved (never the raw thinking content) for observability.
         if isinstance(fallback_body, dict):
-            (
-                normalized_fallback_body,
-                normalized_changed,
-            ) = _normalize_provider_safe_retry_payload(fallback_body)
-            if normalized_changed:
-                fallback_body = normalized_fallback_body
-                fallback_content = json.dumps(fallback_body).encode()
-                retry_signals["provider_safe_removed_assistant_thinking_between_tool_use"] = 1
-                logger.warning(
-                    "provider_safe_removed_assistant_thinking_between_tool_use: removed thinking/redacted_thinking blocks from provider-safe retry payload"
+            assistant_msgs_with_opaque_blocks = _count_assistant_messages_with_opaque_blocks(fallback_body)
+            if assistant_msgs_with_opaque_blocks:
+                retry_signals["provider_safe_retry_preserved_opaque_assistant_blocks"] = (
+                    assistant_msgs_with_opaque_blocks
+                )
+                logger.debug(
+                    "provider_safe_retry_preserved_opaque_assistant_blocks: preserved opaque provider blocks "
+                    "in %d assistant message(s) on fail-open retry (no thinking/redacted_thinking mutation)",
+                    assistant_msgs_with_opaque_blocks,
                 )
         if isinstance(fallback_body, dict):
             provider_safe_summary = summarize_message_structure(fallback_body.get("messages", []))

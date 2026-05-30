@@ -1054,3 +1054,36 @@ def test_compress_file_read_does_not_skeletonize_small_ts_file() -> None:
     result = _compress_file_read(small_ts, tool_context=ctx)
 
     assert result == small_ts
+
+
+def test_precision_read_not_lossy_truncated() -> None:
+    """A precision read (explicit offset/limit) is an explicit exact-evidence
+    request. It must not be returned with a lossy middle-omission truncation,
+    because the overlap-delta tracker marks the full requested window as
+    "covered" -- so any line truncated out of delivery would become permanently
+    invisible and a re-read of it would be wrongly refused as "all overlap".
+    """
+    # 130 dense lines, large enough that size-based truncation would normally fire.
+    content = "\n".join(
+        f"    some_variable_{i} = compute({i}) + helper({i})  # explanatory comment {i}" for i in range(1, 131)
+    )
+    ctx = {"name": "Read", "args": {"file_path": "/x/big.py", "offset": 340, "limit": 130}}
+
+    out = tok_tool_result(content, tool_context=ctx)
+
+    assert "[TRUNCATED" not in out, "precision read must not be lossy-truncated"
+    assert "omitted lines" not in out
+    # A line in the middle of the requested window is present verbatim.
+    assert "some_variable_65 = compute(65)" in out
+
+
+def test_verbatim_read_truncation_unchanged() -> None:
+    """Guard: exempting precision reads must not stop large *verbatim* (no
+    offset/limit) results from being compressed/truncated as before.
+    """
+    single_long_line = "x" * 50000
+    ctx = {"name": "bash", "args": {"command": "cat huge.txt"}}
+
+    out = tok_tool_result(single_long_line, tool_context=ctx)
+
+    assert len(out) < len(single_long_line)
