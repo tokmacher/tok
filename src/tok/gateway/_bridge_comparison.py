@@ -23,6 +23,43 @@ def _safe_headers(headers: httpx.Headers) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in _DROP_RESPONSE_HEADERS}
 
 
+#: Response header that surfaces per-turn Tok state to the client/harness.
+TOK_STATE_HEADER = "x-tok-state"
+
+
+def tok_state_header_value(behavior_signals: dict[str, int], *, baseline_only: bool) -> str:
+    """Return the per-turn Tok state: ``compressed`` / ``baseline`` / ``fail-open``.
+
+    Fail-open dominates: a turn that fell back / retried without compression is
+    the most important state to surface, even if the session is otherwise
+    baseline, because it means Tok protected fidelity at the cost of savings.
+    """
+    if behavior_signals.get("tok_fallback_activated") or behavior_signals.get("tok_fail_open_retry"):
+        return "fail-open"
+    if baseline_only:
+        return "baseline"
+    return "compressed"
+
+
+def apply_tok_state_header(
+    headers: dict[str, str],
+    behavior_signals: dict[str, int],
+    *,
+    baseline_only: bool,
+    enabled: bool,
+) -> dict[str, str]:
+    """Optionally annotate *headers* with the per-turn Tok state.
+
+    This is deliberately out-of-band (a response header), never injected into
+    model-visible content, so it cannot pollute the agent's output. It is opt-in
+    (``enabled``) to preserve Tok's "invisible bridge" default. Returns *headers*
+    for convenient chaining.
+    """
+    if enabled:
+        headers[TOK_STATE_HEADER] = tok_state_header_value(behavior_signals, baseline_only=baseline_only)
+    return headers
+
+
 def _payloads_materially_differ(content: bytes, original_content: bytes | None) -> bool:
     """Return True when two JSON payloads differ materially."""
     if original_content is None or original_content == content:
