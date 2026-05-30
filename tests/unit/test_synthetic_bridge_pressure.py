@@ -861,6 +861,48 @@ def test_summary_or_skeleton_then_edit_intent_is_flagged(tmp_path) -> None:
     assert "Re-read" in message
 
 
+def test_skeleton_edit_recovery_via_offset_read_unblocks(tmp_path) -> None:
+    """The skeleton-edit block tells the agent to recover with ``Read offset=1``.
+
+    That documented recovery must actually clear the block so the follow-up edit
+    succeeds. Previously only a no-argument verbatim read cleared the block, so
+    following the literal instruction (a precision read at offset=1) left the
+    edit permanently blocked.
+    """
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    runtime = UniversalTokRuntime()
+
+    target = tmp_path / "pressure.py"
+    target.write_text("before\nmiddle\nafter_marker\n")
+    path = str(target)
+    session._skeleton_delivered_paths.add(normalize_path_target(path))
+
+    edit_event = NormalizedToolEvent(
+        id="toolu_edit_1",
+        name="edit_file",
+        args={"path": path, "old_string": "before", "new_string": "BEFORE"},
+        path=path,
+    )
+
+    # 1. Edit is blocked while only a skeleton has been delivered.
+    with pytest.raises(TokSafetyError):
+        runtime.execute_tool_event(edit_event, session=session)
+
+    # 2. Agent follows the documented recovery: precision re-read from the top.
+    read_event = NormalizedToolEvent(
+        id="toolu_read_1",
+        name="read",
+        args={"file_path": path, "offset": 1},
+        path=path,
+    )
+    runtime.execute_tool_event(read_event, session=session)
+
+    assert normalize_path_target(path) not in session._skeleton_delivered_paths
+
+    # 3. The edit now succeeds (no TokSafetyError).
+    runtime.execute_tool_event(edit_event, session=session)
+
+
 def test_provider_sensitive_tool_pairing_never_silent_fallbacks(tmp_path) -> None:
     session = BridgeSession(memory_dir=tmp_path / ".tok", fail_open=True)
     body = {

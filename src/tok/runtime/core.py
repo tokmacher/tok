@@ -373,6 +373,33 @@ class RuntimeSession:
         precision_params = ("offset", "limit", "start", "end")
         return not any(key in args for key in precision_params)
 
+    def _read_clears_skeleton_block(self, event: NormalizedToolEvent) -> bool:
+        """Return True when a read should lift a prior skeleton-edit block.
+
+        Two cases qualify:
+
+        1. A full verbatim read (no window parameters), or
+        2. The documented recovery from the skeleton-edit safety error: a
+           precision read from the top of the file (``offset``/``start`` in
+           ``{0, 1}``).
+
+        Precision reads are delivered exact -- un-skeletonized and (per the
+        precision-read truncation exemption) un-truncated -- so re-reading the
+        file from the top re-delivers real bytes and makes a follow-up edit
+        safe. Without case 2 the safety error's own ``Read offset=1`` advice
+        would never clear the block, stranding the agent in a loop.
+        """
+        if self._is_verbatim_file_read(event):
+            return True
+        if event.name.lower() not in ("read", "read_file", "fileread"):
+            return False
+        args = event.args if isinstance(event.args, dict) else {}
+        start = args.get("offset", args.get("start"))
+        try:
+            return start is not None and int(start) in (0, 1)
+        except (TypeError, ValueError):
+            return False
+
     def _clear_skeleton_tracking(self, event: NormalizedToolEvent) -> None:
         if not hasattr(self, "project"):
             return
@@ -1456,7 +1483,7 @@ class UniversalTokRuntime:
                     f"(The offset=1 forces Tok to return the complete file.)"
                 )
 
-            if session._is_verbatim_file_read(event):
+            if session._read_clears_skeleton_block(event):
                 session._clear_skeleton_tracking(event)
 
         return self.tool_executor.execute_normalized_tool(event)
