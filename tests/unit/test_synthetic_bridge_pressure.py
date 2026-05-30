@@ -1134,3 +1134,31 @@ def test_baseline_only_and_real_failure_signals_are_distinct(tmp_path) -> None:
     assert payload.behavior_signals.get("baseline_only_session") == 1
     # … but does NOT pollute the per-request failure counter.
     assert "tok_fallback_activated" not in payload.behavior_signals
+
+
+def test_is_verbatim_file_read_consults_shared_precision_keys(monkeypatch) -> None:
+    """RuntimeSession._is_verbatim_file_read must consult the shared
+    PRECISION_READ_ARG_KEYS SSOT, not an inline literal copy.
+
+    The skeleton-edit recovery logic (``_read_clears_skeleton_block``) keys off
+    "is this a verbatim (window-less) read"; that distinction must use the same
+    precision arg-key definition as the compression layer. We patch the shared
+    tuple in the runtime namespace to include a sentinel window key: a read
+    carrying *only* that key is then a precision (bounded) read -- hence NOT
+    verbatim. A hardcoded inline copy ignores the patch and still reports the read
+    as verbatim, so the assertion fails.
+    """
+    import tok.runtime.core as core
+
+    monkeypatch.setattr(
+        core,
+        "PRECISION_READ_ARG_KEYS",
+        ("offset", "limit", "start", "end", "sentinel_window"),
+        raising=False,
+    )
+
+    event = NormalizedToolEvent(id="t1", name="Read", args={"sentinel_window": 5})
+    # _is_verbatim_file_read reads only event.* (never self); a throwaway self is fine.
+    assert core.RuntimeSession._is_verbatim_file_read(object(), event) is False, (
+        "_is_verbatim_file_read did not consult the patched shared precision keys (an inline literal is still in use)"
+    )

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from tok._tool_arg_keys import PRECISION_READ_ARG_KEYS as _PRECISION_READ_ARG_KEYS
+
 FILE_LIKE_TOOLS = frozenset(
     {
         "view",
@@ -60,7 +62,8 @@ COMMAND_LIKE_TOOLS = frozenset(
     }
 )
 
-_PRECISION_READ_ARG_KEYS = ("offset", "limit", "start", "end")
+# Re-exported from the neutral tok._tool_arg_keys SSOT (imported above) so existing
+# compression call sites keep importing it from here unchanged.
 
 
 def is_precision_read_context(context: dict[str, Any] | None) -> bool:

@@ -109,6 +109,7 @@ from ._tool_taxonomy import (
     FILE_LIKE_TOOLS,
     LISTING_LIKE_TOOLS,
     SEARCH_LIKE_TOOLS,
+    is_precision_read_context,
 )
 
 COMMAND_LIKE_TOOLS = COMMAND_LIKE_TOOLS
@@ -952,12 +953,7 @@ def _apply_result_cache(
     """
     tool_name = context.get("name")
     normalized_tool_name = str(tool_name or "").lower()
-    args = context.get("args") if isinstance(context.get("args"), dict) else {}
-    is_precision_read = (
-        normalized_tool_name in FILE_LIKE_TOOLS
-        and isinstance(args, dict)
-        and any(k in args for k in ("offset", "limit", "start", "end"))
-    )
+    is_precision_read = is_precision_read_context(context)
     is_file_like = normalized_tool_name in FILE_LIKE_TOOLS
     is_command_like = normalized_tool_name in COMMAND_LIKE_TOOLS
 

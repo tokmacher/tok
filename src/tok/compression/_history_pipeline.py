@@ -77,8 +77,10 @@ from ._tool_result_pipeline import (
     tok_tool_result_impl as _tok_tool_result_impl,
 )
 from ._tool_taxonomy import (
+    _PRECISION_READ_ARG_KEYS,
     LISTING_LIKE_TOOLS,
     SEARCH_LIKE_TOOLS,
+    is_precision_read_context,
 )
 
 WEB_RESULT_TOOLS = frozenset({"web_search", "websearch", "web_fetch", "webfetch"})
@@ -845,7 +847,7 @@ def compress_tool_results_impl(
         context: dict[str, Any] | None,
         raw: str,
     ) -> tuple[str, int, int, list[str]] | None:
-        if not _is_precision_read_context(context):
+        if not is_precision_read_context(context):
             return None
         if not isinstance(context, dict):
             return None
@@ -1104,7 +1106,7 @@ def compress_tool_results_impl(
         if cache_key is None:
             return
         args = context.get("args") if isinstance(context, dict) else None
-        if isinstance(args, dict) and any(k in args for k in ("offset", "limit", "start", "end")):
+        if isinstance(args, dict) and any(k in args for k in _PRECISION_READ_ARG_KEYS):
             return
         cache[cache_key] = _compute_semantic_hash(raw)
 
@@ -1133,17 +1135,6 @@ def compress_tool_results_impl(
 
     def _stable_result_header(content_hash: str) -> str:
         return f"@stable_result(hash:{content_hash};fidelity:summary;lossy:true)"
-
-    def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
-        if not context:
-            return False
-        tool_name = str(context.get("name", "")).lower()
-        if tool_name not in FILE_LIKE_TOOLS:
-            return False
-        args = context.get("args")
-        if not isinstance(args, dict):
-            return False
-        return any(k in args for k in ("offset", "limit", "start", "end"))
 
     def _first_exact_guard(context: dict[str, Any] | None, raw: str) -> bool:
         """Guard first exact observation from compression.
@@ -1238,7 +1229,7 @@ def compress_tool_results_impl(
                 )
             if tool_name in FILE_LIKE_TOOLS:
                 args = context.get("args")
-                if isinstance(args, dict) and any(k in args for k in ("offset", "limit", "start", "end")):
+                if isinstance(args, dict) and any(k in args for k in _PRECISION_READ_ARG_KEYS):
                     return False
         if session_files_read is not None and norm_path and norm_path not in session_files_read:
             _mark_verbatim_file_observation(context, raw, norm_path)
@@ -1506,7 +1497,7 @@ def compress_tool_results_impl(
                             else:
                                 semantic_hash_cache[cache_key] = content_hash
 
-            if _is_precision_read_context(ctx):
+            if is_precision_read_context(ctx):
                 if TOK_ENABLE_FILE_OVERLAP_DELTA:
                     precision_window = _extract_precision_range(ctx, raw)
                     if precision_window is not None:
@@ -1557,7 +1548,7 @@ def compress_tool_results_impl(
                 and ctx
                 and tool_name in FILE_LIKE_TOOLS
                 and norm_path
-                and not _is_precision_read_context(ctx)
+                and not is_precision_read_context(ctx)
             ):
                 previous_full = last_full_file_by_path.get(norm_path)
                 if previous_full:
@@ -1634,7 +1625,7 @@ def compress_tool_results_impl(
                     continue
                 cache_key = _make_semantic_cache_key(ctx, raw)
                 ctx_args = ctx.get("args") if isinstance(ctx, dict) else None
-                if isinstance(ctx_args, dict) and any(k in ctx_args for k in ("offset", "limit", "start", "end")):
+                if isinstance(ctx_args, dict) and any(k in ctx_args for k in _PRECISION_READ_ARG_KEYS):
                     cache_key = None
                 if cache_key is not None:
                     content_hash = _compute_semantic_hash(raw)
@@ -1900,17 +1891,6 @@ def compress_recent_window_impl(
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Apply content-aware compression to recent window messages."""
 
-    def _is_precision_read_context(context: dict[str, Any] | None) -> bool:
-        if not context:
-            return False
-        tool_name = str(context.get("name", "")).lower()
-        if tool_name not in FILE_LIKE_TOOLS:
-            return False
-        args = context.get("args")
-        if not isinstance(args, dict):
-            return False
-        return any(k in args for k in ("offset", "limit", "start", "end"))
-
     def _first_exact_guard(context: dict[str, Any] | None, raw: str) -> bool:
         """Guard first exact observation from compression.
 
@@ -2033,7 +2013,7 @@ def compress_recent_window_impl(
         if msg.get("role") == "tool_result" and isinstance(content, str):
             tool_id = str(msg.get("tool_use_id", ""))
             ctx = (tool_use_id_to_context or {}).get(tool_id, {})
-            if _is_precision_read_context(ctx):
+            if is_precision_read_context(ctx):
                 continue
             tool_name = str(ctx.get("name", "")).lower()
             if tool_name in SEARCH_LIKE_TOOLS and search_result_evidence_level(content) == "navigation":
@@ -2183,7 +2163,7 @@ def compress_recent_window_impl(
                     kind = "ps_output"
             if kind == "pytest" and " FAILED" in raw and not TOK_ENABLE_PYTEST_FAIL_COMPRESSION:
                 continue
-            if _is_precision_read_context(tool_ctx):
+            if is_precision_read_context(tool_ctx):
                 block["content"] = raw
                 continue
             if kind in {"raw", "file"}:

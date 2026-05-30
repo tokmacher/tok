@@ -38,6 +38,7 @@ from typing import Any
 
 logger = logging.getLogger("tok.runtime")
 
+from tok._tool_arg_keys import PRECISION_READ_ARG_KEYS
 from tok.utils.resolver_cache import ResolverCache
 
 from ._answer_phase_state import AnswerPhaseState
@@ -369,9 +370,8 @@ class RuntimeSession:
             return False
 
         args = event.args if isinstance(event.args, dict) else {}
-        # Check for precision read parameters (offset, limit, start, end)
-        precision_params = ("offset", "limit", "start", "end")
-        return not any(key in args for key in precision_params)
+        # A verbatim read is a file read with no bounded-window (precision) args.
+        return not any(key in args for key in PRECISION_READ_ARG_KEYS)
 
     def _read_clears_skeleton_block(self, event: NormalizedToolEvent) -> bool:
         """Return True when a read should lift a prior skeleton-edit block.
