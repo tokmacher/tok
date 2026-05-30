@@ -272,7 +272,6 @@ def stats_command(
                 "runtime_verdict_style": verdict_style,
                 "savings_source": str(session_summary.get("savings_source", "session_tracker")),
                 "last_degradation_reason": last_degradation_reason,
-                "degradation_reason": last_degradation_reason,
             }
             if session_quality != "clean" or fail_open_count > 0 or last_degradation_reason:
                 warnings.append(
@@ -1296,7 +1295,6 @@ def doctor_command(*, verbose: bool = False, report: bool = False, json_output: 
                     json_data["runtime_verdict_style"] = verdict_style
                     json_data["savings_source"] = str(payload.get("savings_source", "session_tracker"))
                     json_data["last_degradation_reason"] = last_degradation_reason
-                    json_data["degradation_reason"] = last_degradation_reason
                     json_data["session_quality"] = session_quality
                     json_data["goal"] = str(payload.get("goal", ""))
                     json_data["tokens_saved"] = tokens_saved

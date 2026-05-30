@@ -541,7 +541,6 @@ def bridge_status(*, json_output: bool = False) -> None:
                         "runtime_verdict_style": verdict_style,
                         "savings_source": str(payload.get("savings_source", "session_tracker")),
                         "last_degradation_reason": last_degradation_reason,
-                        "degradation_reason": last_degradation_reason,
                         "session_quality": session_quality,
                         "tokens_saved": int(session_summary["tokens_saved"]),
                         "savings_pct": float(session_summary["savings_pct"]),

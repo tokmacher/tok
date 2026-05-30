@@ -5,15 +5,13 @@ Experimental: this module is not part of the defended 0.2.x root API.
 
 from __future__ import annotations
 
-import json
-import uuid
-from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from tok.protocol._common import _prefixed_id, _utc_now_z
+from tok.protocol._crypto import _digest_file, _digest_payload
 from tok.receipt import BridgeReceipt, read_bridge_receipts
 from tok.runtime._diagnostics import DiagnosticsSnapshot
 from tok.utils.savings_event import SavingsEvent, read_savings_events
@@ -33,7 +31,24 @@ ValidationLevel = Literal[
 
 
 def _default_deferred_validation_levels() -> list[ValidationLevel]:
-    return ["L4_signed_provenance", "L5_remote_verification"]
+    return _DEFERRED_L4_L5
+
+
+_DEFERRED_L4_L5: list[ValidationLevel] = ["L4_signed_provenance", "L5_remote_verification"]
+_DEFERRED_L3_L4_L5: list[ValidationLevel] = ["L3_local_recovery", "L4_signed_provenance", "L5_remote_verification"]
+_DEFERRED_L2_L3_L4_L5: list[ValidationLevel] = [
+    "L2_digest",
+    "L3_local_recovery",
+    "L4_signed_provenance",
+    "L5_remote_verification",
+]
+_DEFERRED_L1_THROUGH_L5: list[ValidationLevel] = [
+    "L1_internal_consistency",
+    "L2_digest",
+    "L3_local_recovery",
+    "L4_signed_provenance",
+    "L5_remote_verification",
+]
 
 
 class SessionIdentity(BaseModel, frozen=True):
@@ -230,15 +245,11 @@ def generate_session_receipt(
     validation = ValidationSummary(
         level="L2_digest" if artifacts else "L1_internal_consistency",
         passed=True,
-        deferred_levels=(
-            ["L3_local_recovery", "L4_signed_provenance", "L5_remote_verification"]
-            if not artifacts
-            else ["L4_signed_provenance", "L5_remote_verification"]
-        ),
+        deferred_levels=list(_DEFERRED_L3_L4_L5 if not artifacts else _DEFERRED_L4_L5),
     )
     return TokSessionReceipt(
-        receipt_id="tsr_" + uuid.uuid4().hex,
-        created_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        receipt_id=_prefixed_id("tsr_"),
+        created_at=_utc_now_z(),
         session=SessionIdentity(
             session_id=session_id,
             turn_count=max((receipt.turn for receipt in bridge_receipts), default=0),
@@ -272,13 +283,7 @@ def verify_session_receipt(receipt: TokSessionReceipt | dict[str, Any]) -> Recei
             passed=False,
             level="L0_schema",
             errors=[f"schema_invalid:{exc}"],
-            deferred_levels=[
-                "L1_internal_consistency",
-                "L2_digest",
-                "L3_local_recovery",
-                "L4_signed_provenance",
-                "L5_remote_verification",
-            ],
+            deferred_levels=list(_DEFERRED_L1_THROUGH_L5),
         )
 
     if parsed.schema_ != SESSION_RECEIPT_SCHEMA:
@@ -343,12 +348,7 @@ def verify_session_receipt(receipt: TokSessionReceipt | dict[str, Any]) -> Recei
             level="L1_internal_consistency",
             errors=errors,
             warnings=warnings,
-            deferred_levels=[
-                "L2_digest",
-                "L3_local_recovery",
-                "L4_signed_provenance",
-                "L5_remote_verification",
-            ],
+            deferred_levels=list(_DEFERRED_L2_L3_L4_L5),
         )
     if local_recovery_checked and parsed.evidence_summary.reacquisition_required_count == 0:
         return ReceiptVerificationResult(
@@ -361,18 +361,13 @@ def verify_session_receipt(receipt: TokSessionReceipt | dict[str, Any]) -> Recei
             passed=True,
             level="L2_digest",
             warnings=warnings,
-            deferred_levels=["L3_local_recovery", "L4_signed_provenance", "L5_remote_verification"],
+            deferred_levels=list(_DEFERRED_L3_L4_L5),
         )
     return ReceiptVerificationResult(
         passed=True,
         level="L1_internal_consistency",
         warnings=warnings,
-        deferred_levels=[
-            "L2_digest",
-            "L3_local_recovery",
-            "L4_signed_provenance",
-            "L5_remote_verification",
-        ],
+        deferred_levels=list(_DEFERRED_L2_L3_L4_L5),
     )
 
 
@@ -520,19 +515,11 @@ def _provider_from_events(events: list[SavingsEvent]) -> ProviderIdentity:
     return ProviderIdentity(name="unknown", model=model)
 
 
-def _digest_file(path: Path) -> str:
-    return "sha256:" + sha256(path.read_bytes()).hexdigest()
-
-
-def _digest_payload(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return "sha256:" + sha256(encoded).hexdigest()
-
-
 __all__ = [
     "AdapterIdentity",
     "ArtifactReference",
     "DiagnosticsSummary",
+    "EvidenceForm",
     "EvidenceSummary",
     "ProviderIdentity",
     "ReceiptReference",

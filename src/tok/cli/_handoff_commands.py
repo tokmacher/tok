@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from ._cli_support import console
+from ._cli_support import _resolve_session_dir, console
 
 handoff_app = typer.Typer(help="Export and inspect local Tok handoff packets", hidden=True)
 
@@ -100,20 +99,6 @@ def handoff_inspect(
 
 def register(app: typer.Typer) -> None:
     app.add_typer(handoff_app, name="handoff", hidden=True)
-
-
-def _resolve_session_dir(*, session_dir: Path | None, latest: bool) -> Path | None:
-    if session_dir is not None:
-        return session_dir
-    if not latest:
-        return None
-    root = Path(os.getenv("TOK_DIR", str(Path.home() / ".tok"))) / "sessions"
-    if not root.exists():
-        return None
-    candidates = [path for path in root.iterdir() if path.is_dir() and (path / "receipts.jsonl").is_file()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda path: (path / "receipts.jsonl").stat().st_mtime)
 
 
 __all__ = ["handoff_app", "register"]

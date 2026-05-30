@@ -6,18 +6,21 @@ Experimental: this module is not part of the defended 0.2.x root API.
 from __future__ import annotations
 
 import json
-import uuid
-from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from tok.protocol.session_receipt import TokSessionReceipt, generate_session_receipt, verify_session_receipt
+from tok.protocol._common import _prefixed_id, _utc_now_z
+from tok.protocol._crypto import _digest_file
+from tok.protocol.session_receipt import (
+    EvidenceForm,
+    TokSessionReceipt,
+    generate_session_receipt,
+    verify_session_receipt,
+)
 
 HANDOFF_SCHEMA = "tok-handoff/v0.1-draft"
-EvidenceForm = Literal["exact", "summary", "skeleton", "reference"]
 
 
 class HandoffReceiptReference(BaseModel, frozen=True):
@@ -114,8 +117,8 @@ def export_handoff(
     if receipt.savings_summary.degraded_to_baseline or receipt.savings_summary.fallback_count:
         warnings.append("Linked session receipt reports fallback or degraded baseline state.")
     return HandoffPacket(
-        handoff_id="handoff_" + uuid.uuid4().hex,
-        created_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        handoff_id=_prefixed_id("handoff_"),
+        created_at=_utc_now_z(),
         source_agent=source_agent,
         target_agent=target_agent,
         session_receipt=HandoffReceiptReference(
@@ -251,10 +254,6 @@ def _render_handoff_summary(packet: HandoffPacket, *, session_level: str) -> str
         lines.append("Required exact reacquisitions:")
         lines.extend(f"- {item.path}: {item.reason}" for item in packet.required_reacquisitions)
     return "\n".join(lines)
-
-
-def _digest_file(path: Path) -> str:
-    return "sha256:" + sha256(path.read_bytes()).hexdigest()
 
 
 __all__ = [

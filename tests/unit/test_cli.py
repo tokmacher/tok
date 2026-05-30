@@ -480,7 +480,7 @@ class TestCLI:
         assert data["data"]["api_base"] == ""
         assert data["data"]["fallback_count"] == 0
         assert data["data"]["fail_open_count"] == 46
-        assert data["data"]["degradation_reason"] == "fail-open compatibility"
+        assert data["data"]["last_degradation_reason"] == "fail-open compatibility"
         assert any("fail-open compatibility" in warning for warning in data["warnings"])
 
     def test_bridge_status_recovers_when_localhost_probe_fails(self, monkeypatch) -> None:
@@ -2018,7 +2018,7 @@ class TestCLI:
         assert data["ok"] is True
         assert data["data"]["fallback_count"] == 0
         assert data["data"]["fail_open_count"] == 46
-        assert data["data"]["degradation_reason"] == "fail-open compatibility"
+        assert data["data"]["last_degradation_reason"] == "fail-open compatibility"
         assert any("fail-open compatibility" in warning for warning in data["warnings"])
 
     def test_doctor_human_watch_session_does_not_claim_all_checks_passed(self, monkeypatch, tmp_path) -> None:
@@ -3312,7 +3312,7 @@ class TestStatsTotalNoDoubleCounting:
         assert session["degraded_to_baseline"] is True
         assert session["compression_bypass_count"] == 0
         assert session["session_quality"] == "watch"
-        assert session["degradation_reason"] == "fail-open compatibility"
+        assert session["last_degradation_reason"] == "fail-open compatibility"
         assert any("fail-open compatibility" in warning for warning in data["warnings"])
 
     def test_stats_json_short_session_includes_full_savings_evidence_fields(self, tmp_path, monkeypatch) -> None:
@@ -3408,6 +3408,6 @@ class TestStatsTotalNoDoubleCounting:
 
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data["data"]["session"]["degradation_reason"] == ""
+        assert data["data"]["session"]["last_degradation_reason"] == ""
         assert data["data"]["session"]["degraded_to_baseline"] is False
         assert data["warnings"] == []
