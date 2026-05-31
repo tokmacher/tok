@@ -861,6 +861,48 @@ def test_summary_or_skeleton_then_edit_intent_is_flagged(tmp_path) -> None:
     assert "Re-read" in message
 
 
+def test_skeleton_edit_recovery_via_offset_read_unblocks(tmp_path) -> None:
+    """The skeleton-edit block tells the agent to recover with ``Read offset=1``.
+
+    That documented recovery must actually clear the block so the follow-up edit
+    succeeds. Previously only a no-argument verbatim read cleared the block, so
+    following the literal instruction (a precision read at offset=1) left the
+    edit permanently blocked.
+    """
+    session = RuntimeSession(memory_dir=tmp_path / ".tok")
+    runtime = UniversalTokRuntime()
+
+    target = tmp_path / "pressure.py"
+    target.write_text("before\nmiddle\nafter_marker\n")
+    path = str(target)
+    session._skeleton_delivered_paths.add(normalize_path_target(path))
+
+    edit_event = NormalizedToolEvent(
+        id="toolu_edit_1",
+        name="edit_file",
+        args={"path": path, "old_string": "before", "new_string": "BEFORE"},
+        path=path,
+    )
+
+    # 1. Edit is blocked while only a skeleton has been delivered.
+    with pytest.raises(TokSafetyError):
+        runtime.execute_tool_event(edit_event, session=session)
+
+    # 2. Agent follows the documented recovery: precision re-read from the top.
+    read_event = NormalizedToolEvent(
+        id="toolu_read_1",
+        name="read",
+        args={"file_path": path, "offset": 1},
+        path=path,
+    )
+    runtime.execute_tool_event(read_event, session=session)
+
+    assert normalize_path_target(path) not in session._skeleton_delivered_paths
+
+    # 3. The edit now succeeds (no TokSafetyError).
+    runtime.execute_tool_event(edit_event, session=session)
+
+
 def test_provider_sensitive_tool_pairing_never_silent_fallbacks(tmp_path) -> None:
     session = BridgeSession(memory_dir=tmp_path / ".tok", fail_open=True)
     body = {
@@ -1092,3 +1134,31 @@ def test_baseline_only_and_real_failure_signals_are_distinct(tmp_path) -> None:
     assert payload.behavior_signals.get("baseline_only_session") == 1
     # … but does NOT pollute the per-request failure counter.
     assert "tok_fallback_activated" not in payload.behavior_signals
+
+
+def test_is_verbatim_file_read_consults_shared_precision_keys(monkeypatch) -> None:
+    """RuntimeSession._is_verbatim_file_read must consult the shared
+    PRECISION_READ_ARG_KEYS SSOT, not an inline literal copy.
+
+    The skeleton-edit recovery logic (``_read_clears_skeleton_block``) keys off
+    "is this a verbatim (window-less) read"; that distinction must use the same
+    precision arg-key definition as the compression layer. We patch the shared
+    tuple in the runtime namespace to include a sentinel window key: a read
+    carrying *only* that key is then a precision (bounded) read -- hence NOT
+    verbatim. A hardcoded inline copy ignores the patch and still reports the read
+    as verbatim, so the assertion fails.
+    """
+    import tok.runtime.core as core
+
+    monkeypatch.setattr(
+        core,
+        "PRECISION_READ_ARG_KEYS",
+        ("offset", "limit", "start", "end", "sentinel_window"),
+        raising=False,
+    )
+
+    event = NormalizedToolEvent(id="t1", name="Read", args={"sentinel_window": 5})
+    # _is_verbatim_file_read reads only event.* (never self); a throwaway self is fine.
+    assert core.RuntimeSession._is_verbatim_file_read(object(), event) is False, (
+        "_is_verbatim_file_read did not consult the patched shared precision keys (an inline literal is still in use)"
+    )

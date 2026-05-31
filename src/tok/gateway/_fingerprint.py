@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from tok.provider_block_semantics import is_text_block
+
 from ._cache_control import _cache_control_counts_for_messages, _cache_control_counts_for_tools
 
 
@@ -38,7 +40,7 @@ def _system_fingerprint(system: object) -> dict[str, int | str]:
         for block in system:
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "text":
+            if is_text_block(block):
                 text_length += len(str(block.get("text", "")))
             if "cache_control" in block:
                 cache_control_blocks += 1

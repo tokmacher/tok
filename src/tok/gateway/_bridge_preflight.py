@@ -7,6 +7,7 @@ import copy
 import json
 from typing import Any
 
+from tok.provider_block_semantics import is_tool_result_block
 from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body, validate_outgoing_bridge_body
 from tok.runtime._request_preparation import (
     _restore_latest_assistant_thinking,
@@ -151,11 +152,7 @@ def _rewrite_provider_sensitive_large_tool_use_text_interleaving(
 
         next_content = next_message.get("content")
         assert isinstance(next_content, list), "next_content should be a list"
-        user_tool_result_blocks = [
-            copy.deepcopy(block)
-            for block in next_content
-            if isinstance(block, dict) and block.get("type") == "tool_result"
-        ]
+        user_tool_result_blocks = [copy.deepcopy(block) for block in next_content if is_tool_result_block(block)]
         if len(user_tool_result_blocks) != sum(len(segment["tool_uses"]) for segment in segments):
             rewritten_messages.append(copy.deepcopy(message))
             index += 1
@@ -359,7 +356,7 @@ def _count_user_messages_with_mixed_tool_result_content(
         content = message.get("content")
         if not isinstance(content, list):
             continue
-        has_tool_result = any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+        has_tool_result = any(is_tool_result_block(block) for block in content)
         has_non_tool_result = any(isinstance(block, dict) and block.get("type") != "tool_result" for block in content)
         if has_tool_result and has_non_tool_result:
             mixed_count += 1
@@ -386,15 +383,11 @@ def _count_user_tool_result_split_boundaries(
         following_content = following.get("content")
         if not isinstance(current_content, list) or not isinstance(following_content, list):
             continue
-        current_has_tool_result = any(
-            isinstance(block, dict) and block.get("type") == "tool_result" for block in current_content
-        )
+        current_has_tool_result = any(is_tool_result_block(block) for block in current_content)
         current_has_non_tool_result = any(
             isinstance(block, dict) and block.get("type") != "tool_result" for block in current_content
         )
-        following_has_tool_result = any(
-            isinstance(block, dict) and block.get("type") == "tool_result" for block in following_content
-        )
+        following_has_tool_result = any(is_tool_result_block(block) for block in following_content)
         if current_has_tool_result and not current_has_non_tool_result and not following_has_tool_result:
             boundaries += 1
     return boundaries

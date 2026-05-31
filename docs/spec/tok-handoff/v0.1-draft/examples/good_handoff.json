@@ -1,0 +1,43 @@
+{
+  "schema": "tok-handoff/v0.1-draft",
+  "handoff_id": "handoff_good_001",
+  "created_at": "2026-05-26T00:00:00Z",
+  "source_agent": "agent-a",
+  "target_agent": "agent-b",
+  "session_receipt": {
+    "receipt_id": "tsr_good_001",
+    "path": "docs/spec/fixtures/session_receipt_good.json",
+    "digest": "sha256:example"
+  },
+  "task_state": {
+    "goal": "Continue the bounded docs validation task.",
+    "completed": [
+      "Defined session receipt schema and local verifier."
+    ],
+    "next_steps": [
+      "Inspect required exact files before editing.",
+      "Run the targeted docs contract test."
+    ]
+  },
+  "evidence": [
+    {
+      "label": "session receipt model",
+      "exactness": "exact",
+      "path": "src/tok/protocol/session_receipt.py",
+      "digest": "sha256:example"
+    },
+    {
+      "label": "plan summary",
+      "exactness": "summary",
+      "path": "docs/plans/substrate_execution_prompt.md",
+      "digest": ""
+    }
+  ],
+  "required_reacquisitions": [
+    {
+      "reason": "Source edits require exact local file content.",
+      "path": "src/tok/protocol/session_receipt.py"
+    }
+  ],
+  "warnings": []
+}

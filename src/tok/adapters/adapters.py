@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from tok.adapters._utils import _render_text, _system_to_messages
 from tok.runtime.core import (
     PreparedRuntimeRequest,
     ProcessedRuntimeResponse,
@@ -14,29 +15,6 @@ from tok.runtime.core import (
     UniversalTokRuntime,
 )
 from tok.runtime.types import SignalPacket, SurfaceMetadata
-
-
-def _system_to_messages(
-    system: str | list[dict[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    """Convert system prompt to list of message dicts."""
-    if not system:
-        return []
-    if isinstance(system, str):
-        return [{"role": "system", "content": system}]
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": block.get("text", "")} for block in system if isinstance(block, dict)
-    ]
-    return messages
-
-
-def _render_text(content_blocks: list[dict[str, Any]]) -> str:
-    """Extract and join text from content blocks."""
-    return "\n".join(
-        str(block.get("text", "")).strip()
-        for block in content_blocks
-        if block.get("type") == "text" and str(block.get("text", "")).strip()
-    )
 
 
 @dataclass

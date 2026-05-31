@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from tok.provider_block_semantics import is_tool_result_block
 from tok.runtime.core import RuntimeSession
 from tok.runtime.pipeline.context_dependency import ContextDependencyDecision, suffix_preserves_tool_pairs
 from tok.runtime.types import RuntimeRequest
@@ -338,8 +339,7 @@ def prepare_compress_history(
                 for m in body.get("messages", [])
                 if m.get("role") == "user"
                 and any(
-                    isinstance(b, dict) and b.get("type") == "tool_result"
-                    for b in (m.get("content") if isinstance(m.get("content"), list) else [])
+                    is_tool_result_block(b) for b in (m.get("content") if isinstance(m.get("content"), list) else [])
                 )
             )
             if tool_result_count > 0:

@@ -42,11 +42,11 @@ def resolve_adapter_config(adapter: str | None = None) -> AdapterConfig:
 def get_adapter_probe(adapter: str) -> Any:
     config = resolve_adapter_config(adapter)
     if config.name == "opencode":
-        from tok.adapters.opencode_probe import OpenCodeAdapter
+        from tok.adapters.probes import OpenCodeAdapter
 
         return OpenCodeAdapter()
     if config.name == "codex-cli":
-        from tok.adapters.codex_probe import CodexAdapter
+        from tok.adapters.probes import CodexAdapter
 
         return CodexAdapter()
     from tok.adapters import ClaudeBridgeAdapter

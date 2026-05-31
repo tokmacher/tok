@@ -699,6 +699,27 @@ def session_status_rows(
                 ),
             ]
         )
+        # Show the conservative net (gross tokens_saved minus tokens actually
+        # spent re-acquiring exact evidence) whenever any reacquisition cost was
+        # incurred. Gross savings can include avoided-reacquisition estimates, so
+        # net is the credible, defensible figure to surface alongside it.
+        reacq_cost_tokens = (
+            int(summary["reacquisition_cost_tokens"])
+            if isinstance(summary.get("reacquisition_cost_tokens"), int | float | str)
+            else 0
+        )
+        if reacq_cost_tokens > 0:
+            net_tokens_saved = (
+                int(summary["net_tokens_saved"])
+                if isinstance(summary.get("net_tokens_saved"), int | float | str)
+                else 0
+            )
+            rows.append(
+                (
+                    "Net tokens saved (after reacquisition)",
+                    f"{net_tokens_saved:,} (reacq {reacq_cost_tokens:,})",
+                )
+            )
     note = savings_diagnostic_note(
         summary=summary,
         baseline_only=baseline_only,
@@ -837,6 +858,20 @@ def json_envelope(
         "warnings": warnings or [],
         "next_steps": next_steps or [],
     }
+
+
+def _resolve_session_dir(*, session_dir: Path | None, latest: bool) -> Path | None:
+    if session_dir is not None:
+        return session_dir
+    if not latest:
+        return None
+    root = Path(os.getenv("TOK_DIR", str(Path.home() / ".tok"))) / "sessions"
+    if not root.exists():
+        return None
+    candidates = [path for path in root.iterdir() if path.is_dir() and (path / "receipts.jsonl").is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: (path / "receipts.jsonl").stat().st_mtime)
 
 
 __all__ = [

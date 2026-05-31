@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from tok.provider_block_semantics import is_text_block
+
 DEFAULT_PROMPT_BLOAT_THRESHOLD_CHARS = 2000
 DEFAULT_PROMPT_OPTIMIZE_LIMIT_CHARS = 2500
 USER_PROMPT_LEAK_MIN_CHARS = 200
@@ -35,11 +37,7 @@ def detect_prompt_bloat(system_prompt: str | list[dict[str, Any]] | None, user_p
 
     system_text = ""
     if isinstance(system_prompt, list):
-        system_text = " ".join(
-            str(block.get("text", ""))
-            for block in system_prompt
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
+        system_text = " ".join(str(block.get("text", "")) for block in system_prompt if is_text_block(block))
     else:
         system_text = str(system_prompt)
 
@@ -63,11 +61,7 @@ def should_optimize_prompts(
 
     system_text = ""
     if isinstance(system_prompt, list):
-        system_text = " ".join(
-            str(block.get("text", ""))
-            for block in system_prompt
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
+        system_text = " ".join(str(block.get("text", "")) for block in system_prompt if is_text_block(block))
     elif system_prompt:
         system_text = str(system_prompt)
 

@@ -31,6 +31,7 @@ from tok.compression._tool_result_codecs import (
     _detect_tool_content_type,
     truncate_large_result,
 )
+from tok.provider_block_semantics import is_text_block
 from tok.utils.token_utils import count_tokens
 
 logger = logging.getLogger("tok.gateway.anthropic")
@@ -148,7 +149,7 @@ def scrub_leaked_tok_context(body: dict[str, Any]) -> tuple[dict[str, Any], int]
     elif isinstance(system, list):
         cleaned_system = []
         for block in system:
-            if isinstance(block, dict) and block.get("type") == "text":
+            if is_text_block(block):
                 block["text"] = _clean_value(block.get("text", ""))
                 if not str(block.get("text", "")).strip():
                     continue
@@ -166,7 +167,7 @@ def scrub_leaked_tok_context(body: dict[str, Any]) -> tuple[dict[str, Any], int]
             elif isinstance(content, list):
                 cleaned_content = []
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
+                    if is_text_block(block):
                         block["text"] = _clean_value(block.get("text", ""))
                         if not str(block.get("text", "")).strip():
                             continue
@@ -220,7 +221,7 @@ def sift_tool_results(
             cache_marked_saved_tokens = 0
             if isinstance(inner, list):
                 for sub in inner:
-                    if isinstance(sub, dict) and sub.get("type") == "text":
+                    if is_text_block(sub):
                         original_text = str(sub.get("text", ""))
                         original_len = len(original_text)
                         if cache_marked:
@@ -411,7 +412,7 @@ def bpe_translate_request(body: dict[str, Any]) -> tuple[dict[str, Any], int]:
             body["system"] = translated
     elif isinstance(system, list):
         for block in system:
-            if isinstance(block, dict) and block.get("type") == "text":
+            if is_text_block(block):
                 raw = block.get("text", "")
                 if _looks_like_tok_wire(raw):
                     translated = _translate_bpe(raw)

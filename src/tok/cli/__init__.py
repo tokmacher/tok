@@ -16,6 +16,7 @@ from ._claude import register as register_claude_command
 from ._cli_support import console
 from ._contract import register as register_contract_commands
 from ._dev import dev_app
+from ._handoff_commands import register as register_handoff_commands
 from ._init_commands import register as register_init_commands
 from ._install_commands import register as register_install_commands
 from ._mcp_commands import register as register_mcp_commands
@@ -25,6 +26,7 @@ from ._release_commands import register as register_release_commands
 from ._resolver_commands import register as register_resolver_commands
 from ._review import register as register_review_commands
 from ._savings_audit_commands import register as register_savings_audit_commands
+from ._session_receipt_commands import register as register_session_receipt_commands
 
 load_dotenv()
 logging.basicConfig(
@@ -84,6 +86,8 @@ register_release_commands(app)
 register_resolver_commands(app)
 register_review_commands(app)
 register_savings_audit_commands(app)
+register_session_receipt_commands(app)
+register_handoff_commands(app)
 register_mcp_commands(app)
 register_benchmark_commands(app)
 

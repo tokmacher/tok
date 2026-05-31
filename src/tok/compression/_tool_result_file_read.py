@@ -8,6 +8,8 @@ from typing import Any
 
 from tok.runtime.repeat_targets import normalize_path_target
 
+from ._tool_taxonomy import _PRECISION_READ_ARG_KEYS
+
 _SIGNATURE_CONTINUATION_RE = re.compile(r"^[)\],]\s*$|^[)\],]\s*[#]|,\s*$|\S\s*\\$")
 
 _SIGNATURE_OPEN_PAREN_RE = re.compile(r"\(")
@@ -693,7 +695,11 @@ def _compress_file_read(text: str, tool_context: dict[str, Any] | None = None, s
         _small_lines = _SMALL_FILE_MAX_LINES * 3
     if tool_context:
         args = tool_context.get("args") if isinstance(tool_context.get("args"), dict) else {}
-        if any(k in args for k in ("offset", "limit", "start", "end")) or args.get("verbatim"):
+        # NB: intentionally the broad "exact-bytes requested" predicate (no
+        # tool-name gate, plus ``verbatim``) rather than is_precision_read_context();
+        # this codec is selected by content kind, not tool name. The drift-prone
+        # part -- the precision arg-key tuple -- is single-sourced from _tool_taxonomy.
+        if any(k in args for k in _PRECISION_READ_ARG_KEYS) or args.get("verbatim"):
             return text
         file_heat = tool_context.get("file_heat") if isinstance(tool_context, dict) else None
         if file_heat is not None:

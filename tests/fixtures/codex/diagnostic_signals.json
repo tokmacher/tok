@@ -1,0 +1,20 @@
+{
+  "conversation_id": "codex-diagnostics-1",
+  "model": "test-codex-model",
+  "input": [
+    {
+      "role": "user",
+      "content": "Parse a normal Codex fixture and expose probe diagnostic signals."
+    }
+  ],
+  "tools": [
+    {
+      "name": "shell"
+    }
+  ],
+  "capabilities": [
+    "tool-pair",
+    "stdio",
+    "fixture-only"
+  ]
+}

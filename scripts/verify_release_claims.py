@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +44,24 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _verified_savings_bands_from_claims_matrix(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    bands: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if "|" not in line or "Verified" not in line or "savings" not in line.lower():
+            continue
+        for match in re.finditer(r"(?P<min>\d+(?:\.\d+)?)\s*-\s*(?P<max>\d+(?:\.\d+)?)\s*%", line):
+            bands.append(
+                {
+                    "line": line.strip(),
+                    "min": float(match.group("min")),
+                    "max": float(match.group("max")),
+                }
+            )
+    return bands
+
+
 def verify_release_claims(
     *,
     gate_metrics_path: Path,
@@ -50,6 +69,7 @@ def verify_release_claims(
     min_savings_pct: float,
     max_savings_pct: float,
     benchmark_report_path: Path | None = None,
+    claims_matrix_path: Path | None = None,
 ) -> dict[str, Any]:
     gate_payload = _read_json(gate_metrics_path)
     release_summary = gate_payload.get("release_summary", {})
@@ -69,6 +89,25 @@ def verify_release_claims(
             },
         )
     ]
+
+    if claims_matrix_path is not None:
+        verified_bands = _verified_savings_bands_from_claims_matrix(claims_matrix_path)
+        out_of_band = [
+            band for band in verified_bands if band["min"] < min_savings_pct or band["max"] > max_savings_pct
+        ]
+        checks.append(
+            ClaimCheckResult(
+                name="claims_matrix_savings_band",
+                passed=not out_of_band,
+                details={
+                    "claims_matrix": str(claims_matrix_path),
+                    "allowed_min": min_savings_pct,
+                    "allowed_max": max_savings_pct,
+                    "verified_bands": verified_bands,
+                    "out_of_band": out_of_band,
+                },
+            )
+        )
 
     if benchmark_report_path is not None:
         benchmark_check = check_benchmark_report(benchmark_report_path)
@@ -99,6 +138,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-savings-pct", type=float, default=45.0, help="Minimum acceptable average savings pct")
     parser.add_argument("--max-savings-pct", type=float, default=55.0, help="Maximum acceptable average savings pct")
     parser.add_argument("--benchmark-report", type=Path, default=None, help="Optional benchmark report JSON path")
+    parser.add_argument(
+        "--claims-matrix",
+        type=Path,
+        default=Path("docs/claims_matrix.md"),
+        help="Claims matrix Markdown path to check for verified savings bands",
+    )
     return parser.parse_args(argv)
 
 
@@ -110,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         min_savings_pct=float(args.min_savings_pct),
         max_savings_pct=float(args.max_savings_pct),
         benchmark_report_path=args.benchmark_report,
+        claims_matrix_path=args.claims_matrix,
     )
     print(f"[claims] wrote {args.output}")
     if not payload["passed"]:

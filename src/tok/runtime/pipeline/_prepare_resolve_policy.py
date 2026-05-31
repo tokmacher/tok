@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from tok.provider_block_semantics import is_tool_result_block, is_tool_use_block
 from tok.runtime.config import (
     _SHORT_SESSION_THRESHOLD,
     TOK_REACQUIRE_STUCK_WINDOW_TURNS,
@@ -24,13 +25,13 @@ def _messages_contain_tool_material(messages: list[dict[str, Any]]) -> bool:
             content = message.get("content")
             if isinstance(content, list):
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                    if is_tool_use_block(block):
                         return True
         elif message.get("role") == "user":
             content = message.get("content")
             if isinstance(content, list):
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                    if is_tool_result_block(block):
                         return True
     return False
 

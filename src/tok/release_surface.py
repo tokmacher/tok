@@ -92,6 +92,8 @@ EXPERIMENTAL_CLI_ROOT_COMMANDS: tuple[str, ...] = (
     "jit-check",
     "gate-check",
     "review",
+    "handoff",
+    "session-receipt",
     "verify-contract",
 )
 

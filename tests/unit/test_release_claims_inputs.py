@@ -20,6 +20,15 @@ def test_claims_matrix_has_required_columns() -> None:
     assert "Demoted" in content
 
 
+def test_public_benchmark_family_labels_match_supported_families() -> None:
+    from tok.testing.benchmark_suite import PUBLIC_BENCHMARK_FAMILY_LABELS, VALID_BENCHMARK_FAMILIES
+
+    assert set(PUBLIC_BENCHMARK_FAMILY_LABELS) == VALID_BENCHMARK_FAMILIES
+    assert PUBLIC_BENCHMARK_FAMILY_LABELS["execution_patch"] == "Execution patch"
+    assert PUBLIC_BENCHMARK_FAMILY_LABELS["repo_grounding"] == "Repository grounding"
+    assert PUBLIC_BENCHMARK_FAMILY_LABELS["real_session"] == "Real session"
+
+
 def test_pricing_verification_points_to_canonical_source() -> None:
     content = _read("docs/pricing_verification.md")
     assert "src/tok/utils/pricing.py" in content

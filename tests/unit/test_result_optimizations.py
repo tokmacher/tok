@@ -1054,3 +1054,168 @@ def test_compress_file_read_does_not_skeletonize_small_ts_file() -> None:
     result = _compress_file_read(small_ts, tool_context=ctx)
 
     assert result == small_ts
+
+
+def test_precision_read_not_lossy_truncated() -> None:
+    """A precision read (explicit offset/limit) is an explicit exact-evidence
+    request. It must not be returned with a lossy middle-omission truncation,
+    because the overlap-delta tracker marks the full requested window as
+    "covered" -- so any line truncated out of delivery would become permanently
+    invisible and a re-read of it would be wrongly refused as "all overlap".
+    """
+    # 130 dense lines, large enough that size-based truncation would normally fire.
+    content = "\n".join(
+        f"    some_variable_{i} = compute({i}) + helper({i})  # explanatory comment {i}" for i in range(1, 131)
+    )
+    ctx = {"name": "Read", "args": {"file_path": "/x/big.py", "offset": 340, "limit": 130}}
+
+    out = tok_tool_result(content, tool_context=ctx)
+
+    assert "[TRUNCATED" not in out, "precision read must not be lossy-truncated"
+    assert "omitted lines" not in out
+    # A line in the middle of the requested window is present verbatim.
+    assert "some_variable_65 = compute(65)" in out
+
+
+def test_verbatim_read_truncation_unchanged() -> None:
+    """Guard: exempting precision reads must not stop large *verbatim* (no
+    offset/limit) results from being compressed/truncated as before.
+    """
+    single_long_line = "x" * 50000
+    ctx = {"name": "bash", "args": {"command": "cat huge.txt"}}
+
+    out = tok_tool_result(single_long_line, tool_context=ctx)
+
+    assert len(out) < len(single_long_line)
+
+
+def test_overlap_delta_marker_labels_delivered_exact_coverage() -> None:
+    """The overlap-delta marker must record the basis of its coverage claim.
+
+    When a re-read overlaps a prior precision read, the suppressed lines were
+    *delivered exactly* before (precision reads are never skeletonized or
+    truncated). The wire marker carries an explicit ``coverage:delivered-exact``
+    token so an auditor can verify the "all overlap" claim is sound rather than
+    an assumption against summarized content.
+    """
+    from tok.compression import compress_tool_results
+
+    # Longer per-line content so the overlap marker is clearly shorter than the
+    # re-delivered raw block (overlap-delta only fires when it actually saves).
+    full = "\n".join(f"line{i} = some descriptive content for row number {i} here" for i in range(1, 201))
+    mid = "\n".join(f"line{i} = some descriptive content for row number {i} here" for i in range(100, 140))
+
+    def read_msgs(tid: str, content: str, offset: int, limit: int):
+        ctx = {"name": "Read", "args": {"file_path": "/x/big.py", "offset": offset, "limit": limit}}
+        a = {"role": "assistant", "content": [{"type": "tool_use", "id": tid, "name": "Read", "input": ctx["args"]}]}
+        u = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tid, "content": content}]}
+        return ctx, a, u
+
+    ctx1, a1, u1 = read_msgs("t1", full, 1, 200)
+    ctx2, a2, u2 = read_msgs("t2", mid, 100, 40)
+    out, _bd = compress_tool_results([a1, u1, a2, u2], result_cache={}, tool_use_id_to_context={"t1": ctx1, "t2": ctx2})
+
+    second = out[3]["content"][0]["content"]
+    assert "file_read_overlap_delta" in second
+    assert "coverage:delivered-exact" in second
+
+
+# ---------------------------------------------------------------------------
+# Precision-read predicate is single-sourced (one is_precision_read_context()).
+#
+# These guard against re-introducing the duplicated inline predicate that the
+# audit flagged. Two of them prove the call site actually *consults* the shared
+# helper (monkeypatch the helper, observe the call site's behavior flip); the
+# third enforces the source-level invariant that the literal key tuple lives in
+# exactly one module.
+# ---------------------------------------------------------------------------
+
+
+def test_overlap_delta_consults_shared_precision_helper(monkeypatch) -> None:
+    """compress_tool_results' overlap-delta path must consult the shared
+    is_precision_read_context() SSOT, not an inline copy.
+
+    We patch the helper *in the history-pipeline namespace* to report "not a
+    precision read". A delegating call site then skips the precision/overlap-delta
+    branch entirely, so the re-read carries no ``file_read_overlap_delta`` marker.
+    An inline copy ignores the patch and still emits the marker -> test fails.
+    """
+    import tok.compression._history_pipeline as hp
+    from tok.compression import compress_tool_results
+
+    monkeypatch.setattr(hp, "is_precision_read_context", lambda ctx: False, raising=False)
+
+    full = "\n".join(f"line{i} = some descriptive content for row number {i} here" for i in range(1, 201))
+    mid = "\n".join(f"line{i} = some descriptive content for row number {i} here" for i in range(100, 140))
+
+    def read_msgs(tid: str, content: str, offset: int, limit: int):
+        ctx = {"name": "Read", "args": {"file_path": "/x/big.py", "offset": offset, "limit": limit}}
+        a = {"role": "assistant", "content": [{"type": "tool_use", "id": tid, "name": "Read", "input": ctx["args"]}]}
+        u = {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tid, "content": content}]}
+        return ctx, a, u
+
+    ctx1, a1, u1 = read_msgs("t1", full, 1, 200)
+    ctx2, a2, u2 = read_msgs("t2", mid, 100, 40)
+    out, _bd = compress_tool_results([a1, u1, a2, u2], result_cache={}, tool_use_id_to_context={"t1": ctx1, "t2": ctx2})
+
+    second = out[3]["content"][0]["content"]
+    assert "file_read_overlap_delta" not in second, (
+        "overlap-delta path did not consult the patched shared helper (an inline precision predicate is still in use)"
+    )
+
+
+def test_recent_window_consults_shared_precision_helper(monkeypatch) -> None:
+    """compress_recent_window must consult the shared SSOT.
+
+    Patching the helper to report *every* context as a precision read makes the
+    window preserve the block verbatim (precision reads are never compressed), so
+    the normally-compressed ``uv run env`` output is left intact. An inline copy
+    ignores the patch and still compresses to env_output -> test fails.
+    """
+    import tok.compression._history_pipeline as hp
+    from tok.compression import compress_recent_window
+
+    monkeypatch.setattr(hp, "is_precision_read_context", lambda ctx: True, raising=False)
+
+    content = "\n".join(f"KEY_{i}=value_{i}_{'x' * 30}" for i in range(200))
+    assert len(content) > 8_000
+    msg = {"role": "tool", "content": [{"type": "tool_result", "tool_use_id": "env_id", "content": content}]}
+    ctx = {"env_id": {"name": "bash", "args": {"command": "uv run env"}}}
+
+    msgs, breakdown = compress_recent_window([msg], tool_use_id_to_context=ctx, threshold=0)
+
+    assert breakdown.get("env_output", 0) == 0, (
+        "recent-window did not consult the patched shared helper (an inline precision predicate is still in use)"
+    )
+    assert msgs[0]["content"][0]["content"] == content
+
+
+def test_precision_arg_keys_single_sourced() -> None:
+    """The precision-read argument-key tuple must live in exactly one place across
+    the whole tok tree: the neutral ``tok/_tool_arg_keys.py`` module.
+
+    Any other module re-inlining the literal ``("offset", "limit", "start", "end")``
+    -- in the compression layer OR the runtime layer -- is a drift hazard: a
+    maintainer extending the precision definition in the SSOT would silently miss
+    the copy, desyncing delivery from the overlap-delta coverage tracker (compression)
+    or misclassifying a precision read as verbatim (runtime skeleton-edit recovery).
+    """
+    import os
+
+    import tok
+
+    root = os.path.dirname(tok.__file__)
+    literal = '"offset", "limit", "start", "end"'
+    offenders = []
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            full = os.path.join(dirpath, name)
+            with open(full, encoding="utf-8") as fh:
+                if literal in fh.read():
+                    offenders.append(os.path.relpath(full, root))
+    assert sorted(offenders) == ["_tool_arg_keys.py"], (
+        "precision-read key literal must only appear in tok/_tool_arg_keys.py (the SSOT); "
+        f"found inline copies in {sorted(offenders)}"
+    )

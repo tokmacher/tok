@@ -1,0 +1,45 @@
+{
+  "conversation_id": "codex-exactness-1",
+  "model": "test-codex-model",
+  "input": [
+    {
+      "role": "tool",
+      "tool": "read_file",
+      "path": "src/tok/runtime/types.py",
+      "content": "class RuntimeRequest(BaseModel, frozen=True):\n    model: str"
+    },
+    {
+      "role": "tool",
+      "tool": "search",
+      "query": "RuntimeRequest",
+      "content": "3 matches found in 2 files"
+    },
+    {
+      "role": "tool",
+      "tool": "outline",
+      "content": "class CodexAdapter\n  def parse_inbound_request\n  def build_outbound_response"
+    },
+    {
+      "role": "tool",
+      "tool": "read_file",
+      "reference_id": "tok://artifact/codex-fixture-previous-read",
+      "content": "tok://artifact/codex-fixture-previous-read"
+    }
+  ],
+  "tools": [
+    {
+      "name": "read_file"
+    },
+    {
+      "name": "search"
+    },
+    {
+      "name": "outline"
+    }
+  ],
+  "capabilities": [
+    "tool-pair",
+    "stdio",
+    "fixture-only"
+  ]
+}
