@@ -7125,7 +7125,7 @@ def _interleaved_assistant_thinking_between_tool_use_blocks() -> list[dict[str, 
     ]
 
 
-def test_fail_open_retry_rewrites_interleaved_assistant_thinking_between_tool_use_blocks(
+def test_fail_open_retry_preserves_interleaved_assistant_thinking_between_tool_use_blocks(
     tmp_path, monkeypatch, caplog
 ) -> None:
     memory_dir = tmp_path / ".tok"
@@ -7190,18 +7190,22 @@ def test_fail_open_retry_rewrites_interleaved_assistant_thinking_between_tool_us
 
     assert response.status_code == 200
     assert len(sent_bodies) == 2
-    # Verify retry payload has thinking blocks removed
+    # The fail-open retry must preserve the opaque thinking block byte-for-byte
+    # and in its original position. Stripping it (the previous behavior) is what
+    # triggered the upstream 400 "thinking ... blocks in the latest assistant
+    # message cannot be modified".
     retry_message_content = sent_bodies[1]["messages"][1]["content"]
-    assert all(block["type"] != "thinking" for block in retry_message_content)
-    assert all(block["type"] != "redacted_thinking" for block in retry_message_content)
+    assert [block["type"] for block in retry_message_content] == ["tool_use", "thinking", "tool_use"]
+    thinking_blocks = [block for block in retry_message_content if block["type"] == "thinking"]
+    assert thinking_blocks == [{"type": "thinking", "thinking": "Thinking between tool uses."}]
     # Verify tool_use block order is preserved
     tool_use_blocks = [block for block in retry_message_content if block["type"] == "tool_use"]
     assert [block["id"] for block in tool_use_blocks] == [
         "toolu_small_1",
         "toolu_small_2",
     ]
-    # Verify the observability signal is emitted
-    assert "provider_safe_removed_assistant_thinking_between_tool_use" in caplog.text
+    # The removal path must be gone: no thinking/redacted_thinking is stripped.
+    assert "provider_safe_removed_assistant_thinking_between_tool_use" not in caplog.text
 
 
 def test_provider_safe_retry_normalization_preserves_later_unchanged_messages() -> None:
@@ -7231,11 +7235,14 @@ def test_provider_safe_retry_normalization_preserves_later_unchanged_messages() 
     assert result["messages"][0]["content"][0]["type"] == "thinking"
 
 
-def test_provider_safe_retry_normalization_ignores_non_dict_later_messages() -> None:
+def test_provider_safe_retry_normalization_preserves_opaque_blocks_and_ignores_non_dict_later_messages() -> None:
+    # Opaque provider blocks (thinking/redacted_thinking) must never be stripped
+    # on the fail-open retry, even in the latest assistant turn. The body is
+    # returned unchanged and malformed later messages are left untouched.
     current_message = {
         "role": "assistant",
         "content": [
-            {"type": "thinking", "thinking": "remove this"},
+            {"type": "thinking", "thinking": "preserve this verbatim"},
             {"type": "tool_use", "id": "tu_1", "name": "read_file", "input": {}},
         ],
     }
@@ -7249,15 +7256,21 @@ def test_provider_safe_retry_normalization_ignores_non_dict_later_messages() -> 
 
     result, changed = _normalize_provider_safe_retry_payload(body)
 
-    assert changed is True
-    assert result is not None
+    assert changed is False
+    assert result is body
     assert result["messages"][2] == "malformed-later-message"
     current_content = result["messages"][1]["content"]
-    assert [block.get("type") for block in current_content] == ["tool_use"]
+    assert [block.get("type") for block in current_content] == ["thinking", "tool_use"]
 
 
-def test_thinking_preserved_in_history_before_tool_use_blocks() -> None:
-    """Pre-tool_use thinking in history turns is preserved; only post-tool_use thinking is stripped."""
+def test_provider_safe_retry_preserves_opaque_thinking_in_history_and_current_turns() -> None:
+    """Opaque thinking blocks are preserved verbatim in every assistant turn.
+
+    A previous implementation stripped post-tool_use thinking from the current
+    assistant turn, producing the upstream 400 "thinking or redacted_thinking
+    blocks in the latest assistant message cannot be modified". Tok must never
+    mutate or drop these provider-owned blocks, regardless of position.
+    """
     history_message = {
         "role": "assistant",
         "content": [
@@ -7270,7 +7283,7 @@ def test_thinking_preserved_in_history_before_tool_use_blocks() -> None:
         "role": "assistant",
         "content": [
             {"type": "tool_use", "id": "tu_3", "name": "grep_search", "input": {}},
-            {"type": "thinking", "thinking": "Interleaved thinking should be stripped."},
+            {"type": "thinking", "thinking": "Interleaved thinking must be preserved."},
             {"type": "tool_use", "id": "tu_4", "name": "grep_search", "input": {}},
         ],
     }
@@ -7286,19 +7299,19 @@ def test_thinking_preserved_in_history_before_tool_use_blocks() -> None:
 
     result, changed = _normalize_provider_safe_retry_payload(body)
 
-    assert changed is True
-    assert result is not None
+    assert changed is False
+    assert result is body
     history_content = result["messages"][1]["content"]
-    thinking_blocks = [b for b in history_content if b.get("type") in {"thinking", "redacted_thinking"}]
-    assert len(thinking_blocks) == 1
-    assert thinking_blocks[0]["thinking"] == "Early reasoning about the codebase."
+    assert [b.get("type") for b in history_content] == ["thinking", "tool_use", "tool_use"]
+    assert history_content[0]["thinking"] == "Early reasoning about the codebase."
 
+    # The latest assistant turn keeps its interleaved thinking block in place.
     current_content = result["messages"][4]["content"]
-    current_thinking = [b for b in current_content if b.get("type") in {"thinking", "redacted_thinking"}]
-    assert len(current_thinking) == 0
+    assert [b.get("type") for b in current_content] == ["tool_use", "thinking", "tool_use"]
+    assert current_content[1]["thinking"] == "Interleaved thinking must be preserved."
 
 
-def test_provider_safe_retry_normalization_uses_block_position_for_duplicate_thinking() -> None:
+def test_provider_safe_retry_preserves_duplicate_thinking_blocks() -> None:
     duplicate_thinking = {"type": "thinking", "thinking": "same thought"}
     history_message = {
         "role": "assistant",
@@ -7324,11 +7337,12 @@ def test_provider_safe_retry_normalization_uses_block_position_for_duplicate_thi
 
     result, changed = _normalize_provider_safe_retry_payload(body)
 
-    assert changed is True
-    assert result is not None
+    # Both duplicate opaque blocks are preserved verbatim and in order.
+    assert changed is False
+    assert result is body
     history_content = result["messages"][1]["content"]
     thinking_blocks = [block for block in history_content if block.get("type") == "thinking"]
-    assert thinking_blocks == [duplicate_thinking]
+    assert thinking_blocks == [duplicate_thinking, duplicate_thinking]
     assert [block["id"] for block in history_content if block.get("type") == "tool_use"] == ["tu_1", "tu_2"]
 
 

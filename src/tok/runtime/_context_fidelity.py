@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from tok.provider_block_semantics import is_text_block
+
 _STRUCTURED_ANSWER_LABEL_RE = re.compile(r"(?<![\w-])(file|verification|related)(?![\w-])\s*[:=]", re.IGNORECASE)
 _CONTEXT_FIDELITY_PATH_RE = re.compile(
     r"(?<!\w)([\w./-]+\.(?:py|ts|tsx|js|jsx|json|md|toml|yaml|yml|sh|txt|css|html|sql|rs|go|rb))(?!\w)"
@@ -71,11 +73,7 @@ def _system_prompt_text(system_prompt: str | list[dict[str, Any]] | None) -> str
     if system_prompt is None:
         return ""
     if isinstance(system_prompt, list):
-        return "\n".join(
-            str(block.get("text", ""))
-            for block in system_prompt
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
+        return "\n".join(str(block.get("text", "")) for block in system_prompt if is_text_block(block))
     return str(system_prompt)
 
 

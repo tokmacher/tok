@@ -8,6 +8,7 @@
   ],
   "tok": {
     "adapter": "codex-cli-probe",
+    "behavior_signals": {},
     "runtime": "codex-cli",
     "fixture_only": true
   }

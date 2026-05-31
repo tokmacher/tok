@@ -5,6 +5,7 @@ import json
 from typing import Any, cast
 
 from tok.compression import text_of
+from tok.provider_opaque_blocks import content_has_opaque_provider_blocks
 from tok.runtime._context_fidelity import extract_requested_answer_labels
 from tok.runtime.core import RuntimeSession
 
@@ -50,7 +51,7 @@ def restore_latest_assistant_thinking(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        if not any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
+        if not content_has_opaque_provider_blocks(content):
             continue
 
         msg["content"] = original_content

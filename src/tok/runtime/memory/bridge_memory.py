@@ -18,6 +18,7 @@ from tok.compression import (
 )
 from tok.macros.ir import Instruction, Macro, MacroRegistry
 from tok.memory.pointers import PointerRegistry
+from tok.provider_block_semantics import is_text_block
 from tok.runtime.policy.smart_policy import (
     CANONICAL_WIRE_FIELD_ORDER,
     MemoryProjectionProfile,
@@ -1309,11 +1310,7 @@ def clean_system_context(
 
     system_text = ""
     if isinstance(system_prompt, list):
-        system_text = "\n".join(
-            str(block.get("text", ""))
-            for block in system_prompt
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
+        system_text = "\n".join(str(block.get("text", "")) for block in system_prompt if is_text_block(block))
     else:
         system_text = str(system_prompt)
 

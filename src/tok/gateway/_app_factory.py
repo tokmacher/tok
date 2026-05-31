@@ -18,10 +18,12 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
+from tok.provider_block_semantics import is_text_block
 from tok.runtime._diagnostics import DiagnosticsSnapshot
 from tok.runtime.pipeline.request_validation import normalize_tool_use_blocks
 from tok.runtime.smoothness import SmoothnessEventType
 from tok.spec.live_trace import emit_live_trace
+from tok.utils.env_utils import env_bool
 
 from . import (
     _RUNTIME,
@@ -32,7 +34,7 @@ from . import (
     logger,
 )
 from ._anthropic_optimizations import apply_anthropic_optimizations
-from ._bridge_comparison import _safe_headers
+from ._bridge_comparison import _safe_headers, apply_tok_state_header
 from ._bridge_request_handler import send_with_tok_fail_open_retry
 from ._bridge_runtime_pipeline import prepare_bridge_payload
 from ._bridge_streaming import _emit_sse_block, _run_macro_mining, buffer_strip_restream_impl, passthrough_stream_impl
@@ -139,7 +141,7 @@ def _build_response_signals(
         for i, block in enumerate(resp_json.get("content", [])):
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "text":
+            if is_text_block(block):
                 continue
             if passthrough_idx < len(passthrough_blocks):
                 resp_json["content"][i] = passthrough_blocks[passthrough_idx]
@@ -490,7 +492,7 @@ def _rebuild_content_preserving_position(
     for block in original_content:
         if not isinstance(block, dict):
             continue
-        if block.get("type") == "text":
+        if is_text_block(block):
             if processed_idx < len(processed_blocks):
                 result.append(processed_blocks[processed_idx])
                 processed_idx += 1
@@ -994,7 +996,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     behavior_signals["tok_fallback_activated"] = behavior_signals.get("tok_fallback_activated", 0) + 1
                     logger.warning("tok_fallback_activated: upstream 400 retry, serving without compression")
                     _record_fallback_once(active_session, request_state)
-                resp_headers = _safe_headers(response.headers)
+                resp_headers = apply_tok_state_header(
+                    _safe_headers(response.headers),
+                    behavior_signals,
+                    baseline_only=bool(active_session.runtime_session._baseline_only),
+                    enabled=env_bool("TOK_EMIT_STATE_HEADER", False),
+                )
                 if response.status_code >= 400:
                     error_content = await response.aread()
                     await _close_streaming_setup_resources(None, client)
@@ -1173,7 +1180,7 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
                     )
 
                     for block in resp_json.get("content", []):
-                        if isinstance(block, dict) and block.get("type") == "text":
+                        if is_text_block(block):
                             text_content = block.get("text")
                             if isinstance(text_content, str):
                                 full_response_text += text_content
@@ -1224,7 +1231,12 @@ def create_app_impl(session: BridgeSession | None = None) -> FastAPI:
             return Response(
                 content=content,
                 status_code=response.status_code,
-                headers=_safe_headers(response.headers),
+                headers=apply_tok_state_header(
+                    _safe_headers(response.headers),
+                    behavior_signals,
+                    baseline_only=bool(active_session.runtime_session._baseline_only),
+                    enabled=env_bool("TOK_EMIT_STATE_HEADER", False),
+                ),
                 media_type=response.headers.get("content-type", "application/json"),
             )
 

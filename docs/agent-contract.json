@@ -19,7 +19,7 @@
   ],
   "forbidden_claims": [
     "stable universal protocol",
-    "agent-to-agent exchange implemented",
+    "universal agent-to-agent exchange implemented",
     "protocol compliance certified by tok audit",
     "local resolver beta implies stable protocol",
     "resolver manifest is a public API",

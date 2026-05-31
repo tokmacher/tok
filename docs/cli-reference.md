@@ -98,7 +98,7 @@ tok resolver put <path>
 tok resolver get tok-resolver://sha256:... --out ./artifact.bin
 ```
 
-The resolver is a local content-addressed store. Tok 0.2.0 does not do remote routing,
+The resolver is a local content-addressed store. Tok 0.2.x does not do remote routing,
 referral following, or any network resolution.
 
 Use:
@@ -167,10 +167,35 @@ Exactness terms:
 - `safe-block`: Tok blocked compression because exactness mattered more than savings.
 - `fallback`: Tok used raw/baseline behavior because compact representation was unsafe.
 
+## Experimental Local Substrate Artifacts
+
+These commands are hidden and experimental. They produce local artifacts only.
+
+```bash
+tok session-receipt --latest --json
+tok session-receipt --session-dir ~/.tok/sessions/<id> --output receipt.json
+tok audit --session-receipt receipt.json --json
+tok handoff export --latest --json
+tok handoff export --session-receipt receipt.json --output handoff.json
+tok handoff inspect handoff.json
+```
+
+Use:
+
+- `tok session-receipt` to generate a local `TokSessionReceipt` from bridge receipts,
+  savings events, and available diagnostics.
+- `tok audit --session-receipt` to run local receipt validation. This is not a protocol
+  compliance certificate.
+- `tok handoff export` to create a compact local packet that references a session
+  receipt and lists evidence labels.
+- `tok handoff inspect` to validate the packet and show exact reacquisitions required
+  before edit-like work.
+
 Advanced maintainer utilities remain available, but they are intentionally hidden from
-the default help surface in `0.2.0` so new users land on one clear workflow. Hidden
-commands such as capture review, release gating, conversion helpers, and developer tools
-are maintainer-only for this release and may change without compatibility guarantees.
+the default help surface in `0.2.x` so new users land on one clear workflow. Hidden
+commands such as capture review, release gating, conversion helpers, substrate artifact
+helpers, and developer tools are maintainer-only for this release and may change without
+compatibility guarantees.
 
 For maintainer workflows, see [`docs/release-checklist.md`](./release-checklist.md) and
 [`docs/CICD_INTEGRATION.md`](./CICD_INTEGRATION.md) instead of treating those commands

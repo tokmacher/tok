@@ -3,6 +3,7 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
+from tok.provider_block_semantics import is_tool_use_block
 from tok.utils.telemetry import emit_event_sync
 
 if TYPE_CHECKING:
@@ -92,7 +93,7 @@ def report_protocol_drift(
             "reasoning_depth": session.reasoning_depth_per_token(),
             "active_tools": getattr(session, "_active_tools", []),
             "current_tools": [
-                block["name"] for block in content_blocks if block.get("type") == "tool_use" and block.get("name")
+                block["name"] for block in content_blocks if is_tool_use_block(block) and block.get("name")
             ],
         },
         model=model,

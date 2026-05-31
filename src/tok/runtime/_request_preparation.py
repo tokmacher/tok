@@ -19,6 +19,7 @@ from tok.compression import (
 )
 from tok.compression._file_integrity import format_file_integrity_manifest
 from tok.macros.ir import Instruction
+from tok.provider_opaque_blocks import content_has_opaque_provider_blocks, is_opaque_provider_block
 from tok.provider_request_shapes import canonicalize_bridge_body, validate_bridge_body
 from tok.runtime.repeat_targets import SEARCH_LIKE_TOOLS
 
@@ -568,9 +569,7 @@ def _snapshot_latest_assistant_thinking(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        thinking_blocks = [
-            b for b in content if isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"}
-        ]
+        thinking_blocks = [b for b in content if is_opaque_provider_block(b)]
         if not thinking_blocks:
             return None
 
@@ -622,7 +621,7 @@ def _restore_latest_assistant_thinking(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        if not any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
+        if not content_has_opaque_provider_blocks(content):
             continue
 
         msg["content"] = original_content

@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from tok.provider_block_semantics import is_text_block, is_tool_result_block, is_tool_use_block
+
 _logger = logging.getLogger(__name__)
 
 
@@ -14,7 +16,7 @@ def _message_has_tool_result(message: dict[str, Any]) -> bool:
     content = message.get("content")
     if not isinstance(content, list):
         return False
-    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+    return any(is_tool_result_block(block) for block in content)
 
 
 def _message_has_user_prompt(message: dict[str, Any]) -> bool:
@@ -24,7 +26,7 @@ def _message_has_user_prompt(message: dict[str, Any]) -> bool:
     if not isinstance(content, list):
         return False
     for block in content:
-        if isinstance(block, dict) and block.get("type") == "text" and str(block.get("text", "")).strip():
+        if is_text_block(block) and str(block.get("text", "")).strip():
             return True
     return False
 
@@ -53,7 +55,7 @@ def _stream_recovery_winnowing_floor_messages(messages: list[dict[str, Any]]) ->
         tool_ids = {
             str(block.get("id", "")).strip()
             for block in content
-            if isinstance(block, dict) and block.get("type") == "tool_use" and str(block.get("id", "")).strip()
+            if is_tool_use_block(block) and str(block.get("id", "")).strip()
         }
         if tool_ids:
             assistant_idx = idx
@@ -77,9 +79,7 @@ def _stream_recovery_winnowing_floor_messages(messages: list[dict[str, Any]]) ->
                 tool_result_ids = {
                     str(block.get("tool_use_id", "")).strip()
                     for block in content
-                    if isinstance(block, dict)
-                    and block.get("type") == "tool_result"
-                    and str(block.get("tool_use_id", "")).strip()
+                    if is_tool_result_block(block) and str(block.get("tool_use_id", "")).strip()
                 }
             if assistant_tool_ids & tool_result_ids:
                 paired_user_idx = idx
@@ -113,7 +113,7 @@ def _assistant_tool_use_ids(message: dict[str, Any]) -> set[str]:
     return {
         str(block.get("id", "")).strip()
         for block in content
-        if isinstance(block, dict) and block.get("type") == "tool_use" and str(block.get("id", "")).strip()
+        if is_tool_use_block(block) and str(block.get("id", "")).strip()
     }
 
 
@@ -127,7 +127,7 @@ def _message_tool_result_ids(message: dict[str, Any]) -> set[str]:
     return {
         str(block.get("tool_use_id", "")).strip()
         for block in content
-        if isinstance(block, dict) and block.get("type") == "tool_result" and str(block.get("tool_use_id", "")).strip()
+        if is_tool_result_block(block) and str(block.get("tool_use_id", "")).strip()
     }
 
 
@@ -165,7 +165,7 @@ def _bridge_recent_suffix_has_safe_pairing(messages: list[dict[str, Any]]) -> bo
             return False
         next_content = next_message.get("content")
         if isinstance(next_content, list):
-            if any(not (isinstance(block, dict) and block.get("type") == "tool_result") for block in next_content):
+            if any(not (is_tool_result_block(block)) for block in next_content):
                 return False
         result_ids = _message_tool_result_ids(next_message)
         if not tool_ids.issubset(result_ids):
@@ -192,11 +192,7 @@ def _message_tool_result_text(message: dict[str, Any]) -> str:
     content = message.get("content")
     if not isinstance(content, list):
         return ""
-    return "\n".join(
-        str(block.get("content", ""))
-        for block in content
-        if isinstance(block, dict) and block.get("type") == "tool_result"
-    )
+    return "\n".join(str(block.get("content", "")) for block in content if is_tool_result_block(block))
 
 
 def _assistant_used_skill_tool(message: dict[str, Any]) -> bool:
@@ -205,10 +201,7 @@ def _assistant_used_skill_tool(message: dict[str, Any]) -> bool:
     content = message.get("content")
     if not isinstance(content, list):
         return False
-    return any(
-        isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name", "").lower() == "skill"
-        for block in content
-    )
+    return any(is_tool_use_block(block) and block.get("name", "").lower() == "skill" for block in content)
 
 
 def _starts_after_unanswered_skill_result(messages: list[dict[str, Any]], start_index: int) -> bool:

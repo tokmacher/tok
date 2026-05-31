@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from tok.protocol.models import TokNode
 from tok.protocol.parser import TokParser, serialize
+from tok.provider_block_semantics import is_text_block, is_tool_use_block
 from tok.runtime.memory.answer_memory import extract_structured_answer_memory
 from tok.runtime.policy.translator import IS_TOK, is_likely_tok, postprocess_response
 from tok.runtime.types import ProcessedRuntimeResponse
@@ -86,7 +87,7 @@ def _visible_text_from_content_blocks(
     return "\n".join(
         str(block.get("text", "")).strip()
         for block in content_blocks
-        if block.get("type") == "text" and str(block.get("text", "")).strip()
+        if is_text_block(block) and str(block.get("text", "")).strip()
     ).strip()
 
 
@@ -184,7 +185,7 @@ def is_safe_visible_contract_output(
 ) -> bool:
     if not visible_text.strip():
         return False
-    if any(block.get("type") == "tool_use" for block in content_blocks):
+    if any(is_tool_use_block(block) for block in content_blocks):
         return False
     if _looks_like_tool_intent_text(visible_text):
         return False
@@ -203,7 +204,7 @@ def _is_tool_intent_without_answer(
 ) -> bool:
     if _is_answer_like_visible_text(visible_text):
         return False
-    has_tool_blocks = any(block.get("type") == "tool_use" for block in content_blocks)
+    has_tool_blocks = any(is_tool_use_block(block) for block in content_blocks)
     if has_tool_blocks:
         return True
     return _looks_like_tool_intent_text(visible_text) or _looks_like_tool_intent_text(raw_text)
@@ -659,7 +660,7 @@ def _tool_compatible_mixed_turn_signals(
 ) -> dict[str, int]:
     if not tool_compatible:
         return {}
-    has_tool = any(block.get("type") == "tool_use" for block in tool_blocks)
+    has_tool = any(is_tool_use_block(block) for block in tool_blocks)
     if not has_tool or not visible_text.strip():
         return {}
     signals = {"mixed_tool_visible_text": 1}
@@ -671,9 +672,9 @@ def _tool_compatible_mixed_turn_signals(
 
 def has_visible_content_block(content_blocks: list[dict[str, Any]]) -> bool:
     for block in content_blocks:
-        if block.get("type") == "tool_use":
+        if is_tool_use_block(block):
             return True
-        if block.get("type") == "text" and str(block.get("text", "")).strip():
+        if is_text_block(block) and str(block.get("text", "")).strip():
             return True
     return False
 
@@ -805,7 +806,7 @@ def has_well_formed_tok_blocks(content_blocks: list[dict[str, Any]]) -> bool:
             return False
 
     # If we have tool blocks, at least one should be well-formed
-    return has_tool_blocks or any(b.get("type") == "text" for b in content_blocks)
+    return has_tool_blocks or any(is_text_block(b) for b in content_blocks)
 
 
 def translate_request_results(
@@ -1165,7 +1166,7 @@ def response_contract_for_mode(
             )
 
     expected_labels = _expected_structured_labels(session)
-    has_tool_blocks = any(block.get("type") == "tool_use" for block in content_blocks)
+    has_tool_blocks = any(is_tool_use_block(block) for block in content_blocks)
     if expected_labels and not has_tool_blocks:
         repaired_text, repair_signals = _repair_structured_answer_text(
             visible_text,
@@ -1237,7 +1238,7 @@ def _tok_native_path(
     tok_blocks: list[dict[str, Any]],
     tool_compatible: bool,
 ) -> tuple[str, dict[str, int], list[dict[str, Any]], str]:
-    visible_text = "".join(block.get("text", "") for block in tok_blocks if block.get("type") == "text")
+    visible_text = "".join(block.get("text", "") for block in tok_blocks if is_text_block(block))
     contract_signals = _tool_compatible_mixed_turn_signals(tok_blocks, visible_text, tool_compatible=tool_compatible)
     signals = {"tok_native_response": 1, **contract_signals}
     return visible_text, signals, tok_blocks, "tok-native"
@@ -1250,7 +1251,7 @@ def _tool_compatible_path(
     has_tok_protocol: bool,
     tool_compatible: bool,
 ) -> tuple[str, dict[str, int], list[dict[str, Any]], str]:
-    has_tool_blocks = any(block.get("type") == "tool_use" for block in tok_blocks)
+    has_tool_blocks = any(is_tool_use_block(block) for block in tok_blocks)
     content_blocks = tok_blocks if has_tool_blocks else fallback_blocks
     visible_text = _visible_text_from_content_blocks(content_blocks)
 
@@ -1285,7 +1286,7 @@ def _standard_fallback_path(
             signals["fail_open_compat_response"] = 1
 
     content_blocks = fallback_blocks or tok_blocks
-    visible_text = "".join(block.get("text", "") for block in content_blocks if block.get("type") == "text")
+    visible_text = "".join(block.get("text", "") for block in content_blocks if is_text_block(block))
 
     mode = fallback_mode
     if has_tok_protocol and malformed_signals:

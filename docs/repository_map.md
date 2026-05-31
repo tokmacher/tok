@@ -20,13 +20,15 @@ maintainer-only material.
 
 - `src/tok/cli/`: Typer CLI implementation for `tok`.
 - `src/tok/gateway/`: local bridge server, request handling, streaming, health, and
-  bridge preflight behavior.
+  bridge preflight behavior. `_adapter_proxy.py` contains the gated adapter local proxy
+  proof and is not the defended Claude bridge path.
 - `src/tok/runtime/`: compression runtime state, diagnostics, fallback state, request
   preparation, and exactness-related safety logic.
 - `src/tok/compression/`: deterministic compression pipelines and tool-result codecs.
 - `src/tok/resolver/`: local resolver beta storage and manifest support.
 - `src/tok/spec/`: trace and live-trace helpers.
-- `src/tok/protocol/`: draft protocol models and parser/encoder helpers.
+- `src/tok/protocol/`: draft protocol models, parser/encoder helpers, local session
+  receipts, and handoff packet helpers.
 - `src/tok/release_surface.py`: tested lists of supported, experimental, and internal
   CLI/public surface.
 
@@ -94,6 +96,8 @@ the check.
 ## Draft Specs And Architecture
 
 - `docs/spec/`: draft trace/protocol specification work and fixtures.
+- `docs/spec/tok-session-receipt/`: draft local session receipt schema and examples.
+- `docs/spec/tok-handoff/`: draft local handoff packet schema and examples.
 - `docs/bridge-standard.md`: bridge exactness and attribution standard.
 - `docs/architecture.md`: current architecture overview.
 - `docs/architecture-0.2.md`: roadmap/target context, not the runtime contract.

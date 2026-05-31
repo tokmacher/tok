@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from tok.compression import _strip_harness_injections, text_of
+from tok.provider_block_semantics import is_tool_result_block, is_tool_use_block
 from tok.runtime.config import TOOL_DENSITY_THRESHOLD, TOOL_VOLUME_HEAVY_BYTES
 from tok.runtime.repeat_targets import (
     SEARCH_LIKE_TOOLS,
@@ -31,7 +32,7 @@ def _count_tool_density(messages: list[dict[str, Any]]) -> tuple[int, int]:
         if not isinstance(content, list):
             continue
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "tool_use":
+            if is_tool_use_block(block):
                 tool_uses += 1
     return tool_uses, tool_results
 
@@ -48,7 +49,7 @@ def _count_heavy_results(messages: list[dict[str, Any]]) -> int:
         if not isinstance(content, list):
             continue
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "tool_result":
+            if is_tool_result_block(block):
                 raw = block.get("content", "")
                 if isinstance(raw, str) and len(raw) > TOOL_VOLUME_HEAVY_BYTES:
                     heavy_results += 1
@@ -104,7 +105,7 @@ def _iter_tool_results(
         if not isinstance(content, list):
             continue
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "tool_result":
+            if is_tool_result_block(block):
                 tool_id = str(block.get("tool_use_id", "")).strip()
                 if tool_id:
                     results.append((tool_id, text_of(block.get("content", ""))))

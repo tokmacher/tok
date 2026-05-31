@@ -33,6 +33,7 @@ from ._tool_result_codecs import (
     _tighten_compressed_output,
     truncate_large_result,
 )
+from ._tool_taxonomy import is_precision_read_context
 
 _logger = logging.getLogger("tok.compression")
 
@@ -146,7 +147,13 @@ def tok_tool_result_impl(
         "git_diff",
         "find",
     )
-    compressed = truncate_large_result(compressed, already_compressed=already_compressed, result_type=kind)
+    # A precision read (explicit offset/limit) is an explicit exact-evidence
+    # request for a bounded window the agent chose. Lossily truncating its
+    # middle both violates that request and desynchronizes delivery from the
+    # overlap-delta coverage tracker (which marks the whole requested window as
+    # "seen"), leaving the omitted span permanently invisible and un-re-readable.
+    if not is_precision_read_context(tool_context):
+        compressed = truncate_large_result(compressed, already_compressed=already_compressed, result_type=kind)
 
     saved = original_chars - len(compressed)
     if saved <= 0:

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 from tok.compression import FILE_LIKE_TOOLS, inject_system_additions, text_of
+from tok.provider_block_semantics import is_text_block, is_tool_result_block
 from tok.provider_request_shapes import validate_request_body
 from tok.runtime.config import _TOOL_REQUIRED_PROMPT_PATTERNS
 
@@ -46,7 +47,7 @@ def _process_content_list(
     """Process a list content block and return adapted content."""
     if not content:
         return " "
-    if all(isinstance(b, dict) and b.get("type") == "text" for b in content):
+    if all(is_text_block(b) for b in content):
         # Pure text array -> flatten to string for Bedrock/OpenAI compatibility
         return "\n".join(b.get("text", "") for b in content).strip() or " "
     # Ensure tool-only assistant messages have at least a placeholder space
@@ -144,7 +145,7 @@ def _message_has_tool_results(message: dict[str, Any] | None) -> bool:
     content = message.get("content")
     if not isinstance(content, list):
         return False
-    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+    return any(is_tool_result_block(block) for block in content)
 
 
 def _message_user_text(message: dict[str, Any] | None) -> str:
@@ -158,7 +159,7 @@ def _message_user_text(message: dict[str, Any] | None) -> str:
         return ""
     parts: list[str] = []
     for block in content:
-        if isinstance(block, dict) and block.get("type") == "text" and str(block.get("text", "")).strip():
+        if is_text_block(block) and str(block.get("text", "")).strip():
             parts.append(str(block.get("text", "")).strip())
     return "\n".join(parts)
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from tok.provider_opaque_blocks import content_has_opaque_provider_blocks
 from tok.runtime._signal_registry import (
     _INVALID_TOOL_HISTORY_FAILURES,
     _NON_BLOCKING_OUTGOING_FAILURES,
@@ -716,6 +717,13 @@ def _normalize_assistant_block_order(
 
     Messages whose id() is in skip_identities are not reordered. This is used
     to preserve the latest assistant message with thinking blocks unchanged.
+
+    Additionally, any assistant message that contains opaque provider blocks
+    (thinking / redacted_thinking) is left untouched regardless of identity.
+    Those blocks are provider-owned and must be forwarded byte-for-byte in
+    their original position; reordering them is the kind of mutation the
+    provider rejects ("thinking ... blocks ... cannot be modified"). Preserving
+    the client's original block order here is always provider-safe.
     """
     changed = False
     for message in messages:
@@ -727,6 +735,9 @@ def _normalize_assistant_block_order(
             continue
         content = message.get("content")
         if not isinstance(content, list):
+            continue
+        # Never reorder a message carrying opaque provider blocks.
+        if content_has_opaque_provider_blocks(content):
             continue
 
         non_tool_use: list[dict[str, Any]] = []
@@ -784,7 +795,7 @@ def _find_protected_message(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        if any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
+        if content_has_opaque_provider_blocks(content):
             return id(msg), id(content)
     return None, None
 
@@ -838,7 +849,7 @@ def _check_thinking_block_mutation(
             content = msg.get("content")
             if not isinstance(content, list):
                 continue
-            if any(isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"} for b in content):
+            if content_has_opaque_provider_blocks(content):
                 after_content = content
                 break
     if after_content is not None:

@@ -347,7 +347,7 @@ class TestStatsJsonRegression:
             "fallback_count",
             "baseline_only",
             "session_quality",
-            "degradation_reason",
+            "last_degradation_reason",
         ):
             assert field in session, f"Session data missing field: {field}"
 

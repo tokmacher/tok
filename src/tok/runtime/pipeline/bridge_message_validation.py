@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from tok.provider_block_semantics import is_text_block, is_tool_result_block, is_tool_use_block
+
 DEFAULT_ALLOWED_BLOCK_TYPES = frozenset({"text", "tool_use", "tool_result", "thinking", "redacted_thinking"})
 DEFAULT_PROVIDER_SENSITIVE_LARGE_TOOL_BATCH_THRESHOLD = 16
 
@@ -28,18 +30,13 @@ def collect_provider_sensitivity_risks(
         if not isinstance(content, list):
             continue
 
-        tool_positions = [
-            block_index
-            for block_index, block in enumerate(content)
-            if isinstance(block, dict) and block.get("type") == "tool_use"
-        ]
+        tool_positions = [block_index for block_index, block in enumerate(content) if is_tool_use_block(block)]
         if not tool_positions:
             continue
         first_tool = tool_positions[0]
         tool_use_count = len(tool_positions)
         has_text_between_or_after_tool_uses = any(
-            isinstance(block, dict) and block.get("type") == "text" and block_index > first_tool
-            for block_index, block in enumerate(content)
+            is_text_block(block) and block_index > first_tool for block_index, block in enumerate(content)
         )
         if tool_use_count >= large_tool_batch_threshold:
             risks["assistant_large_tool_use_batch"] = risks.get("assistant_large_tool_use_batch", 0) + 1
@@ -50,9 +47,7 @@ def collect_provider_sensitivity_risks(
             next_content = next_message.get("content") if isinstance(next_message, dict) else None
             next_tool_result_count = 0
             if isinstance(next_content, list):
-                next_tool_result_count = sum(
-                    1 for block in next_content if isinstance(block, dict) and block.get("type") == "tool_result"
-                )
+                next_tool_result_count = sum(1 for block in next_content if is_tool_result_block(block))
             risks["assistant_large_tool_use_text_interleaving"] = (
                 risks.get("assistant_large_tool_use_text_interleaving", 0) + 1
             )
@@ -160,11 +155,7 @@ def summarize_bridge_pairing(
         content = message.get("content")
         if not isinstance(content, list):
             continue
-        tool_use_ids = [
-            str(block.get("id", "")).strip()
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "tool_use"
-        ]
+        tool_use_ids = [str(block.get("id", "")).strip() for block in content if is_tool_use_block(block)]
         if not tool_use_ids:
             continue
         next_message = messages[index + 1] if index + 1 < len(messages) else None
@@ -173,9 +164,7 @@ def summarize_bridge_pairing(
         next_tool_result_ids: list[str] = []
         if isinstance(next_content, list):
             next_tool_result_ids = [
-                str(block.get("tool_use_id", "")).strip()
-                for block in next_content
-                if isinstance(block, dict) and block.get("type") == "tool_result"
+                str(block.get("tool_use_id", "")).strip() for block in next_content if is_tool_result_block(block)
             ]
         timeline.append(
             {

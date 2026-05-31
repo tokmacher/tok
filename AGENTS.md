@@ -17,6 +17,8 @@ Supported 0.2.x path:
 - `tok claude`
 - diagnostics through `tok bridge status`, `tok doctor`, `tok stats`, and `tok audit`
 - local resolver beta commands through `tok resolver`
+- experimental local session receipts through `tok session-receipt`
+- experimental local handoff packets through `tok handoff`
 
 Do not describe Tok 0.2.x as:
 
@@ -26,10 +28,11 @@ Do not describe Tok 0.2.x as:
 - a universal protocol implementation
 - a stable Python SDK
 
-Tok Resolver is implemented as a local-only beta. Tok Capability, Tok Session, and
-agent-to-agent exchange are not yet implemented. Do not claim they are. `tok audit`
-validates trace structure, not general protocol compliance. Local resolver beta does not
-imply a stable protocol.
+Tok Resolver is implemented as a local-only beta. Session receipts and handoff packets
+are local draft artifacts. Tok Capability, stable Tok Session, remote resolver routing,
+and universal agent-to-agent exchange are not yet implemented. Do not claim they are.
+`tok audit` validates trace structure, local sidecars, or local session receipts; it is
+not general protocol compliance. Local resolver beta does not imply a stable protocol.
 
 ## Golden path
 
@@ -45,6 +48,8 @@ uv run tok doctor --help
 uv run tok stats --help
 uv run tok audit --help
 uv run tok resolver --help
+uv run tok session-receipt --help
+uv run tok handoff --help
 uv run python scripts/run_agent_smoke.py
 ```
 
@@ -186,6 +191,7 @@ Release-surface rules:
 - Update release-surface tests when intentionally changing the supported CLI surface.
 - `tok audit` validates trace structure and local sidecars; it is not a general
   protocol-compliance certificate.
+- `tok audit --session-receipt` validates a local session receipt only.
 
 ## Extension rules
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from tok.compression import FILE_LIKE_TOOLS, text_of
+from tok.provider_block_semantics import is_text_block, is_tool_use_block
 from tok.runtime.repeat_targets import extract_shell_file_read_path
 
 from ._tool_context import logical_target_key_from_context
@@ -69,7 +70,7 @@ def _detect_prose_leaks(messages: list[dict[str, Any]], bump: Callable[[str], No
         if not isinstance(content, list):
             continue
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
+            if is_text_block(block):
                 text = block.get("text", "")
                 if text.startswith(">>>"):
                     text = "\n".join(text.split("\n")[1:])
@@ -111,7 +112,7 @@ def _track_assistant_tool_usage(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        tool_uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+        tool_uses = [b for b in content if is_tool_use_block(b)]
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue

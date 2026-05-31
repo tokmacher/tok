@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from tok.compression import text_of
+from tok.provider_block_semantics import is_tool_result_block, is_tool_use_block
 
 
 @dataclass(frozen=True)
@@ -169,9 +170,9 @@ def _message_contains_plan_evidence(message: dict[str, Any]) -> bool:
         for block in content:
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "tool_result" and _is_plan_like_text(text_of(block.get("content", ""))):
+            if is_tool_result_block(block) and _is_plan_like_text(text_of(block.get("content", ""))):
                 return True
-            if block.get("type") == "tool_use" and _tool_use_mentions_plan_artifact(block):
+            if is_tool_use_block(block) and _tool_use_mentions_plan_artifact(block):
                 return True
     return False
 
@@ -219,7 +220,7 @@ def _tool_use_mentions_plan_artifact(block: dict[str, Any]) -> bool:
 def _message_has_tool_result(content: Any) -> bool:
     if not isinstance(content, list):
         return False
-    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+    return any(is_tool_result_block(block) for block in content)
 
 
 def _tool_use_ids_in_slice(messages: list[dict[str, Any]]) -> set[str]:
@@ -229,7 +230,7 @@ def _tool_use_ids_in_slice(messages: list[dict[str, Any]]) -> set[str]:
         if not isinstance(content, list):
             continue
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "tool_use":
+            if is_tool_use_block(block):
                 tool_id = str(block.get("id") or "").strip()
                 if tool_id:
                     ids.add(tool_id)
@@ -247,7 +248,7 @@ def _tool_result_ids_in_slice(messages: list[dict[str, Any]]) -> set[str]:
         if not isinstance(content, list):
             continue
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "tool_result":
+            if is_tool_result_block(block):
                 tool_id = str(block.get("tool_use_id") or "").strip()
                 if tool_id:
                     ids.add(tool_id)
@@ -260,10 +261,6 @@ def _find_tool_use_message_index(messages: list[dict[str, Any]], tool_use_id: st
         if not isinstance(content, list):
             continue
         for block in content:
-            if (
-                isinstance(block, dict)
-                and block.get("type") == "tool_use"
-                and str(block.get("id") or "").strip() == tool_use_id
-            ):
+            if is_tool_use_block(block) and str(block.get("id") or "").strip() == tool_use_id:
                 return index
     return None

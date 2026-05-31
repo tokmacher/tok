@@ -1,6 +1,6 @@
 """Tests for tok.pricing — model price lookups."""
 
-from tok.utils.pricing import PRICING_DEFAULT, get_pricing
+from tok.utils.pricing import get_pricing, has_known_pricing
 
 
 class TestGetPricing:
@@ -16,9 +16,18 @@ class TestGetPricing:
         rates = get_pricing("claude-haiku-4-20250101")
         assert rates[0] == 0.80
 
-    def test_unknown_model_returns_default(self) -> None:
-        rates = get_pricing("gpt-4o-unknown")
-        assert rates == PRICING_DEFAULT
+    def test_unknown_model_returns_conservative_zero_rates(self) -> None:
+        # An unknown model must not be silently priced at a fabricated (Sonnet)
+        # rate, which would produce misleading dollar cost/savings. Conservative
+        # zero rates suppress the dollar claim while leaving token savings (which
+        # are rate-independent) intact.
+        rates = get_pricing("totally-unknown/model-v9")
+        assert rates == (0.0, 0.0, 0.0, 0.0)
+
+    def test_has_known_pricing_distinguishes_known_from_unknown(self) -> None:
+        assert has_known_pricing("claude-sonnet-4-20250101")
+        assert has_known_pricing("openai/gpt-5.4-pro")
+        assert not has_known_pricing("totally-unknown/model-v9")
 
     def test_legacy_model(self) -> None:
         rates = get_pricing("claude-3-opus-20240229")

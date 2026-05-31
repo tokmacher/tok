@@ -3,9 +3,9 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "tok-protocol-dependencies",
-  "documentNamespace": "https://tok-protocol.dev/sbom/90b5e867-7769-436c-83b5-d9fd54511798",
+  "documentNamespace": "https://tok-protocol.dev/sbom/784a03bc-32f2-408b-b009-b4c1454a7dc7",
   "creationInfo": {
-    "created": "2026-05-25T10:51:27.838709Z",
+    "created": "2026-05-31T15:35:57.267160Z",
     "creators": [
       "Tool: tok-security-pipeline-1.0.0",
       "Organization: tokmacher"
@@ -15,7 +15,7 @@
     {
       "name": "tok-protocol",
       "SPDXID": "SPDXRef-tok-protocol",
-      "versionInfo": "0.2.1",
+      "versionInfo": "0.2.2",
       "downloadLocation": "https://github.com/tokmacher/tok",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -25,7 +25,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:pypi/tok-protocol@0.2.1"
+          "referenceLocator": "pkg:pypi/tok-protocol@0.2.2"
         }
       ]
     },

@@ -11,7 +11,7 @@ FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "opencode"
 
 
 def test_opencode_probe_parses_fixture_request() -> None:
-    from tok.adapters.opencode_probe import OpenCodeAdapter
+    from tok.adapters.probes import OpenCodeAdapter
 
     adapter = OpenCodeAdapter()
     request = adapter.parse_inbound_request((FIXTURE_DIR / "request.json").read_bytes())
@@ -25,7 +25,7 @@ def test_opencode_probe_parses_fixture_request() -> None:
 
 
 def test_opencode_probe_builds_fixture_response_shape() -> None:
-    from tok.adapters.opencode_probe import OpenCodeAdapter
+    from tok.adapters.probes import OpenCodeAdapter
 
     adapter = OpenCodeAdapter()
     response = adapter.build_outbound_response(
@@ -44,7 +44,7 @@ def test_opencode_probe_builds_fixture_response_shape() -> None:
 
 
 def test_opencode_probe_capabilities_are_fixture_only() -> None:
-    from tok.adapters.opencode_probe import OpenCodeAdapter
+    from tok.adapters.probes import OpenCodeAdapter
 
     adapter = OpenCodeAdapter()
     assert "fixture-only" in adapter.supported_capabilities()

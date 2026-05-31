@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from tok.compression import text_of
+from tok.provider_opaque_blocks import is_opaque_provider_block
 from tok.runtime.core import RuntimeSession
 from tok.runtime.types import RuntimeRequest
 
@@ -24,9 +25,7 @@ def _snapshot_latest_assistant_thinking(
         content = msg.get("content")
         if not isinstance(content, list):
             continue
-        thinking_blocks = [
-            b for b in content if isinstance(b, dict) and b.get("type") in {"thinking", "redacted_thinking"}
-        ]
+        thinking_blocks = [b for b in content if is_opaque_provider_block(b)]
         if not thinking_blocks:
             continue
         content_json = json.dumps(content, ensure_ascii=False, sort_keys=True)

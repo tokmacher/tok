@@ -10,8 +10,9 @@ Claude Code and the upstream model API, reduces repeated file/search/tool contex
 it can do so safely, and fails open to normal uncompressed behavior when fidelity is at
 risk.
 
-Tok `0.2.0` is deliberately narrow: Claude Code routed through a local bridge with a
-local resolver beta. It is not a hosted service, agent framework, repo indexer, or
+Tok `0.2.2` is deliberately narrow: Claude Code routed through a local bridge with a
+local resolver beta, plus experimental local session-receipt and handoff artifacts for
+auditable state transfer. It is not a hosted service, agent framework, repo indexer, or
 general prompt-compression SDK.
 
 ## Why Tok Exists
@@ -115,7 +116,7 @@ serving requests without compression.
 
 ## Supported Surface
 
-The public `0.2.0` workflow is:
+The public `0.2.2` workflow is:
 
 ```bash
 tok init
@@ -130,6 +131,20 @@ tok resolver init
 tok resolver put <file>
 tok resolver get tok-resolver://sha256:...
 ```
+
+Experimental substrate commands are hidden from the default help surface:
+
+```bash
+tok session-receipt --latest --json
+tok audit --session-receipt ./receipt.json --json
+tok handoff export --latest --json
+tok handoff inspect ./handoff.json
+```
+
+Session receipts summarize local bridge receipts, savings events, diagnostics, and
+exactness labels. Handoff packets reference a session receipt and list exact
+reacquisitions required before another agent performs edit-like work. These are local
+draft artifacts, not universal protocol or remote agent-exchange support.
 
 The default request policy is `natural-first`, which preserves raw provider-compatible
 traffic when a turn has not yet earned compression and applies Tok only when the bridge
@@ -154,7 +169,7 @@ That path is useful for debugging and experiments, but the low-friction public i
 story is `pip install tok-protocol` followed by `tok claude`.
 
 Experimental Python submodule APIs and internal compression features exist, but they are
-not part of the supported `0.2.0` contract and may change without compatibility
+not part of the supported `0.2.2` contract and may change without compatibility
 guarantees.
 
 ## Streaming Behavior
