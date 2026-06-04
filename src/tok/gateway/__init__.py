@@ -428,6 +428,7 @@ class BridgeSession:
     # Smoothness tracking for interaction quality
     smoothness_tracker: SmoothnessTracker = field(default_factory=SmoothnessTracker)
     session_ttl_seconds: int = field(default_factory=lambda: _env_int("TOK_SESSION_TTL_SECONDS", 21600))
+    idle_shutdown_seconds: int = field(default_factory=lambda: _env_int("TOK_BRIDGE_IDLE_SHUTDOWN_SECONDS", 7200))
     max_sessions: int = field(default_factory=lambda: _env_int("TOK_MAX_SESSIONS", 32))
     _session_buckets: dict[str, _BridgeSessionBucket] = field(default_factory=dict, init=False, repr=False)
     _active_session_key: str = field(default="default", init=False, repr=False)
@@ -991,9 +992,40 @@ def run_bridge(
         os.getenv("TOK_MODE", "tool-compatible"),
         os.getenv("TOK_REQUEST_POLICY", "<unset>"),
     )
+    idle_sec = session.idle_shutdown_seconds
+    if idle_sec > 0:
+        logger.info("Idle auto-shutdown: %ds", idle_sec)
+    else:
+        logger.info("Idle auto-shutdown: disabled")
 
     try:
-        uvicorn.run(app, host=bind_host, port=port, log_level=log_level)
+        if idle_sec > 0:
+            config = uvicorn.Config(app, host=bind_host, port=port, log_level=log_level)
+            server = uvicorn.Server(config)
+
+            async def _idle_watchdog() -> None:
+                poll_interval = max(30, idle_sec // 10)
+                while not server.should_exit:
+                    await asyncio.sleep(poll_interval)
+                    if not session._session_buckets:
+                        continue
+                    last_activity = max(b.last_seen for b in session._session_buckets.values())
+                    idle_for = time.time() - last_activity
+                    if idle_for >= idle_sec:
+                        logger.info(
+                            "Bridge idle for %.0fs (threshold %ds), shutting down",
+                            idle_for,
+                            idle_sec,
+                        )
+                        server.should_exit = True
+
+            async def _serve_with_watchdog() -> None:
+                asyncio.ensure_future(_idle_watchdog())
+                await server.serve()
+
+            asyncio.run(_serve_with_watchdog())
+        else:
+            uvicorn.run(app, host=bind_host, port=port, log_level=log_level)
     except Exception as exc:
         logger.exception("Bridge server exited unexpectedly on port %d: %s", port, exc)
         raise

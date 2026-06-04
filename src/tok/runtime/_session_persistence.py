@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .config import RESULT_CACHE_TTL_SECONDS
+from .evidence_safety import EvidenceLedgerEntry
 from .memory.bridge_memory import BridgeMemoryState
 from .memory.session_state import _discover_project_markers
 from .types import EpisodeEntry, EpisodeLedger
@@ -38,6 +39,7 @@ def initialize_session_storage(session: RuntimeSession, *, explicit_memory_dir: 
         session._load_global_macros = not explicit_memory_dir
     session.bridge_memory = load_bridge_memory(session)
     session.result_cache = load_result_cache(session)
+    load_delivery_state(session)
     session.episode_ledger = load_episode_ledger(session)
     warm_records = load_hot_summaries(session)
     if warm_records:
@@ -223,6 +225,131 @@ def save_result_cache(session: RuntimeSession) -> None:
             result_cache_file(session),
             exc,
         )
+
+
+DELIVERY_STATE_VERSION = 1
+
+
+def delivery_state_file(session: RuntimeSession) -> Path:
+    """Return the path to the verbatim-delivery tracking file for this session."""
+    assert session.memory_dir is not None
+    return session.memory_dir / "delivery_state.tok"
+
+
+def save_delivery_state(session: RuntimeSession) -> None:
+    """Persist verbatim-delivery tracking so resumes reuse compressed forms.
+
+    On resume into a fresh process the in-RAM trackers (files_read,
+    files_fully_delivered, first_exact_seen, the evidence ledger) start empty,
+    so every previously-compressed tool result in the replayed transcript would
+    be re-delivered verbatim — the resumption request spike.  The verbatim
+    content already lives in the replayed transcript, so persisting these
+    trackers lets the resumed request safely keep the compressed forms.
+    """
+    try:
+        assert session.memory_dir is not None
+        session.memory_dir.mkdir(parents=True, exist_ok=True)
+        project = session.project
+        evidence = session.evidence_safety
+        payload: dict[str, Any] = {
+            "v": DELIVERY_STATE_VERSION,
+            "timestamp": time_module.time(),
+            "files_read": sorted(project.files_read),
+            "files_fully_delivered": dict(project.files_fully_delivered),
+            "skeleton_delivered_paths": sorted(project.skeleton_delivered_paths),
+            "files_read_fingerprints": dict(session._files_read_fingerprints),
+            "first_exact_seen": sorted(evidence.first_exact_seen),
+            "pending_exact_keys": sorted(evidence.pending_exact_keys),
+            "alias_map": dict(evidence.alias_map),
+            "ledger": {key: dataclasses.asdict(entry) for key, entry in evidence.ledger.items()},
+        }
+        path = delivery_state_file(session)
+        tmp_fd, tmp_name = tempfile.mkstemp(dir=str(session.memory_dir), prefix=".delivery_state.", suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w") as handle:
+                json.dump(payload, handle)
+            os.replace(tmp_name, path)
+        finally:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+    except Exception as exc:
+        session._persistence_failures += 1
+        session_logger_for(session).warning(
+            "Failed to save delivery state to %s: %s",
+            delivery_state_file(session),
+            exc,
+        )
+
+
+def load_delivery_state(session: RuntimeSession) -> None:
+    """Restore verbatim-delivery tracking saved by :func:`save_delivery_state`.
+
+    Any failure leaves the trackers empty, which is cold but safe: at worst a
+    previously-compressed result is re-delivered verbatim once, never a
+    wrongful compression of evidence the model has not actually seen.
+    """
+    path = delivery_state_file(session)
+    if not path.exists():
+        return
+    try:
+        payload = json.loads(path.read_text())
+        if not isinstance(payload, dict):
+            return
+        timestamp = payload.get("timestamp", 0)
+        if time_module.time() - timestamp >= RESULT_CACHE_TTL_SECONDS:
+            return  # Stale: let the resume re-establish delivery naturally.
+
+        project = session.project
+        evidence = session.evidence_safety
+
+        files_read = payload.get("files_read")
+        if isinstance(files_read, list):
+            project.files_read.update(str(p) for p in files_read)
+
+        files_fully_delivered = payload.get("files_fully_delivered")
+        if isinstance(files_fully_delivered, dict):
+            for norm_path, turn in files_fully_delivered.items():
+                if isinstance(turn, int) and not isinstance(turn, bool):
+                    project.files_fully_delivered[str(norm_path)] = turn
+
+        skeleton = payload.get("skeleton_delivered_paths")
+        if isinstance(skeleton, list):
+            project.skeleton_delivered_paths.update(str(p) for p in skeleton)
+
+        fingerprints = payload.get("files_read_fingerprints")
+        if isinstance(fingerprints, dict):
+            for norm_path, fingerprint in fingerprints.items():
+                session._files_read_fingerprints[str(norm_path)] = str(fingerprint)
+
+        first_exact = payload.get("first_exact_seen")
+        if isinstance(first_exact, list):
+            evidence.first_exact_seen.update(str(k) for k in first_exact)
+
+        pending = payload.get("pending_exact_keys")
+        if isinstance(pending, list):
+            evidence.pending_exact_keys.update(str(k) for k in pending)
+
+        alias_map = payload.get("alias_map")
+        if isinstance(alias_map, dict):
+            for alias, canonical in alias_map.items():
+                evidence.alias_map[str(alias)] = str(canonical)
+
+        ledger = payload.get("ledger")
+        if isinstance(ledger, dict):
+            allowed = {f.name for f in dataclasses.fields(EvidenceLedgerEntry)}
+            for key, raw in ledger.items():
+                if not isinstance(raw, dict):
+                    continue
+                fields = {k: v for k, v in raw.items() if k in allowed}
+                fields.setdefault("key", str(key))
+                try:
+                    evidence.ledger[str(key)] = EvidenceLedgerEntry(**fields)
+                except (TypeError, ValueError):
+                    continue
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        session_logger_for(session).warning("Delivery state corrupted at %s: %s — starting empty", path, exc)
+    except Exception as exc:
+        session_logger_for(session).warning("Failed to load delivery state from %s: %s", path, exc)
 
 
 def fallback_memory_file(session: RuntimeSession) -> Path:

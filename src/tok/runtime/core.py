@@ -97,12 +97,14 @@ from ._session_persistence import (
     hot_summaries_file,
     initialize_session_storage,
     load_bridge_memory,
+    load_delivery_state,
     load_episode_ledger,
     load_fallback_memory,
     load_hot_summaries,
     load_result_cache,
     result_cache_file,
     save_bridge_memory,
+    save_delivery_state,
     save_episode_ledger,
     save_fallback_memory,
     save_hot_summaries,
@@ -272,6 +274,9 @@ class RuntimeSession:
         self.request_policy.reset()
         self.answer_phase.reset()
         self.file_delivery.reset()
+        if self.memory_dir is not None:
+            ds_path = self.memory_dir / "delivery_state.tok"
+            ds_path.unlink(missing_ok=True)
         logger.info("RuntimeSession reset: all transient state cleared")
 
     def record_invalid_tool_history_recovery(self, *, blocked: bool) -> dict[str, int]:
@@ -517,6 +522,14 @@ class RuntimeSession:
     def _save_result_cache(self) -> None:
         """Persist result cache to disk."""
         save_result_cache(self)
+
+    def _load_delivery_state(self) -> None:
+        """Restore verbatim-delivery tracking from disk."""
+        load_delivery_state(self)
+
+    def _save_delivery_state(self) -> None:
+        """Persist verbatim-delivery tracking to disk."""
+        save_delivery_state(self)
 
     def _fallback_memory_file(self) -> Path:
         """Return the path to the fallback memory file."""

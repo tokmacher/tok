@@ -112,18 +112,14 @@ def _audit_session_receipt(path: Path, *, json_output: bool) -> None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
+        from tok.protocol.session_receipt import _DEFERRED_L1_THROUGH_L5
+
         result = {
             "passed": False,
             "level": "L0_schema",
             "errors": [f"json_invalid:{exc}"],
             "warnings": [],
-            "deferred_levels": [
-                "L1_internal_consistency",
-                "L2_digest",
-                "L3_local_recovery",
-                "L4_signed_provenance",
-                "L5_remote_verification",
-            ],
+            "deferred_levels": list(_DEFERRED_L1_THROUGH_L5),
         }
     else:
         from tok.protocol.session_receipt import verify_session_receipt

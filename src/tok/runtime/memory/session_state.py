@@ -90,6 +90,7 @@ def session_write_memory(session: "RuntimeSession", text: str) -> str:
 
     session._save_bridge_memory()
     session._save_result_cache()
+    session._save_delivery_state()
     return latest_state
 
 

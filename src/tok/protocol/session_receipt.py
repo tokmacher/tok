@@ -31,7 +31,7 @@ ValidationLevel = Literal[
 
 
 def _default_deferred_validation_levels() -> list[ValidationLevel]:
-    return _DEFERRED_L4_L5
+    return list(_DEFERRED_L4_L5)
 
 
 _DEFERRED_L4_L5: list[ValidationLevel] = ["L4_signed_provenance", "L5_remote_verification"]
@@ -245,7 +245,7 @@ def generate_session_receipt(
     validation = ValidationSummary(
         level="L2_digest" if artifacts else "L1_internal_consistency",
         passed=True,
-        deferred_levels=list(_DEFERRED_L3_L4_L5 if not artifacts else _DEFERRED_L4_L5),
+        deferred_levels=list(_DEFERRED_L2_L3_L4_L5 if not artifacts else _DEFERRED_L4_L5),
     )
     return TokSessionReceipt(
         receipt_id=_prefixed_id("tsr_"),

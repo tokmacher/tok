@@ -305,3 +305,29 @@ def test_audit_session_receipt_cli_json(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["passed"] is True
     assert payload["level"] == "L1_internal_consistency"
+
+
+def test_default_deferred_levels_not_shared_across_instances() -> None:
+    from tok.protocol.session_receipt import ValidationSummary
+
+    a = ValidationSummary()
+    b = ValidationSummary()
+    a.deferred_levels.append("should_not_mutate_shared_state")
+    assert "should_not_mutate_shared_state" not in b.deferred_levels
+
+
+def test_audit_invalid_json_uses_canonical_deferred_levels(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from tok.cli import app
+    from tok.protocol.session_receipt import _DEFERRED_L1_THROUGH_L5
+
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("{not valid json", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["audit", "--session-receipt", str(bad_path), "--json"])
+    assert result.exit_code != 0
+    payload = json.loads(result.output)
+    assert payload["passed"] is False
+    assert payload["level"] == "L0_schema"
+    assert payload["deferred_levels"] == list(_DEFERRED_L1_THROUGH_L5)
